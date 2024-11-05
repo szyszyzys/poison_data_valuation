@@ -1,5 +1,3 @@
-import random
-
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import minimize_scalar
@@ -135,7 +133,7 @@ def measure_coverage(X_selected, X_buy):
 
 
 def evaluate_indices(
-    X_sell, y_sell, X_buy, y_buy, data_indices, inverse_covariance=None
+        X_sell, y_sell, X_buy, y_buy, data_indices, inverse_covariance=None
 ):
     """
     Evaluate the performance of selected data indices on the buyer's data.
@@ -223,7 +221,7 @@ def compute_neg_gradient(X_sell, X_buy, inverse_covariance):
     product_matrix = X_sell @ inverse_covariance @ X_buy.T
 
     # Calculate the squared norms of rows E(x_i^T P x_0)^2
-    neg_gradient = np.mean(product_matrix**2, axis=1)
+    neg_gradient = np.mean(product_matrix ** 2, axis=1)
 
     return neg_gradient
 
@@ -258,7 +256,7 @@ def opt_step_size(X_sell_data, X_buy, inverse_covariance, old_loss, lower=1e-3):
     a = old_loss
     # # E(x_0 P x_i)^2
     prod = (X_sell_data.T @ inverse_covariance) @ X_buy.T
-    b = np.mean(prod**2)
+    b = np.mean(prod ** 2)
     c = X_sell_data @ inverse_covariance @ X_sell_data
 
     # print(a, b, c)
@@ -285,20 +283,20 @@ def one_step(X_sell, X_buy):
 
 
 def design_selection(
-    X_sell,
-    y_sell,
-    X_buy,
-    y_buy,
-    num_select=10,
-    num_iters=1000,
-    alpha=0.01,
-    line_search=True,
-    recompute_interval=50,
-    early_stop_threshold=None,
-    sampling_selection_error=True,
-    costs=None,
-    return_grads=False,
-    reg_lambda=0.0,
+        X_sell,
+        y_sell,
+        X_buy,
+        y_buy,
+        num_select=10,
+        num_iters=1000,
+        alpha=0.01,
+        line_search=True,
+        recompute_interval=50,
+        early_stop_threshold=None,
+        sampling_selection_error=True,
+        costs=None,
+        return_grads=False,
+        reg_lambda=0.0,
 ):
     """
     Select data points based on experimental design optimization.
@@ -330,7 +328,7 @@ def design_selection(
     if reg_lambda > 0:
         reg = np.eye(X_sell.shape[1]) @ np.diag(X_sell.std(0))
         cov = X_sell.T @ np.diag(weights) @ X_sell
-        reg_cov = (1-reg_lambda) * cov + reg_lambda * reg
+        reg_cov = (1 - reg_lambda) * cov + reg_lambda * reg
         inv_cov = np.linalg.pinv(reg_cov)
     else:
         inv_cov = np.linalg.pinv(X_sell.T @ np.diag(weights) @ X_sell)
@@ -392,7 +390,7 @@ def design_selection(
             inv_cov,
             alpha * X_sell[update_coord, :],
             X_sell[update_coord, :],
-        )
+            )
 
         if sampling_selection_error:
             selected_seller_indices = np.random.choice(

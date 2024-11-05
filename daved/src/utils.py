@@ -1,38 +1,20 @@
 import frank_wolfe
-import json
-import math
-import os
 import time
 from collections import defaultdict
 from pathlib import Path
-from time import perf_counter
 
 import clip
-import cvxpy as cp
-import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
 from opendataval import dataval
 from opendataval.dataloader import DataFetcher
-from opendataval.dataval import (AME, DVRL, BetaShapley, DataBanzhaf, DataOob,
-                                 DataShapley, InfluenceFunction,
-                                 InfluenceSubsample, KNNShapley, LavaEvaluator,
-                                 LeaveOneOut, RandomEvaluator,
-                                 RobustVolumeShapley)
 from opendataval.model import RegressionSkLearnWrapper
 from PIL import Image
-from sklearn.cluster import KMeans
-from sklearn.datasets import load_diabetes, make_regression
 from sklearn.linear_model import LinearRegression, Ridge
-from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
-from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.utils import check_random_state
-from torchvision.datasets import MNIST
-from torchvision.models import efficientnet_b1, resnet50
 from torchvision.transforms import (CenterCrop, Compose, Lambda, Resize,
                                     ToTensor)
 from transformers import (
@@ -41,7 +23,6 @@ from transformers import (
     GPT2Tokenizer, GPT2Model,
     Trainer, TrainingArguments,
 )
-from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import mean_squared_error
 from torch.utils.data import Dataset
 from tqdm import tqdm
