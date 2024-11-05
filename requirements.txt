@@ -1,0 +1,11 @@
+accelerate
+jupyterlab
+scipy==1.10
+scikit-learn
+tqdm
+cvxpy
+opendataval
+gpytorch
+statsmodels
+jupyterlab_vim
+transformers
