@@ -254,7 +254,11 @@ def preprocess_image(image):
     """
     Preprocess the image for CLIP.
     """
-    return processor(images=image, return_tensors="pt").to(device)
+    preprocess = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+    ])
+    return preprocess(image)
 
 
 def modify_image(
@@ -513,7 +517,6 @@ def evaluate_attack(
         weights=initial_results['weights'],
         num_select=num_select,
     )
-
 
     print(f"Initial Selected Indices: {selected_indices_initial}")
     print(f"Number of Unselected Data Points: {len(unsampled_indices_initial)}")
