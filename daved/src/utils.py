@@ -1,4 +1,4 @@
-import frank_wolfe
+import daved.src.frank_wolfe as frank_wolfe
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -303,7 +303,7 @@ def get_cost_function(cost_func, bias=0):
         case "squared":
             return lambda c: c ** 2.0 + bias
         case _:
-            raise Exception(f"{_} not supported")
+            raise Exception(f"not supported")
 
 
 def get_data(
