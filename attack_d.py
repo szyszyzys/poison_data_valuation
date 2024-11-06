@@ -490,8 +490,7 @@ def evaluate_attack(
     index_b = data['index_buy']
     index_v = data['index_val']
     img_paths = data['img_paths']
-    print("Data type of img_paths:", type(img_paths))
-    print("Data type of index_s:", index_s.shape)
+    print("Data type of index_s:", len(img_paths))
     sell_img_path = [img_paths[i] for i in index_s]
     print(f"Seller Data Shape: {x_s.shape}".center(40, "="))
     print(f"Buyer Data Shape: {x_b.shape}".center(40, "="))
