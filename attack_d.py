@@ -401,9 +401,8 @@ def modify_image(
         # normalized_modified_image = clip_normalize(preprocess_image(modified_image_pil).unsqueeze(0).to(device))
         # modified_embedding = model.get_image_features(pixel_values=normalized_modified_image)
         # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
-        modified_image_pil.save("temp_image.jpg")
-        reloaded_image = Image.open("temp_image.jpg")
-        normalized_modified_image = processor(reloaded_image)
+
+        normalized_modified_image = processor(preprocess_image(modified_image_pil).unsqueeze(0).to(device))
         modified_embedding = model.encode_image(normalized_modified_image.to(device))
         # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
         final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
