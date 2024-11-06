@@ -512,7 +512,7 @@ def assign_random_targets(x_s, selected_indices, unsampled_indices):
     for idx in unsampled_indices:
         random_selected_index = np.random.choice(selected_indices)  # Choose a random selected sample
         target_vector = x_s[random_selected_index]
-        target_vector = target_vector / np.linalg.norm(target_vector)  # Normalize the target vector
+        # target_vector = target_vector / np.linalg.norm(target_vector)  # Normalize the target vector
         target_vectors[idx] = target_vector
     return target_vectors
 
@@ -572,6 +572,8 @@ def evaluate_attack(
         random_state=args.random_seed,
         cost_range=args.cost_range,
         cost_func=args.cost_func,
+        # todo change cost
+        assigned_cost=None
     )
     # Extract relevant data
     x_s = data["X_sell"].astype(np.float32)

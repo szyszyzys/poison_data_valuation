@@ -319,6 +319,7 @@ def get_data(
         cost_range=None,
         cost_func="linear",
         recompute_embeddings=False,
+        assigned_cost = None
 ):
     total_samples = num_seller + num_buyer + num_val
     data_dir = Path(data_dir)
