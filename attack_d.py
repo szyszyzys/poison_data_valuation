@@ -209,7 +209,7 @@ def load_image(image_path):
     """
     Load an image and return a PIL Image.
     """
-    return Image.open(image_path).convert("RGB")
+    return Image.open(image_path)
 
 
 def preprocess_image(image):
@@ -258,7 +258,7 @@ def modify_image(
     # image = load_image(image_path)
     # original_image_tensor = preprocess_image(image).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
     # original_image_tensor = original_image_tensor.detach()  # Detach to prevent gradients flowing into original image
-    image = Image.open(image_path).convert("RGB")
+    image = Image.open(image_path)
     image_tensor = processor(image).unsqueeze(0).to(device).clone().detach().requires_grad_(
         True)  # Shape: (1, 3, 224, 224)
     original_image_tensor = image_tensor.clone().detach()
@@ -350,9 +350,17 @@ def modify_image(
             if verbose:
                 print(f"Saved intermediate image at step {step + 1}")
 
-    # Detach and convert to PIL Image
-    modified_image = image_tensor.detach().cpu().squeeze(0)
-    modified_image_pil = transforms.ToPILImage()(modified_image)
+    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
+    std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(3, 1, 1)
+
+    # Denormalize the image tensor
+    def denormalize_image(tensor):
+        return tensor * std + mean
+
+    # In your save step
+    modified_image = image_tensor.detach().cpu().squeeze(0)  # Remove batch dimension
+    modified_image = denormalize_image(modified_image)  # Apply denormalization
+    modified_image_pil = transforms.ToPILImage()(modified_image.clamp(0, 1))
 
     # Compute final similarity
     with torch.no_grad():
@@ -439,7 +447,7 @@ def perform_attack_on_unsampled(
         modified_image.save(modified_image_path)
         o_image_path = os.path.join(output_dir, f'o_{Path(image_path).name}')
         o_image = load_image(image_path)
-        o_image = preprocess_image(o_image)
+        o_image = processor(o_image)
 
         # Convert the tensor back to a PIL image
         o_image = transforms.ToPILImage()(o_image)
@@ -687,7 +695,7 @@ def embed_images(img_paths, model, preprocess, device):
     embeddings = []
     with torch.no_grad():
         for img_path in tqdm(img_paths, desc="Embedding Images"):
-            img = Image.open(img_path).convert("RGB")
+            img = Image.open(img_path)
             img_preprocessed = preprocess(img).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
             embedding = model.encode_image(img_preprocessed)
             embedding = embedding / embedding.norm(dim=-1, keepdim=True)  # Normalize embedding
@@ -811,6 +819,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--skip_save", action="store_true", help="Don't save weights or data"
     )
+
     parser.add_argument(
         "--cost_range",
         nargs="*",
