@@ -351,6 +351,7 @@ def modify_image(
         image_path,
         target_vector,
         model,
+        processor,
         device,
         num_steps=100,
         learning_rate=0.01,
