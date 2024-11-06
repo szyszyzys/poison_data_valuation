@@ -786,6 +786,14 @@ if __name__ == "__main__":
         help="dimensionality of the data samples",
     )
     parser.add_argument(
+        "--num_select",
+        default=10,
+        type=int,
+        help="dimensionality of the data samples",
+    )
+
+
+    parser.add_argument(
         "--num_iters",
         default=500,
         type=int,
@@ -887,7 +895,7 @@ if __name__ == "__main__":
         'data_dir': './data',
         'csv_path': "./fitzpatrick17k/fitzpatrick-mod.csv",
         'img_path' './fitzpatrick17k/images'
-        'num_buyer': args.num_buyer,
+        'num_buyer': args.num_buyers,
         'num_seller': args.num_seller,
         'num_val': 1,
         'max_eval_range': 50,
@@ -898,6 +906,7 @@ if __name__ == "__main__":
         'save_results_flag': True,
         'result_dir': 'results',
         'save_name': 'attack_evaluation',
+        "num_select": args.num_select
     }
 
     # Run the attack evaluation experiment
