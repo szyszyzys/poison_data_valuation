@@ -351,7 +351,6 @@ def modify_image(
         image_path,
         target_vector,
         model,
-        processor,
         device,
         num_steps=100,
         learning_rate=0.01,
@@ -363,10 +362,9 @@ def modify_image(
 
     Parameters:
     - image_path (str): Path to the image to be modified.
-    - target_vector (np.array): Target embedding vector.
+    - target_vector (np.array): Target embedding vector (1D array).
     - model (CLIPModel): Pre-trained CLIP model.
-    - processor (CLIPProcessor): CLIP processor.
-    - device (str): Device to run computations on.
+    - device (str): Device to run computations on ('cuda' or 'cpu').
     - num_steps (int): Number of optimization steps.
     - learning_rate (float): Learning rate for optimizer.
     - lambda_reg (float): Regularization strength.
@@ -374,7 +372,7 @@ def modify_image(
 
     Returns:
     - modified_image (PIL.Image): The optimized image.
-    - final_similarity (float): Cosine similarity with the target vector.
+    - final_similarity (float): Cosine similarity with the target vector after modification.
     """
     # Load and preprocess the original image
     image = load_image(image_path)
@@ -389,6 +387,12 @@ def modify_image(
     # Define optimizer
     optimizer = torch.optim.Adam([image_tensor], lr=learning_rate)
 
+    # Define CLIP normalization (mean and std)
+    clip_normalize = transforms.Normalize(
+        mean=[0.48145466, 0.4578275, 0.40821073],
+        std=[0.26862954, 0.26130258, 0.27577711]
+    )
+
     # Convert target_vector to torch tensor and normalize
     target_tensor = torch.tensor(target_vector, dtype=torch.float32).to(device)
     target_tensor = F.normalize(target_tensor, p=2, dim=0)
@@ -399,16 +403,11 @@ def modify_image(
     for step in range(num_steps):
         optimizer.zero_grad()
 
-        # Convert image tensor to PIL image
-        with torch.no_grad():
-            # Clamp to ensure pixel values are valid
-            clamped_image = torch.clamp(image_tensor, 0, 1)
-            # Convert tensor to PIL image
-            modified_pil = transforms.ToPILImage()(clamped_image.squeeze(0).cpu())
+        # Normalize the image tensor as per CLIP's requirements
+        normalized_image = clip_normalize(image_tensor)
 
-        # Forward pass: get embedding
-        inputs = processor(images=modified_pil, return_tensors="pt").to(device)
-        embedding = model.get_image_features(**inputs)
+        # Get image features
+        embedding = model.get_image_features(pixel_values=normalized_image)
         embedding = F.normalize(embedding, p=2, dim=-1)
 
         # Compute cosine similarity and aggregate to scalar
@@ -452,8 +451,8 @@ def modify_image(
 
     # Compute final similarity
     with torch.no_grad():
-        inputs = processor(images=modified_image_pil, return_tensors="pt").to(device)
-        modified_embedding = model.get_image_features(**inputs)
+        normalized_modified_image = clip_normalize(preprocess_image(modified_image_pil).unsqueeze(0).to(device))
+        modified_embedding = model.get_image_features(pixel_values=normalized_modified_image)
         modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
         final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
 
