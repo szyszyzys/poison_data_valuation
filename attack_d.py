@@ -5,7 +5,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn.functional as F
 import torchvision.transforms as transforms
@@ -892,9 +891,9 @@ def evaluate_attack(
         model=model,
         processor=processor,
         device=device,
-        num_steps=200,
-        learning_rate=0.1,
-        lambda_reg=0.1,
+        num_steps=args.attack_steps,  # 200
+        learning_rate=args.attack_learning_rate,  # learning rate 0.1
+        lambda_reg=args.attack_lambda_reg,  # 0.1
         epsilon=0.05,
         output_dir=modified_images_path,
     )
@@ -1039,6 +1038,26 @@ if __name__ == "__main__":
         type=int,
         help="evaluation interval",
     )
+    parser.add_argument(
+        "--attack_step",
+        default=200,
+        type=int,
+        help="attack steps",
+    )
+
+    parser.add_argument(
+        "--attack_lambda_reg",
+        default=0,
+        type=float,
+        help="attack reg",
+    )
+    parser.add_argument(
+        "--attack_learning_rate",
+        default=0.1,
+        type=float,
+        help="attack lr",
+    )
+
     parser.add_argument(
         "--baselines",
         nargs="*",
