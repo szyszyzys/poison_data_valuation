@@ -894,7 +894,7 @@ def evaluate_attack(
         processor=processor,
         device=device,
         num_steps=args.attack_steps,  # 200
-        learning_rate=args.attack_learning_rate,  # learning rate 0.1
+        learning_rate=args.attack_lr,  # learning rate 0.1
         lambda_reg=args.attack_lambda_reg,  # 0.1
         epsilon=0.05,
         output_dir=modified_images_path,
