@@ -318,6 +318,8 @@ def modify_image(
         loss = -cosine_sim + lambda_reg * torch.norm(
             image_tensor - preprocess_image(image).unsqueeze(0).to(device)).mean()
         # Backward pass
+        print(loss)
+        print(loss.shape)
         loss.backward()
         optimizer.step()
 
