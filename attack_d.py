@@ -1038,21 +1038,15 @@ if __name__ == "__main__":
         type=int,
         help="evaluation interval",
     )
-    parser.add_argument(
-        "--attack_step",
-        default=200,
-        type=int,
-        help="attack steps",
-    )
 
     parser.add_argument(
-        "--attack_lambda_reg",
+        "--attack_reg",
         default=0,
         type=float,
         help="attack reg",
     )
     parser.add_argument(
-        "--attack_learning_rate",
+        "--attack_lr",
         default=0.1,
         type=float,
         help="attack lr",
@@ -1129,7 +1123,7 @@ if __name__ == "__main__":
         'csv_path': "./fitzpatrick17k/fitzpatrick-mod.csv",
         'img_path' './fitzpatrick17k/images'
         'num_buyer': 2,
-        'num_seller': 1000,
+        'num_seller': 200,
         'num_val': 1,
         'max_eval_range': 50,
         'eval_step': 5,
