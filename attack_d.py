@@ -3,6 +3,7 @@ import os
 import pickle
 from pathlib import Path
 
+import clip
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -294,26 +295,27 @@ def modify_image(
     - final_similarity (float): Cosine similarity with the target vector after modification.
     """
     # Load and preprocess the original image
-    image = load_image(image_path)
-    original_image_tensor = preprocess_image(image).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
-    original_image_tensor = original_image_tensor.detach()  # Detach to prevent gradients flowing into original image
-
+    # image = load_image(image_path)
+    # original_image_tensor = preprocess_image(image).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
+    # original_image_tensor = original_image_tensor.detach()  # Detach to prevent gradients flowing into original image
+    image = Image.open(image_path).convert("RGB")
+    image_tensor = preprocess(image).unsqueeze(0).to(device).clone().detach().requires_grad_(
+        True)  # Shape: (1, 3, 224, 224)
+    original_image_tensor = image_tensor.clone().detach()
     # Initialize the image tensor to be optimized
-    image_tensor = original_image_tensor.clone().requires_grad_(True)
+    # image_tensor = original_image_tensor.clone().requires_grad_(True)
 
     if verbose:
+        print(f"Starting optimization for image: {image_path}")
         print("Initial image tensor shape:", image_tensor.shape)
 
     # Define optimizer
-    optimizer = torch.optim.Adam([image_tensor], lr=learning_rate)
+    optimizer = torch.optim.AdamW([image_tensor], lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps, eta_min=0)
-
-    # Define CLIP normalization (mean and std)
     clip_normalize = transforms.Normalize(
         mean=[0.48145466, 0.4578275, 0.40821073],
         std=[0.26862954, 0.26130258, 0.27577711]
     )
-
     # Convert target_vector to torch tensor and normalize
     target_tensor = torch.tensor(target_vector, dtype=torch.float32).to(device)
     target_tensor = F.normalize(target_tensor, p=2, dim=0)
@@ -329,11 +331,8 @@ def modify_image(
     for step in range(num_steps):
         optimizer.zero_grad()
 
-        # Normalize the image tensor as per CLIP's requirements
-        normalized_image = clip_normalize(image_tensor)
-
-        # Get image features
-        embedding = model.get_image_features(pixel_values=normalized_image)
+        # Forward pass: get embedding
+        embedding = model.encode_image(image_tensor)
         embedding = F.normalize(embedding, p=2, dim=-1)
 
         # Compute cosine similarity and aggregate to scalar
@@ -713,7 +712,7 @@ def evaluate_attack(
     modified_images_path = f'./result/{dataset}/modified_images'
     # Step 4: Perform Attack on Unselected Data Points
     modified_indices, similarities = perform_attack_on_unsampled(
-        selected_indices_initial = selected_indices_initial,
+        selected_indices_initial=selected_indices_initial,
         unsampled_indices=unsampled_indices_initial,
         image_paths=sell_img_path,
         X_sell=x_s,
@@ -791,10 +790,39 @@ def evaluate_attack(
     }
 
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# device = "cuda" if torch.cuda.is_available() else "cpu"
+#
+# model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+# processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
-model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
-processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model, preprocess = clip.load("ViT-B/32", device=device)
+model.eval()  # Set model to evaluation mode
+
+
+def embed_images(img_paths, model, preprocess, device):
+    """
+    Embed images using CLIP's encode_image function.
+
+    Parameters:
+    - img_paths (list of str): Paths to the images to be embedded.
+    - model (CLIPModel): Pre-trained CLIP model.
+    - preprocess (callable): CLIP's preprocess function.
+    - device (str): Device to run computations on ('cpu' or 'cuda').
+
+    Returns:
+    - embeddings (torch.Tensor): Concatenated embeddings of all images.
+    """
+    embeddings = []
+    with torch.no_grad():
+        for img_path in tqdm(img_paths, desc="Embedding Images"):
+            img = Image.open(img_path).convert("RGB")
+            img_preprocessed = preprocess(img).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
+            embedding = model.encode_image(img_preprocessed)
+            embedding = embedding / embedding.norm(dim=-1, keepdim=True)  # Normalize embedding
+            embeddings.append(embedding.cpu())
+    return torch.cat(embeddings)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
