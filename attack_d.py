@@ -311,10 +311,7 @@ def modify_image(
     # Define optimizer
     optimizer = torch.optim.AdamW([image_tensor], lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps, eta_min=0)
-    clip_normalize = transforms.Normalize(
-        mean=[0.48145466, 0.4578275, 0.40821073],
-        std=[0.26862954, 0.26130258, 0.27577711]
-    )
+
     # Convert target_vector to torch tensor and normalize
     target_tensor = torch.tensor(target_vector, dtype=torch.float32).to(device)
     target_tensor = F.normalize(target_tensor, p=2, dim=0)
@@ -402,8 +399,8 @@ def modify_image(
         # modified_embedding = model.get_image_features(pixel_values=normalized_modified_image)
         # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
 
-        normalized_modified_image = processor(preprocess_image(modified_image_pil).unsqueeze(0).to(device))
-        modified_embedding = model.encode_image(normalized_modified_image.to(device))
+        # normalized_modified_image = processor(modified_image_pil)
+        modified_embedding = model.encode_image(modified_image.to(device))
         # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
         final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
 
@@ -615,8 +612,8 @@ def evaluate_attack(
     print(f"Number of Unselected Data Points: {len(unsampled_indices_initial)}")
 
     # learn the vector can be selected
-    target_vector = x_s[selected_indices_initial].mean(axis=0)
-    target_vector = target_vector / np.linalg.norm(target_vector)
+    # target_vector = x_s[selected_indices_initial].mean(axis=0)
+    # target_vector = target_vector / np.linalg.norm(target_vector)
 
     modified_images_path = f'./result/{dataset}/modified_images/step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}'
     # Step 4: Perform Attack on Unselected Data Points
