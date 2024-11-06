@@ -491,8 +491,8 @@ def evaluate_attack(
     index_v = data['index_val']
     img_paths = data['img_paths']
     print("Data type of img_paths:", type(img_paths))
-    print("Data type of index_s:", type(index_s))
-    sell_img_path = img_paths[int(index_s)]
+    print("Data type of index_s:", index_s.shape)
+    sell_img_path = img_paths[index_s[0]]
     print(f"Seller Data Shape: {x_s.shape}".center(40, "="))
     print(f"Buyer Data Shape: {x_b.shape}".center(40, "="))
     if costs is not None:
