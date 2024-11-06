@@ -347,6 +347,119 @@ def preprocess_image(image):
 #
 #     return modified_image_pil, final_similarity
 
+# def modify_image(
+#         image_path,
+#         target_vector,
+#         model,
+#         processor,
+#         device,
+#         num_steps=100,
+#         learning_rate=0.01,
+#         lambda_reg=0.1,
+#         epsilon=0.05
+# ):
+#     """
+#     Modify an image to align its CLIP embedding with the target vector.
+#
+#     Parameters:
+#     - image_path (str): Path to the image to be modified.
+#     - target_vector (np.array): Target embedding vector (1D array).
+#     - model (CLIPModel): Pre-trained CLIP model.
+#     - device (str): Device to run computations on ('cuda' or 'cpu').
+#     - num_steps (int): Number of optimization steps.
+#     - learning_rate (float): Learning rate for optimizer.
+#     - lambda_reg (float): Regularization strength.
+#     - epsilon (float): Maximum allowed perturbation per pixel.
+#
+#     Returns:
+#     - modified_image (PIL.Image): The optimized image.
+#     - final_similarity (float): Cosine similarity with the target vector after modification.
+#     """
+#     # Load and preprocess the original image
+#     image = load_image(image_path)
+#     original_image_tensor = preprocess_image(image).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
+#     original_image_tensor = original_image_tensor.detach()  # Detach to prevent gradients flowing into original image
+#
+#     # Initialize the image tensor to be optimized
+#     image_tensor = original_image_tensor.clone().requires_grad_(True)
+#
+#     print("Current image tensor shape:", image_tensor.shape)
+#
+#     # Define optimizer
+#     optimizer = torch.optim.Adam([image_tensor], lr=learning_rate)
+#
+#     # Define CLIP normalization (mean and std)
+#     clip_normalize = transforms.Normalize(
+#         mean=[0.48145466, 0.4578275, 0.40821073],
+#         std=[0.26862954, 0.26130258, 0.27577711]
+#     )
+#
+#     # Convert target_vector to torch tensor and normalize
+#     target_tensor = torch.tensor(target_vector, dtype=torch.float32).to(device)
+#     target_tensor = F.normalize(target_tensor, p=2, dim=0)
+#
+#     # Set model to evaluation mode
+#     model.eval()
+#
+#     for step in range(num_steps):
+#         optimizer.zero_grad()
+#
+#         # Normalize the image tensor as per CLIP's requirements
+#         normalized_image = clip_normalize(image_tensor)
+#
+#         # Get image features
+#         embedding = model.get_image_features(pixel_values=normalized_image)
+#         embedding = F.normalize(embedding, p=2, dim=-1)
+#
+#         # Compute cosine similarity and aggregate to scalar
+#         cosine_sim = F.cosine_similarity(embedding, target_tensor, dim=-1).mean()
+#
+#         # Compute perturbation norm
+#         perturbation = image_tensor - original_image_tensor
+#         reg_loss = lambda_reg * torch.norm(perturbation)
+#
+#         # Compute loss: maximize cosine similarity and minimize perturbation
+#         loss = -cosine_sim + reg_loss
+#
+#         # Backward pass
+#         loss.backward()
+#
+#         # Check gradients
+#         if image_tensor.grad is not None:
+#             grad_norm = image_tensor.grad.norm().item()
+#             print(
+#                 f"Step {step + 1}/{num_steps}, Grad Norm: {grad_norm:.4f}, Loss: {loss.item():.4f}, Cosine Similarity: {cosine_sim.item():.4f}")
+#         else:
+#             print(f"Step {step + 1}/{num_steps}, No gradients computed.")
+#
+#         # Optimizer step
+#         optimizer.step()
+#
+#         # Clamp the image tensor to maintain valid pixel range and limit perturbation
+#         with torch.no_grad():
+#             # Calculate perturbation and clamp
+#             perturbation = torch.clamp(image_tensor - original_image_tensor, -epsilon, epsilon)
+#             # Apply perturbation
+#             image_tensor.copy_(torch.clamp(original_image_tensor + perturbation, 0, 1))
+#
+#         # Optional: Print progress every 20 steps
+#         if (step + 1) % 20 == 0 or step == 0:
+#             print(f"Step {step + 1}/{num_steps}, Cosine Similarity: {cosine_sim.item():.4f}, Loss: {loss.item():.4f}")
+#
+#     # Detach and convert to PIL Image
+#     modified_image = image_tensor.detach().cpu().squeeze(0)
+#     modified_image_pil = transforms.ToPILImage()(modified_image)
+#
+#     # Compute final similarity
+#     with torch.no_grad():
+#         normalized_modified_image = clip_normalize(preprocess_image(modified_image_pil).unsqueeze(0).to(device))
+#         modified_embedding = model.get_image_features(pixel_values=normalized_modified_image)
+#         modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
+#         final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
+#
+#     return modified_image_pil, final_similarity
+
+
 def modify_image(
         image_path,
         target_vector,
@@ -356,7 +469,8 @@ def modify_image(
         num_steps=100,
         learning_rate=0.01,
         lambda_reg=0.1,
-        epsilon=0.05
+        epsilon=0.05,
+        verbose=True
 ):
     """
     Modify an image to align its CLIP embedding with the target vector.
@@ -365,11 +479,13 @@ def modify_image(
     - image_path (str): Path to the image to be modified.
     - target_vector (np.array): Target embedding vector (1D array).
     - model (CLIPModel): Pre-trained CLIP model.
+    - processor (CLIPProcessor): CLIP processor.
     - device (str): Device to run computations on ('cuda' or 'cpu').
     - num_steps (int): Number of optimization steps.
     - learning_rate (float): Learning rate for optimizer.
     - lambda_reg (float): Regularization strength.
     - epsilon (float): Maximum allowed perturbation per pixel.
+    - verbose (bool): Whether to print progress messages.
 
     Returns:
     - modified_image (PIL.Image): The optimized image.
@@ -383,7 +499,8 @@ def modify_image(
     # Initialize the image tensor to be optimized
     image_tensor = original_image_tensor.clone().requires_grad_(True)
 
-    print("Current image tensor shape:", image_tensor.shape)
+    if verbose:
+        print("Initial image tensor shape:", image_tensor.shape)
 
     # Define optimizer
     optimizer = torch.optim.Adam([image_tensor], lr=learning_rate)
@@ -400,6 +517,11 @@ def modify_image(
 
     # Set model to evaluation mode
     model.eval()
+
+    # Initialize variables for early stopping
+    previous_loss = float('inf')
+    patience = 10  # Number of steps to wait for improvement
+    patience_counter = 0
 
     for step in range(num_steps):
         optimizer.zero_grad()
@@ -427,10 +549,13 @@ def modify_image(
         # Check gradients
         if image_tensor.grad is not None:
             grad_norm = image_tensor.grad.norm().item()
-            print(
-                f"Step {step + 1}/{num_steps}, Grad Norm: {grad_norm:.4f}, Loss: {loss.item():.4f}, Cosine Similarity: {cosine_sim.item():.4f}")
+            if verbose:
+                print(
+                    f"Step {step + 1}/{num_steps}, Grad Norm: {grad_norm:.4f}, Loss: {loss.item():.4f}, Cosine Similarity: {cosine_sim.item():.4f}")
         else:
-            print(f"Step {step + 1}/{num_steps}, No gradients computed.")
+            if verbose:
+                print(f"Step {step + 1}/{num_steps}, No gradients computed.")
+            grad_norm = 0.0
 
         # Optimizer step
         optimizer.step()
@@ -442,9 +567,28 @@ def modify_image(
             # Apply perturbation
             image_tensor.copy_(torch.clamp(original_image_tensor + perturbation, 0, 1))
 
-        # Optional: Print progress every 20 steps
-        if (step + 1) % 20 == 0 or step == 0:
-            print(f"Step {step + 1}/{num_steps}, Cosine Similarity: {cosine_sim.item():.4f}, Loss: {loss.item():.4f}")
+        # Early Stopping Check
+        current_loss = loss.item()
+        if verbose:
+            print(f"Step {step + 1}/{num_steps}, Current Loss: {current_loss:.4f}")
+
+        if abs(previous_loss - current_loss) < 1e-6:
+            patience_counter += 1
+            if patience_counter >= patience:
+                if verbose:
+                    print("Early stopping triggered.")
+                break
+        else:
+            patience_counter = 0
+        previous_loss = current_loss
+
+        # Optional: Save intermediate images for visualization
+        if (step + 1) % 50 == 0 and verbose:
+            intermediate_image = image_tensor.detach().cpu().squeeze(0)
+            intermediate_pil = transforms.ToPILImage()(intermediate_image)
+            intermediate_pil.save(f"modified_step_{step + 1}.jpg")
+            if verbose:
+                print(f"Saved intermediate image at step {step + 1}")
 
     # Detach and convert to PIL Image
     modified_image = image_tensor.detach().cpu().squeeze(0)
@@ -566,9 +710,6 @@ def extract_features(image, model, processor):
     return image_features.squeeze(0)  # Remove batch dimension
 
 
-import shutil
-
-
 def perform_attack_on_unsampled(
         unsampled_indices,
         image_paths,
@@ -626,6 +767,11 @@ def perform_attack_on_unsampled(
         o_image_path = os.path.join(output_dir, f'o_{Path(image_path).name}')
         o_image = load_image(image_path)
         o_image = preprocess_image(o_image)
+
+        # Convert the tensor back to a PIL image
+        o_image = transforms.ToPILImage()(o_image)
+
+        # Save the image
         o_image.save(o_image_path)
 
         img_mapping[modified_image_path] = image_path
