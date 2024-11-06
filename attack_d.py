@@ -503,6 +503,7 @@ def modify_image(
 
     # Define optimizer
     optimizer = torch.optim.Adam([image_tensor], lr=learning_rate)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps, eta_min=0)
 
     # Define CLIP normalization (mean and std)
     clip_normalize = transforms.Normalize(
@@ -558,6 +559,7 @@ def modify_image(
 
         # Optimizer step
         optimizer.step()
+        scheduler.step()
 
         # Clamp the image tensor to maintain valid pixel range and limit perturbation
         with torch.no_grad():
