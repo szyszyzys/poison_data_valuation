@@ -411,7 +411,7 @@ def extract_features(image, model, processor):
     """
     Extract the image features using the CLIP model.
     """
-    inputs = processor(images=image, return_tensors="pt").to(device)
+    inputs = processor(image).to(device)
     with torch.no_grad():
         image_features = model.get_image_features(**inputs)
     # Normalize the features
