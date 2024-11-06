@@ -332,7 +332,7 @@ def modify_image(
 
         # Forward pass: get embedding
         embedding = model.encode_image(image_tensor)
-        embedding = F.normalize(embedding, p=2, dim=-1)
+        # embedding = F.normalize(embedding, p=2, dim=-1)
 
         # Compute cosine similarity and aggregate to scalar
         cosine_sim = F.cosine_similarity(embedding, target_tensor, dim=-1).mean()
@@ -398,9 +398,12 @@ def modify_image(
 
     # Compute final similarity
     with torch.no_grad():
-        normalized_modified_image = clip_normalize(preprocess_image(modified_image_pil).unsqueeze(0).to(device))
-        modified_embedding = model.get_image_features(pixel_values=normalized_modified_image)
-        modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
+        # normalized_modified_image = clip_normalize(preprocess_image(modified_image_pil).unsqueeze(0).to(device))
+        # modified_embedding = model.get_image_features(pixel_values=normalized_modified_image)
+        # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
+        normalized_modified_image = preprocess_image(modified_image_pil)
+        modified_embedding = model.encode_image(normalized_modified_image)
+        # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
         final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
 
     return modified_image_pil, final_similarity
