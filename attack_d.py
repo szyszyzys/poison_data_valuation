@@ -207,6 +207,7 @@ def plot_selection_weights(initial_weights, updated_weights, save_path=None):
     plt.ylabel('Frequency')
     plt.title('Distribution of Weights Before and After Attack')
     plt.legend()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     if save_path:
         plt.savefig(save_path)
     else:
@@ -713,10 +714,10 @@ def extract_features(image, model, processor):
 
 
 def perform_attack_on_unsampled(
+        selected_indices_initial,
         unsampled_indices,
         image_paths,
         X_sell,
-        target_vector,
         model,
         processor,
         device,
@@ -744,12 +745,15 @@ def perform_attack_on_unsampled(
     - modified_indices (list): Indices of images that were modified.
     - similarities (dict): Cosine similarities after modification.
     """
+    target_vectors = assign_random_targets(X_sell, selected_indices_initial, unsampled_indices)
+
     os.makedirs(output_dir, exist_ok=True)
     modified_indices = []
     similarities = {}
     img_mapping = {}
 
     for idx in tqdm(unsampled_indices, desc="Performing Attack on Unsampled Images"):
+        target_vector = target_vectors[idx]
         image_path = image_paths[idx]
         modified_image, similarity = modify_image(
             image_path=image_path,
@@ -784,6 +788,27 @@ def perform_attack_on_unsampled(
         similarities[idx] = similarity
 
     return modified_indices, similarities
+
+
+def assign_random_targets(x_s, selected_indices, unsampled_indices):
+    """
+    Assign a random target vector (from selected samples) to each unselected sample.
+
+    Parameters:
+    - x_s (np.array): The array of embeddings for all samples.
+    - selected_indices (list or np.array): Indices of selected samples to choose from.
+    - unsampled_indices (list or np.array): Indices of unsampled data points to assign targets.
+
+    Returns:
+    - target_vectors (dict): A dictionary where keys are unsampled indices and values are target vectors.
+    """
+    target_vectors = {}
+    for idx in unsampled_indices:
+        random_selected_index = np.random.choice(selected_indices)  # Choose a random selected sample
+        target_vector = x_s[random_selected_index]
+        target_vector = target_vector / np.linalg.norm(target_vector)  # Normalize the target vector
+        target_vectors[idx] = target_vector
+    return target_vectors
 
 
 def evaluate_attack(
@@ -887,10 +912,10 @@ def evaluate_attack(
     modified_images_path = f'./result/{dataset}/modified_images'
     # Step 4: Perform Attack on Unselected Data Points
     modified_indices, similarities = perform_attack_on_unsampled(
+        selected_indices_initial = selected_indices_initial,
         unsampled_indices=unsampled_indices_initial,
         image_paths=sell_img_path,
         X_sell=x_s,
-        target_vector=target_vector,
         model=model,
         processor=processor,
         device=device,
@@ -934,7 +959,7 @@ def evaluate_attack(
     plot_selection_weights(
         initial_weights=initial_results['weights'],
         updated_weights=updated_results['weights'],
-        save_path=f'{result_dir}/res.jpg',  # Set a path to save the plot if desired
+        save_path=f'{result_dir}/',  # Set a path to save the plot if desired
     )
 
     # Step 9: Save Results (Optional)
