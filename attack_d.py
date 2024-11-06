@@ -489,7 +489,7 @@ def evaluate_attack(
     index_s = data['index_sell']
     index_b = data['index_buy']
     index_v = data['index_val']
-    img_paths = data.img_paths
+    img_paths = data['img_paths']
 
     sell_img_path = img_paths[index_s]
     print(f"Seller Data Shape: {x_s.shape}".center(40, "="))
