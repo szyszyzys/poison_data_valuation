@@ -516,8 +516,7 @@ def perform_attack_on_unsampled(
 
         img_mapping[modified_image_path] = image_path
         # Update the feature matrix
-        X_sell[idx] = extract_features(modified_image, model, processor)
-
+        X_sell[idx] = extract_features(modified_image, model, processor).cpu().numpy()
         # Record the modification
         modified_indices.append(idx)
         similarities[idx] = similarity
