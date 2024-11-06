@@ -101,7 +101,7 @@ def perform_attack(x_s, unsampled_indices, selected_indices, attack_strength=0.1
     return x_s_modified, unsampled_indices  # Assuming all unsampled are modified
 
 
-def data_selection(x_s, y_s, x_b, y_b, num_iters, reg_lambda, costs):
+def data_selection(x_s, y_s, x_b, y_b, num_iters, reg_lambda=None, costs=None):
     """
     Perform the initial data selection using the design_selection function.
 
