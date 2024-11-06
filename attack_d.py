@@ -466,7 +466,7 @@ def perform_attack_on_unsampled(
         o_image = load_image(image_path)
 
         o_image = processor(o_image)
-        denormalize_image(o_image)
+        o_image = denormalize_image(o_image)
         # Convert the tensor back to a PIL image
         o_image = transforms.ToPILImage()(o_image)
 
