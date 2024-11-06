@@ -374,7 +374,7 @@ def modify_image(
         if verbose:
             print(f"Step {step + 1}/{num_steps}, Current Loss: {current_loss:.4f}")
 
-        if abs(previous_loss - current_loss) < 1e-6:
+        if abs(previous_loss - current_loss) < 1e-4:
             patience_counter += 1
             if patience_counter >= patience:
                 if verbose:
@@ -401,7 +401,7 @@ def modify_image(
         # normalized_modified_image = clip_normalize(preprocess_image(modified_image_pil).unsqueeze(0).to(device))
         # modified_embedding = model.get_image_features(pixel_values=normalized_modified_image)
         # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
-        normalized_modified_image = processor(modified_image.to(device))
+        normalized_modified_image = processor(modified_image_pil)
         modified_embedding = model.encode_image(normalized_modified_image)
         # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
         final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
