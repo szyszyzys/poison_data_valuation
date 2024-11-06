@@ -362,7 +362,7 @@ def get_data(
         ret = split_data(
             num_buyer, num_val, random_state=random_state, X=X, y=y, costs=costs, index=index,
         )
-    ret['img_path'] = data['img_paths']
+    ret['img_paths'] = data['img_paths']
     ret["coef"] = coef
     ret["cost_range"] = cost_range
     ret["cost_func"] = cost_func
