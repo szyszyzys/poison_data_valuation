@@ -184,6 +184,7 @@ def evaluate_attack_success(initial_selected, updated_selected, modified_indices
     - success_rate (float): Proportion of modified data points that were selected after the attack.
     - num_success (int): Number of modified data points selected after the attack.
     """
+    updated_selected = set(updated_selected)
     modified_selected = updated_selected.intersection(modified_indices)
     num_success = len(modified_selected)
     success_rate = num_success / len(modified_indices) if len(modified_indices) > 0 else 0.0
