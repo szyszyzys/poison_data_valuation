@@ -100,11 +100,11 @@ def get_fitzpatrick_data(
     embedding_path = embedding_path.parent / embedding_name
     print(f'{data_dir=}')
     print(f'{embedding_path=}')
+    img_paths = []
     if recompute_embeddings or not (data_dir / embedding_path).exists():
         print(f'No embeddings found at: {data_dir / embedding_path}. Creating new embeddings...')
         img_dict = {p.stem: p for p in Path(data_dir / img_dir).glob("*.jpg")}
         df = pd.read_csv(data_dir / csv_path)
-        img_paths = []
         labels = []
         for k, v in img_dict.items():
             if k in df.md5hash.values:
