@@ -314,8 +314,9 @@ def modify_image(
         cosine_sim = F.cosine_similarity(embedding, target_tensor, dim=0)
 
         # Compute loss: maximize cosine similarity and minimize perturbation
-        loss = -cosine_sim + lambda_reg * torch.norm(image_tensor - preprocess_image(image).unsqueeze(0).to(device))
-
+        # loss = -cosine_sim + lambda_reg * torch.norm(image_tensor - preprocess_image(image).unsqueeze(0).to(device))
+        loss = -cosine_sim + lambda_reg * torch.norm(
+            image_tensor - preprocess_image(image).unsqueeze(0).to(device)).mean()
         # Backward pass
         loss.backward()
         optimizer.step()
