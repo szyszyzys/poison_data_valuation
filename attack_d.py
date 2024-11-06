@@ -376,6 +376,23 @@ def modify_image(
     return modified_image_pil, final_similarity
 
 
+mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
+std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(3, 1, 1)
+
+
+def denormalize_image(tensor):
+    """
+    Reverses the normalization applied to the image tensor.
+
+    Parameters:
+    - tensor (torch.Tensor): The normalized image tensor to be denormalized.
+
+    Returns:
+    - torch.Tensor: The denormalized image tensor.
+    """
+    return tensor * std + mean
+
+
 def extract_features(image, model, processor):
     """
     Extract the image features using the CLIP model.
@@ -447,8 +464,9 @@ def perform_attack_on_unsampled(
         modified_image.save(modified_image_path)
         o_image_path = os.path.join(output_dir, f'o_{Path(image_path).name}')
         o_image = load_image(image_path)
-        o_image = processor(o_image)
 
+        o_image = processor(o_image)
+        denormalize_image(o_image)
         # Convert the tensor back to a PIL image
         o_image = transforms.ToPILImage()(o_image)
 
