@@ -443,6 +443,7 @@ def evaluate_attack(
         result_dir='results',
         save_name='attack_evaluation',
         num_select=100,
+        **kwargs
 ):
     """
     Run the attack evaluation experiment.
