@@ -111,7 +111,7 @@ def identify_selected_unsampled(weights, num_select=10):
     """
     selected_indices = set(weights.argsort()[::-1][:num_select])
     unsampled_indices = list(set(range(len(weights))) - selected_indices)
-    return selected_indices, unsampled_indices
+    return list(selected_indices), unsampled_indices
 
 
 def perform_attack(x_s, unsampled_indices, selected_indices, attack_strength=0.1):
@@ -513,6 +513,7 @@ def evaluate_attack(
         weights=initial_results['weights'],
         num_select=num_select,
     )
+
 
     print(f"Initial Selected Indices: {selected_indices_initial}")
     print(f"Number of Unselected Data Points: {len(unsampled_indices_initial)}")
