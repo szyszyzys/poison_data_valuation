@@ -11,7 +11,6 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 from PIL import Image
 from tqdm import tqdm
-from transformers import CLIPModel, CLIPProcessor
 
 # CLIP model and processor
 import daved.src.frank_wolfe as frank_wolfe  # Ensure this module contains the design_selection function
@@ -299,7 +298,7 @@ def modify_image(
     # original_image_tensor = preprocess_image(image).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
     # original_image_tensor = original_image_tensor.detach()  # Detach to prevent gradients flowing into original image
     image = Image.open(image_path).convert("RGB")
-    image_tensor = preprocess(image).unsqueeze(0).to(device).clone().detach().requires_grad_(
+    image_tensor = processor(image).unsqueeze(0).to(device).clone().detach().requires_grad_(
         True)  # Shape: (1, 3, 224, 224)
     original_image_tensor = image_tensor.clone().detach()
     # Initialize the image tensor to be optimized
@@ -405,100 +404,6 @@ def modify_image(
         final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
 
     return modified_image_pil, final_similarity
-
-
-# def modify_image(
-#         image_path,
-#         target_vector,
-#         model,
-#         processor,
-#         device,
-#         num_steps=300,
-#         learning_rate=0.01,
-#         lambda_reg=0.1,
-#         epsilon=0.05
-# ):
-#     """
-#     Modify an image to align its CLIP embedding with the target vector.
-#
-#     Parameters:
-#     - image_path (str): Path to the image to be modified.
-#     - target_vector (np.array): Target embedding vector.
-#     - model (CLIPModel): Pre-trained CLIP model.
-#     - processor (CLIPProcessor): CLIP processor.
-#     - device (str): Device to run computations on.
-#     - num_steps (int): Number of optimization steps.
-#     - learning_rate (float): Learning rate for optimizer.
-#     - lambda_reg (float): Regularization strength.
-#     - epsilon (float): Maximum allowed perturbation per pixel.
-#
-#     Returns:
-#     - modified_image (PIL.Image): The optimized image.
-#     - similarity (float): Cosine similarity with the target vector.
-#     """
-#     # Load and preprocess image
-#     image = load_image(image_path)
-#     image_tensor = preprocess_image(image).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
-#     image_tensor.requires_grad = True
-#     print("cur img shape =====================")
-#     print(image_tensor.shape)
-#     # Define optimizer
-#     optimizer = torch.optim.Adam([image_tensor], lr=learning_rate)
-#
-#     # Convert target_vector to torch tensor
-#     target_tensor = torch.tensor(target_vector).to(device)
-#     target_tensor = F.normalize(target_tensor, p=2, dim=0)
-#
-#     for step in range(num_steps):
-#         optimizer.zero_grad()
-#
-#         # Forward pass: get embedding
-#         # inputs = processor(images=image_tensor.squeeze(0).cpu(), return_tensors="pt").to(device)
-#         inputs = preprocess_image()
-#         embedding = model.get_image_features(**inputs)
-#         embedding = F.normalize(embedding, p=2, dim=-1)
-#
-#         # # Compute cosine similarity
-#         # cosine_sim = F.cosine_similarity(embedding, target_tensor, dim=0)
-#         #
-#         # # Compute loss: maximize cosine similarity and minimize perturbation
-#         # # loss = -cosine_sim + lambda_reg * torch.norm(image_tensor - preprocess_image(image).unsqueeze(0).to(device))
-#         # loss = -cosine_sim + lambda_reg * torch.norm(
-#         #     image_tensor - preprocess_image(image).unsqueeze(0).to(device)).mean()
-#         # Backward pass
-#         # Compute cosine similarity across the embedding dimension and take the mean to get a scalar
-#         cosine_sim = F.cosine_similarity(embedding, target_tensor, dim=-1).mean()
-#
-#         # Compute loss: maximize cosine similarity and minimize perturbation
-#         # Negative cosine similarity is used because we want to maximize similarity
-#         perturbation = image_tensor - preprocess_image(image).unsqueeze(0).to(device)
-#         loss = -cosine_sim + lambda_reg * torch.norm(perturbation)
-#
-#         loss.backward()
-#         optimizer.step()
-#
-#         # Clamp the image tensor to maintain valid pixel range and limit perturbation
-#         with torch.no_grad():
-#             perturbation = torch.clamp(image_tensor - preprocess_image(image).unsqueeze(0).to(device), -epsilon,
-#                                        epsilon)
-#             image_tensor.copy_(torch.clamp(preprocess_image(image).unsqueeze(0).to(device) + perturbation, 0, 1))
-#
-#         # Optional: Print progress
-#         if (step + 1) % 20 == 0 or step == 0:
-#             print(f"Step {step + 1}/{num_steps}, Cosine Similarity: {cosine_sim.item():.4f}, Loss: {loss.item():.4f}")
-#
-#     # Detach and convert to PIL Image
-#     modified_image = image_tensor.detach().cpu().squeeze(0)
-#     modified_image_pil = transforms.ToPILImage()(modified_image)
-#
-#     # Compute final similarity
-#     inputs = processor(images=modified_image_pil, return_tensors="pt").to(device)
-#     with torch.no_grad():
-#         modified_embedding = model.get_image_features(**inputs)
-#     modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
-#     final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
-#
-#     return modified_image_pil, final_similarity
 
 
 def extract_features(image, model, processor):
@@ -709,7 +614,7 @@ def evaluate_attack(
     target_vector = x_s[selected_indices_initial].mean(axis=0)
     target_vector = target_vector / np.linalg.norm(target_vector)
 
-    modified_images_path = f'./result/{dataset}/modified_images'
+    modified_images_path = f'./result/{dataset}/modified_images/step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}'
     # Step 4: Perform Attack on Unselected Data Points
     modified_indices, similarities = perform_attack_on_unsampled(
         selected_indices_initial=selected_indices_initial,
@@ -717,7 +622,7 @@ def evaluate_attack(
         image_paths=sell_img_path,
         X_sell=x_s,
         model=model,
-        processor=processor,
+        processor=preprocess,
         device=device,
         num_steps=args.attack_steps,  # 200
         learning_rate=args.attack_lr,  # learning rate 0.1
