@@ -887,8 +887,8 @@ if __name__ == "__main__":
         'data_dir': './data',
         'csv_path': "./fitzpatrick17k/fitzpatrick-mod.csv",
         'img_path' './fitzpatrick17k/images'
-        'num_buyer': 2,
-        'num_seller': 200,
+        'num_buyer': args.num_buyer,
+        'num_seller': args.num_seller,
         'num_val': 1,
         'max_eval_range': 50,
         'eval_step': 5,
