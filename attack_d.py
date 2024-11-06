@@ -413,7 +413,7 @@ def extract_features(image, model, processor):
     """
     inputs = processor(image).to(device)
     with torch.no_grad():
-        image_features = model.get_image_features(**inputs)
+        image_features = model.encode_image(**inputs)
     # Normalize the features
     image_features = F.normalize(image_features, p=2, dim=-1)
     return image_features.squeeze(0)  # Remove batch dimension
