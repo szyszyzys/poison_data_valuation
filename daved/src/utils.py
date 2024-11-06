@@ -100,7 +100,8 @@ def get_fitzpatrick_data(
     embedding_path = embedding_path.parent / embedding_name
     print(f'{data_dir=}')
     print(f'{embedding_path=}')
-    img_paths = []
+    img_paths = list(Path(data_dir / img_dir).glob("*.jpg"))
+
     if recompute_embeddings or not (data_dir / embedding_path).exists():
         print(f'No embeddings found at: {data_dir / embedding_path}. Creating new embeddings...')
         img_dict = {p.stem: p for p in Path(data_dir / img_dir).glob("*.jpg")}
