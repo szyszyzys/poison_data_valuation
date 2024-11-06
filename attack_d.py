@@ -413,7 +413,7 @@ def extract_features(image, model, processor):
     """
     inputs = processor(image).to(device)
     with torch.no_grad():
-        image_features = model.encode_image(**inputs)
+        image_features = model.get_image_features(**inputs)
     # Normalize the features
     image_features = F.normalize(image_features, p=2, dim=-1)
     return image_features.squeeze(0)  # Remove batch dimension
@@ -488,7 +488,7 @@ def perform_attack_on_unsampled(
 
         img_mapping[modified_image_path] = image_path
         # Update the feature matrix
-        X_sell[idx] = extract_features(modified_image, model, processor).cpu().numpy()
+        X_sell[idx] = model.encode_image(processor(modified_image)[None].to(device)).cpu().numpy()
         # Record the modification
         modified_indices.append(idx)
         similarities[idx] = similarity
