@@ -1,24 +1,16 @@
-import matplotlib.pyplot as plt
+import argparse
+import os
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
-import os
 import pandas as pd
-import requests
-import torch
 import torch
 import torch.nn.functional as F
-import torch.nn.functional as F
-import torchvision.transforms as transforms
 import torchvision.transforms as transforms
 from PIL import Image
-from PIL import Image
-from io import BytesIO
-from pathlib import Path
-from sklearn.metrics import mean_squared_error
-from torchvision.utils import save_image
 from torchvision.utils import save_image
 from tqdm import tqdm
-from transformers import CLIPModel, CLIPProcessor
 # CLIP model and processor
 from transformers import CLIPModel, CLIPProcessor
 
@@ -147,6 +139,25 @@ def poison_backdoor():
 
 def poison_sampling_exp():
     pass
+
+
+def load_image(image_path):
+    """
+    Load an image and return a PIL Image.
+    """
+    return Image.open(image_path).convert("RGB")
+
+
+def extract_features(image, model, processor):
+    """
+    Extract the image features using the CLIP model.
+    """
+    inputs = processor(images=image, return_tensors="pt").to(device)
+    with torch.no_grad():
+        image_features = model.get_image_features(**inputs)
+    # Normalize the features
+    image_features = F.normalize(image_features, p=2, dim=-1)
+    return image_features.squeeze(0)  # Remove batch dimension
 
 
 def modify_image(
@@ -517,6 +528,45 @@ def run_attack_experiment(
     }
 
     return results
+
+
+def load_and_preprocess_data(data_dir, csv_path, max_char_length=2048, exclude_long_reviews=False):
+    """
+    Load and preprocess the dataset.
+
+    Parameters:
+    - data_dir (str): Directory where the CSV file is located.
+    - csv_path (str): Path to the CSV file containing the data.
+    - max_char_length (int): Maximum character length for reviews.
+    - exclude_long_reviews (bool): Whether to exclude reviews exceeding max_char_length.
+
+    Returns:
+    - data (dict): Dictionary containing split datasets.
+    - reviews (list): List of review texts.
+    - labels (list): List of corresponding labels.
+    """
+    df = pd.read_csv(Path(data_dir) / csv_path)
+    reviews = []
+    labels = []
+    for i, r in tqdm(df.iterrows(), total=df.shape[0], desc="Loading Data"):
+        x = f'Benefits: {r.benefitsReview}\nSide effects: {r.sideEffectsReview}\nComments: {r.commentsReview}'
+        if exclude_long_reviews and len(x) > max_char_length:
+            continue
+        reviews.append(x)
+        labels.append(r.rating)
+    print(f'Total Reviews Loaded: {len(reviews)}')
+
+    # Assuming `get_drug_data` is a utility function that handles data splitting and embedding extraction
+    data = utils.get_drug_data(
+        num_samples=len(reviews),
+        data_dir=data_dir,
+        csv_path=csv_path,
+        embedding_path=f"druglib/druglib_embeddings_clip.pt",  # Adjust as needed
+        device="cuda" if torch.cuda.is_available() else "cpu",
+        model_name='clip',
+        max_char_length=max_char_length,
+    )
+    return data, reviews, labels
 
 
 if __name__ == "__main__":

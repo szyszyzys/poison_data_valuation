@@ -19,7 +19,7 @@ from torchvision.transforms import (CenterCrop, Compose, Lambda, Resize,
                                     ToTensor)
 from transformers import (
     BertTokenizer, BertModel,
-    BertForSequenceClassification, BertConfig, 
+    BertForSequenceClassification, BertConfig,
     GPT2Tokenizer, GPT2Model,
     Trainer, TrainingArguments,
 )
@@ -40,10 +40,10 @@ def get_gaussian_data(num_samples=100, dim=10, noise=0.1, costs=None):
 
 
 def get_mimic_data(
-    num_samples,
-    data_dir,
-    csv_path="mimic-los-data.csv",
-    scale=True,
+        num_samples,
+        data_dir,
+        csv_path="mimic-los-data.csv",
+        scale=True,
 ):
     df = pd.read_csv(data_dir / csv_path)
     y = df.iloc[:, 0].values
@@ -83,15 +83,16 @@ def embed_images(img_paths, model_name="clip", device="cpu"):
     torch.cuda.empty_cache()
     return torch.cat(embeddings)
 
+
 def get_fitzpatrick_data(
-    num_samples,
-    data_dir,
-    img_dir="fitzpatrick17k/images",
-    csv_path="fitzpatrick17k/fitzpatrick-mod.csv",
-    recompute_embeddings=False,
-    embedding_path="fitzpatrick17k/fitzpatrick_embeddings.pt",
-    device="cuda",
-    model_name="clip",
+        num_samples,
+        data_dir,
+        img_dir="fitzpatrick17k/images",
+        csv_path="fitzpatrick17k/fitzpatrick-mod.csv",
+        recompute_embeddings=False,
+        embedding_path="fitzpatrick17k/fitzpatrick_embeddings.pt",
+        device="cuda",
+        model_name="clip",
 ):
     data_dir = Path(data_dir)
     embedding_path = Path(embedding_path)
@@ -119,18 +120,18 @@ def get_fitzpatrick_data(
     embeddings = embed_dict["embeddings"]
     labels = embed_dict["labels"]
 
-    return dict(X=embeddings[:num_samples], y=labels[:num_samples])
+    return dict(X=embeddings[:num_samples], y=labels[:num_samples], img_paths=img_paths)
 
 
 def get_bone_data(
-    num_samples,
-    data_dir,
-    img_dir="bone-age/boneage-training-dataset",
-    csv_path="bone-age/train.csv",
-    recompute_embeddings=False,
-    embedding_path="bone-age/bone_age_embeddings.pt",
-    device="cuda",
-    model_name="clip",
+        num_samples,
+        data_dir,
+        img_dir="bone-age/boneage-training-dataset",
+        csv_path="bone-age/train.csv",
+        recompute_embeddings=False,
+        embedding_path="bone-age/bone_age_embeddings.pt",
+        device="cuda",
+        model_name="clip",
 ):
     data_dir = Path(data_dir)
     embedding_path = Path(embedding_path)
@@ -158,7 +159,7 @@ def get_bone_data(
     return dict(X=embeddings[:num_samples], y=labels[:num_samples])
 
 
-def embed_text(text_inputs :list[str], model_name='gpt2', device='cuda'):
+def embed_text(text_inputs: list[str], model_name='gpt2', device='cuda'):
     match model_name:
         case "gpt2":
             print('Using GPT2 tokenizer and embedding')
@@ -175,7 +176,7 @@ def embed_text(text_inputs :list[str], model_name='gpt2', device='cuda'):
     embeddings = []
     for x in tqdm(text_inputs):
         # if len(x) > max_length:
-            # print('long text', len(x))
+        # print('long text', len(x))
         inputs = tokenizer(x, return_tensors="pt", truncation=True).to(device)
         with torch.no_grad():
             outputs = model(**inputs)
@@ -186,16 +187,17 @@ def embed_text(text_inputs :list[str], model_name='gpt2', device='cuda'):
         # torch.cuda.empty_cache()
     return torch.cat(embeddings)
 
+
 def get_drug_data(
-    num_samples,
-    data_dir,
-    csv_path="druglib/druglib.csv",
-    recompute_embeddings=False,
-    embedding_path="druglib/druglib_embeddings_gpt2.pt",
-    device="cuda",
-    model_name="gpt2",
-    max_char_length=4096,
-    exclude_long_reviews=True,
+        num_samples,
+        data_dir,
+        csv_path="druglib/druglib.csv",
+        recompute_embeddings=False,
+        embedding_path="druglib/druglib_embeddings_gpt2.pt",
+        device="cuda",
+        model_name="gpt2",
+        max_char_length=4096,
+        exclude_long_reviews=True,
 ):
     data_dir = Path(data_dir)
     embedding_path = Path(embedding_path)
@@ -228,8 +230,7 @@ def get_drug_data(
     return dict(X=embeddings[:num_samples], y=labels[:num_samples], index=index[:num_samples])
 
 
-
-def split_data(num_buyer=1, num_val=10, random_state=0, X=None, y=None, index=None, costs=None):
+def split_data(num_buyer=1, num_val=10, random_state=0, X=None, y=None, index=None, costs=None, img_path=None):
     assert X is not None, "X is missing"
     assert y is not None, "y is missing"
     if index is None:
@@ -296,27 +297,27 @@ def split_data(num_buyer=1, num_val=10, random_state=0, X=None, y=None, index=No
 def get_cost_function(cost_func, bias=0):
     match cost_func:
         case "square_root":
-            return lambda c: c**0.5 + bias
+            return lambda c: c ** 0.5 + bias
         case "linear":
-            return lambda c: c**1.0 + bias
+            return lambda c: c ** 1.0 + bias
         case "squared":
-            return lambda c: c**2.0 + bias
+            return lambda c: c ** 2.0 + bias
         case _:
             raise Exception(f"{_} not supported")
 
 
 def get_data(
-    dataset="gaussian",
-    data_dir="../../data",
-    random_state=0,
-    num_seller=10000,
-    num_buyer=100,
-    num_val=100,
-    dim=100,
-    noise_level=1,
-    cost_range=None,
-    cost_func="linear",
-    recompute_embeddings=False,
+        dataset="gaussian",
+        data_dir="./data",
+        random_state=0,
+        num_seller=10000,
+        num_buyer=100,
+        num_val=100,
+        dim=100,
+        noise_level=1,
+        cost_range=None,
+        cost_func="linear",
+        recompute_embeddings=False,
 ):
     total_samples = num_seller + num_buyer + num_val
     data_dir = Path(data_dir)
@@ -376,10 +377,10 @@ def get_data(
             e = noise_level * np.random.randn(ret["X_sell"].shape[0])
             print(type(ret["costs_sell"]))
             ret["y_sell"] = (
-                np.einsum("i,ij->ij", h(ret["costs_sell"]), ret["X_sell"]) @ coef + e
+                    np.einsum("i,ij->ij", h(ret["costs_sell"]), ret["X_sell"]) @ coef + e
             )
             ret["y_buy"] = ret["X_buy"] @ coef
-        case _, _:  #  not gaussian with costs
+        case _, _:  # not gaussian with costs
             h = get_cost_function(cost_func)
             e = noise_level * np.random.randn(ret["X_sell"].shape[0])
             print(f'{e[:10].round(2)=}', e.mean())
@@ -394,14 +395,14 @@ def get_data(
 
 
 def get_error_fixed(
-    x_test,
-    y_test,
-    x_s,
-    y_s,
-    w,
-    eval_range=range(1, 10),
-    use_sklearn=False,
-    return_list=False,
+        x_test,
+        y_test,
+        x_s,
+        y_s,
+        w,
+        eval_range=range(1, 10),
+        use_sklearn=False,
+        return_list=False,
 ):
     sorted_w = w.argsort()[::-1]
 
@@ -425,15 +426,15 @@ def get_error_fixed(
 
 
 def get_error_under_budget(
-    x_test,
-    y_test,
-    x_s,
-    y_s,
-    w,
-    costs=None,
-    eval_range=range(1, 10),
-    use_sklearn=False,
-    return_list=False,
+        x_test,
+        y_test,
+        x_s,
+        y_s,
+        w,
+        costs=None,
+        eval_range=range(1, 10),
+        use_sklearn=False,
+        return_list=False,
 ):
     assert costs is not None, "Missing costs"
     sorted_w = w.argsort()[::-1]
@@ -467,17 +468,17 @@ def get_error_under_budget(
 
 
 def get_baseline_values(
-    train_x,
-    train_y,
-    val_x,
-    val_y,
-    test_x,
-    test_y,
-    metric=mean_squared_error,
-    random_state=0,
-    baselines=["DataOob"],
-    baseline_kwargs={"DataOob": {"num_models": 100}},
-    use_ridge=False,
+        train_x,
+        train_y,
+        val_x,
+        val_y,
+        test_x,
+        test_y,
+        metric=mean_squared_error,
+        random_state=0,
+        baselines=["DataOob"],
+        baseline_kwargs={"DataOob": {"num_models": 100}},
+        use_ridge=False,
 ):
     fetcher = DataFetcher.from_data_splits(
         train_x, train_y, val_x, val_y, test_x, test_y, one_hot=False
@@ -647,36 +648,37 @@ class TextDataset(Dataset):
 
     def __getitem__(self, idx, return_tensor=None, device=None):
         item = self.tokenizer(
-            self.texts[idx], 
-            truncation=True, 
-            padding='max_length', 
+            self.texts[idx],
+            truncation=True,
+            padding='max_length',
             return_tensors=return_tensor,
         )
-        item['labels'] = torch.tensor(self.labels[idx], dtype=torch.float32) 
+        item['labels'] = torch.tensor(self.labels[idx], dtype=torch.float32)
         if device is not None:
             item = {k: v.to(device) for k, v in item.items()}
         return item
-        
+
 
 class GPT2Regressor(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.gpt2 = GPT2Model.from_pretrained('gpt2')
         self.regressor = torch.nn.Linear(self.gpt2.config.n_embd, 1)
-        self.loss_fn = torch.nn.MSELoss()  
+        self.loss_fn = torch.nn.MSELoss()
 
     def forward(self, input_ids, attention_mask=None, labels=None, **kwargs):
         outputs = self.gpt2(input_ids=input_ids, attention_mask=attention_mask)
         hidden_states = outputs.last_hidden_state
         x_last = hidden_states[:, -1, :]
         logits = self.regressor(x_last)
-        
+
         if labels is not None:
             # Calculate loss if labels are provided
             loss = self.loss_fn(logits.view(-1), labels.view(-1))  # Ensure correct shape
             return {"loss": loss, "logits": logits}
-        
+
         return {"logits": logits}
+
 
 def compute_metrics(eval_pred):
     predictions, labels = eval_pred
@@ -685,22 +687,22 @@ def compute_metrics(eval_pred):
 
 
 def run_exp(
-        num_buyer = 10,
-        num_samples = 1000,
-        Ks = [2, 5, 10, 25, 50],
-        epochs = 10,
-        num_iters = 500,
-        model_name = 'gpt2',
+        num_buyer=10,
+        num_samples=1000,
+        Ks=[2, 5, 10, 25, 50],
+        epochs=10,
+        num_iters=500,
+        model_name='gpt2',
         # model_name = 'bert',
-        lr = 5e-5,
-        batch_size = 1,
-        grad_steps = 1,
-        weight_decay = 0.01,
+        lr=5e-5,
+        batch_size=1,
+        grad_steps=1,
+        weight_decay=0.01,
         max_char_length=2048,
         exclude_long_reviews=False,
         data_dir='../../data',
         csv_path="druglib/druglib.csv",
-    ):
+):
     df = pd.read_csv(Path(data_dir) / csv_path)
     reviews = []
     labels = []
@@ -722,8 +724,9 @@ def run_exp(
         max_char_length=max_char_length,
         # recompute_embeddings=True,
     )
-    data_part = split_data(num_buyer=num_buyer, num_val=1, X=data['X'], y=data['y'], index=np.arange(data['X'].shape[0]))
-    
+    data_part = split_data(num_buyer=num_buyer, num_val=1, X=data['X'], y=data['y'],
+                           index=np.arange(data['X'].shape[0]))
+
     probe_design_mse = {}
     probe_random_mse = {}
     finetune_design_mse = {}
@@ -732,8 +735,8 @@ def run_exp(
         results = frank_wolfe.design_selection(
             data_part['X_sell'],
             data_part['y_sell'],
-            data_part['X_buy'][j:j+1],
-            data_part['y_buy'][j:j+1],
+            data_part['X_buy'][j:j + 1],
+            data_part['y_buy'][j:j + 1],
             num_select=10,
             num_iters=num_iters,
             alpha=None,
@@ -745,23 +748,23 @@ def run_exp(
         eval_range = list(range(1, 200, 1))
         w = results['weights']
         probe_design_mse[j] = get_error_fixed(
-            data_part['X_buy'][j:j+1],
-            data_part['y_buy'][j:j+1],
+            data_part['X_buy'][j:j + 1],
+            data_part['y_buy'][j:j + 1],
             data_part['X_sell'],
             data_part['y_sell'],
             w=w,
-            eval_range = eval_range,
+            eval_range=eval_range,
         )
         n = w.shape[0]
         probe_random_mse[j] = get_error_fixed(
-            data_part['X_buy'][j:j+1],
-            data_part['y_buy'][j:j+1],
+            data_part['X_buy'][j:j + 1],
+            data_part['y_buy'][j:j + 1],
             data_part['X_sell'],
             data_part['y_sell'],
             w=np.random.choice(n, size=n, replace=False),
-            eval_range = eval_range,
+            eval_range=eval_range,
         )
-    
+
         design_finetune = {}
         random_finetune = {}
         for K in Ks:
@@ -772,7 +775,7 @@ def run_exp(
                 config = BertConfig.from_pretrained('bert-base-uncased', num_labels=1)
                 model = BertForSequenceClassification.from_pretrained('bert-base-uncased', config=config)
                 rand_model = BertForSequenceClassification.from_pretrained('bert-base-uncased', config=config)
-            
+
             elif model_name == 'gpt2':
                 print('gpt2'.center(40, '-'))
                 tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
@@ -781,13 +784,13 @@ def run_exp(
                 rand_model = GPT2Regressor()
             else:
                 raise ValueError(f'{model_name} model not found')
-        
+
             selected = w.argsort()[::-1][:K]
-        
+
             orig_sell_index = np.array(data_part['index_sell'])[selected]
             orig_buy_index = np.array(data_part['index_buy'])
             train_ds = TextDataset(
-                [reviews[i] for i in orig_sell_index], [labels[i] for i in orig_sell_index], 
+                [reviews[i] for i in orig_sell_index], [labels[i] for i in orig_sell_index],
                 tokenizer,
             )
             eval_ds = TextDataset(
@@ -797,23 +800,23 @@ def run_exp(
             # random_index = np.random.choice(len(reviews), size=K, replace=False)
             random_index = np.arange(K)
             rand_ds = TextDataset(
-                [reviews[i] for i in random_index], [labels[i] for i in random_index], 
+                [reviews[i] for i in random_index], [labels[i] for i in random_index],
                 tokenizer,
             )
-            
+
             training_args = TrainingArguments(
                 output_dir='temp',
                 evaluation_strategy='epoch',
                 save_strategy='no',
                 logging_strategy='epoch',
-                logging_steps=1, 
+                logging_steps=1,
                 learning_rate=lr,
                 per_device_train_batch_size=1,
                 num_train_epochs=epochs,
                 gradient_accumulation_steps=grad_steps,
                 weight_decay=weight_decay,
             )
-            
+
             trainer = Trainer(
                 model=model,
                 args=training_args,
@@ -824,7 +827,7 @@ def run_exp(
             # trainer.add_callback(CustomLRScheduler())
             trainer.train()
             # trainer.evaluate()
-    
+
             output = model(**eval_ds.__getitem__(0, return_tensor='pt', device='cuda'))
             logit = output['logits'].cpu().detach()
             lab = eval_ds[0]['labels'].unsqueeze(0)
@@ -833,11 +836,11 @@ def run_exp(
                 logit
             )
             design_finetune[K] = mse
-            
-            print(j, f"LABEL: {data_part['y_buy'][j:j+1]} {lab}")
+
+            print(j, f"LABEL: {data_part['y_buy'][j:j + 1]} {lab}")
             print(f'PRED: {logit}')
             print(f'MSE: {mse:.4f}')
-        
+
             rand_trainer = Trainer(
                 model=rand_model,
                 args=training_args,
@@ -847,7 +850,7 @@ def run_exp(
             )
             # rand_trainer.add_callback(CustomLRScheduler())
             rand_trainer.train()
-            
+
             rand_output = rand_model(**eval_ds.__getitem__(0, return_tensor='pt', device='cuda'))
             rand_logit = rand_output['logits'].cpu().detach()
             lab = eval_ds[0]['labels'].unsqueeze(0)
@@ -856,14 +859,14 @@ def run_exp(
                 rand_logit
             )
             random_finetune[K] = rand_mse
-            print(j, f"LABEL: {data_part['y_buy'][j:j+1]} {lab}")
+            print(j, f"LABEL: {data_part['y_buy'][j:j + 1]} {lab}")
             print(f'RANDOM PRED: {rand_logit}')
             print(f'RANDOM MSE: {rand_mse:.4f}')
-            
+
             del model
             del rand_model
             torch.cuda.empty_cache()
-            
+
         finetune_design_mse[j] = design_finetune
         finetune_random_mse[j] = random_finetune
 
