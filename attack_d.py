@@ -400,7 +400,7 @@ def modify_image(
         # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
 
         # normalized_modified_image = processor(modified_image_pil)
-        modified_embedding = model.encode_image(modified_image.to(device))
+        modified_embedding = model.encode_image(image_tensor)
         # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
         final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
 
