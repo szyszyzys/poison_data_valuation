@@ -294,7 +294,8 @@ def modify_image(
     image = load_image(image_path)
     image_tensor = preprocess_image(image).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
     image_tensor.requires_grad = True
-
+    print("cur img shape =====================")
+    print(image_tensor.shape)
     # Define optimizer
     optimizer = torch.optim.Adam([image_tensor], lr=learning_rate)
 
@@ -310,16 +311,22 @@ def modify_image(
         embedding = model.get_image_features(**inputs)
         embedding = F.normalize(embedding, p=2, dim=-1)
 
-        # Compute cosine similarity
-        cosine_sim = F.cosine_similarity(embedding, target_tensor, dim=0)
+        # # Compute cosine similarity
+        # cosine_sim = F.cosine_similarity(embedding, target_tensor, dim=0)
+        #
+        # # Compute loss: maximize cosine similarity and minimize perturbation
+        # # loss = -cosine_sim + lambda_reg * torch.norm(image_tensor - preprocess_image(image).unsqueeze(0).to(device))
+        # loss = -cosine_sim + lambda_reg * torch.norm(
+        #     image_tensor - preprocess_image(image).unsqueeze(0).to(device)).mean()
+        # Backward pass
+        # Compute cosine similarity across the embedding dimension and take the mean to get a scalar
+        cosine_sim = F.cosine_similarity(embedding, target_tensor, dim=-1).mean()
 
         # Compute loss: maximize cosine similarity and minimize perturbation
-        # loss = -cosine_sim + lambda_reg * torch.norm(image_tensor - preprocess_image(image).unsqueeze(0).to(device))
-        loss = -cosine_sim + lambda_reg * torch.norm(
-            image_tensor - preprocess_image(image).unsqueeze(0).to(device)).mean()
-        # Backward pass
-        print(loss)
-        print(loss.shape)
+        # Negative cosine similarity is used because we want to maximize similarity
+        perturbation = image_tensor - preprocess_image(image).unsqueeze(0).to(device)
+        loss = -cosine_sim + lambda_reg * torch.norm(perturbation)
+
         loss.backward()
         optimizer.step()
 
