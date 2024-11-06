@@ -57,45 +57,6 @@ import daved.src.utils as utils  # Ensure this module contains necessary utility
 #     return data, reviews, labels
 
 
-def initial_selection(x_s, y_s, x_b, y_b, num_iters, reg_lambda, costs):
-    """
-    Perform the initial data selection using the design_selection function.
-
-    Parameters:
-    - x_s (np.ndarray): Feature matrix for seller data.
-    - y_s (np.ndarray): Labels for seller data.
-    - x_b (np.ndarray): Feature matrix for buyer data.
-    - y_b (np.ndarray): Labels for buyer data.
-    - num_iters (int): Number of iterations for the selection algorithm.
-    - reg_lambda (float): Regularization parameter.
-
-    Returns:
-    - initial_results (dict): Results from the initial selection.
-    """
-    initial_results = frank_wolfe.design_selection(
-        x_s,
-        y_s,
-        x_b,
-        y_b,
-        num_select=10,
-        num_iters=num_iters,
-        alpha=None,
-        recompute_interval=0,
-        line_search=True,
-        costs=costs,
-        reg_lambda=reg_lambda,
-    )
-    #     num_select=10,
-    #     num_iters=num_iters,
-    #     alpha=None,
-    #     recompute_interval=0,
-    #     line_search=True,
-    #     costs=None,
-    #     reg_lambda=reg_lambda,
-    # )
-    return initial_results
-
-
 def identify_selected_unsampled(weights, num_select=10):
     """
     Identify which data points are selected and which are unselected based on weights.
@@ -140,12 +101,12 @@ def perform_attack(x_s, unsampled_indices, selected_indices, attack_strength=0.1
     return x_s_modified, unsampled_indices  # Assuming all unsampled are modified
 
 
-def re_run_selection(x_s_modified, y_s, x_b, y_b, num_iters, reg_lambda):
+def data_selection(x_s, y_s, x_b, y_b, num_iters, reg_lambda, costs):
     """
-    Perform data selection again on the modified dataset.
+    Perform the initial data selection using the design_selection function.
 
     Parameters:
-    - x_s_modified (np.ndarray): Modified feature matrix for seller data.
+    - x_s (np.ndarray): Feature matrix for seller data.
     - y_s (np.ndarray): Labels for seller data.
     - x_b (np.ndarray): Feature matrix for buyer data.
     - y_b (np.ndarray): Labels for buyer data.
@@ -153,10 +114,10 @@ def re_run_selection(x_s_modified, y_s, x_b, y_b, num_iters, reg_lambda):
     - reg_lambda (float): Regularization parameter.
 
     Returns:
-    - updated_results (dict): Results from the updated selection.
+    - initial_results (dict): Results from the initial selection.
     """
-    updated_results = frank_wolfe.design_selection(
-        x_s_modified,
+    initial_results = frank_wolfe.design_selection(
+        x_s,
         y_s,
         x_b,
         y_b,
@@ -165,10 +126,10 @@ def re_run_selection(x_s_modified, y_s, x_b, y_b, num_iters, reg_lambda):
         alpha=None,
         recompute_interval=0,
         line_search=True,
-        costs=None,
+        costs=costs,
         reg_lambda=reg_lambda,
     )
-    return updated_results
+    return initial_results
 
 
 def evaluate_attack_success(initial_selected, updated_selected, modified_indices):
@@ -594,7 +555,7 @@ def evaluate_attack(
         print(f"Costs Shape: {costs.shape}".center(40, "="))
 
     # Step 2: Initial Data Selection
-    initial_results = initial_selection(
+    initial_results = data_selection(
         x_s=x_s,
         y_s=y_s,
         x_b=x_b,
@@ -637,8 +598,8 @@ def evaluate_attack(
     print(f"Number of Data Points Modified: {len(modified_indices)}")
 
     # Step 5: Re-run Data Selection on Modified Data
-    updated_results = re_run_selection(
-        x_s_modified=x_s,
+    updated_results = data_selection(
+        x_s=x_s,
         y_s=y_s,
         x_b=x_b,
         y_b=y_b,
@@ -651,8 +612,10 @@ def evaluate_attack(
         weights=updated_results['weights'],
         num_select=num_select,
     )
-
+    print(f"Initial Selected Indices: {selected_indices_initial}")
+    print(f"Initial Selected result: {initial_results['weights']}")
     print(f"Updated Selected Indices: {selected_indices_updated}")
+    print(f"Updated Selected result: {updated_results['weights']}")
 
     # Step 7: Evaluate Attack Success
     success_rate, num_success = evaluate_attack_success(
@@ -791,7 +754,6 @@ if __name__ == "__main__":
         type=int,
         help="dimensionality of the data samples",
     )
-
 
     parser.add_argument(
         "--num_iters",
