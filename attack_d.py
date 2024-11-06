@@ -624,7 +624,9 @@ def perform_attack_on_unsampled(
         modified_image_path = os.path.join(output_dir, f'modified_{Path(image_path).name}')
         modified_image.save(modified_image_path)
         o_image_path = os.path.join(output_dir, f'o_{Path(image_path).name}')
-        shutil.copy(image_path, o_image_path)
+        o_image = load_image(image_path)
+        o_image = preprocess_image(o_image)
+        o_image.save(o_image_path)
 
         img_mapping[modified_image_path] = image_path
         # Update the feature matrix
@@ -744,8 +746,8 @@ def evaluate_attack(
         model=model,
         processor=processor,
         device=device,
-        num_steps=100,
-        learning_rate=0.01,
+        num_steps=200,
+        learning_rate=0.1,
         lambda_reg=0.1,
         epsilon=0.05,
         output_dir=modified_images_path,
