@@ -261,6 +261,92 @@ def preprocess_image(image):
     return preprocess(image)
 
 
+# def modify_image(
+#         image_path,
+#         target_vector,
+#         model,
+#         processor,
+#         device,
+#         num_steps=100,
+#         learning_rate=0.01,
+#         lambda_reg=0.1,
+#         epsilon=0.05
+# ):
+#     """
+#     Modify an image to align its CLIP embedding with the target vector.
+#
+#     Parameters:
+#     - image_path (str): Path to the image to be modified.
+#     - target_vector (np.array): Target embedding vector.
+#     - model (CLIPModel): Pre-trained CLIP model.
+#     - processor (CLIPProcessor): CLIP processor.
+#     - device (str): Device to run computations on.
+#     - num_steps (int): Number of optimization steps.
+#     - learning_rate (float): Learning rate for optimizer.
+#     - lambda_reg (float): Regularization strength.
+#     - epsilon (float): Maximum allowed perturbation per pixel.
+#
+#     Returns:
+#     - modified_image (PIL.Image): The optimized image.
+#     - final_similarity (float): Cosine similarity with the target vector after modification.
+#     """
+#     # Load and preprocess the image
+#     image = load_image(image_path)
+#     image_tensor = preprocess_image(image).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
+#     image_tensor.requires_grad = True
+#     print("Current image tensor shape:", image_tensor.shape)
+#
+#     # Define optimizer
+#     optimizer = torch.optim.Adam([image_tensor], lr=learning_rate)
+#
+#     # Convert target_vector to torch tensor and normalize
+#     target_tensor = torch.tensor(target_vector, dtype=torch.float32).to(device)
+#     target_tensor = F.normalize(target_tensor, p=2, dim=0)
+#
+#     for step in range(num_steps):
+#         optimizer.zero_grad()
+#
+#         # Forward pass: get embedding
+#         # Ensure image_tensor is detached and moved to CPU before processing
+#         inputs = processor(images=image_tensor.squeeze(0).detach().cpu(), return_tensors="pt").to(device)
+#         embedding = model.get_image_features(**inputs)
+#         embedding = F.normalize(embedding, p=2, dim=-1)
+#
+#         # Compute cosine similarity across the embedding dimension and take the mean to get a scalar
+#         cosine_sim = F.cosine_similarity(embedding, target_tensor, dim=-1).mean()
+#
+#         # Compute loss: maximize cosine similarity and minimize perturbation
+#         # Negative cosine similarity is used because we want to maximize similarity
+#         perturbation = image_tensor - preprocess_image(image).unsqueeze(0).to(device)
+#         loss = -cosine_sim + lambda_reg * torch.norm(perturbation)
+#
+#         # Backward pass
+#         print(f"Step {step + 1}/{num_steps}, Loss: {loss.item():.4f}, Cosine Similarity: {cosine_sim.item():.4f}")
+#         loss.backward()
+#         optimizer.step()
+#
+#         # Clamp the image tensor to maintain valid pixel range and limit perturbation
+#         with torch.no_grad():
+#             perturbation = torch.clamp(perturbation, -epsilon, epsilon)
+#             image_tensor.copy_(torch.clamp(preprocess_image(image).unsqueeze(0).to(device) + perturbation, 0, 1))
+#
+#         # Optional: Print progress every 20 steps
+#         if (step + 1) % 20 == 0 or step == 0:
+#             print(f"Step {step + 1}/{num_steps}, Cosine Similarity: {cosine_sim.item():.4f}, Loss: {loss.item():.4f}")
+#
+#     # Detach and convert to PIL Image
+#     modified_image = image_tensor.detach().cpu().squeeze(0)
+#     modified_image_pil = transforms.ToPILImage()(modified_image)
+#
+#     # Compute final similarity
+#     with torch.no_grad():
+#         inputs = processor(images=modified_image_pil, return_tensors="pt").to(device)
+#         modified_embedding = model.get_image_features(**inputs)
+#         modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
+#         final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
+#
+#     return modified_image_pil, final_similarity
+
 def modify_image(
         image_path,
         target_vector,
@@ -288,12 +374,16 @@ def modify_image(
 
     Returns:
     - modified_image (PIL.Image): The optimized image.
-    - final_similarity (float): Cosine similarity with the target vector after modification.
+    - final_similarity (float): Cosine similarity with the target vector.
     """
-    # Load and preprocess the image
+    # Load and preprocess the original image
     image = load_image(image_path)
-    image_tensor = preprocess_image(image).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
-    image_tensor.requires_grad = True
+    original_image_tensor = preprocess_image(image).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
+    original_image_tensor = original_image_tensor.detach()  # Detach to prevent gradients flowing into original image
+
+    # Initialize the image tensor to be optimized
+    image_tensor = original_image_tensor.clone().requires_grad_(True)
+
     print("Current image tensor shape:", image_tensor.shape)
 
     # Define optimizer
@@ -303,32 +393,54 @@ def modify_image(
     target_tensor = torch.tensor(target_vector, dtype=torch.float32).to(device)
     target_tensor = F.normalize(target_tensor, p=2, dim=0)
 
+    # Set model to evaluation mode
+    model.eval()
+
     for step in range(num_steps):
         optimizer.zero_grad()
 
+        # Convert image tensor to PIL image
+        with torch.no_grad():
+            # Clamp to ensure pixel values are valid
+            clamped_image = torch.clamp(image_tensor, 0, 1)
+            # Convert tensor to PIL image
+            modified_pil = transforms.ToPILImage()(clamped_image.squeeze(0).cpu())
+
         # Forward pass: get embedding
-        # Ensure image_tensor is detached and moved to CPU before processing
-        inputs = processor(images=image_tensor.squeeze(0).detach().cpu(), return_tensors="pt").to(device)
+        inputs = processor(images=modified_pil, return_tensors="pt").to(device)
         embedding = model.get_image_features(**inputs)
         embedding = F.normalize(embedding, p=2, dim=-1)
 
-        # Compute cosine similarity across the embedding dimension and take the mean to get a scalar
+        # Compute cosine similarity and aggregate to scalar
         cosine_sim = F.cosine_similarity(embedding, target_tensor, dim=-1).mean()
 
+        # Compute perturbation norm
+        perturbation = image_tensor - original_image_tensor
+        reg_loss = lambda_reg * torch.norm(perturbation)
+
         # Compute loss: maximize cosine similarity and minimize perturbation
-        # Negative cosine similarity is used because we want to maximize similarity
-        perturbation = image_tensor - preprocess_image(image).unsqueeze(0).to(device)
-        loss = -cosine_sim + lambda_reg * torch.norm(perturbation)
+        loss = -cosine_sim + reg_loss
 
         # Backward pass
-        print(f"Step {step + 1}/{num_steps}, Loss: {loss.item():.4f}, Cosine Similarity: {cosine_sim.item():.4f}")
         loss.backward()
+
+        # Check gradients
+        if image_tensor.grad is not None:
+            grad_norm = image_tensor.grad.norm().item()
+            print(
+                f"Step {step + 1}/{num_steps}, Grad Norm: {grad_norm:.4f}, Loss: {loss.item():.4f}, Cosine Similarity: {cosine_sim.item():.4f}")
+        else:
+            print(f"Step {step + 1}/{num_steps}, No gradients computed.")
+
+        # Optimizer step
         optimizer.step()
 
         # Clamp the image tensor to maintain valid pixel range and limit perturbation
         with torch.no_grad():
-            perturbation = torch.clamp(perturbation, -epsilon, epsilon)
-            image_tensor.copy_(torch.clamp(preprocess_image(image).unsqueeze(0).to(device) + perturbation, 0, 1))
+            # Calculate perturbation and clamp
+            perturbation = torch.clamp(image_tensor - original_image_tensor, -epsilon, epsilon)
+            # Apply perturbation
+            image_tensor.copy_(torch.clamp(original_image_tensor + perturbation, 0, 1))
 
         # Optional: Print progress every 20 steps
         if (step + 1) % 20 == 0 or step == 0:
