@@ -267,7 +267,7 @@ def modify_image(
         model,
         processor,
         device,
-        num_steps=100,
+        num_steps=300,
         learning_rate=0.01,
         lambda_reg=0.1,
         epsilon=0.05
@@ -428,7 +428,7 @@ def perform_attack_on_unsampled(
 
         img_mapping[modified_image_path] = image_path
         # Update the feature matrix
-        X_sell[idx] = extract_features(modified_image, model, processor)
+        X_sell[idx.cpu()] = extract_features(modified_image, model, processor)
 
         # Record the modification
         modified_indices.append(idx)
