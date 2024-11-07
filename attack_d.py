@@ -10,6 +10,8 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 from PIL import Image
+from sklearn.metrics import pairwise_distances
+from sklearn.model_selection import StratifiedShuffleSplit
 from tqdm import tqdm
 
 # CLIP model and processor
@@ -695,6 +697,66 @@ def evaluate_attack(
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model, preprocess = clip.load("ViT-B/32", device=device)
 model.eval()  # Set model to evaluation mode
+
+
+def attack_target_sampling(data, labels, strategy="random", num_samples=100, **kwargs):
+    """
+    Samples data points for fine-tuning using different selection strategies.
+
+    Parameters:
+    - data (numpy.ndarray): Array of data points, shape (n_samples, n_features).
+    - labels (numpy.ndarray): Array of labels corresponding to data points, shape (n_samples,).
+    - strategy (str): Sampling strategy to use; options are 'random', 'uncertainty', 'stratified', 'similarity'.
+    - num_samples (int): Number of samples to select.
+    - **kwargs: Additional parameters for specific strategies.
+        - uncertainty_scores (numpy.ndarray): Array of uncertainty scores, required for 'uncertainty' strategy.
+        - similarity_target (numpy.ndarray): Target vector for similarity-based sampling, required for 'similarity' strategy.
+        - similarity_metric (str): Similarity metric to use for 'similarity' strategy; default is 'cosine'.
+
+    Returns:
+    - selected_indices (numpy.ndarray): Indices of selected data points.
+    """
+    n_samples = data.shape[0]
+
+    # Validate num_samples
+    if num_samples > n_samples:
+        raise ValueError("num_samples cannot exceed the total number of data points.")
+
+    # Random Sampling
+    if strategy == "random":
+        selected_indices = np.random.choice(n_samples, num_samples, replace=False)
+
+    # Uncertainty Sampling
+    elif strategy == "uncertainty":
+        uncertainty_scores = kwargs.get("uncertainty_scores")
+        if uncertainty_scores is None or len(uncertainty_scores) != n_samples:
+            raise ValueError(
+                "For 'uncertainty' strategy, 'uncertainty_scores' must be provided with length equal to data points.")
+
+        # Sort by highest uncertainty and select top indices
+        selected_indices = np.argsort(uncertainty_scores)[-num_samples:]
+
+    # Stratified Sampling
+    elif strategy == "stratified":
+        stratified_split = StratifiedShuffleSplit(n_splits=1, test_size=num_samples, random_state=42)
+        train_idx, selected_indices = next(stratified_split.split(data, labels))
+
+    # Similarity-Based Sampling
+    elif strategy == "similarity":
+        similarity_target = kwargs.get("similarity_target")
+        similarity_metric = kwargs.get("similarity_metric", "cosine")
+        if similarity_target is None:
+            raise ValueError("For 'similarity' strategy, 'similarity_target' must be provided.")
+
+        # Calculate similarity scores
+        distances = pairwise_distances(data, similarity_target.reshape(1, -1), metric=similarity_metric).flatten()
+        selected_indices = np.argsort(distances)[:num_samples]  # Select closest samples to the target vector
+
+    else:
+        raise ValueError(
+            f"Invalid strategy '{strategy}'. Choose from 'random', 'uncertainty', 'stratified', or 'similarity'.")
+
+    return selected_indices
 
 
 def embed_images(img_paths, model, preprocess, device):
