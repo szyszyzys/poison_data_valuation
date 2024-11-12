@@ -1,6 +1,9 @@
 import argparse
+import json
 import os
 import pickle
+import time
+from collections import defaultdict
 from pathlib import Path
 
 import clip
@@ -17,7 +20,10 @@ from tqdm import tqdm
 # CLIP model and processor
 import daved.src.frank_wolfe as frank_wolfe  # Ensure this module contains the design_selection function
 # Import your custom modules or utilities
-import daved.src.utils as utils  # Ensure this module contains necessary utility functions
+from attack.general_attack.my_utils import get_data, manipulate_cost_function
+from attack.general_attack.train_model import comprehensive_evaluation
+from daved.src import utils
+from daved.src.main import plot_results
 
 
 # def load_and_preprocess_data(data_dir, csv_path, max_char_length=2048, exclude_long_reviews=False):
@@ -134,7 +140,7 @@ def data_selection(x_s, y_s, x_b, y_b, num_iters, reg_lambda=None, costs=None):
     return initial_results
 
 
-def evaluate_attack_success(initial_selected, updated_selected, modified_indices):
+def evaluate_attack_success_selection(initial_selected, updated_selected, modified_indices, total_selected=10):
     """
     Evaluate how many of the modified (attacked) data points were selected after the attack.
 
@@ -142,7 +148,7 @@ def evaluate_attack_success(initial_selected, updated_selected, modified_indices
     - initial_selected (set): Indices of initially selected data points.
     - updated_selected (set): Indices of selected data points after the attack.
     - modified_indices (list): Indices of data points that were modified.
-
+    - total_selected (int): Total number of samples selected.
     Returns:
     - success_rate (float): Proportion of modified data points that were selected after the attack.
     - num_success (int): Number of modified data points selected after the attack.
@@ -150,7 +156,7 @@ def evaluate_attack_success(initial_selected, updated_selected, modified_indices
     updated_selected = set(updated_selected)
     modified_selected = updated_selected.intersection(modified_indices)
     num_success = len(modified_selected)
-    success_rate = num_success / len(modified_indices) if len(modified_indices) > 0 else 0.0
+    success_rate = num_success / total_selected
     return success_rate, num_success
 
 
@@ -257,15 +263,10 @@ def modify_image(
     - final_similarity (float): Cosine similarity with the target vector after modification.
     """
     # Load and preprocess the original image
-    # image = load_image(image_path)
-    # original_image_tensor = preprocess_image(image).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
-    # original_image_tensor = original_image_tensor.detach()  # Detach to prevent gradients flowing into original image
-    image = Image.open(image_path)
-    image_tensor = processor(image).unsqueeze(0).to(device).clone().detach().requires_grad_(
-        True)  # Shape: (1, 3, 224, 224)
+    image = Image.open(image_path).convert("RGB")
+    processed = processor(images=image, return_tensors="pt")
+    image_tensor = processed['pixel_values'].to(device).clone().detach().requires_grad_(True)
     original_image_tensor = image_tensor.clone().detach()
-    # Initialize the image tensor to be optimized
-    # image_tensor = original_image_tensor.clone().requires_grad_(True)
 
     if verbose:
         print(f"Starting optimization for image: {image_path}")
@@ -282,6 +283,10 @@ def modify_image(
     # Set model to evaluation mode
     model.eval()
 
+    # Retrieve normalization parameters from the processor
+    mean = torch.tensor(processor.feature_extractor.image_mean).view(3, 1, 1).to(device)
+    std = torch.tensor(processor.feature_extractor.image_std).view(3, 1, 1).to(device)
+
     # Initialize variables for early stopping
     previous_loss = float('inf')
     patience = 10  # Number of steps to wait for improvement
@@ -292,14 +297,14 @@ def modify_image(
 
         # Forward pass: get embedding
         embedding = model.encode_image(image_tensor)
-        # embedding = F.normalize(embedding, p=2, dim=-1)
+        embedding = F.normalize(embedding, p=2, dim=-1)
 
-        # Compute cosine similarity and aggregate to scalar
+        # Compute cosine similarity
         cosine_sim = F.cosine_similarity(embedding, target_tensor, dim=-1).mean()
 
-        # Compute perturbation norm
+        # Compute perturbation norm (L-infinity)
         perturbation = image_tensor - original_image_tensor
-        reg_loss = lambda_reg * torch.norm(perturbation)
+        reg_loss = lambda_reg * torch.norm(perturbation, p=float('inf'))
 
         # Compute loss: maximize cosine similarity and minimize perturbation
         loss = -cosine_sim + reg_loss
@@ -307,12 +312,16 @@ def modify_image(
         # Backward pass
         loss.backward()
 
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_([image_tensor], max_norm=1.0)
+
         # Check gradients
         if image_tensor.grad is not None:
             grad_norm = image_tensor.grad.norm().item()
             if verbose:
                 print(
-                    f"Step {step + 1}/{num_steps}, Grad Norm: {grad_norm:.4f}, Loss: {loss.item():.4f}, Cosine Similarity: {cosine_sim.item():.4f}")
+                    f"Step {step + 1}/{num_steps}, Grad Norm: {grad_norm:.4f}, Loss: {loss.item():.4f}, "
+                    f"Cosine Similarity: {cosine_sim.item():.4f}")
         else:
             if verbose:
                 print(f"Step {step + 1}/{num_steps}, No gradients computed.")
@@ -324,10 +333,9 @@ def modify_image(
 
         # Clamp the image tensor to maintain valid pixel range and limit perturbation
         with torch.no_grad():
-            # Calculate perturbation and clamp
             perturbation = torch.clamp(image_tensor - original_image_tensor, -epsilon, epsilon)
-            # Apply perturbation
-            image_tensor.copy_(torch.clamp(original_image_tensor + perturbation, 0, 1))
+            new_image = torch.clamp(original_image_tensor + perturbation, 0, 1)
+            image_tensor.copy_(new_image)
 
         # Early Stopping Check
         current_loss = loss.item()
@@ -352,30 +360,173 @@ def modify_image(
             if verbose:
                 print(f"Saved intermediate image at step {step + 1}")
 
-    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
-    std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(3, 1, 1)
-
     # Denormalize the image tensor
     def denormalize_image(tensor):
         return tensor * std + mean
 
-    # In your save step
-    modified_image = image_tensor.detach().cpu().squeeze(0)  # Remove batch dimension
-    modified_image = denormalize_image(modified_image)  # Apply denormalization
+    modified_image = denormalize_image(image_tensor.detach().cpu().squeeze(0))
     modified_image_pil = transforms.ToPILImage()(modified_image.clamp(0, 1))
 
     # Compute final similarity
     with torch.no_grad():
-        # normalized_modified_image = clip_normalize(preprocess_image(modified_image_pil).unsqueeze(0).to(device))
-        # modified_embedding = model.get_image_features(pixel_values=normalized_modified_image)
-        # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
-
-        # normalized_modified_image = processor(modified_image_pil)
         modified_embedding = model.encode_image(image_tensor)
-        # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
+        modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
         final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
 
     return modified_image_pil, final_similarity
+
+
+# def modify_image(
+#         image_path,
+#         target_vector,
+#         model,
+#         processor,
+#         device,
+#         num_steps=100,
+#         learning_rate=0.01,
+#         lambda_reg=0.1,
+#         epsilon=0.05,
+#         verbose=True
+# ):
+#     """
+#     Modify an image to align its CLIP embedding with the target vector.
+#
+#     Parameters:
+#     - image_path (str): Path to the image to be modified.
+#     - target_vector (np.array): Target embedding vector (1D array).
+#     - model (CLIPModel): Pre-trained CLIP model.
+#     - processor (CLIPProcessor): CLIP processor.
+#     - device (str): Device to run computations on ('cuda' or 'cpu').
+#     - num_steps (int): Number of optimization steps.
+#     - learning_rate (float): Learning rate for optimizer.
+#     - lambda_reg (float): Regularization strength.
+#     - epsilon (float): Maximum allowed perturbation per pixel.
+#     - verbose (bool): Whether to print progress messages.
+#
+#     Returns:
+#     - modified_image (PIL.Image): The optimized image.
+#     - final_similarity (float): Cosine similarity with the target vector after modification.
+#     """
+#     # Load and preprocess the original image
+#     # image = load_image(image_path)
+#     # original_image_tensor = preprocess_image(image).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
+#     # original_image_tensor = original_image_tensor.detach()  # Detach to prevent gradients flowing into original image
+#     image = Image.open(image_path)
+#     image_tensor = processor(image).unsqueeze(0).to(device).clone().detach().requires_grad_(
+#         True)  # Shape: (1, 3, 224, 224)
+#     original_image_tensor = image_tensor.clone().detach()
+#     # Initialize the image tensor to be optimized
+#     # image_tensor = original_image_tensor.clone().requires_grad_(True)
+#
+#     if verbose:
+#         print(f"Starting optimization for image: {image_path}")
+#         print("Initial image tensor shape:", image_tensor.shape)
+#
+#     # Define optimizer
+#     optimizer = torch.optim.AdamW([image_tensor], lr=learning_rate)
+#     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps, eta_min=0)
+#
+#     # Convert target_vector to torch tensor and normalize
+#     target_tensor = torch.tensor(target_vector, dtype=torch.float32).to(device)
+#     target_tensor = F.normalize(target_tensor, p=2, dim=0)
+#
+#     # Set model to evaluation mode
+#     model.eval()
+#
+#     # Initialize variables for early stopping
+#     previous_loss = float('inf')
+#     patience = 10  # Number of steps to wait for improvement
+#     patience_counter = 0
+#
+#     for step in range(num_steps):
+#         optimizer.zero_grad()
+#
+#         # Forward pass: get embedding
+#         embedding = model.encode_image(image_tensor)
+#         # embedding = F.normalize(embedding, p=2, dim=-1)
+#
+#         # Compute cosine similarity and aggregate to scalar
+#         cosine_sim = F.cosine_similarity(embedding, target_tensor, dim=-1).mean()
+#
+#         # Compute perturbation norm
+#         perturbation = image_tensor - original_image_tensor
+#         reg_loss = lambda_reg * torch.norm(perturbation)
+#
+#         # Compute loss: maximize cosine similarity and minimize perturbation
+#         loss = -cosine_sim + reg_loss
+#
+#         # Backward pass
+#         loss.backward()
+#
+#         # Check gradients
+#         if image_tensor.grad is not None:
+#             grad_norm = image_tensor.grad.norm().item()
+#             if verbose:
+#                 print(
+#                     f"Step {step + 1}/{num_steps}, Grad Norm: {grad_norm:.4f}, Loss: {loss.item():.4f}, Cosine Similarity: {cosine_sim.item():.4f}")
+#         else:
+#             if verbose:
+#                 print(f"Step {step + 1}/{num_steps}, No gradients computed.")
+#             grad_norm = 0.0
+#
+#         # Optimizer step
+#         optimizer.step()
+#         scheduler.step()
+#
+#         # Clamp the image tensor to maintain valid pixel range and limit perturbation
+#         with torch.no_grad():
+#             # Calculate perturbation and clamp
+#             perturbation = torch.clamp(image_tensor - original_image_tensor, -epsilon, epsilon)
+#             # Apply perturbation
+#             image_tensor.copy_(torch.clamp(original_image_tensor + perturbation, 0, 1))
+#
+#         # Early Stopping Check
+#         current_loss = loss.item()
+#         if verbose:
+#             print(f"Step {step + 1}/{num_steps}, Current Loss: {current_loss:.4f}")
+#
+#         if abs(previous_loss - current_loss) < 1e-4:
+#             patience_counter += 1
+#             if patience_counter >= patience:
+#                 if verbose:
+#                     print("Early stopping triggered.")
+#                 break
+#         else:
+#             patience_counter = 0
+#         previous_loss = current_loss
+#
+#         # Optional: Save intermediate images for visualization
+#         if (step + 1) % 50 == 0 and verbose:
+#             intermediate_image = image_tensor.detach().cpu().squeeze(0)
+#             intermediate_pil = transforms.ToPILImage()(intermediate_image)
+#             intermediate_pil.save(f"modified_step_{step + 1}.jpg")
+#             if verbose:
+#                 print(f"Saved intermediate image at step {step + 1}")
+#
+#     mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
+#     std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(3, 1, 1)
+#
+#     # Denormalize the image tensor
+#     def denormalize_image(tensor):
+#         return tensor * std + mean
+#
+#     # In your save step
+#     modified_image = image_tensor.detach().cpu().squeeze(0)  # Remove batch dimension
+#     modified_image = denormalize_image(modified_image)  # Apply denormalization
+#     modified_image_pil = transforms.ToPILImage()(modified_image.clamp(0, 1))
+#
+#     # Compute final similarity
+#     with torch.no_grad():
+#         # normalized_modified_image = clip_normalize(preprocess_image(modified_image_pil).unsqueeze(0).to(device))
+#         # modified_embedding = model.get_image_features(pixel_values=normalized_modified_image)
+#         # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
+#
+#         # normalized_modified_image = processor(modified_image_pil)
+#         modified_embedding = model.encode_image(image_tensor)
+#         # modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
+#         final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
+#
+#     return modified_image_pil, final_similarity
 
 
 mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
@@ -506,6 +657,290 @@ def assign_random_targets(x_s, selected_indices, unsampled_indices):
     return target_vectors
 
 
+def save_results_trained_model(args, results):
+    for k, v in vars(args).items():
+        if k not in results:
+            if isinstance(v, Path):
+                v = str(v)
+            results[k] = v
+        else:
+            print(f"Found {k} in results. Skipping.")
+
+    result_path = args.result_dir / f"{args.save_name}-results.json"
+
+    with open(result_path, "w") as f:
+        json.dump(results, f, default=float)
+    print(f"Results saved to {result_path}".center(80, "="))
+
+
+def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None):
+    # Dictionaries to store errors, runtimes, and weights for each method and test point
+    errors = defaultdict(list)
+    runtimes = defaultdict(list)
+    weights = defaultdict(list)
+    test_point_info = []  # To store details for each test point evaluation
+
+    # Loop over each test point in buyer's data, in batches
+    for i, j in tqdm(enumerate(range(0, x_b.shape[0], args.batch_size))):
+        # Get batch of test points
+        x_test = x_b[j: j + args.batch_size]
+        y_test = y_b[j: j + args.batch_size]
+
+        # Prepare keyword arguments for the error function
+        err_kwargs = dict(
+            x_test=x_test,
+            y_test=y_test,
+            x_s=x_s,
+            y_s=y_s,
+            eval_range=eval_range
+        )
+
+        if costs is not None:
+            error_func = utils.get_error_under_budget
+            err_kwargs["costs"] = costs
+        else:
+            error_func = utils.get_error_fixed
+            err_kwargs["return_list"] = True
+
+        # Perform single-step optimization (DAVED single step)
+        os_start = time.perf_counter()
+        w_os = frank_wolfe.one_step(x_s, x_test)
+        os_end = time.perf_counter()
+
+        # Store runtime and weights for single-step
+        runtimes["DAVED (single step)"].append(os_end - os_start)
+        weights["DAVED (single step)"].append(w_os)
+
+        # Record error for single-step
+        errors["DAVED (single step)"].append(error_func(w=w_os, **err_kwargs))
+
+        # Perform multi-step optimization (DAVED multi-step)
+        fw_start = time.perf_counter()
+        res_fw = frank_wolfe.design_selection(
+            x_s,
+            y_s,
+            x_test,
+            y_test,
+            num_select=10,
+            num_iters=args.num_iters,
+            alpha=None,
+            recompute_interval=0,
+            line_search=True,
+            costs=costs,
+            reg_lambda=args.reg_lambda,
+        )
+        fw_end = time.perf_counter()
+
+        # Store runtime, weights, and errors for multi-step
+        w_fw = res_fw["weights"]
+        runtimes["DAVED (multi-step)"].append(fw_end - fw_start)
+        weights["DAVED (multi-step)"].append(w_fw)
+        errors["DAVED (multi-step)"].append(error_func(w=w_fw, **err_kwargs))
+
+        # Store information about the test point, the indices used, and their results
+        test_point_info.append({
+            "test_point_index": j,
+            "test_x": x_test,
+            "test_y": y_test,
+            "single_step_weights": w_os,
+            "single_step_error": errors["DAVED (single step)"][-1],
+            "multi_step_weights": w_fw,
+            "multi_step_error": errors["DAVED (multi-step)"][-1],
+            "runtime_single_step": runtimes["DAVED (single step)"][-1],
+            "runtime_multi_step": runtimes["DAVED (multi-step)"][-1],
+            "eval_range": eval_range
+        })
+
+        # Save intermediate results periodically
+        if i % 25 == 0:
+            results = dict(errors=errors, eval_range=eval_range, runtimes=runtimes, test_point_info=test_point_info)
+            save_results_trained_model(args=args, results=results)
+            plot_results(args=args, results=results)
+            print(f"Checkpoint: Saved results at round {i}".center(40, "="))
+
+    # Final save of all results if not skipped
+    if not args.skip_save:
+        results = dict(errors=errors, eval_range=eval_range, runtimes=runtimes, test_point_info=test_point_info)
+        with open(args.result_dir / f"{args.save_name}-weights.pkl", "wb") as f:
+            pickle.dump(weights, f)
+        save_results_trained_model(args=args, results=results)
+        plot_results(args=args, results=results)
+
+    return results, test_point_info
+
+
+# def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None):
+#     errors = defaultdict(list)
+#     runtimes = defaultdict(list)
+#     weights = defaultdict(list)
+#     # loop over each test point in buyer
+#     for i, j in tqdm(enumerate(range(0, x_b.shape[0], args.batch_size))):
+#         x_test = x_b[j: j + args.batch_size]
+#         y_test = y_b[j: j + args.batch_size]
+#
+#         err_kwargs = dict(
+#             x_test=x_test, y_test=y_test, x_s=x_s, y_s=y_s, eval_range=eval_range
+#         )
+#
+#         if costs is not None:
+#             error_func = utils.get_error_under_budget
+#             err_kwargs["costs"] = costs
+#         else:
+#             error_func = utils.get_error_fixed
+#             err_kwargs["return_list"] = True
+#
+#         os_start = time.perf_counter()
+#         w_os = frank_wolfe.one_step(x_s, x_test)
+#         os_end = time.perf_counter()
+#         runtimes["DAVED (single step)"].append(os_end - os_start)
+#         weights["DAVED (single step)"].append(w_os)
+#
+#         fw_start = time.perf_counter()
+#         res_fw = frank_wolfe.design_selection(
+#             x_s,
+#             y_s,
+#             x_test,
+#             y_test,
+#             num_select=10,
+#             num_iters=args.num_iters,
+#             alpha=None,
+#             recompute_interval=0,
+#             line_search=True,
+#             costs=costs,
+#             reg_lambda=args.reg_lambda,
+#         )
+#         fw_end = time.perf_counter()
+#         w_fw = res_fw["weights"]
+#         runtimes["DAVED (multi-step)"].append(fw_end - fw_start)
+#         weights["DAVED (multi-step)"].append(w_fw)
+#
+#         errors["DAVED (multi-step)"].append(error_func(w=w_fw, **err_kwargs))
+#         errors["DAVED (single step)"].append(error_func(w=w_os, **err_kwargs))
+#
+#         results = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
+#
+#         if i % 25 == 0:
+#             save_results_trained_model(args=args, results=results)
+#             plot_results(args=args, results=results)
+#
+#         print(f"round {i} done".center(40, "="))
+#     if not args.skip_save:
+#         with open(args.result_dir / f"{args.save_name}-weights.pkl", "wb") as f:
+#             pickle.dump(weights, f)
+#
+#     save_results_trained_model(args=args, results=results)
+#     plot_results(args=args, results=results)
+#
+#     return results, weights
+
+
+class Adv:
+    def __init__(self, adversary_data):
+        self.x = adversary_data["X"]
+        self.y = adversary_data["y"]
+        self.costs = adversary_data["costs"]
+        self.indices = adversary_data["indices"]
+
+    def attack(self, attack_type, attack_param):
+        res = {}
+        if attack_type in ["cost", "both"] and args.use_cost:
+            # Cost Manipulation
+            print("Applying Cost Manipulation Attack...")
+            # Generate manipulated costs
+            # Manipulate the cost function as needed
+            manipulated_costs = manipulate_cost_function(
+                costs=self.costs,
+                method=attack_param["cost_manipulation_method"],  # e.g., "scale", "offset"
+                factor=attack_param["cost_factor"],
+                offset=attack_param["cost_offset"],
+                power=attack_param["cost_power"]
+            )
+
+            print("Cost Manipulation Completed.")
+            res["manipulated_costs"] = manipulated_costs
+
+        if attack_type in ["data", "both"]:
+            modified_indices, similarities = perform_attack_on_unsampled(
+                selected_indices_initial=selected_adversary_indices,
+                unsampled_indices=unsampled_adversary_indices,
+                image_paths=data['img_paths'],
+                X_sell=x_s,
+                model=args.model,
+                processor=args.preprocess,
+                device=args.device,
+                num_steps=args.attack_steps,
+                learning_rate=args.attack_lr,
+                lambda_reg=args.attack_reg,
+                epsilon=0.05,
+                output_dir=modified_images_path,
+            )
+
+            res["manipulated_img"] = manipulated_img
+        return res
+
+
+def evaluate_poisoning_effectiveness(
+        initial_weights,
+        updated_weights,
+        selected_indices_initial,
+        selected_indices_updated,
+        adversary_indices
+):
+    """
+    Evaluate the effectiveness of adversarial poisoning by comparing initial and updated weights and selections.
+
+    Parameters:
+    - initial_weights (np.ndarray): Array of weights before poisoning.
+    - updated_weights (np.ndarray): Array of weights after poisoning.
+    - selected_indices_initial (np.ndarray): Indices of samples selected before poisoning.
+    - selected_indices_updated (np.ndarray): Indices of samples selected after poisoning.
+    - adversary_indices (np.ndarray): Indices of adversarial samples.
+
+    Returns:
+    - dict: Evaluation metrics including counts and weight statistics.
+    """
+
+    # Step 1: Find adversarial samples in selected set before and after poisoning
+    initial_selected_adv = np.intersect1d(selected_indices_initial, adversary_indices)
+    updated_selected_adv = np.intersect1d(selected_indices_updated, adversary_indices)
+
+    # Step 2: Calculate number of adversarial samples selected before and after poisoning
+    num_adv_selected_before = len(initial_selected_adv)
+    num_adv_selected_after = len(updated_selected_adv)
+
+    # Step 3: Calculate mean weight for adversarial samples before and after poisoning
+    adv_weights_before = initial_weights[adversary_indices]
+    adv_weights_after = updated_weights[adversary_indices]
+
+    mean_adv_weight_before = np.mean(adv_weights_before)
+    mean_adv_weight_after = np.mean(adv_weights_after)
+    weight_increase_adv = mean_adv_weight_after - mean_adv_weight_before
+
+    # For comparison, calculate mean weight increase for non-adversarial samples
+    non_adversary_indices = np.setdiff1d(np.arange(len(initial_weights)), adversary_indices)
+    non_adv_weights_before = initial_weights[non_adversary_indices]
+    non_adv_weights_after = updated_weights[non_adversary_indices]
+
+    mean_non_adv_weight_before = np.mean(non_adv_weights_before)
+    mean_non_adv_weight_after = np.mean(non_adv_weights_after)
+    weight_increase_non_adv = mean_non_adv_weight_after - mean_non_adv_weight_before
+
+    # Compile the evaluation results into a dictionary
+    evaluation_results = {
+        "num_adv_selected_before": num_adv_selected_before,
+        "num_adv_selected_after": num_adv_selected_after,
+        "increase_in_selected_adv": num_adv_selected_after - num_adv_selected_before,
+        "mean_adv_weight_before": mean_adv_weight_before,
+        "mean_adv_weight_after": mean_adv_weight_after,
+        "weight_increase_adv": weight_increase_adv,
+        "mean_non_adv_weight_before": mean_non_adv_weight_before,
+        "mean_non_adv_weight_after": mean_non_adv_weight_after,
+        "weight_increase_non_adv": weight_increase_non_adv,
+    }
+
+    return evaluation_results
+
+
 def evaluate_attack(
         args,
         dataset='./data',
@@ -526,6 +961,8 @@ def evaluate_attack(
         result_dir='results',
         save_name='attack_evaluation',
         num_select=100,
+        attack_type="data",
+        adversary_ratio=0.25,
         **kwargs
 ):
     """
@@ -550,8 +987,7 @@ def evaluate_attack(
     - results (dict): Dictionary containing evaluation metrics and other relevant data.
     """
     # Step 1: Load and preprocess data
-
-    data = utils.get_data(
+    data = get_data(
         dataset=dataset,
         num_buyer=num_buyer * batch_size,
         num_seller=num_seller,
@@ -559,16 +995,17 @@ def evaluate_attack(
         dim=num_dim,
         noise_level=args.noise_level,
         random_state=args.random_seed,
-        cost_range=args.cost_range,
+        cost_gen_mode=args.cost_gen_mode,
+        use_cost=args.use_cost,
         cost_func=args.cost_func,
-        # todo change cost
-        assigned_cost=None
+        assigned_cost=None,
     )
     # Extract relevant data
     x_s = data["X_sell"].astype(np.float32)
     y_s = data["y_sell"].astype(np.float32)
     x_b = data["X_buy"].astype(np.float32)
     y_b = data["y_buy"].astype(np.float32)
+
     # todo change the costs
     costs = data.get("costs_sell")
     index_s = data['index_sell']
@@ -582,62 +1019,96 @@ def evaluate_attack(
     if costs is not None:
         print(f"Costs Shape: {costs.shape}".center(40, "="))
 
+    # adversary preparation, sample partial data for the adversary
+    num_adversary_samples = int(len(x_s) * adversary_ratio)
+    adversary_indices = np.random.choice(len(x_s), size=num_adversary_samples, replace=False)
+    adversary_data = {
+        "X": x_s[adversary_indices],
+        "y": y_s[adversary_indices],
+        "costs": costs[adversary_indices] if costs is not None else None,
+        "indices": adversary_indices
+    }
+    adv = Adv(adversary_data)
+
     # Step 2: Initial Data Selection
-    initial_results = data_selection(
-        x_s=x_s,
-        y_s=y_s,
-        x_b=x_b,
-        y_b=y_b,
-        num_iters=num_iters,
-        reg_lambda=reg_lambda,
-        costs=costs
+    # initial_results = data_selection(
+    #     x_s=x_s,
+    #     y_s=y_s,
+    #     x_b=x_b,
+    #     y_b=y_b,
+    #     num_iters=num_iters,
+    #     reg_lambda=reg_lambda,
+    #     costs=costs
+    # )
+    #
+    # Evaluate the peformance
+    eval_range = list(range(1, 30, 1)) + list(
+        range(30, args.max_eval_range, args.eval_step)
     )
 
+    # do the retrival and test performance of model.
+    initial_results, test_point_info = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs, args=args)
     # Step 3: Identify Selected and Unselected Data Points
+    for info_dic in test_point_info:
+        initial_weights = info_dic["DAVED (multi-step)"]
+        {
+            "test_point_index": j,
+            "test_x": x_test,
+            "test_y": y_test,
+            "single_step_weights": w_os,
+            "single_step_error": errors["DAVED (single step)"][-1],
+            "multi_step_weights": w_fw,
+            "multi_step_error": errors["DAVED (multi-step)"][-1],
+            "runtime_single_step": runtimes["DAVED (single step)"][-1],
+            "runtime_multi_step": runtimes["DAVED (multi-step)"][-1],
+            "eval_range": eval_range
+        }
+
     selected_indices_initial, unsampled_indices_initial = identify_selected_unsampled(
-        weights=initial_results['weights'],
+        weights=weights["DAVED (multi-step)"],
         num_select=num_select,
     )
 
+    # learn the selected and unselected for the adversary
+    selected_adversary_indices = np.intersect1d(selected_indices_initial, adversary_indices)
+    unsampled_adversary_indices = np.intersect1d(unsampled_indices_initial, adversary_indices)
+
     print(f"Initial Selected Indices: {selected_indices_initial}")
     print(f"Number of Unselected Data Points: {len(unsampled_indices_initial)}")
+    print(f"Initial Selected Indices from Adversary: {selected_adversary_indices}")
+    print(f"Number of Unselected Data Points from Adversary: {len(unsampled_adversary_indices)}")
 
-    # learn the vector can be selected
-    # target_vector = x_s[selected_indices_initial].mean(axis=0)
-    # target_vector = target_vector / np.linalg.norm(target_vector)
+    # Step 5: Perform Attack on Unselected Data Points
+    modified_images_path = os.path.join(
+        result_dir,
+        f'modified_images_{attack_type}',
+        f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}'
+    )
+    os.makedirs(modified_images_path, exist_ok=True)
 
-    modified_images_path = f'./result/{dataset}/modified_images/step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}'
-    # Step 4: Perform Attack on Unselected Data Points
+    modified_indices, similarities = adv.attack()
     modified_indices, similarities = perform_attack_on_unsampled(
-        selected_indices_initial=selected_indices_initial,
-        unsampled_indices=unsampled_indices_initial,
-        image_paths=sell_img_path,
+        selected_indices_initial=selected_adversary_indices,
+        unsampled_indices=unsampled_adversary_indices,
+        image_paths=data['img_paths'],
         X_sell=x_s,
-        model=model,
-        processor=preprocess,
-        device=device,
-        num_steps=args.attack_steps,  # 200
-        learning_rate=args.attack_lr,  # learning rate 0.1
-        lambda_reg=args.attack_reg,  # 0.1
+        model=args.model,
+        processor=args.preprocess,
+        device=args.device,
+        num_steps=args.attack_steps,
+        learning_rate=args.attack_lr,
+        lambda_reg=args.attack_reg,
         epsilon=0.05,
         output_dir=modified_images_path,
     )
-
     print(f"Number of Data Points Modified: {len(modified_indices)}")
 
     # Step 5: Re-run Data Selection on Modified Data
-    updated_results = data_selection(
-        x_s=x_s,
-        y_s=y_s,
-        x_b=x_b,
-        y_b=y_b,
-        num_iters=num_iters,
-        reg_lambda=reg_lambda,
-    )
+    updated_results, updated_weights = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs, args=args)
 
     # Step 6: Identify Updated Selected Data Points
     selected_indices_updated, _ = identify_selected_unsampled(
-        weights=updated_results['weights'],
+        weights=updated_weights,
         num_select=num_select,
     )
     print(f"Initial Selected Indices: {selected_indices_initial}")
@@ -645,14 +1116,39 @@ def evaluate_attack(
     print(f"Updated Selected Indices: {selected_indices_updated}")
     print(f"Updated Selected result: {updated_results['weights']}")
 
-    # Step 7: Evaluate Attack Success
-    success_rate, num_success = evaluate_attack_success(
+    # Step 7: Evaluate Attack Success on market side
+
+    evaluate_poisoning_effectiveness(
+        initial_weights=weights,
+        updated_weights,
+        selected_indices_initial,
+        selected_indices_updated,
+        adversary_indices)
+
+    total_selected = len(selected_indices_updated)
+    success_rate, num_success = evaluate_attack_success_selection(
         initial_selected=selected_indices_initial,
         updated_selected=selected_indices_updated,
         modified_indices=modified_indices,
+        total_selected=total_selected
+    )
+    print(f"Attack Success Rate (data selection): {success_rate * 100:.2f}% ({num_success}/{total_selected})")
+
+    # Step 8: Evaluate Attack Success on trained model
+
+    comprehensive_evaluation(
+        X_sell_original, y_sell_original,
+        X_sell_modified, y_sell_modified,
+        X_buy, y_buy,
+        data_indices_original, data_indices_modified,
+        cv_folds=5
     )
 
-    print(f"Attack Success Rate: {success_rate * 100:.2f}% ({num_success}/{len(modified_indices)})")
+    mse_before = evaluate_attack_trained_model(
+        x_s, y_s, x_b, y_b, selected_indices_initial, inverse_covariance=None)
+
+    mse_after = evaluate_attack_trained_model(
+        x_s, y_s, x_b, y_b, selected_indices_updated, inverse_covariance=None)
 
     # Step 8: Plot Weight Distributions
     plot_selection_weights(
@@ -671,6 +1167,8 @@ def evaluate_attack(
             'modified_indices': modified_indices,
             'attack_success_rate': success_rate,
             'num_successfully_selected': num_success,
+            'trained_model_mse_before': mse_before,
+            'trained_model_mse_after': mse_after,
         }
         save_results(
             results=results,
@@ -896,6 +1394,8 @@ if __name__ == "__main__":
         help="Compare to other data valution baselines in opendataval",
     )
     parser.add_argument("--debug", action="store_true", help="Turn on debugging mode")
+    parser.add_argument("--use_cost", action="store_true", help="If use cost")
+
     parser.add_argument(
         "--skip_save", action="store_true", help="Don't save weights or data"
     )
@@ -920,6 +1420,14 @@ if __name__ == "__main__":
         help="Choose cost function to apply.",
     )
     parser.add_argument(
+        "--cost_gen_mode",
+        default="constant",
+        choices=["random_uniform", "random_choice", "constant"],
+        type=str,
+        help="Choose cost function to apply.",
+    )
+
+    parser.add_argument(
         "--noise_level",
         default=0,
         type=float,
@@ -939,7 +1447,7 @@ if __name__ == "__main__":
         help="attack step",
     )
     args = parser.parse_args()
-
+    save_name = f'attack_evaluation_{args.dataset}_b_{args.num_buyers}_s_{args.num_seller}'
     # Define experiment parameters
     experiment_params = {
         'dataset': args.dataset,
@@ -956,7 +1464,7 @@ if __name__ == "__main__":
         'attack_strength': 0.1,
         'save_results_flag': True,
         'result_dir': 'results',
-        'save_name': 'attack_evaluation',
+        'save_name': save_name,
         "num_select": args.num_select
     }
 
