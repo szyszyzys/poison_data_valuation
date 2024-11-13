@@ -869,11 +869,12 @@ class Adv:
         device = attack_param["device"]
         model = attack_param["model"]
         modified_images_path = attack_param["modified_images_path"]
-
+        modified_images_path = f"{modified_images_path}/"
+        manipulated_costs = None
         modify_info = assign_random_targets(x_s, target_indices, modify_indices, img_path)
-        target_costs = costs[target_indices]
         if attack_type in ["cost", "both"] and attack_param.get("use_cost", False):
             print("Applying Cost Manipulation Attack...")
+            target_costs = costs[target_indices]
 
             # Retrieve base costs for manipulation
             manipulated_costs = self.costs.copy()
@@ -1173,7 +1174,7 @@ def evaluate_attack(
     for idx, info_dic in enumerate(initial_selection_info):
         m_cur_weight = info_dic["multi_step_weights"]
         s_cur_weight = info_dic["single_step_weights"]
-
+        test_point_index = info_dic["test_point_index"]
         x_test = info_dic["test_x"]
         y_test = info_dic["test_y"]
 
@@ -1194,7 +1195,8 @@ def evaluate_attack(
         modified_images_path = os.path.join(
             result_dir,
             f'modified_images_{attack_type}_multi_step',
-            f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}'
+            f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}',
+            f'target_query_batch_{test_point_index}'
         )
         os.makedirs(modified_images_path, exist_ok=True)
 
