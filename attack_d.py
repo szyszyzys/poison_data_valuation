@@ -1,4 +1,5 @@
 import argparse
+import copy
 import json
 import os
 import pickle
@@ -20,7 +21,7 @@ from tqdm import tqdm
 # CLIP model and processor
 import daved.src.frank_wolfe as frank_wolfe  # Ensure this module contains the design_selection function
 # Import your custom modules or utilities
-from attack.general_attack.my_utils import get_data, manipulate_cost_function
+from attack.general_attack.my_utils import get_data
 from attack.general_attack.train_model import comprehensive_evaluation
 from daved.src import utils
 from daved.src.main import plot_results
@@ -373,7 +374,7 @@ def modify_image(
         modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
         final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
 
-    return modified_image_pil, final_similarity
+    return modified_image_pil, modified_embedding, final_similarity
 
 
 # def modify_image(
@@ -558,9 +559,17 @@ def extract_features(image, model, processor):
     return image_features.squeeze(0)  # Remove batch dimension
 
 
+class IMG:
+    def __init__(self, path, idx, emb, is_modified, modify_target_idx):
+        self.path = path
+        self.idx = idx
+        self.emb = emb
+        self.is_modified = is_modified
+        self.modify_target_idx = modify_target_idx
+
+
 def image_modification(
         modify_info,
-        X_sell,
         model,
         processor,
         device,
@@ -591,25 +600,17 @@ def image_modification(
     """
 
     os.makedirs(output_dir, exist_ok=True)
-    # {"target_vector": target_vector,
-    #  "index": random_selected_index,
-    #  "target_img_path": img_path[random_selected_index],
-    #  "original_img_path": img_path[idx]}
 
-    modified_indices = []
-    similarities = {}
-    img_mapping = {}
-    modifed_result = {}
-    # {"target_vector": target_vector,
-    #  "index": random_selected_index,
-    #  "target_img_path": img_path[random_selected_index],
-    #  "original_img_path": img_path[idx]}
+    modify_result = {}
+
     modify_indices = modify_info.keys()
     for idx in tqdm(modify_indices, desc="Performing Attack on Unsampled Images"):
         cur_info = modify_info[modify_indices]
         target_vector = cur_info["target_vector"]
         modify_image_path = cur_info["original_img_path"]
-        modified_image, similarity = modify_image(
+        target_img_path = cur_info["target_img_path"]
+        target_img_idx = cur_info["index"]
+        modified_image, modified_embedding, similarity = modify_image(
             image_path=modify_image_path,
             target_vector=target_vector,
             model=model,
@@ -622,39 +623,24 @@ def image_modification(
         )
 
         # Save the modified image
-        modified_image_path = os.path.join(output_dir, f'modified_{Path(image_path).name}')
+        modified_image_path = os.path.join(output_dir, f'modified_{Path(modify_image_path).name}')
         modified_image.save(modified_image_path)
-        o_image_path = os.path.join(output_dir, f'o_{Path(image_path).name}')
-        o_image = load_image(image_path)
-
+        o_image_path = os.path.join(output_dir, f'o_{Path(modify_image_path).name}')
+        o_image = load_image(modify_image_path)
         o_image = processor(o_image)
         o_image = denormalize_image(o_image)
         # Convert the tensor back to a PIL image
         o_image = transforms.ToPILImage()(o_image)
-
         # Save the image
         o_image.save(o_image_path)
 
-        img_mapping[modified_image_path] = image_path
-        # Update the feature matrix
-        X_sell[idx] = model.encode_image(processor(modified_image)[None].to(device)).cpu().detach().numpy()
-        # Record the modification
-
-        modifed_result[idx] = {"genenral_info": cur_info,
-                               "similarity": similarity,
-                               "m_embedding": ,
-        "modified_image": modified_image
-
-
-        }
-
-    # Store the modified image path for tracking
-    manipulated_img_mapping[original_image_path] = {
-        "target_image": target_image_path,
-        "modified_indices": modified_indices,
-        "similarity": similarities
-    }
-    return modifed_result
+        modify_result[idx] = {"target_image": target_img_idx,
+                              "similarity": similarity,
+                              "m_embedding": modified_embedding,
+                              "modified_image": modified_image,
+                              "modified_img_original": modify_image_path
+                              }
+    return modify_result
 
 
 def assign_random_targets(x_s, selected_indices, unsampled_indices, img_path):
@@ -777,85 +763,86 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
 
         # Save intermediate results periodically
         if i % 25 == 0:
-            results = dict(errors=errors, eval_range=eval_range, runtimes=runtimes, test_point_info=test_point_info)
-            save_results_trained_model(args=args, results=results)
-            plot_results(args=args, results=results)
+            attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes,
+                                       test_point_info=test_point_info)
+            save_results_trained_model(args=args, results=attack_model_result)
+            plot_results(args=args, results=attack_model_result)
             print(f"Checkpoint: Saved results at round {i}".center(40, "="))
 
     # Final save of all results if not skipped
     if not args.skip_save:
-        results = dict(errors=errors, eval_range=eval_range, runtimes=runtimes, test_point_info=test_point_info)
+        attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes,
+                                   test_point_info=test_point_info)
         with open(args.result_dir / f"{args.save_name}-weights.pkl", "wb") as f:
             pickle.dump(weights, f)
-        save_results_trained_model(args=args, results=results)
-        plot_results(args=args, results=results)
+        save_results_trained_model(args=args, results=attack_model_result)
+        plot_results(args=args, results=attack_model_result)
 
-    return results, test_point_info
+    return attack_model_result, test_point_info
 
-
-# def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None):
-#     errors = defaultdict(list)
-#     runtimes = defaultdict(list)
-#     weights = defaultdict(list)
-#     # loop over each test point in buyer
-#     for i, j in tqdm(enumerate(range(0, x_b.shape[0], args.batch_size))):
-#         x_test = x_b[j: j + args.batch_size]
-#         y_test = y_b[j: j + args.batch_size]
-#
-#         err_kwargs = dict(
-#             x_test=x_test, y_test=y_test, x_s=x_s, y_s=y_s, eval_range=eval_range
-#         )
-#
-#         if costs is not None:
-#             error_func = utils.get_error_under_budget
-#             err_kwargs["costs"] = costs
-#         else:
-#             error_func = utils.get_error_fixed
-#             err_kwargs["return_list"] = True
-#
-#         os_start = time.perf_counter()
-#         w_os = frank_wolfe.one_step(x_s, x_test)
-#         os_end = time.perf_counter()
-#         runtimes["DAVED (single step)"].append(os_end - os_start)
-#         weights["DAVED (single step)"].append(w_os)
-#
-#         fw_start = time.perf_counter()
-#         res_fw = frank_wolfe.design_selection(
-#             x_s,
-#             y_s,
-#             x_test,
-#             y_test,
-#             num_select=10,
-#             num_iters=args.num_iters,
-#             alpha=None,
-#             recompute_interval=0,
-#             line_search=True,
-#             costs=costs,
-#             reg_lambda=args.reg_lambda,
-#         )
-#         fw_end = time.perf_counter()
-#         w_fw = res_fw["weights"]
-#         runtimes["DAVED (multi-step)"].append(fw_end - fw_start)
-#         weights["DAVED (multi-step)"].append(w_fw)
-#
-#         errors["DAVED (multi-step)"].append(error_func(w=w_fw, **err_kwargs))
-#         errors["DAVED (single step)"].append(error_func(w=w_os, **err_kwargs))
-#
-#         results = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
-#
-#         if i % 25 == 0:
-#             save_results_trained_model(args=args, results=results)
-#             plot_results(args=args, results=results)
-#
-#         print(f"round {i} done".center(40, "="))
-#     if not args.skip_save:
-#         with open(args.result_dir / f"{args.save_name}-weights.pkl", "wb") as f:
-#             pickle.dump(weights, f)
-#
-#     save_results_trained_model(args=args, results=results)
-#     plot_results(args=args, results=results)
-#
-#     return results, weights
+    # def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None):
+    #     errors = defaultdict(list)
+    #     runtimes = defaultdict(list)
+    #     weights = defaultdict(list)
+    #     # loop over each test point in buyer
+    #     for i, j in tqdm(enumerate(range(0, x_b.shape[0], args.batch_size))):
+    #         x_test = x_b[j: j + args.batch_size]
+    #         y_test = y_b[j: j + args.batch_size]
+    #
+    #         err_kwargs = dict(
+    #             x_test=x_test, y_test=y_test, x_s=x_s, y_s=y_s, eval_range=eval_range
+    #         )
+    #
+    #         if costs is not None:
+    #             error_func = utils.get_error_under_budget
+    #             err_kwargs["costs"] = costs
+    #         else:
+    #             error_func = utils.get_error_fixed
+    #             err_kwargs["return_list"] = True
+    #
+    #         os_start = time.perf_counter()
+    #         w_os = frank_wolfe.one_step(x_s, x_test)
+    #         os_end = time.perf_counter()
+    #         runtimes["DAVED (single step)"].append(os_end - os_start)
+    #         weights["DAVED (single step)"].append(w_os)
+    #
+    #         fw_start = time.perf_counter()
+    #         res_fw = frank_wolfe.design_selection(
+    #             x_s,
+    #             y_s,
+    #             x_test,
+    #             y_test,
+    #             num_select=10,
+    #             num_iters=args.num_iters,
+    #             alpha=None,
+    #             recompute_interval=0,
+    #             line_search=True,
+    #             costs=costs,
+    #             reg_lambda=args.reg_lambda,
+    #         )
+    #         fw_end = time.perf_counter()
+    #         w_fw = res_fw["weights"]
+    #         runtimes["DAVED (multi-step)"].append(fw_end - fw_start)
+    #         weights["DAVED (multi-step)"].append(w_fw)
+    #
+    #         errors["DAVED (multi-step)"].append(error_func(w=w_fw, **err_kwargs))
+    #         errors["DAVED (single step)"].append(error_func(w=w_os, **err_kwargs))
+    #
+    #         results = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
+    #
+    #         if i % 25 == 0:
+    #             save_results_trained_model(args=args, results=results)
+    #             plot_results(args=args, results=results)
+    #
+    #         print(f"round {i} done".center(40, "="))
+    #     if not args.skip_save:
+    #         with open(args.result_dir / f"{args.save_name}-weights.pkl", "wb") as f:
+    #             pickle.dump(weights, f)
+    #
+    #     save_results_trained_model(args=args, results=results)
+    #     plot_results(args=args, results=results)
+    #
+    #     return results, weights
 
 
 class Adv:
@@ -881,6 +868,10 @@ class Adv:
         # Step 1: Apply Cost Manipulation
         target_indices = attack_param["selected_indices"]
         modify_indices = attack_param["unselected_indices"]
+        preprocess = attack_param["preprocess"]
+        device = attack_param["device"]
+        model = attack_param["model"]
+        modified_images_path = attack_param["modified_images_path"]
 
         modify_info = assign_random_targets(x_s, target_indices, modify_indices, img_path)
         target_costs = costs[target_indices]
@@ -935,23 +926,89 @@ class Adv:
 
             manipulated_info = image_modification(
                 modify_info=modify_info,
-                X_sell=x_s,
-                model=args.model,
-                processor=args.preprocess,
-                device=args.device,
+                model=model,
+                processor=preprocess,
+                device=device,
                 num_steps=attack_param.get("attack_steps", 200),
                 learning_rate=attack_param.get("attack_lr", 0.1),
                 lambda_reg=attack_param.get("attack_reg", 0.1),
                 epsilon=attack_param.get("epsilon", 0.05),
                 output_dir=modified_images_path,
             )
-
-
-
-            print("Data Manipulation Attack Completed.")
-        res = {"manipulated_img_mapping": manipulated_img_mapping,
+            # modify_result[idx] = {"target_image": target_img_idx,
+            #                       "similarity": similarity,
+            #                       "m_embedding": modified_embedding,
+            #                       "modified_image": modified_image,
+            #                       "modified_img_original": modify_image_path
+            #                       }
+        res = {"image_modification_info": manipulated_info,
                "manipulated_costs": manipulated_costs}
         return res
+
+
+def print_evaluation_results(evaluation_results):
+    """
+    Print the evaluation results of the adversarial poisoning effectiveness in a readable format.
+
+    Parameters:
+    - evaluation_results (dict): Dictionary containing metrics on poisoning effectiveness.
+    """
+
+    print("==== Adversarial Poisoning Effectiveness Evaluation ====")
+    print(f"Number of adversarial samples selected before poisoning: {evaluation_results['num_adv_selected_before']}")
+    print(f"Number of adversarial samples selected after poisoning: {evaluation_results['num_adv_selected_after']}")
+    print(f"Increase in selected adversarial samples: {evaluation_results['increase_in_selected_adv']}")
+
+    print("\n-- Weight Analysis for Adversarial Samples --")
+    print(f"Mean weight of adversarial samples before poisoning: {evaluation_results['mean_adv_weight_before']:.4f}")
+    print(f"Mean weight of adversarial samples after poisoning: {evaluation_results['mean_adv_weight_after']:.4f}")
+    print(f"Weight increase for adversarial samples: {evaluation_results['weight_increase_adv']:.4f}")
+
+    print("\n-- Weight Analysis for Non-Adversarial Samples --")
+    print(
+        f"Mean weight of non-adversarial samples before poisoning: {evaluation_results['mean_non_adv_weight_before']:.4f}")
+    print(
+        f"Mean weight of non-adversarial samples after poisoning: {evaluation_results['mean_non_adv_weight_after']:.4f}")
+    print(f"Weight increase for non-adversarial samples: {evaluation_results['weight_increase_non_adv']:.4f}")
+
+    print("========================================================")
+
+
+def average_metrics(results_list):
+    """
+    Calculate the average metrics from multiple evaluation results.
+
+    Parameters:
+    - results_list (list of dict): List of evaluation results dictionaries from multiple runs.
+
+    Returns:
+    - dict: Dictionary containing the average values of each metric.
+    """
+
+    # Initialize dictionary to store sums of each metric
+    averaged_results = {
+        "num_adv_selected_before": 0,
+        "num_adv_selected_after": 0,
+        "increase_in_selected_adv": 0,
+        "mean_adv_weight_before": 0.0,
+        "mean_adv_weight_after": 0.0,
+        "weight_increase_adv": 0.0,
+        "mean_non_adv_weight_before": 0.0,
+        "mean_non_adv_weight_after": 0.0,
+        "weight_increase_non_adv": 0.0,
+    }
+
+    # Sum each metric across all runs
+    for result in results_list:
+        for key in averaged_results:
+            averaged_results[key] += result[key]
+
+    # Calculate average by dividing by the number of runs
+    num_runs = len(results_list)
+    for key in averaged_results:
+        averaged_results[key] /= num_runs
+
+    return averaged_results
 
 
 def evaluate_poisoning_effectiveness(
@@ -1012,7 +1069,7 @@ def evaluate_poisoning_effectiveness(
         "mean_non_adv_weight_after": mean_non_adv_weight_after,
         "weight_increase_non_adv": weight_increase_non_adv,
     }
-
+    print_evaluation_results(evaluation_results)
     return evaluation_results
 
 
@@ -1088,7 +1145,6 @@ def evaluate_attack(
     index_v = data['index_val']
     img_paths = data['img_paths']
     print("Data type of index_s:", len(img_paths))
-    sell_img_path = [img_paths[i] for i in index_s]
     print(f"Seller Data Shape: {x_s.shape}".center(40, "="))
     print(f"Buyer Data Shape: {x_b.shape}".center(40, "="))
     if costs is not None:
@@ -1105,161 +1161,178 @@ def evaluate_attack(
     }
     adv = Adv(adversary_data)
 
-    # Step 2: Initial Data Selection
-    # initial_results = data_selection(
-    #     x_s=x_s,
-    #     y_s=y_s,
-    #     x_b=x_b,
-    #     y_b=y_b,
-    #     num_iters=num_iters,
-    #     reg_lambda=reg_lambda,
-    #     costs=costs
-    # )
-    #
     # Evaluate the peformance
     eval_range = list(range(1, 30, 1)) + list(
         range(30, args.max_eval_range, args.eval_step)
     )
 
-    # do the retrival and test performance of model.
-    initial_results, test_point_info = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs, args=args)
+    # Get the clean result.
+    initial_results, initial_selection_info = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs,
+                                                                     args=args)
     # Step 3: Identify Selected and Unselected Data Points
-    for info_dic in test_point_info:
-        initial_weights = info_dic["DAVED (multi-step)"]
-        {
-            "test_point_index": j,
-            "test_x": x_test,
-            "test_y": y_test,
-            "single_step_weights": w_os,
-            "single_step_error": errors["DAVED (single step)"][-1],
-            "multi_step_weights": w_fw,
-            "multi_step_error": errors["DAVED (multi-step)"][-1],
-            "runtime_single_step": runtimes["DAVED (single step)"][-1],
-            "runtime_multi_step": runtimes["DAVED (multi-step)"][-1],
-            "eval_range": eval_range
+    # For each batch (buyer query), perform the reconstruction
+    all_attack_model_training_result = []
+    all_attack_selection_info = []
+    for idx, info_dic in enumerate(initial_selection_info):
+        m_cur_weight = info_dic["multi_step_weights"]
+        s_cur_weight = info_dic["single_step_weights"]
+
+        x_test = info_dic["test_x"]
+        y_test = info_dic["test_y"]
+
+        # for current data batch, find which points are selected
+        selected_indices_initial, unsampled_indices_initial = identify_selected_unsampled(
+            weights=m_cur_weight,
+            num_select=num_select,
+        )
+        selected_adversary_indices = np.intersect1d(selected_indices_initial, adversary_indices)
+        unsampled_adversary_indices = np.intersect1d(unsampled_indices_initial, adversary_indices)
+
+        print(f"Initial Selected Indices: {len(selected_indices_initial)}")
+        print(f"Number of Unselected Data Points: {len(unsampled_indices_initial)}")
+        print(f"Initial Selected Indices from Adversary: {len(selected_adversary_indices)}")
+        print(f"Number of Unselected Data Points from Adversary: {len(unsampled_adversary_indices)}")
+
+        # Step 5: Perform Attack on Unselected Data Points
+        modified_images_path = os.path.join(
+            result_dir,
+            f'modified_images_{attack_type}_multi_step',
+            f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}'
+        )
+        os.makedirs(modified_images_path, exist_ok=True)
+
+        # start attack
+        attack_param = {
+            "cost_manipulation_method": "undercut_target",
+            "selected_indices": None,
+            "unselected_indices": None,
+            "use_cost": False,
         }
+        attack_result = adv.attack(attack_type, attack_param, x_s, costs, img_paths)
 
-    selected_indices_initial, unsampled_indices_initial = identify_selected_unsampled(
-        weights=weights["DAVED (multi-step)"],
-        num_select=num_select,
-    )
+        # image_modification_info[idx] = {"target_image": target_img_idx,
+        #                       "similarity": similarity,
+        #                       "m_embedding": modified_embedding,
+        #                       "modified_image": modified_image,
+        #                       "modified_img_original": modify_image_path
+        #                       }
+        # summarize the modify result
+        image_modification_info = attack_result["image_modification_info"]
 
-    # learn the selected and unselected for the adversary
-    selected_adversary_indices = np.intersect1d(selected_indices_initial, adversary_indices)
-    unsampled_adversary_indices = np.intersect1d(unsampled_indices_initial, adversary_indices)
+        m_embeddings = []
+        m_indices = []
+        for img_idx, info in image_modification_info:
+            modified_embedding = info["m_embedding"]
+            m_embeddings.append(modified_embedding)
+            m_indices.append(img_idx)
+        x_s_clone = copy.deepcopy(x_s)
+        costs_clone = copy.deepcopy(costs)
+        updated_results, updated_test_point_info = sampling_run_one_buyer(
+            x_test, y_test, x_s_clone, y_s, eval_range, costs=costs_clone, args=args
+        )
 
-    print(f"Initial Selected Indices: {selected_indices_initial}")
-    print(f"Number of Unselected Data Points: {len(unsampled_indices_initial)}")
-    print(f"Initial Selected Indices from Adversary: {selected_adversary_indices}")
-    print(f"Number of Unselected Data Points from Adversary: {len(unsampled_adversary_indices)}")
+        all_attack_model_training_result.append(updated_results)
+        all_attack_selection_info.append(updated_test_point_info[0])
+    evaluation_results_list = []
 
-    # Step 5: Perform Attack on Unselected Data Points
-    modified_images_path = os.path.join(
-        result_dir,
-        f'modified_images_{attack_type}',
-        f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}'
-    )
-    os.makedirs(modified_images_path, exist_ok=True)
+    # Step 6: attack evaluation, identify Updated Selected Data Points
+    for o_info, u_info in (initial_selection_info, all_attack_selection_info):
+        s_result = []
+        o_weight = o_info["multi_step_weights"]
+        u_weight = u_info["multi_step_weights"]
 
-    modified_indices, similarities = adv.attack()
-    modified_indices, similarities = image_modification(
-        selected_indices_initial=selected_adversary_indices,
-        modify_indices=unsampled_adversary_indices,
-        image_paths=data['img_paths'],
-        X_sell=x_s,
-        model=args.model,
-        processor=args.preprocess,
-        device=args.device,
-        num_steps=args.attack_steps,
-        learning_rate=args.attack_lr,
-        lambda_reg=args.attack_reg,
-        epsilon=0.05,
-        output_dir=modified_images_path,
-    )
-    print(f"Number of Data Points Modified: {len(modified_indices)}")
+        o_selected_indices, _ = identify_selected_unsampled(
+            weights=o_weight,
+            num_select=num_select,
+        )
 
-    # Step 5: Re-run Data Selection on Modified Data
-    updated_results, updated_weights = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs, args=args)
+        u_selected_indices, _ = identify_selected_unsampled(
+            weights=u_weight,
+            num_select=num_select,
+        )
 
-    # Step 6: Identify Updated Selected Data Points
-    selected_indices_updated, _ = identify_selected_unsampled(
-        weights=updated_weights,
-        num_select=num_select,
-    )
-    print(f"Initial Selected Indices: {selected_indices_initial}")
-    print(f"Initial Selected result: {initial_results['weights']}")
-    print(f"Updated Selected Indices: {selected_indices_updated}")
-    print(f"Updated Selected result: {updated_results['weights']}")
+        evaluation_results = evaluate_poisoning_effectiveness(
+            initial_weights=o_weight,
+            updated_weights=u_weight,
+            selected_indices_initial=o_selected_indices,
+            selected_indices_updated=u_selected_indices,
+            adversary_indices=adversary_indices)
+        evaluation_results_list.append(evaluation_results)
+        # evaluation_results = {
+        #     "num_adv_selected_before": num_adv_selected_before,
+        #     "num_adv_selected_after": num_adv_selected_after,
+        #     "increase_in_selected_adv": num_adv_selected_after - num_adv_selected_before,
+        #     "mean_adv_weight_before": mean_adv_weight_before,
+        #     "mean_adv_weight_after": mean_adv_weight_after,
+        #     "weight_increase_adv": weight_increase_adv,
+        #     "mean_non_adv_weight_before": mean_non_adv_weight_before,
+        #     "mean_non_adv_weight_after": mean_non_adv_weight_after,
+        #     "weight_increase_non_adv": weight_increase_non_adv,
+        # }
 
-    # Step 7: Evaluate Attack Success on market side
-
-    evaluate_poisoning_effectiveness(
-        initial_weights=weights,
-        updated_weights,
-        selected_indices_initial,
-        selected_indices_updated,
-        adversary_indices)
-
-    total_selected = len(selected_indices_updated)
-    success_rate, num_success = evaluate_attack_success_selection(
-        initial_selected=selected_indices_initial,
-        updated_selected=selected_indices_updated,
-        modified_indices=modified_indices,
-        total_selected=total_selected
-    )
-    print(f"Attack Success Rate (data selection): {success_rate * 100:.2f}% ({num_success}/{total_selected})")
+    average_metrics(evaluation_results)
 
     # Step 8: Evaluate Attack Success on trained model
+    # get average result for attacked model:
+    final_errors = {}
+    amr_errors = []
+    for amr in all_attack_model_training_result:
+        # amr = dict(errors=errors, eval_range=eval_range, runtimes=runtimes, test_point_info=test_point_info)
+        amr_errors.append(amr["errors"]["DAVED (multi-step)"][-1])
+    amr_errors = np.array(amr_errors)
+    initial_results["errors"]["attacks"] = amr_errors
+    args.save_name = "malicious_comparasion"
+    plot_results(args=args, results=initial_results)
 
-    comprehensive_evaluation(
-        X_sell_original, y_sell_original,
-        X_sell_modified, y_sell_modified,
-        X_buy, y_buy,
-        data_indices_original, data_indices_modified,
-        cv_folds=5
-    )
+    # comprehensive_evaluation(
+    #     X_sell_original, y_sell_original,
+    #     X_sell_modified, y_sell_modified,
+    #     X_buy, y_buy,
+    #     data_indices_original, data_indices_modified,
+    #     cv_folds=5
+    # )
 
-    mse_before = evaluate_attack_trained_model(
-        x_s, y_s, x_b, y_b, selected_indices_initial, inverse_covariance=None)
-
-    mse_after = evaluate_attack_trained_model(
-        x_s, y_s, x_b, y_b, selected_indices_updated, inverse_covariance=None)
+    # mse_before = evaluate_attack_trained_model(
+    #     x_s, y_s, x_b, y_b, selected_indices_initial, inverse_covariance=None)
+    #
+    # mse_after = evaluate_attack_trained_model(
+    #     x_s, y_s, x_b, y_b, selected_indices_updated, inverse_covariance=None)
 
     # Step 8: Plot Weight Distributions
-    plot_selection_weights(
-        initial_weights=initial_results['weights'],
-        updated_weights=updated_results['weights'],
-        save_path=f'{result_dir}/',  # Set a path to save the plot if desired
-    )
+    # plot_selection_weights(
+    #     initial_weights=initial_results['weights'],
+    #     updated_weights=updated_results['weights'],
+    #     save_path=f'{result_dir}/',  # Set a path to save the plot if desired
+    # )
 
     # Step 9: Save Results (Optional)
-    if save_results_flag:
-        results = {
-            'initial_selected_indices': selected_indices_initial,
-            'unsampled_indices_initial': unsampled_indices_initial,
-            'x_s_modified': x_s,
-            'updated_selected_indices': selected_indices_updated,
-            'modified_indices': modified_indices,
-            'attack_success_rate': success_rate,
-            'num_successfully_selected': num_success,
-            'trained_model_mse_before': mse_before,
-            'trained_model_mse_after': mse_after,
-        }
-        save_results(
-            results=results,
-            save_dir=result_dir,
-            save_name=save_name,
-        )
-        print(f"Results saved to {result_dir}/{save_name}.pkl")
-
-    return {
-        'initial_selected_indices': selected_indices_initial,
-        'unsampled_indices_initial': unsampled_indices_initial,
-        'updated_selected_indices': selected_indices_updated,
-        'modified_indices': modified_indices,
-        'attack_success_rate': success_rate,
-        'num_successfully_selected': num_success,
-    }
+    # if save_results_flag:
+    #     results = {
+    #         'initial_selected_indices': selected_indices_initial,
+    #         'unsampled_indices_initial': unsampled_indices_initial,
+    #         'x_s_modified': x_s,
+    #         'updated_selected_indices': selected_indices_updated,
+    #         'modified_indices': modified_indices,
+    #         'attack_success_rate': success_rate,
+    #         'num_successfully_selected': num_success,
+    #         'trained_model_mse_before': mse_before,
+    #         'trained_model_mse_after': mse_after,
+    #     }
+    #     save_results(
+    #         results=results,
+    #         save_dir=result_dir,
+    #         save_name=save_name,
+    #     )
+    #     print(f"Results saved to {result_dir}/{save_name}.pkl")
+    #
+    # return {
+    #     'initial_selected_indices': selected_indices_initial,
+    #     'unsampled_indices_initial': unsampled_indices_initial,
+    #     'updated_selected_indices': selected_indices_updated,
+    #     'modified_indices': modified_indices,
+    #     'attack_success_rate': success_rate,
+    #     'num_successfully_selected': num_success,
+    # }
 
 
 # device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -1480,12 +1553,12 @@ if __name__ == "__main__":
         nargs="*",
         default=None,
         help="""
-        Choose range of costs to sample uniformly.
-        E.g. costs=[1, 2, 3, 9] will randomly set each seller data point
-        to one of these costs and apply the cost_func during optimization.
-        If set to None, no cost is applied during optimization.
-        Default is None.
-        """,
+    Choose range of costs to sample uniformly.
+    E.g. costs=[1, 2, 3, 9] will randomly set each seller data point
+    to one of these costs and apply the cost_func during optimization.
+    If set to None, no cost is applied during optimization.
+    Default is None.
+    """,
     )
     parser.add_argument(
         "--cost_func",

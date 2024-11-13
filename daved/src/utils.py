@@ -536,11 +536,13 @@ def plot_errors_fixed(results, save_path):
                 k = "KNN Shapley"
             case "DataOob":
                 k = "Data-OOB"
+            case "attack":
+                k = "Attack-DEVAD"
             case _:
                 k = k
 
         match k:
-            case k if "Ours" in k:
+            case k if "DAVED (multi-step)" in k:
                 lw = 2
                 ls = "-"
                 marker = "*"
