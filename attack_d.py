@@ -931,7 +931,7 @@ class Adv:
                 model=model,
                 processor=preprocess,
                 device=device,
-                num_steps=attack_param.get("attack_steps", 200),
+                num_steps=attack_param.get("attack_steps", 50),
                 learning_rate=attack_param.get("attack_lr", 0.1),
                 lambda_reg=attack_param.get("attack_reg", 0.1),
                 epsilon=attack_param.get("epsilon", 0.05),
@@ -1233,7 +1233,7 @@ def evaluate_attack(
 
         m_embeddings = []
         m_indices = []
-        for img_idx, info in image_modification_info:
+        for img_idx, info in image_modification_info.items():
             modified_embedding = info["m_embedding"]
             m_embeddings.append(modified_embedding)
             m_indices.append(img_idx)
