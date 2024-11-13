@@ -9,8 +9,8 @@ from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 
-import frank_wolfe
-import utils
+import daved.src.frank_wolfe as frank_wolfe
+import daved.src.utils as utils
 
 
 def main(args):

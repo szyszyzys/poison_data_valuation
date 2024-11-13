@@ -1,1 +1,1 @@
-python main.py -d fitzpatrick --num_buyers 100 --num_seller 15000  --exp_name main_table
+python main.py -d fitzpatrick --num_buyers 100 --num_seller 500  --exp_name main_table
