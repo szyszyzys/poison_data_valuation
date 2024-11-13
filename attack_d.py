@@ -289,9 +289,10 @@ def modify_image(
     model.eval()
 
     # Retrieve normalization parameters from the processor
-    mean = torch.tensor(processor.feature_extractor.image_mean).view(3, 1, 1).to(device)
-    std = torch.tensor(processor.feature_extractor.image_std).view(3, 1, 1).to(device)
-
+    # mean = torch.tensor(processor.feature_extractor.image_mean).view(3, 1, 1).to(device)
+    # std = torch.tensor(processor.feature_extractor.image_std).view(3, 1, 1).to(device)
+    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1).to(device)
+    std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(3, 1, 1).to(device)
     # Initialize variables for early stopping
     previous_loss = float('inf')
     patience = 10  # Number of steps to wait for improvement
