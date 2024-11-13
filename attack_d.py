@@ -266,7 +266,11 @@ def modify_image(
     image = Image.open(image_path).convert("RGB")
     # processed = processor(images=image, return_tensors="pt")\
     processed = processor(image)
-    image_tensor = processed['pixel_values'].to(device).clone().detach().requires_grad_(True)
+    image_tensor = preprocess(image).unsqueeze(0).to(device)  # No need for ['pixel_values']
+
+    # If you want gradients with respect to the image tensor, set requires_grad
+    image_tensor = image_tensor.clone().detach().requires_grad_(True)
+
     original_image_tensor = image_tensor.clone().detach()
 
     if verbose:
