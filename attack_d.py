@@ -1569,6 +1569,13 @@ if __name__ == "__main__":
         type=str,
         help="Choose cost function to apply.",
     )
+
+    parser.add_argument(
+        "--save_name",
+        default="robustness_test",
+        type=str,
+        help="save_name.",
+    )
     parser.add_argument(
         "--cost_gen_mode",
         default="constant",
