@@ -1658,5 +1658,5 @@ if __name__ == "__main__":
 
     # Print final results
     print("\nFinal Attack Evaluation Metrics:")
-    print(f"Attack Success Rate: {results['attack_success_rate'] * 100:.2f}%")
-    print(f"Number of Successfully Selected Modified Data Points: {results['num_successfully_selected']}")
+    # print(f"Attack Success Rate: {results['attack_success_rate'] * 100:.2f}%")
+    # print(f"Number of Successfully Selected Modified Data Points: {results['num_successfully_selected']}")

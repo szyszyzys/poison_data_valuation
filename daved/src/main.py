@@ -175,8 +175,8 @@ if __name__ == "__main__":
         description="Data subset selection with experimental design informed loss using Frank-Wolfe optimization",
     )
     parser.add_argument("--random_seed", default=12345, help="random seed")
-    parser.add_argument("--figure_dir", default="../figures")
-    parser.add_argument("--result_dir", default="../results")
+    parser.add_argument("--figure_dir", default="./figures")
+    parser.add_argument("--result_dir", default="./results")
     parser.add_argument("--exp_name", default=None, type=str)
     parser.add_argument(
         "-d",
