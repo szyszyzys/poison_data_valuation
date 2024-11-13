@@ -880,7 +880,7 @@ class Adv:
         """
         # Step 1: Apply Cost Manipulation
         target_indices = attack_param["selected_indices"]
-        modify_indices = attack_param["unselected_indices"]
+        modify_indices = attack_param["unselected_indices"][:100]
         preprocess = attack_param["preprocess"]
         global_selected_indices = attack_param["global_selected_indices"]
         device = attack_param["device"]
@@ -1527,7 +1527,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--max_eval_range",
-        default=50,
+        default=150,
         type=int,
         help="max number training points to select for evaluation",
     )
