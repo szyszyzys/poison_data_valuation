@@ -602,8 +602,7 @@ def image_modification(
 
     modify_result = {}
 
-    modify_indices = modify_info.keys()
-    for idx, cur_info in tqdm(modify_info, desc="Performing Attack on Unsampled Images"):
+    for idx, cur_info in tqdm(modify_info.items(), desc="Performing Attack on Unsampled Images"):
         target_vector = cur_info["target_vector"]
         modify_image_path = cur_info["original_img_path"]
         target_img_path = cur_info["target_img_path"]
