@@ -161,7 +161,7 @@ def save_results(args, results):
 
 
 def plot_results(args, results):
-    figure_path = args.figure_dir / f"{args.save_name}-plot.png"
+    figure_path = f"{args.figure_dir}/{args.save_name}-plot.png"
     if args.cost_range is not None:
         utils.plot_errors_under_budget(results, figure_path)
     else:
