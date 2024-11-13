@@ -182,11 +182,11 @@ def get_data(
     ret["cost_func"] = cost_func
 
     match dataset, use_cost:
-        case "gaussian", None:  # gaussian, no costs
+        case "gaussian", True:  # gaussian, no costs
             ret["y_buy"] = ret["X_buy"] @ coef
-        case _, None:  # not gaussian, no costs
+        case _, False:  # not gaussian, no costs
             pass
-        case "gaussian", _:  # gaussian with costs
+        case "gaussian", True:  # gaussian with costs
             h = get_cost_function(cost_func)
             e = noise_level * np.random.randn(ret["X_sell"].shape[0])
             print(type(ret["costs_sell"]))
@@ -194,7 +194,7 @@ def get_data(
                     np.einsum("i,ij->ij", h(ret["costs_sell"]), ret["X_sell"]) @ coef + e
             )
             ret["y_buy"] = ret["X_buy"] @ coef
-        case _, _:  # not gaussian with costs
+        case _, False:  # not gaussian with costs
             h = get_cost_function(cost_func)
             e = noise_level * np.random.randn(ret["X_sell"].shape[0])
             print(f'{e[:10].round(2)=}', e.mean())
