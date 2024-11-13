@@ -762,16 +762,14 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
 
         # Save intermediate results periodically
         if i % 25 == 0:
-            attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes,
-                                       test_point_info=test_point_info)
+            attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
             save_results_trained_model(args=args, results=attack_model_result)
             plot_results(args=args, results=attack_model_result)
             print(f"Checkpoint: Saved results at round {i}".center(40, "="))
 
     # Final save of all results if not skipped
     if not args.skip_save:
-        attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes,
-                                   test_point_info=test_point_info)
+        attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
         with open(args.result_dir / f"{args.save_name}-weights.pkl", "wb") as f:
             pickle.dump(weights, f)
         save_results_trained_model(args=args, results=attack_model_result)
