@@ -264,7 +264,8 @@ def modify_image(
     """
     # Load and preprocess the original image
     image = Image.open(image_path).convert("RGB")
-    processed = processor(images=image, return_tensors="pt")
+    # processed = processor(images=image, return_tensors="pt")\
+    processed = processor(image)
     image_tensor = processed['pixel_values'].to(device).clone().detach().requires_grad_(True)
     original_image_tensor = image_tensor.clone().detach()
 
