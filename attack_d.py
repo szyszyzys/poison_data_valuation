@@ -1201,10 +1201,18 @@ def evaluate_attack(
         # start attack
         attack_param = {
             "cost_manipulation_method": "undercut_target",
-            "selected_indices": None,
-            "unselected_indices": None,
+            "selected_indices": selected_adversary_indices,
+            "unselected_indices": unsampled_adversary_indices,
             "use_cost": False,
+            "model": model,
+            "device": device,
+            "preprocess": preprocess
         }
+        # target_indices = attack_param["selected_indices"]
+        # modify_indices = attack_param["unselected_indices"]
+        # preprocess = attack_param["preprocess"]
+        # device = attack_param["device"]
+        # model = attack_param["model"]
         attack_result = adv.attack(attack_type, attack_param, x_s, costs, img_paths)
 
         # image_modification_info[idx] = {"target_image": target_img_idx,
