@@ -1270,7 +1270,8 @@ def evaluate_attack(
         #     "weight_increase_non_adv": weight_increase_non_adv,
         # }
 
-    average_metrics(evaluation_results)
+    averaged_data_selection_results = average_metrics(evaluation_results_list)
+    print_evaluation_results(averaged_data_selection_results)
 
     # Step 8: Evaluate Attack Success on trained model
     # get average result for attacked model:
@@ -1281,9 +1282,10 @@ def evaluate_attack(
         amr_errors.append(amr["errors"]["DAVED (multi-step)"][-1])
     amr_errors = np.array(amr_errors)
     initial_results["errors"]["attacks"] = amr_errors
-    args.save_name = "malicious_comparasion"
+    args.save_name = "attack_result"
     plot_results(args=args, results=initial_results)
-
+    initial_results["averaged_data_selection_results"] = averaged_data_selection_results
+    save_results_trained_model(args, initial_results)
     # comprehensive_evaluation(
     #     X_sell_original, y_sell_original,
     #     X_sell_modified, y_sell_modified,
