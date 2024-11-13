@@ -558,10 +558,8 @@ def extract_features(image, model, processor):
     return image_features.squeeze(0)  # Remove batch dimension
 
 
-def perform_attack_on_unsampled(
-        selected_indices_initial,
-        unsampled_indices,
-        image_paths,
+def image_modification(
+        modify_info,
         X_sell,
         model,
         processor,
@@ -570,7 +568,8 @@ def perform_attack_on_unsampled(
         num_steps=100,
         learning_rate=0.1,
         lambda_reg=0.1,
-        epsilon=0.05
+        epsilon=0.05,
+        target_vector=None
 ):
     """
     Perform the poisoning attack on unsampled images.
@@ -590,18 +589,28 @@ def perform_attack_on_unsampled(
     - modified_indices (list): Indices of images that were modified.
     - similarities (dict): Cosine similarities after modification.
     """
-    target_vectors = assign_random_targets(X_sell, selected_indices_initial, unsampled_indices)
 
     os.makedirs(output_dir, exist_ok=True)
+    # {"target_vector": target_vector,
+    #  "index": random_selected_index,
+    #  "target_img_path": img_path[random_selected_index],
+    #  "original_img_path": img_path[idx]}
+
     modified_indices = []
     similarities = {}
     img_mapping = {}
-
-    for idx in tqdm(unsampled_indices, desc="Performing Attack on Unsampled Images"):
-        target_vector = target_vectors[idx]
-        image_path = image_paths[idx]
+    modifed_result = {}
+    # {"target_vector": target_vector,
+    #  "index": random_selected_index,
+    #  "target_img_path": img_path[random_selected_index],
+    #  "original_img_path": img_path[idx]}
+    modify_indices = modify_info.keys()
+    for idx in tqdm(modify_indices, desc="Performing Attack on Unsampled Images"):
+        cur_info = modify_info[modify_indices]
+        target_vector = cur_info["target_vector"]
+        modify_image_path = cur_info["original_img_path"]
         modified_image, similarity = modify_image(
-            image_path=image_path,
+            image_path=modify_image_path,
             target_vector=target_vector,
             model=model,
             processor=processor,
@@ -630,13 +639,25 @@ def perform_attack_on_unsampled(
         # Update the feature matrix
         X_sell[idx] = model.encode_image(processor(modified_image)[None].to(device)).cpu().detach().numpy()
         # Record the modification
-        modified_indices.append(idx)
-        similarities[idx] = similarity
 
-    return modified_indices, similarities
+        modifed_result[idx] = {"genenral_info": cur_info,
+                               "similarity": similarity,
+                               "m_embedding": ,
+        "modified_image": modified_image
 
 
-def assign_random_targets(x_s, selected_indices, unsampled_indices):
+        }
+
+    # Store the modified image path for tracking
+    manipulated_img_mapping[original_image_path] = {
+        "target_image": target_image_path,
+        "modified_indices": modified_indices,
+        "similarity": similarities
+    }
+    return modifed_result
+
+
+def assign_random_targets(x_s, selected_indices, unsampled_indices, img_path):
     """
     Assign a random target vector (from selected samples) to each unselected sample.
 
@@ -653,7 +674,10 @@ def assign_random_targets(x_s, selected_indices, unsampled_indices):
         random_selected_index = np.random.choice(selected_indices)  # Choose a random selected sample
         target_vector = x_s[random_selected_index]
         # target_vector = target_vector / np.linalg.norm(target_vector)  # Normalize the target vector
-        target_vectors[idx] = target_vector
+        target_vectors[idx] = {"target_vector": target_vector,
+                               "index": random_selected_index,
+                               "target_img_path": img_path[random_selected_index],
+                               "original_img_path": img_path[idx]}
     return target_vectors
 
 
@@ -841,41 +865,92 @@ class Adv:
         self.costs = adversary_data["costs"]
         self.indices = adversary_data["indices"]
 
-    def attack(self, attack_type, attack_param):
-        res = {}
-        if attack_type in ["cost", "both"] and args.use_cost:
-            # Cost Manipulation
+    def attack(self, attack_type, attack_param, x_s, costs, img_path):
+        """
+        Perform specified attack type: cost manipulation, data manipulation, or both.
+
+        Parameters:
+        - attack_type (str): Type of attack to perform ("cost", "data", or "both").
+        - attack_param (dict): Parameters for the attack (e.g., manipulation method, factors).
+        - target_images (list, optional): List of target images to mimic for data manipulation.
+        - target_costs (np.ndarray, optional): Array of target costs to mimic or undercut in cost manipulation.
+
+        Returns:
+        - dict: Dictionary containing manipulated results (e.g., manipulated costs, manipulated images).
+        """
+        # Step 1: Apply Cost Manipulation
+        target_indices = attack_param["selected_indices"]
+        modify_indices = attack_param["unselected_indices"]
+
+        modify_info = assign_random_targets(x_s, target_indices, modify_indices, img_path)
+        target_costs = costs[target_indices]
+        if attack_type in ["cost", "both"] and attack_param.get("use_cost", False):
             print("Applying Cost Manipulation Attack...")
-            # Generate manipulated costs
-            # Manipulate the cost function as needed
-            manipulated_costs = manipulate_cost_function(
-                costs=self.costs,
-                method=attack_param["cost_manipulation_method"],  # e.g., "scale", "offset"
-                factor=attack_param["cost_factor"],
-                offset=attack_param["cost_offset"],
-                power=attack_param["cost_power"]
-            )
+
+            # Retrieve base costs for manipulation
+            manipulated_costs = self.costs.copy()
+
+            # Different types of cost manipulations
+            if attack_param["cost_manipulation_method"] == "scale":
+                manipulated_costs *= attack_param.get("cost_factor", 1.0)
+
+            elif attack_param["cost_manipulation_method"] == "offset":
+                manipulated_costs += attack_param.get("cost_offset", 0.0)
+
+            elif attack_param["cost_manipulation_method"] == "power":
+                manipulated_costs = np.power(manipulated_costs, attack_param.get("cost_power", 1.0))
+
+            elif attack_param["cost_manipulation_method"] == "match_target":
+                # Set costs to match target costs exactly if provided
+                if target_costs is not None:
+                    manipulated_costs = target_costs
+
+            elif attack_param["cost_manipulation_method"] == "undercut_target":
+                # Make costs slightly lower than target costs
+                if target_costs is not None:
+                    manipulated_costs = np.minimum(manipulated_costs,
+                                                   target_costs - attack_param.get("undercut_margin", 0.01))
+
+            elif attack_param["cost_manipulation_method"] == "random_reduce":
+                # Randomly reduce costs within a specified range
+                reduction_factor = np.random.uniform(
+                    attack_param.get("min_reduction", 0.8),
+                    attack_param.get("max_reduction", 1.0),
+                    size=manipulated_costs.shape
+                )
+                manipulated_costs *= reduction_factor
 
             print("Cost Manipulation Completed.")
-            res["manipulated_costs"] = manipulated_costs
 
+        # Step 2: Perform Data Manipulation (Mimic-Based Image Attack)
         if attack_type in ["data", "both"]:
-            modified_indices, similarities = perform_attack_on_unsampled(
-                selected_indices_initial=selected_adversary_indices,
-                unsampled_indices=unsampled_adversary_indices,
-                image_paths=data['img_paths'],
+            print("Applying Data Manipulation Attack...")
+
+            # {"target_vector": target_vector,
+            #  "index": random_selected_index,
+            #  "target_img_path": img_path[random_selected_index],
+            #  "original_img_path": img_path[idx]}
+            # Initialize storage for manipulated image mappings
+            # Perform mimic attack by mapping each original image to a target image
+
+            manipulated_info = image_modification(
+                modify_info=modify_info,
                 X_sell=x_s,
                 model=args.model,
                 processor=args.preprocess,
                 device=args.device,
-                num_steps=args.attack_steps,
-                learning_rate=args.attack_lr,
-                lambda_reg=args.attack_reg,
-                epsilon=0.05,
+                num_steps=attack_param.get("attack_steps", 200),
+                learning_rate=attack_param.get("attack_lr", 0.1),
+                lambda_reg=attack_param.get("attack_reg", 0.1),
+                epsilon=attack_param.get("epsilon", 0.05),
                 output_dir=modified_images_path,
             )
 
-            res["manipulated_img"] = manipulated_img
+
+
+            print("Data Manipulation Attack Completed.")
+        res = {"manipulated_img_mapping": manipulated_img_mapping,
+               "manipulated_costs": manipulated_costs}
         return res
 
 
@@ -1087,9 +1162,9 @@ def evaluate_attack(
     os.makedirs(modified_images_path, exist_ok=True)
 
     modified_indices, similarities = adv.attack()
-    modified_indices, similarities = perform_attack_on_unsampled(
+    modified_indices, similarities = image_modification(
         selected_indices_initial=selected_adversary_indices,
-        unsampled_indices=unsampled_adversary_indices,
+        modify_indices=unsampled_adversary_indices,
         image_paths=data['img_paths'],
         X_sell=x_s,
         model=args.model,
