@@ -870,11 +870,14 @@ class Adv:
         target_indices = attack_param["selected_indices"]
         modify_indices = attack_param["unselected_indices"]
         preprocess = attack_param["preprocess"]
+        global_selected_indices = attack_param["global_selected_indices"]
         device = attack_param["device"]
         model = attack_param["model"]
         modified_images_path = attack_param["modified_images_path"]
         modified_images_path = f"{modified_images_path}/"
         manipulated_costs = None
+        if len(target_indices) == 0:
+            target_indices = global_selected_indices
         modify_info = assign_random_targets(x_s, target_indices, modify_indices, img_path)
         if attack_type in ["cost", "both"] and attack_param.get("use_cost", False):
             print("Applying Cost Manipulation Attack...")
@@ -1213,7 +1216,8 @@ def evaluate_attack(
             "model": model,
             "device": device,
             "preprocess": preprocess,
-            "modified_images_path": modified_images_path
+            "modified_images_path": modified_images_path,
+            "global_selected_indices": selected_indices_initial
         }
         # target_indices = attack_param["selected_indices"]
         # modify_indices = attack_param["unselected_indices"]
