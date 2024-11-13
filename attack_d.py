@@ -880,7 +880,7 @@ class Adv:
         """
         # Step 1: Apply Cost Manipulation
         target_indices = attack_param["selected_indices"]
-        modify_indices = attack_param["unselected_indices"][:100]
+        modify_indices = attack_param["unselected_indices"]
         preprocess = attack_param["preprocess"]
         global_selected_indices = attack_param["global_selected_indices"]
         device = attack_param["device"]
