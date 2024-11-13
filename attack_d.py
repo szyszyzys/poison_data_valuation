@@ -22,7 +22,6 @@ from tqdm import tqdm
 import daved.src.frank_wolfe as frank_wolfe  # Ensure this module contains the design_selection function
 # Import your custom modules or utilities
 from attack.general_attack.my_utils import get_data
-from attack.general_attack.train_model import comprehensive_evaluation
 from daved.src import utils
 from daved.src.main import plot_results
 
@@ -676,7 +675,7 @@ def save_results_trained_model(args, results):
         else:
             print(f"Found {k} in results. Skipping.")
 
-    result_path = args.result_dir / f"{args.save_name}-results.json"
+    result_path = f"{args.result_dir}/{args.save_name}-results.json"
 
     with open(result_path, "w") as f:
         json.dump(results, f, default=float)
