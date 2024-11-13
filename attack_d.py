@@ -670,6 +670,18 @@ def assign_random_targets(x_s, selected_indices, unsampled_indices, img_path):
     return target_vectors
 
 
+def convert_arrays_to_lists(obj):
+    """Recursively convert NumPy arrays to lists in a nested structure."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_arrays_to_lists(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_arrays_to_lists(element) for element in obj]
+    else:
+        return obj
+
+
 def save_results_trained_model(args, results):
     for k, v in vars(args).items():
         if k not in results:
@@ -680,7 +692,7 @@ def save_results_trained_model(args, results):
             print(f"Found {k} in results. Skipping.")
 
     result_path = f"{args.result_dir}/{args.save_name}-results.json"
-
+    results = convert_arrays_to_lists(results)
     with open(result_path, "w") as f:
         json.dump(results, f, default=float)
     print(f"Results saved to {result_path}".center(80, "="))
