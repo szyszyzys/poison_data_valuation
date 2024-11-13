@@ -1206,7 +1206,8 @@ def evaluate_attack(
             "use_cost": False,
             "model": model,
             "device": device,
-            "preprocess": preprocess
+            "preprocess": preprocess,
+            "modified_images_path": modified_images_path
         }
         # target_indices = attack_param["selected_indices"]
         # modify_indices = attack_param["unselected_indices"]
@@ -1504,7 +1505,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--max_eval_range",
-        default=150,
+        default=50,
         type=int,
         help="max number training points to select for evaluation",
     )
@@ -1619,9 +1620,9 @@ if __name__ == "__main__":
         'num_buyer': args.num_buyers,
         'num_seller': args.num_seller,
         'num_val': 1,
-        'max_eval_range': 50,
-        'eval_step': 5,
-        'num_iters': 500,
+        'max_eval_range': args.max_eval_range,
+        'eval_step': args.eval_step,
+        'num_iters': args.num_iters,
         'reg_lambda': 0.1,
         'attack_strength': 0.1,
         'save_results_flag': True,
