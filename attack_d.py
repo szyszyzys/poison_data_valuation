@@ -1032,16 +1032,9 @@ def calculate_average_metrics(results):
     total_weight_increase_non_adv = 0
 
     num_results = len(results)
-
+    selected_num = []
     # Accumulate values
     for result in results:
-        selection_info = result['selection_info']
-        total_selected_num += selection_info["selected_num"]
-        total_num_adv_selected_before += selection_info["num_adv_selected_before"]
-        total_num_adv_selected_after += selection_info["num_adv_selected_after"]
-        total_selection_rate_before += selection_info["selection_rate_before"]
-        total_selection_rate_after += selection_info["selection_rate_after"]
-
         total_mean_adv_weight_before += result["mean_adv_weight_before"]
         total_mean_adv_weight_after += result["mean_adv_weight_after"]
         total_weight_increase_adv += result["weight_increase_adv"]
@@ -1423,6 +1416,7 @@ def evaluate_attack(
     )
     averaged_data_selection_results = calculate_average_metrics(evaluation_results_list)
     print_evaluation_results(averaged_data_selection_results)
+    save_json(f"{selection_attack_result}/all_result_selection.json", evaluation_results_list)
     save_json(f"{selection_attack_result}/avg_result_selection.json", averaged_data_selection_results)
     # Step 5: Perform Attack on Unselected Data Points
 
