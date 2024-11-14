@@ -114,6 +114,7 @@ def get_fitzpatrick_data(
                 img_paths.append(v)
                 labels.append(df[df.md5hash == k].aggregated_fitzpatrick_scale.values[0])
         embeddings = embed_images(img_paths, device=device, model_name=model_name)
+        embeddings = embeddings.to(torch.float32)
         embeddings = F.normalize(embeddings, p=2, dim=-1).cpu().numpy()
 
         labels = torch.tensor(labels).numpy()
