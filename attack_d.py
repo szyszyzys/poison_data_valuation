@@ -368,7 +368,7 @@ def modify_image(
 
     # Denormalize the image tensor
     def denormalize_image(tensor):
-        return tensor * std + mean
+        return tensor * std.cpu() + mean.cpu()
 
     modified_image = denormalize_image(image_tensor.detach().cpu().squeeze(0))
     modified_image_pil = transforms.ToPILImage()(modified_image.clamp(0, 1))
