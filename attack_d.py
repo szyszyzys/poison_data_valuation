@@ -1395,7 +1395,7 @@ def evaluate_attack(
     )
     averaged_data_selection_results = average_metrics(evaluation_results_list)
     print_evaluation_results(averaged_data_selection_results)
-    save_json(, averaged_data_selection_results)
+    save_json(f"{selection_attack_result}/avg_result_selection.json", averaged_data_selection_results)
     # Step 5: Perform Attack on Unselected Data Points
 
     # Step 8: Evaluate Attack Success on trained model
