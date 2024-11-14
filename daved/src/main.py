@@ -160,7 +160,7 @@ def save_results(args, results):
     print(f"Results saved to {result_path}".center(80, "="))
 
 
-def plot_results(figure_path, results):
+def plot_results(figure_path, results, args):
     if args.cost_range is not None:
         utils.plot_errors_under_budget(results, figure_path)
     else:

@@ -795,7 +795,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         if i % 25 == 0:
             attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
             save_results_trained_model(args=args, results=attack_model_result)
-            plot_results(f"{figure_path}_r_{i}res.png", results=attack_model_result)
+            plot_results(f"{figure_path}_r_{i}res.png", results=attack_model_result, args = args)
             print(f"Checkpoint: Saved results at round {i}".center(40, "="))
 
     # Final save of all results if not skipped
@@ -804,7 +804,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         with open(f"{args.result_dir}/{args.save_name}-weights.pkl", "wb") as f:
             pickle.dump(weights, f)
         save_results_trained_model(args=args, results=attack_model_result)
-        plot_results(f"{figure_path}_final.png", results=attack_model_result)
+        plot_results(f"{figure_path}_final.png", results=attack_model_result, args=args)
 
     return attack_model_result, test_point_info
 
@@ -1433,7 +1433,7 @@ def evaluate_attack(
     amr_errors = np.array(amr_errors)
     initial_results["errors"]["attacks"] = amr_errors
     args.save_name = "attack_result"
-    plot_results(args=args, results=initial_results)
+    plot_results(f"{figure_path}final_result_attack.png", results=initial_results, args = args)
     initial_results["averaged_data_selection_results"] = averaged_data_selection_results
     save_results_trained_model(args, initial_results)
     # comprehensive_evaluation(
