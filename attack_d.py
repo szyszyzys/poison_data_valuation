@@ -901,10 +901,10 @@ class Adv:
         # Perform random selection without replacement
         modify_indices = np.random.choice(modify_indices, size=num_samples, replace=False)
 
-        preprocess = attack_param["preprocess"]
+        preprocess = attack_param["img_preprocess"]
         global_selected_indices = attack_param["global_selected_indices"]
         device = attack_param["device"]
-        model = attack_param["model"]
+        model = attack_param["emb_model"]
         modified_images_path = attack_param["modified_images_path"]
         modified_images_path = f"{modified_images_path}/"
         manipulated_costs = None
@@ -1317,7 +1317,6 @@ def evaluate_attack(
             "emb_model": emb_model,
             "img_preprocess": img_preprocess,
             "device": device,
-            "preprocess": preprocess,
             "modified_images_path": modified_images_path,
             "global_selected_indices": selected_indices_initial
         }
