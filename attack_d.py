@@ -795,7 +795,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         if i % 25 == 0:
             attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
             save_results_trained_model(args=args, results=attack_model_result)
-            plot_results(f"{figure_path}_r_{i}res.png", results=attack_model_result, args = args)
+            plot_results(f"{figure_path}_inter_r_{i}_res.png", results=attack_model_result, args=args)
             print(f"Checkpoint: Saved results at round {i}".center(40, "="))
 
     # Final save of all results if not skipped
@@ -804,7 +804,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         with open(f"{args.result_dir}/{args.save_name}-weights.pkl", "wb") as f:
             pickle.dump(weights, f)
         save_results_trained_model(args=args, results=attack_model_result)
-        plot_results(f"{figure_path}_final.png", results=attack_model_result, args=args)
+        plot_results(f"{figure_path}_error_final.png", results=attack_model_result, args=args)
 
     return attack_model_result, test_point_info
 
@@ -1368,7 +1368,7 @@ def evaluate_attack(
             m_indices.append(img_idx)
         x_s_clone = copy.deepcopy(x_s)
         costs_clone = copy.deepcopy(costs)
-        a_figure_path = f"{figure_path}/attack-"
+        a_figure_path = f"{figure_path}/attack_benign"
         updated_results, updated_test_point_info = sampling_run_one_buyer(
             x_test, y_test, x_s_clone, y_s, eval_range, costs=costs_clone, args=args, figure_path=a_figure_path
         )
@@ -1433,7 +1433,7 @@ def evaluate_attack(
     amr_errors = np.array(amr_errors)
     initial_results["errors"]["attacks"] = amr_errors
     args.save_name = "attack_result"
-    plot_results(f"{figure_path}final_result_attack.png", results=initial_results, args = args)
+    plot_results(f"{figure_path}_final_result_attack.png", results=initial_results, args=args)
     initial_results["averaged_data_selection_results"] = averaged_data_selection_results
     save_results_trained_model(args, initial_results)
     # comprehensive_evaluation(
