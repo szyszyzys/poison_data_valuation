@@ -713,7 +713,7 @@ def save_json(path, results):
     print(f"Results saved to {path}".center(80, "="))
 
 
-def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None):
+def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None, figure_path="./figure"):
     # Dictionaries to store errors, runtimes, and weights for each method and test point
     errors = defaultdict(list)
     runtimes = defaultdict(list)
@@ -795,7 +795,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         if i % 25 == 0:
             attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
             save_results_trained_model(args=args, results=attack_model_result)
-            plot_results(args=args, results=attack_model_result)
+            plot_results(f"{figure_path}_r_{i}res.png", results=attack_model_result)
             print(f"Checkpoint: Saved results at round {i}".center(40, "="))
 
     # Final save of all results if not skipped
@@ -804,7 +804,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         with open(f"{args.result_dir}/{args.save_name}-weights.pkl", "wb") as f:
             pickle.dump(weights, f)
         save_results_trained_model(args=args, results=attack_model_result)
-        plot_results(args=args, results=attack_model_result)
+        plot_results(f"{figure_path}_final.png", results=attack_model_result)
 
     return attack_model_result, test_point_info
 
@@ -1006,41 +1006,66 @@ def print_evaluation_results(evaluation_results):
     print("========================================================")
 
 
-def average_metrics(results_list):
+def calculate_average_metrics(results):
     """
-    Calculate the average metrics from multiple evaluation results.
+    Calculate average metrics from a list of evaluation results.
 
     Parameters:
-    - results_list (list of dict): List of evaluation results dictionaries from multiple runs.
+    - results (list of dict): List where each element is a dictionary containing the metrics
+                              for a single evaluation, structured as shown in your example.
 
     Returns:
-    - dict: Dictionary containing the average values of each metric.
+    - avg_metrics (dict): Dictionary with the average of each metric.
     """
+    # Initialize accumulators
+    total_selected_num = 0
+    total_num_adv_selected_before = 0
+    total_num_adv_selected_after = 0
+    total_selection_rate_before = 0
+    total_selection_rate_after = 0
 
-    # Initialize dictionary to store sums of each metric
-    averaged_results = {
-        "num_adv_selected_before": 0,
-        "num_adv_selected_after": 0,
-        "increase_in_selected_adv": 0,
-        "mean_adv_weight_before": 0.0,
-        "mean_adv_weight_after": 0.0,
-        "weight_increase_adv": 0.0,
-        "mean_non_adv_weight_before": 0.0,
-        "mean_non_adv_weight_after": 0.0,
-        "weight_increase_non_adv": 0.0,
+    total_mean_adv_weight_before = 0
+    total_mean_adv_weight_after = 0
+    total_weight_increase_adv = 0
+    total_mean_non_adv_weight_before = 0
+    total_mean_non_adv_weight_after = 0
+    total_weight_increase_non_adv = 0
+
+    num_results = len(results)
+
+    # Accumulate values
+    for result in results:
+        selection_info = result['selection_info']
+        total_selected_num += selection_info["selected_num"]
+        total_num_adv_selected_before += selection_info["num_adv_selected_before"]
+        total_num_adv_selected_after += selection_info["num_adv_selected_after"]
+        total_selection_rate_before += selection_info["selection_rate_before"]
+        total_selection_rate_after += selection_info["selection_rate_after"]
+
+        total_mean_adv_weight_before += result["mean_adv_weight_before"]
+        total_mean_adv_weight_after += result["mean_adv_weight_after"]
+        total_weight_increase_adv += result["weight_increase_adv"]
+        total_mean_non_adv_weight_before += result["mean_non_adv_weight_before"]
+        total_mean_non_adv_weight_after += result["mean_non_adv_weight_after"]
+        total_weight_increase_non_adv += result["weight_increase_non_adv"]
+
+    # Calculate averages
+    avg_metrics = {
+        "avg_selected_num": total_selected_num / num_results,
+        "avg_num_adv_selected_before": total_num_adv_selected_before / num_results,
+        "avg_num_adv_selected_after": total_num_adv_selected_after / num_results,
+        "avg_selection_rate_before": total_selection_rate_before / num_results,
+        "avg_selection_rate_after": total_selection_rate_after / num_results,
+
+        "avg_mean_adv_weight_before": total_mean_adv_weight_before / num_results,
+        "avg_mean_adv_weight_after": total_mean_adv_weight_after / num_results,
+        "avg_weight_increase_adv": total_weight_increase_adv / num_results,
+        "avg_mean_non_adv_weight_before": total_mean_non_adv_weight_before / num_results,
+        "avg_mean_non_adv_weight_after": total_mean_non_adv_weight_after / num_results,
+        "avg_weight_increase_non_adv": total_weight_increase_non_adv / num_results,
     }
 
-    # Sum each metric across all runs
-    for result in results_list:
-        for key in averaged_results:
-            averaged_results[key] += result[key]
-
-    # Calculate average by dividing by the number of runs
-    num_runs = len(results_list)
-    for key in averaged_results:
-        averaged_results[key] /= num_runs
-
-    return averaged_results
+    return avg_metrics
 
 
 def evaluate_poisoning_effectiveness_ranged(
@@ -1174,10 +1199,10 @@ def evaluate_attack(
         args,
         dataset='./data',
         data_dir='./data',
-        batch_size=1,
+        batch_size=16,
         csv_path="druglib/druglib.csv",
         img_path="/images",
-        num_buyer=2,
+        num_buyer=10,
         num_seller=1000,
         num_val=1,
         num_dim=100,
@@ -1238,7 +1263,10 @@ def evaluate_attack(
     y_b = data["y_buy"].astype(np.float32)
 
     result_dir = f'{result_dir}/attack_{attack_type}_num_buyer_{num_buyer}_num_seller_{num_seller}_advr_{adversary_ratio}_prate_{args.poison_rate}_querys_{args.batch_size}/'
+    figure_path = f"{result_dir}/figures/"
+
     os.makedirs(os.path.dirname(result_dir), exist_ok=True)
+    os.makedirs(os.path.dirname(figure_path), exist_ok=True)
 
     # todo change the costs
     costs = data.get("costs_sell")
@@ -1269,7 +1297,7 @@ def evaluate_attack(
     )
 
     initial_results, initial_selection_info = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs,
-                                                                     args=args)
+                                                                     args=args, figure_path=figure_path)
     print(f"Done initial run, number of queries: {len(initial_selection_info)}")
     # Step 3: Identify Selected and Unselected Data Points
     # For each batch (buyer query), perform the reconstruction
@@ -1340,8 +1368,9 @@ def evaluate_attack(
             m_indices.append(img_idx)
         x_s_clone = copy.deepcopy(x_s)
         costs_clone = copy.deepcopy(costs)
+        a_figure_path = f"{figure_path}/attack-"
         updated_results, updated_test_point_info = sampling_run_one_buyer(
-            x_test, y_test, x_s_clone, y_s, eval_range, costs=costs_clone, args=args
+            x_test, y_test, x_s_clone, y_s, eval_range, costs=costs_clone, args=args, figure_path=a_figure_path
         )
 
         all_attack_model_training_result.append(updated_results)
@@ -1392,7 +1421,7 @@ def evaluate_attack(
         f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}',
         f'target_query_batch_{test_point_index}'
     )
-    averaged_data_selection_results = average_metrics(evaluation_results_list)
+    averaged_data_selection_results = calculate_average_metrics(evaluation_results_list)
     print_evaluation_results(averaged_data_selection_results)
     save_json(f"{selection_attack_result}/avg_result_selection.json", averaged_data_selection_results)
     # Step 5: Perform Attack on Unselected Data Points
@@ -1742,7 +1771,7 @@ if __name__ == "__main__":
         'img_path' './fitzpatrick17k/images'
         'num_buyer': args.num_buyers,
         'num_seller': args.num_seller,
-        'num_val': 1,
+        'num_val': args.num_val,
         'max_eval_range': args.max_eval_range,
         'eval_step': args.eval_step,
         'num_iters': args.num_iters,

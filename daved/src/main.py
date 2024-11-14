@@ -160,8 +160,7 @@ def save_results(args, results):
     print(f"Results saved to {result_path}".center(80, "="))
 
 
-def plot_results(args, results):
-    figure_path = f"{args.figure_dir}/{args.save_name}-plot.png"
+def plot_results(figure_path, results):
     if args.cost_range is not None:
         utils.plot_errors_under_budget(results, figure_path)
     else:
