@@ -109,7 +109,7 @@ def get_data(
         num_val=100,
         dim=100,
         noise_level=1,
-        use_cost=True,
+        use_cost=False,
         cost_gen_mode="None",
         cost_func="linear",
         recompute_embeddings=False,

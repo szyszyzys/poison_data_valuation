@@ -1,4 +1,3 @@
-import daved.src.frank_wolfe as frank_wolfe
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -8,24 +7,27 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
+from PIL import Image
 from opendataval import dataval
 from opendataval.dataloader import DataFetcher
 from opendataval.model import RegressionSkLearnWrapper
-from PIL import Image
 from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
+from torch.utils.data import Dataset
 from torchvision.transforms import (CenterCrop, Compose, Lambda, Resize,
                                     ToTensor)
+from tqdm import tqdm
 from transformers import (
     BertTokenizer, BertModel,
     BertForSequenceClassification, BertConfig,
     GPT2Tokenizer, GPT2Model,
     Trainer, TrainingArguments,
 )
-from sklearn.metrics import mean_squared_error
-from torch.utils.data import Dataset
-from tqdm import tqdm
+
+import daved.src.frank_wolfe as frank_wolfe
 
 
 def get_gaussian_data(num_samples=100, dim=10, noise=0.1, costs=None):
@@ -112,6 +114,8 @@ def get_fitzpatrick_data(
                 img_paths.append(v)
                 labels.append(df[df.md5hash == k].aggregated_fitzpatrick_scale.values[0])
         embeddings = embed_images(img_paths, device=device, model_name=model_name).numpy()
+        embeddings = F.normalize(embeddings, p=2, dim=-1)
+
         labels = torch.tensor(labels).numpy()
         torch.save(
             dict(embeddings=embeddings, labels=labels), data_dir / embedding_path
@@ -319,7 +323,7 @@ def get_data(
         cost_range=None,
         cost_func="linear",
         recompute_embeddings=False,
-        assigned_cost = None
+        assigned_cost=None
 ):
     total_samples = num_seller + num_buyer + num_val
     data_dir = Path(data_dir)

@@ -241,7 +241,7 @@ def modify_image(
         learning_rate=0.01,
         lambda_reg=0.1,
         epsilon=0.05,
-        verbose=True
+        verbose=False
 ):
     """
     Modify an image to align its CLIP embedding with the target vector.
@@ -263,10 +263,8 @@ def modify_image(
     - final_similarity (float): Cosine similarity with the target vector after modification.
     """
     # Load and preprocess the original image
-    image = Image.open(image_path).convert("RGB")
-    # processed = processor(images=image, return_tensors="pt")\
-    processed = processor(image)
-    image_tensor = preprocess(image).unsqueeze(0).to(device)  # No need for ['pixel_values']
+    image = Image.open(image_path)
+    image_tensor = processor(image).unsqueeze(0).to(device)  # No need for ['pixel_values']
 
     # If you want gradients with respect to the image tensor, set requires_grad
     image_tensor = image_tensor.clone().detach().requires_grad_(True)
@@ -339,8 +337,10 @@ def modify_image(
 
         # Clamp the image tensor to maintain valid pixel range and limit perturbation
         with torch.no_grad():
+            # Compute perturbation in normalized space
             perturbation = torch.clamp(image_tensor - original_image_tensor, -epsilon, epsilon)
-            new_image = torch.clamp(original_image_tensor + perturbation, 0, 1)
+            # Apply perturbation and clamp to ensure values are within normalized bounds
+            new_image = torch.clamp(original_image_tensor + perturbation, (0 - mean) / std, (1 - mean) / std)
             image_tensor.copy_(new_image)
 
         # Early Stopping Check
@@ -612,7 +612,7 @@ def image_modification(
         target_vector = cur_info["target_vector"]
         modify_image_path = cur_info["original_img_path"]
         target_img_path = cur_info["target_img_path"]
-        target_img_idx = cur_info["index"]
+        target_img_idx = cur_info["target_index"]
         modified_image, modified_embedding, similarity = modify_image(
             image_path=modify_image_path,
             target_vector=target_vector,
@@ -664,7 +664,7 @@ def assign_random_targets(x_s, selected_indices, unsampled_indices, img_path):
         target_vector = x_s[random_selected_index]
         # target_vector = target_vector / np.linalg.norm(target_vector)  # Normalize the target vector
         target_vectors[idx] = {"target_vector": target_vector,
-                               "index": random_selected_index,
+                               "target_index": random_selected_index,
                                "target_img_path": img_path[random_selected_index],
                                "original_img_path": img_path[idx]}
     return target_vectors
@@ -696,6 +696,21 @@ def save_results_trained_model(args, results):
     with open(result_path, "w") as f:
         json.dump(results, f, default=float)
     print(f"Results saved to {result_path}".center(80, "="))
+
+
+def save_json(path, results):
+    for k, v in vars(args).items():
+        if k not in results:
+            if isinstance(v, Path):
+                v = str(v)
+            results[k] = v
+        else:
+            print(f"Found {k} in results. Skipping.")
+
+    results = convert_arrays_to_lists(results)
+    with open(path, "w") as f:
+        json.dump(results, f, default=float)
+    print(f"Results saved to {path}".center(80, "="))
 
 
 def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None):
@@ -859,11 +874,12 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
 
 
 class Adv:
-    def __init__(self, adversary_data):
+    def __init__(self, adversary_data, poison_rate):
         self.x = adversary_data["X"]
         self.y = adversary_data["y"]
         self.costs = adversary_data["costs"]
         self.indices = adversary_data["indices"]
+        self.poison_rate = poison_rate
 
     def attack(self, attack_type, attack_param, x_s, costs, img_path):
         """
@@ -881,6 +897,10 @@ class Adv:
         # Step 1: Apply Cost Manipulation
         target_indices = attack_param["selected_indices"]
         modify_indices = attack_param["unselected_indices"]
+        num_samples = int(len(modify_indices) * self.poison_rate)
+        # Perform random selection without replacement
+        modify_indices = np.random.choice(modify_indices, size=num_samples, replace=False)
+
         preprocess = attack_param["preprocess"]
         global_selected_indices = attack_param["global_selected_indices"]
         device = attack_param["device"]
@@ -888,6 +908,7 @@ class Adv:
         modified_images_path = attack_param["modified_images_path"]
         modified_images_path = f"{modified_images_path}/"
         manipulated_costs = None
+        manipulated_info = None
         if len(target_indices) == 0:
             target_indices = global_selected_indices
         modify_info = assign_random_targets(x_s, target_indices, modify_indices, img_path)
@@ -946,18 +967,12 @@ class Adv:
                 model=model,
                 processor=preprocess,
                 device=device,
-                num_steps=attack_param.get("attack_steps", 50),
+                num_steps=attack_param.get("attack_steps", 100),
                 learning_rate=attack_param.get("attack_lr", 0.1),
                 lambda_reg=attack_param.get("attack_reg", 0.1),
                 epsilon=attack_param.get("epsilon", 0.05),
                 output_dir=modified_images_path,
             )
-            # modify_result[idx] = {"target_image": target_img_idx,
-            #                       "similarity": similarity,
-            #                       "m_embedding": modified_embedding,
-            #                       "modified_image": modified_image,
-            #                       "modified_img_original": modify_image_path
-            #                       }
         res = {"image_modification_info": manipulated_info,
                "manipulated_costs": manipulated_costs}
         return res
@@ -1026,6 +1041,71 @@ def average_metrics(results_list):
         averaged_results[key] /= num_runs
 
     return averaged_results
+
+
+def evaluate_poisoning_effectiveness_ranged(
+        initial_weights,
+        updated_weights,
+        adversary_indices,
+        eval_range):
+    """
+    Evaluate the effectiveness of adversarial poisoning by comparing initial and updated weights and selections.
+
+    Parameters:
+    - initial_weights (np.ndarray): Array of weights before poisoning.
+    - updated_weights (np.ndarray): Array of weights after poisoning.
+    - adversary_indices (np.ndarray): Indices of adversarial samples.
+
+    Returns:
+    - dict: Evaluation metrics including counts and weight statistics.
+    """
+    # the selection rate of adversary under different selection number.
+    selection_info = {}
+    for selected_num in eval_range:
+        o_selected, _ = identify_selected_unsampled(initial_weights, selected_num)
+        u_selected, _ = identify_selected_unsampled(updated_weights, selected_num)
+
+        # Step 1: Find adversarial samples in selected set before and after poisoning
+        initial_selected_adv = np.intersect1d(o_selected, adversary_indices)
+        updated_selected_adv = np.intersect1d(u_selected, adversary_indices)
+
+        # Step 2: Calculate number of adversarial samples selected before and after poisoning
+        n_before = len(initial_selected_adv)
+        n_after = len(updated_selected_adv)
+        selection_info[selected_num] = {
+            "selected_num": selected_num,
+            "num_adv_selected_before": n_before,
+            "num_adv_selected_after": n_after,
+            "selection_rate_before": n_before / selected_num,
+            "selection_rate_after": n_after / selected_num,
+        }
+
+    # Step 3: Calculate mean weight for adversarial samples before and after poisoning
+    adv_weights_before = initial_weights[adversary_indices]
+    adv_weights_after = updated_weights[adversary_indices]
+    mean_adv_weight_before = np.mean(adv_weights_before)
+    mean_adv_weight_after = np.mean(adv_weights_after)
+    weight_increase_adv = mean_adv_weight_after - mean_adv_weight_before
+
+    # For comparison, calculate mean weight increase for non-adversarial samples
+    non_adversary_indices = np.setdiff1d(np.arange(len(initial_weights)), adversary_indices)
+    non_adv_weights_before = initial_weights[non_adversary_indices]
+    non_adv_weights_after = updated_weights[non_adversary_indices]
+    mean_non_adv_weight_before = np.mean(non_adv_weights_before)
+    mean_non_adv_weight_after = np.mean(non_adv_weights_after)
+    weight_increase_non_adv = mean_non_adv_weight_after - mean_non_adv_weight_before
+
+    evaluation_results = {
+        "selection_info": selection_info,
+        "mean_adv_weight_before": mean_adv_weight_before,
+        "mean_adv_weight_after": mean_adv_weight_after,
+        "weight_increase_adv": weight_increase_adv,
+        "mean_non_adv_weight_before": mean_non_adv_weight_before,
+        "mean_non_adv_weight_after": mean_non_adv_weight_after,
+        "weight_increase_non_adv": weight_increase_non_adv,
+    }
+
+    return evaluation_results
 
 
 def evaluate_poisoning_effectiveness(
@@ -1112,6 +1192,8 @@ def evaluate_attack(
         num_select=100,
         attack_type="data",
         adversary_ratio=0.25,
+        emb_model=None,
+        img_preprocess=None,
         **kwargs
 ):
     """
@@ -1155,6 +1237,9 @@ def evaluate_attack(
     x_b = data["X_buy"].astype(np.float32)
     y_b = data["y_buy"].astype(np.float32)
 
+    result_dir = f'{result_dir}/attack_{attack_type}_num_buyer_{num_buyer}_num_seller_{num_seller}_advr_{adversary_ratio}_prate_{args.poison_rate}_querys_{args.batch_size}/'
+    os.makedirs(os.path.dirname(result_dir), exist_ok=True)
+
     # todo change the costs
     costs = data.get("costs_sell")
     index_s = data['index_sell']
@@ -1176,16 +1261,16 @@ def evaluate_attack(
         "costs": costs[adversary_indices] if costs is not None else None,
         "indices": adversary_indices
     }
-    adv = Adv(adversary_data)
+    adv = Adv(adversary_data, args.poison_rate)
 
     # Evaluate the peformance
     eval_range = list(range(1, 30, 1)) + list(
         range(30, args.max_eval_range, args.eval_step)
     )
 
-    # Get the clean result.
     initial_results, initial_selection_info = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs,
                                                                      args=args)
+    print(f"Done initial run, number of queries: {len(initial_selection_info)}")
     # Step 3: Identify Selected and Unselected Data Points
     # For each batch (buyer query), perform the reconstruction
     all_attack_model_training_result = []
@@ -1198,6 +1283,10 @@ def evaluate_attack(
         y_test = info_dic["test_y"]
 
         # for current data batch, find which points are selected
+        # img = Image.open(img_path)
+        # embedding = inference_func(preprocess(img)[None].to(device))
+        # embeddings.append(embedding.cpu())
+        # Get the clean result.
         selected_indices_initial, unsampled_indices_initial = identify_selected_unsampled(
             weights=m_cur_weight,
             num_select=num_select,
@@ -1213,10 +1302,10 @@ def evaluate_attack(
         # Step 5: Perform Attack on Unselected Data Points
         modified_images_path = os.path.join(
             result_dir,
-            f'modified_images_{attack_type}_multi_step',
             f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}',
             f'target_query_batch_{test_point_index}'
         )
+
         os.makedirs(modified_images_path, exist_ok=True)
 
         # start attack
@@ -1225,17 +1314,14 @@ def evaluate_attack(
             "selected_indices": selected_adversary_indices,
             "unselected_indices": unsampled_adversary_indices,
             "use_cost": False,
-            "model": model,
+            "emb_model": emb_model,
+            "img_preprocess": img_preprocess,
             "device": device,
             "preprocess": preprocess,
             "modified_images_path": modified_images_path,
             "global_selected_indices": selected_indices_initial
         }
-        # target_indices = attack_param["selected_indices"]
-        # modify_indices = attack_param["unselected_indices"]
-        # preprocess = attack_param["preprocess"]
-        # device = attack_param["device"]
-        # model = attack_param["model"]
+
         attack_result = adv.attack(attack_type, attack_param, x_s, costs, img_paths)
 
         # image_modification_info[idx] = {"target_image": target_img_idx,
@@ -1265,7 +1351,6 @@ def evaluate_attack(
 
     # Step 6: attack evaluation, identify Updated Selected Data Points
     for o_info, u_info in (initial_selection_info, all_attack_selection_info):
-        s_result = []
         o_weight = o_info["multi_step_weights"]
         u_weight = u_info["multi_step_weights"]
 
@@ -1279,17 +1364,21 @@ def evaluate_attack(
             num_select=num_select,
         )
 
-        evaluation_results = evaluate_poisoning_effectiveness(
+        evaluation_results = evaluate_poisoning_effectiveness_ranged(
             initial_weights=o_weight,
             updated_weights=u_weight,
-            selected_indices_initial=o_selected_indices,
-            selected_indices_updated=u_selected_indices,
-            adversary_indices=adversary_indices)
+            adversary_indices=adversary_indices,
+            eval_range=eval_range)
         evaluation_results_list.append(evaluation_results)
-        # evaluation_results = {
-        #     "num_adv_selected_before": num_adv_selected_before,
-        #     "num_adv_selected_after": num_adv_selected_after,
-        #     "increase_in_selected_adv": num_adv_selected_after - num_adv_selected_before,
+        #
+        # {
+        #     "selection_info": {
+        #         "selected_num": selected_num,
+        #         "num_adv_selected_before": n_before,
+        #         "num_adv_selected_after": n_after,
+        #         "selection_rate_before": n_before / selected_num,
+        #         "selection_rate_after": n_after / selected_num,
+        #     }
         #     "mean_adv_weight_before": mean_adv_weight_before,
         #     "mean_adv_weight_after": mean_adv_weight_after,
         #     "weight_increase_adv": weight_increase_adv,
@@ -1297,16 +1386,21 @@ def evaluate_attack(
         #     "mean_non_adv_weight_after": mean_non_adv_weight_after,
         #     "weight_increase_non_adv": weight_increase_non_adv,
         # }
-
+    #
+    selection_attack_result = os.path.join(
+        result_dir,
+        f'modified_images_{attack_type}_multi_step',
+        f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}',
+        f'target_query_batch_{test_point_index}'
+    )
     averaged_data_selection_results = average_metrics(evaluation_results_list)
     print_evaluation_results(averaged_data_selection_results)
+    save_json(, averaged_data_selection_results)
+    # Step 5: Perform Attack on Unselected Data Points
 
     # Step 8: Evaluate Attack Success on trained model
-    # get average result for attacked model:
-    final_errors = {}
     amr_errors = []
     for amr in all_attack_model_training_result:
-        # amr = dict(errors=errors, eval_range=eval_range, runtimes=runtimes, test_point_info=test_point_info)
         amr_errors.append(amr["errors"]["DAVED (multi-step)"][-1])
     amr_errors = np.array(amr_errors)
     initial_results["errors"]["attacks"] = amr_errors
@@ -1369,10 +1463,6 @@ def evaluate_attack(
 #
 # model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
 # processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model, preprocess = clip.load("ViT-B/32", device=device)
-model.eval()  # Set model to evaluation mode
 
 
 def attack_target_sampling(data, labels, strategy="random", num_samples=100, **kwargs):
@@ -1626,6 +1716,13 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--poison_rate",
+        default=0.2,
+        type=float,
+        help="rate of images to do poison for a buyer",
+    )
+
+    parser.add_argument(
         "--attack_steps",
         default=200,
         type=int,
@@ -1633,6 +1730,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     save_name = f'attack_evaluation_{args.dataset}_b_{args.num_buyers}_s_{args.num_seller}'
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    emb_model, preprocess = clip.load("ViT-B/32", device=device)
+    emb_model.eval()  # Set model to evaluation mode
+
     # Define experiment parameters
     experiment_params = {
         'dataset': args.dataset,
@@ -1650,7 +1752,10 @@ if __name__ == "__main__":
         'save_results_flag': True,
         'result_dir': 'results',
         'save_name': save_name,
-        "num_select": args.num_select
+        "num_select": args.num_select,
+        "adversary_ratio": 0.25,
+        "emb_model": emb_model,
+        "img_preprocess": preprocess,
     }
 
     # Run the attack evaluation experiment
