@@ -1,6 +1,12 @@
 from pathlib import Path
 
+import clip
 import numpy as np
+import torch
+from PIL import Image
+from torchvision.models import resnet18
+from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize, Lambda
+from tqdm import tqdm
 
 from daved.src.utils import get_gaussian_data, get_mimic_data, get_fitzpatrick_data, get_bone_data, get_drug_data, \
     split_data, get_cost_function
@@ -206,3 +212,98 @@ def get_data(
             print(f'{ret["y_sell"].mean()=}')
 
     return ret
+
+
+def load_model_and_preprocessor(model_name, device):
+    """
+    Load the model and preprocessing pipeline based on the model name.
+
+    Args:
+        model_name (str): Model to load ("clip" or "resnet").
+        device (str): Device to load the model onto ("cpu" or "cuda").
+
+    Returns:
+        tuple: (model, preprocess, inference_func)
+    """
+    if model_name == "clip":
+        model, preprocess = clip.load("ViT-B/32", device=device)
+        inference_func = model.encode_image
+    elif model_name == "resnet":
+        model = resnet18(pretrained=True).to(device)
+        preprocess = Compose(
+            [
+                Resize(256),
+                CenterCrop(224),
+                ToTensor(),
+                Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),  # ImageNet normalization
+                Lambda(lambda x: x.repeat(3, 1, 1) if x.shape[0] == 1 else x),  # Handle grayscale
+            ]
+        )
+        inference_func = lambda x: model(x).flatten(start_dim=1)
+    else:
+        raise ValueError(f"Unsupported model: {model_name}")
+    model.eval()  # Ensure the model is in evaluation mode
+    return model, preprocess, inference_func
+
+
+def embed_image(img, model, preprocess, inference_func, device="cpu", normalize_embeddings=True):
+    """
+    Embed a single image object using the given model and preprocessing pipeline.
+
+    Args:
+        img (PIL.Image.Image): Image object.
+        model: The loaded model for embedding.
+        preprocess: The preprocessing pipeline.
+        inference_func: The inference function of the model.
+        device (str): Device to run the model on ("cpu" or "cuda").
+        normalize_embeddings (bool): Whether to normalize embeddings to unit vectors.
+
+    Returns:
+        torch.Tensor: The embedding of the image.
+    """
+    try:
+        img_tensor = preprocess(img).unsqueeze(0).to(device)  # Add batch dimension and move to device
+        embedding = inference_func(img_tensor)
+        if normalize_embeddings:
+            embedding = torch.nn.functional.normalize(embedding, p=2, dim=1)  # Normalize to unit vector
+        return embedding  # Remain on the device
+    except Exception as e:
+        raise ValueError(f"Error processing image: {e}")
+
+
+def embed_images(img_paths, model_name="clip", device="cpu", normalize_embeddings=True):
+    """
+    Embed multiple images using a specified model (CLIP or ResNet).
+
+    Args:
+        img_paths (list[str]): List of paths to images.
+        model_name (str): Model to use for embedding. Options: "clip", "resnet".
+        device (str): Device to run the model on ("cpu" or "cuda").
+        normalize_embeddings (bool): Whether to normalize embeddings to unit vectors.
+
+    Returns:
+        torch.Tensor: Concatenated embeddings of all images.
+    """
+    # Load model and preprocessing pipeline
+    model, preprocess, inference_func = load_model_and_preprocessor(model_name, device)
+
+    embeddings = []
+
+    # Process images and extract embeddings
+    with torch.inference_mode():
+        for img_path in tqdm(img_paths, desc=f"Embedding images with {model_name}"):
+            try:
+                img = Image.open(img_path).convert("RGB")  # Ensure all images are RGB
+                embedding = embed_image(img, model, preprocess, inference_func, device, normalize_embeddings)
+                embeddings.append(embedding)
+            except Exception as e:
+                print(e)
+
+    # Concatenate embeddings
+    embeddings = torch.cat(embeddings, dim=0)
+
+    # Clean up to release resources
+    del model
+    torch.cuda.empty_cache()
+
+    return embeddings

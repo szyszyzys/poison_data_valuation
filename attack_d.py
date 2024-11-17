@@ -779,7 +779,8 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
 
         # Store information about the test point, the indices used, and their results
         test_point_info.append({
-            "test_point_index": j,
+            "query_number": i,
+            "test_point_start_index": j,
             "test_x": x_test,
             "test_y": y_test,
             "single_step_weights": w_os,
@@ -873,109 +874,6 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
     #     return results, weights
 
 
-class Adv:
-    def __init__(self, adversary_data, poison_rate):
-        self.x = adversary_data["X"]
-        self.y = adversary_data["y"]
-        self.costs = adversary_data["costs"]
-        self.indices = adversary_data["indices"]
-        self.poison_rate = poison_rate
-
-    def attack(self, attack_type, attack_param, x_s, costs, img_path):
-        """
-        Perform specified attack type: cost manipulation, data manipulation, or both.
-
-        Parameters:
-        - attack_type (str): Type of attack to perform ("cost", "data", or "both").
-        - attack_param (dict): Parameters for the attack (e.g., manipulation method, factors).
-        - target_images (list, optional): List of target images to mimic for data manipulation.
-        - target_costs (np.ndarray, optional): Array of target costs to mimic or undercut in cost manipulation.
-
-        Returns:
-        - dict: Dictionary containing manipulated results (e.g., manipulated costs, manipulated images).
-        """
-        # Step 1: Apply Cost Manipulation
-        target_indices = attack_param["selected_indices"]
-        modify_indices = attack_param["unselected_indices"]
-        num_samples = int(len(modify_indices) * self.poison_rate)
-        # Perform random selection without replacement
-        modify_indices = np.random.choice(modify_indices, size=num_samples, replace=False)
-
-        preprocess = attack_param["img_preprocess"]
-        global_selected_indices = attack_param["global_selected_indices"]
-        device = attack_param["device"]
-        model = attack_param["emb_model"]
-        modified_images_path = attack_param["modified_images_path"]
-        modified_images_path = f"{modified_images_path}/"
-        manipulated_costs = None
-        manipulated_info = None
-        if len(target_indices) == 0:
-            target_indices = global_selected_indices
-        modify_info = assign_random_targets(x_s, target_indices, modify_indices, img_path)
-        if attack_type in ["cost", "both"] and attack_param.get("use_cost", False):
-            print("Applying Cost Manipulation Attack...")
-            target_costs = costs[target_indices]
-
-            # Retrieve base costs for manipulation
-            manipulated_costs = self.costs.copy()
-
-            # Different types of cost manipulations
-            if attack_param["cost_manipulation_method"] == "scale":
-                manipulated_costs *= attack_param.get("cost_factor", 1.0)
-
-            elif attack_param["cost_manipulation_method"] == "offset":
-                manipulated_costs += attack_param.get("cost_offset", 0.0)
-
-            elif attack_param["cost_manipulation_method"] == "power":
-                manipulated_costs = np.power(manipulated_costs, attack_param.get("cost_power", 1.0))
-
-            elif attack_param["cost_manipulation_method"] == "match_target":
-                # Set costs to match target costs exactly if provided
-                if target_costs is not None:
-                    manipulated_costs = target_costs
-
-            elif attack_param["cost_manipulation_method"] == "undercut_target":
-                # Make costs slightly lower than target costs
-                if target_costs is not None:
-                    manipulated_costs = np.minimum(manipulated_costs,
-                                                   target_costs - attack_param.get("undercut_margin", 0.01))
-
-            elif attack_param["cost_manipulation_method"] == "random_reduce":
-                # Randomly reduce costs within a specified range
-                reduction_factor = np.random.uniform(
-                    attack_param.get("min_reduction", 0.8),
-                    attack_param.get("max_reduction", 1.0),
-                    size=manipulated_costs.shape
-                )
-                manipulated_costs *= reduction_factor
-
-            print("Cost Manipulation Completed.")
-
-        # Step 2: Perform Data Manipulation (Mimic-Based Image Attack)
-        if attack_type in ["data", "both"]:
-            print("Applying Data Manipulation Attack...")
-
-            # {"target_vector": target_vector,
-            #  "index": random_selected_index,
-            #  "target_img_path": img_path[random_selected_index],
-            #  "original_img_path": img_path[idx]}
-            # Initialize storage for manipulated image mappings
-            # Perform mimic attack by mapping each original image to a target image
-
-            manipulated_info = image_modification(
-                modify_info=modify_info,
-                model=model,
-                processor=preprocess,
-                device=device,
-                num_steps=attack_param.get("attack_steps", 100),
-                learning_rate=attack_param.get("attack_lr", 0.1),
-                lambda_reg=attack_param.get("attack_reg", 0.1),
-                epsilon=attack_param.get("epsilon", 0.05),
-                output_dir=modified_images_path,
-            )
-        res = {"image_modification_info": manipulated_info,
-               "manipulated_costs": manipulated_costs}
-        return res
 
 
 def print_evaluation_results(evaluation_results):
@@ -1114,6 +1012,7 @@ def evaluate_poisoning_effectiveness_ranged(
     weight_increase_non_adv = mean_non_adv_weight_after - mean_non_adv_weight_before
 
     evaluation_results = {
+        "selection_eval_range": eval_range,
         "selection_info": selection_info,
         "mean_adv_weight_before": mean_adv_weight_before,
         "mean_adv_weight_after": mean_adv_weight_after,
@@ -1212,6 +1111,7 @@ def evaluate_attack(
         adversary_ratio=0.25,
         emb_model=None,
         img_preprocess=None,
+        cost_manipulation_method="undercut_target",
         **kwargs
 ):
     """
@@ -1296,7 +1196,10 @@ def evaluate_attack(
     # For each batch (buyer query), perform the reconstruction
     all_attack_model_training_result = []
     all_attack_selection_info = []
+
+    # For different query, perform the attacks.
     for idx, info_dic in enumerate(initial_selection_info):
+        cur_query_num = info_dic["query_number"]
         m_cur_weight = info_dic["multi_step_weights"]
         s_cur_weight = info_dic["single_step_weights"]
         test_point_index = info_dic["test_point_index"]
@@ -1331,6 +1234,7 @@ def evaluate_attack(
 
         # start attack
         attack_param = {
+            "target_query": cur_query_num,
             "cost_manipulation_method": "undercut_target",
             "selected_indices": selected_adversary_indices,
             "unselected_indices": unsampled_adversary_indices,
