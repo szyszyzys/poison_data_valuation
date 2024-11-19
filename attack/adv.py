@@ -25,7 +25,8 @@ class Adv:
 
         self.x = self.original_x[self.indices]
         self.y = self.original_y[self.indices]
-        self.costs = self.original_costs[self.indices]
+        if costs is not None:
+            self.costs = self.original_costs[self.indices]
         self.img_path = img_path
 
         self.emb_model, self.preprocess, self.emb_inference_func = load_model_and_preprocessor(emb_model, device)
