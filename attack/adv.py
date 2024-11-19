@@ -14,7 +14,7 @@ from attack_d import image_modification
 
 
 class Adv:
-    def __init__(self, x_s, y_s, costs, indices, emb_model, device):
+    def __init__(self, x_s, y_s, costs, indices, emb_model, device, img_path):
 
         # Reference the original dataset
         self.original_x = x_s.copy()
@@ -27,6 +27,7 @@ class Adv:
         self.x = self.original_x[self.indices]
         self.y = self.original_y[self.indices]
         self.costs = self.original_costs[self.indices]
+        self.img_path = img_path
 
         self.emb_model, self.preprocess, self.emb_inference_func = load_model_and_preprocessor(emb_model, device)
         self.device = device
@@ -34,7 +35,7 @@ class Adv:
         self.emb_model.eval()
 
         # Initialize Fisher Information Matrix
-        self.fisher_information = self.build_fisher_information_matrix(self.embeddings)
+        # self.fisher_information = self.build_fisher_information_matrix(self.embeddings)
 
     def update_subset(self, new_values, attribute="x"):
         """
@@ -71,42 +72,49 @@ class Adv:
     def set_new_purchase(self):
         pass
 
-    def get_selected(self):
-        def attack(self, attack_type, attack_param, x_s, costs, img_path):
-            """
-            Perform specified attack type: cost manipulation, data manipulation, or both.
+    def attack(self, attack_type, attack_param, x_s, costs, img_path):
+        """
+        Perform specified attack type: cost manipulation, data manipulation, or both.
 
-            Parameters:
-            - attack_type (str): Type of attack to perform ("cost", "data", or "both").
-            - attack_param (dict): Parameters for the attack (e.g., manipulation method, factors).
-            - target_images (list, optional): List of target images to mimic for data manipulation.
-            - target_costs (np.ndarray, optional): Array of target costs to mimic or undercut in cost manipulation.
+        Parameters:
+        - attack_type (str): Type of attack to perform ("cost", "data", or "both").
+        - attack_param (dict): Parameters for the attack (e.g., manipulation method, factors).
+        - target_images (list, optional): List of target images to mimic for data manipulation.
+        - target_costs (np.ndarray, optional): Array of target costs to mimic or undercut in cost manipulation.
 
-            Returns:
-            - dict: Dictionary containing manipulated results (e.g., manipulated costs, manipulated images).
-            """
-            res = {}
-            match attack_type:
-                case "cost_manipulation":
-                    print("Applying cost_manipulation Attack...")
-                    cost = self.cost_manipulation(attack_param, x_s, costs, img_path)
-                case "data_manipulation":
-                    print("Applying data_manipulation Attack...")
-                case "embedding_reconstruction":
-                    print("Applying embedding_reconstruction Attack...")
-                case "embedding_space_estimation":
-                    print("Applying embedding_space_estimation Attack...")
-                case "embedding_property_inference":
-                    print("Applying embedding_property_inference Attack...")
+        Returns:
+        - dict: Dictionary containing manipulated results (e.g., manipulated costs, manipulated images).
+        """
+        res = {}
+        match attack_type:
+            case "cost_manipulation":
+                print("Applying cost_manipulation Attack...")
+                cost = self.cost_manipulation(attack_param, x_s, costs, img_path)
+            case "data_manipulation":
+                target_indices = attack_param["target_indices"]
+                modify_indices = attack_param["modify_indices"]
+                poison_rate = attack_param["poison_rate"]
+                output_dir = attack_param["output_dir"]
 
-                # {"target_vector": target_vector,
-                #  "index": random_selected_index,
-                #  "target_img_path": img_path[random_selected_index],
-                #  "original_img_path": img_path[idx]}
-                # Initialize storage for manipulated image mappings
-                # Perform mimic attack by mapping each original image to a target image
+                return self.data_manipulation(target_indices, modify_indices, poison_rate, attack_steps=100,
+                                              attack_lr=0.1,
+                                              attack_reg=0.1, epsilon=0.05,
+                                              output_dir=output_dir)
+            case "embedding_reconstruction":
+                print("Applying embedding_reconstruction Attack...")
+            case "embedding_space_estimation":
+                print("Applying embedding_space_estimation Attack...")
+            case "embedding_property_inference":
+                print("Applying embedding_property_inference Attack...")
 
-            return res
+            # {"target_vector": target_vector,
+            #  "index": random_selected_index,
+            #  "target_img_path": img_path[random_selected_index],
+            #  "original_img_path": img_path[idx]}
+            # Initialize storage for manipulated image mappings
+            # Perform mimic attack by mapping each original image to a target image
+
+        return res
 
     def cost_manipulation(self, attack_param, x_s, costs, img_path):
         # Step 1: Apply Cost Manipulation
@@ -164,18 +172,51 @@ class Adv:
 
         print("Cost Manipulation Completed.")
 
-    def data_manipulation(self, attack_type, attack_param, x_s, costs, img_path):
+    def assign_random_targets(self, selected_indices, unsampled_indices, img_path):
+        """
+        Assign a random target vector (from selected samples) to each unselected sample.
+
+        Parameters:
+        - x_s (np.array): The array of embeddings for all samples.
+        - selected_indices (list or np.array): Indices of selected samples to choose from.
+        - unsampled_indices (list or np.array): Indices of unsampled data points to assign targets.
+
+        Returns:
+        - target_vectors (dict): A dictionary where keys are unsampled indices and values are target vectors.
+        """
+        target_vectors = {}
+        for idx in unsampled_indices:
+            random_selected_index = np.random.choice(selected_indices)  # Choose a random selected sample
+            target_vector = self.original_x[random_selected_index]
+            # target_vector = target_vector / np.linalg.norm(target_vector)  # Normalize the target vector
+            target_vectors[idx] = {"target_vector": target_vector,
+                                   "target_index": random_selected_index,
+                                   "target_img_path": img_path[random_selected_index],
+                                   "original_img_path": img_path[idx]}
+        return target_vectors
+
+    def data_manipulation(self, target_indices, modify_indices, poison_rate, attack_steps=100, attack_lr=0.1,
+                          attack_reg=0.1, epsilon=0.05,
+                          output_dir="./"):
+        num_samples = int(len(modify_indices) * poison_rate)
+        # Perform random selection without replacement
+        modify_indices = np.random.choice(modify_indices, size=num_samples, replace=False)
+
+        # create the modify info for each of images
+
+        img_manipulate_dic = self.assign_random_targets(target_indices, modify_indices, self.img_path)
         manipulated_info = image_modification(
-            modify_info=modify_info,
-            model=model,
-            processor=preprocess,
-            device=device,
-            num_steps=attack_param.get("attack_steps", 100),
-            learning_rate=attack_param.get("attack_lr", 0.1),
-            lambda_reg=attack_param.get("attack_reg", 0.1),
-            epsilon=attack_param.get("epsilon", 0.05),
-            output_dir=modified_images_path,
+            modify_info=img_manipulate_dic,
+            model=self.emb_model,
+            processor=self.preprocess,
+            device=self.device,
+            num_steps=attack_steps,
+            learning_rate=attack_lr,
+            lambda_reg=attack_reg,
+            epsilon=epsilon,
+            output_dir=output_dir,
         )
+        return manipulated_info
 
     def embedding_reconstruction(self, attack_type, attack_param, x_s, costs, img_path):
         self.fisher_information = self.build_fisher_information_matrix(self.embeddings)
@@ -543,7 +584,6 @@ class Adv:
 
     ### **Utility Functions for Fine-Grained Inference (Optional)**
     # These functions can be included as needed, similar to previous implementations.
-
 
 
 # Example Usage

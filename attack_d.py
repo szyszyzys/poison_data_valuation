@@ -20,8 +20,9 @@ from tqdm import tqdm
 
 # CLIP model and processor
 import daved.src.frank_wolfe as frank_wolfe  # Ensure this module contains the design_selection function
+from attack.adv import Adv
 # Import your custom modules or utilities
-from attack.general_attack.my_utils import get_data
+from attack.general_attack.my_utils import get_data, plot_results_data_selection
 from daved.src import utils
 from daved.src.main import plot_results
 
@@ -606,8 +607,10 @@ def image_modification(
 
     os.makedirs(output_dir, exist_ok=True)
 
+    # save the modification result for all the images
     modify_result = {}
 
+    # perform modification for each images
     for idx, cur_info in tqdm(modify_info.items(), desc="Performing Attack on Unsampled Images"):
         target_vector = cur_info["target_vector"]
         modify_image_path = cur_info["original_img_path"]
@@ -644,30 +647,6 @@ def image_modification(
                               "modified_img_original": modify_image_path
                               }
     return modify_result
-
-
-def assign_random_targets(x_s, selected_indices, unsampled_indices, img_path):
-    """
-    Assign a random target vector (from selected samples) to each unselected sample.
-
-    Parameters:
-    - x_s (np.array): The array of embeddings for all samples.
-    - selected_indices (list or np.array): Indices of selected samples to choose from.
-    - unsampled_indices (list or np.array): Indices of unsampled data points to assign targets.
-
-    Returns:
-    - target_vectors (dict): A dictionary where keys are unsampled indices and values are target vectors.
-    """
-    target_vectors = {}
-    for idx in unsampled_indices:
-        random_selected_index = np.random.choice(selected_indices)  # Choose a random selected sample
-        target_vector = x_s[random_selected_index]
-        # target_vector = target_vector / np.linalg.norm(target_vector)  # Normalize the target vector
-        target_vectors[idx] = {"target_vector": target_vector,
-                               "target_index": random_selected_index,
-                               "target_img_path": img_path[random_selected_index],
-                               "original_img_path": img_path[idx]}
-    return target_vectors
 
 
 def convert_arrays_to_lists(obj):
@@ -872,8 +851,6 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
     #     plot_results(args=args, results=results)
     #
     #     return results, weights
-
-
 
 
 def print_evaluation_results(evaluation_results):
@@ -1087,7 +1064,7 @@ def evaluate_poisoning_effectiveness(
     return evaluation_results
 
 
-def evaluate_attack(
+def evaluate_poisoning_attack(
         args,
         dataset='./data',
         data_dir='./data',
@@ -1176,36 +1153,36 @@ def evaluate_attack(
     # adversary preparation, sample partial data for the adversary
     num_adversary_samples = int(len(x_s) * adversary_ratio)
     adversary_indices = np.random.choice(len(x_s), size=num_adversary_samples, replace=False)
-    adversary_data = {
-        "X": x_s[adversary_indices],
-        "y": y_s[adversary_indices],
-        "costs": costs[adversary_indices] if costs is not None else None,
-        "indices": adversary_indices
-    }
-    adv = Adv(adversary_data, args.poison_rate)
+    adv = Adv(x_s, y_s, costs, adversary_indices, emb_model, device, img_path)
 
     # Evaluate the peformance
     eval_range = list(range(1, 30, 1)) + list(
         range(30, args.max_eval_range, args.eval_step)
     )
 
-    initial_results, initial_selection_info = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs,
-                                                                     args=args, figure_path=figure_path)
-    print(f"Done initial run, number of queries: {len(initial_selection_info)}")
+    benign_node_sampling_result_dict = {}
+    benign_training_results, benign_selection_info = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs,
+                                                                            args=args, figure_path=figure_path)
+
+    # transform the initial result into dictionary
+    for cur_info in benign_selection_info:
+        query_number = cur_info["query_number"]
+        benign_node_sampling_result_dict[query_number] = cur_info
+
+    print(f"Done initial run, number of queries: {len(benign_selection_info)}")
     # Step 3: Identify Selected and Unselected Data Points
     # For each batch (buyer query), perform the reconstruction
-    all_attack_model_training_result = []
-    all_attack_selection_info = []
+    attack_result_dict = {}
 
     # For different query, perform the attacks.
-    for idx, info_dic in enumerate(initial_selection_info):
+    for query_n, info_dic in enumerate(benign_selection_info):
         cur_query_num = info_dic["query_number"]
         m_cur_weight = info_dic["multi_step_weights"]
         s_cur_weight = info_dic["single_step_weights"]
         test_point_index = info_dic["test_point_index"]
         x_test = info_dic["test_x"]
         y_test = info_dic["test_y"]
-
+        attack_result_path = f"./{figure_path}/poisoned_sampling_query_number_{query_n}"
         # for current data batch, find which points are selected
         # img = Image.open(img_path)
         # embedding = inference_func(preprocess(img)[None].to(device))
@@ -1242,98 +1219,122 @@ def evaluate_attack(
             "emb_model": emb_model,
             "img_preprocess": img_preprocess,
             "device": device,
-            "modified_images_path": modified_images_path,
+            "output_dir": modified_images_path,
             "global_selected_indices": selected_indices_initial
         }
 
-        attack_result = adv.attack(attack_type, attack_param, x_s, costs, img_paths)
+        # manipulate the images
+        manipulated_img_dict = adv.attack("data_manipulation", attack_param, x_s, costs, img_paths)
 
-        # image_modification_info[idx] = {"target_image": target_img_idx,
-        #                       "similarity": similarity,
-        #                       "m_embedding": modified_embedding,
-        #                       "modified_image": modified_image,
-        #                       "modified_img_original": modify_image_path
-        #                       }
-        # summarize the modify result
-        image_modification_info = attack_result["image_modification_info"]
-
-        m_embeddings = []
-        m_indices = []
-        for img_idx, info in image_modification_info.items():
-            modified_embedding = info["m_embedding"]
-            m_embeddings.append(modified_embedding)
-            m_indices.append(img_idx)
+        # clone the original x_s, insert perturbed embeddings into the x_s
         x_s_clone = copy.deepcopy(x_s)
-        costs_clone = copy.deepcopy(costs)
-        a_figure_path = f"{figure_path}/attack_benign"
-        updated_results, updated_test_point_info = sampling_run_one_buyer(
-            x_test, y_test, x_s_clone, y_s, eval_range, costs=costs_clone, args=args, figure_path=a_figure_path
+
+        for img_idx, info in manipulated_img_dict.items():
+            modified_embedding = info["m_embedding"]
+            x_s_clone[img_idx] = modified_embedding
+
+        # use the sample query to perform the attack.
+        model_training_result, data_sampling_result = sampling_run_one_buyer(
+            x_test, y_test, x_s_clone, y_s, eval_range, costs=costs, args=args, figure_path=attack_result_path
         )
 
-        all_attack_model_training_result.append(updated_results)
-        all_attack_selection_info.append(updated_test_point_info[0])
+        attack_result_dict[query_n] = {
+            "model_training_result": model_training_result,
+            "data_sampling_result": data_sampling_result[0]
+        }
     evaluation_results_list = []
+    torch.save(attack_result_dict, f"{result_dir}/selection_result.pt")
 
+    # benign_training_results = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
+    attack_training_error = []
+    selection_info = defaultdict(list)
     # Step 6: attack evaluation, identify Updated Selected Data Points
-    for o_info, u_info in (initial_selection_info, all_attack_selection_info):
-        o_weight = o_info["multi_step_weights"]
-        u_weight = u_info["multi_step_weights"]
+    for query_n in attack_result_dict.keys():
+        malicious_info = attack_result_dict[query_n]
+        malicious_data_sampling_result = malicious_info["data_sampling_result"]
+        malicious_model_training_result = malicious_info["model_training_result"]
 
-        o_selected_indices, _ = identify_selected_unsampled(
-            weights=o_weight,
-            num_select=num_select,
-        )
+        # find the benign info
+        benign_data_sampling_result = benign_node_sampling_result_dict[query_n]
 
-        u_selected_indices, _ = identify_selected_unsampled(
-            weights=u_weight,
-            num_select=num_select,
-        )
+        m_s_weight = malicious_data_sampling_result["single_step_weights"]
+        m_m_weight = malicious_data_sampling_result["multi_step_weights"]
 
-        evaluation_results = evaluate_poisoning_effectiveness_ranged(
-            initial_weights=o_weight,
-            updated_weights=u_weight,
+        b_s_weight = benign_data_sampling_result["single_step_weights"]
+        b_m_weight = benign_data_sampling_result["multi_step_weights"]
+
+        evaluation_results_single = evaluate_poisoning_effectiveness_ranged(
+            initial_weights=b_s_weight,
+            updated_weights=m_s_weight,
             adversary_indices=adversary_indices,
             eval_range=eval_range)
-        evaluation_results_list.append(evaluation_results)
-        #
-        # {
-        #     "selection_info": {
-        #         "selected_num": selected_num,
-        #         "num_adv_selected_before": n_before,
-        #         "num_adv_selected_after": n_after,
-        #         "selection_rate_before": n_before / selected_num,
-        #         "selection_rate_after": n_after / selected_num,
-        #     }
-        #     "mean_adv_weight_before": mean_adv_weight_before,
-        #     "mean_adv_weight_after": mean_adv_weight_after,
-        #     "weight_increase_adv": weight_increase_adv,
-        #     "mean_non_adv_weight_before": mean_non_adv_weight_before,
-        #     "mean_non_adv_weight_after": mean_non_adv_weight_after,
-        #     "weight_increase_non_adv": weight_increase_non_adv,
-        # }
-    #
-    selection_attack_result = os.path.join(
-        result_dir,
-        f'modified_images_{attack_type}_multi_step',
-        f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}',
-        f'target_query_batch_{test_point_index}'
-    )
-    averaged_data_selection_results = calculate_average_metrics(evaluation_results_list)
-    print_evaluation_results(averaged_data_selection_results)
-    save_json(f"{selection_attack_result}/all_result_selection.json", evaluation_results_list)
-    save_json(f"{selection_attack_result}/avg_result_selection.json", averaged_data_selection_results)
+        selection_info_single = evaluation_results_single["selection_info"]
+
+        evaluation_results_multi = evaluate_poisoning_effectiveness_ranged(
+            initial_weights=b_m_weight,
+            updated_weights=m_m_weight,
+            adversary_indices=adversary_indices,
+            eval_range=eval_range)
+        selection_info_multi = evaluation_results_multi["selection_info"]
+
+        selection_info_bs = []
+        selection_info_ms = []
+        selection_info_bm = []
+        selection_info_mm = []
+
+        for idx in eval_range:
+            selection_info_bs.append(selection_info_single[idx]["num_adv_selected_before"])
+            selection_info_ms.append(selection_info_single[idx]["num_adv_selected_after"])
+            selection_info_bm.append(selection_info_multi[idx]["num_adv_selected_before"])
+            selection_info_mm.append(selection_info_multi[idx]["num_adv_selected_after"])
+
+        selection_info["benign(single)"].append(selection_info_bs)
+        selection_info["malicious(single)"].append(selection_info_ms)
+        selection_info["benign(multi)"].append(selection_info_bm)
+        selection_info["malicious(multi)"].append(selection_info_mm)
+
+    plot_results_data_selection("image_selection_rate", f"{figure_path}/selection_eval.plot", selection_info,
+                                eval_range)
+
+    # start combine the result for trained model performance
+    benign_training_results["errors"]
+    benign_training_results["eval_range"]
+    benign_training_results["runtimes"]
+    m_errors = defaultdict(list)
+    m_runtimes = defaultdict(list)
+    for query_n in attack_result_dict.keys():
+        malicious_info = attack_result_dict[query_n]
+        malicious_model_training_result = malicious_info["model_training_result"]
+        m_runtimes["ADV DAVED (single step)"].append(
+            malicious_model_training_result["runtimes"]["DAVED (single step)"][0])
+        m_errors["ADV DAVED (single step)"].append(malicious_model_training_result["error"]["DAVED (single step)"][0])
+        m_runtimes["ADV DAVED (multi-step)"].append(
+            malicious_model_training_result["runtimes"]["DAVED (single step)"][0])
+        m_errors["ADV DAVED (multi-step)"].append(malicious_model_training_result["error"]["DAVED (single step)"][0])
+
+    for k, v in m_errors:
+        benign_training_results["errors"][k] = v
+        benign_training_results["eval_range"][k] = eval_range
+    for k, v in m_runtimes:
+        benign_training_results["runtimes"][k] = v
+
+    # selection_attack_result = os.path.join(
+    #     result_dir,
+    #     f'modified_images_{attack_type}_multi_step',
+    #     f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}',
+    #     f'target_query_batch_{test_point_index}'
+    # )
+    # averaged_data_selection_results = calculate_average_metrics(evaluation_results_list)
+    # print_evaluation_results(averaged_data_selection_results)
+    # save_json(f"{selection_attack_result}/all_result_selection.json", evaluation_results_list)
+    # save_json(f"{selection_attack_result}/avg_result_selection.json", averaged_data_selection_results)
     # Step 5: Perform Attack on Unselected Data Points
 
     # Step 8: Evaluate Attack Success on trained model
-    amr_errors = []
-    for amr in all_attack_model_training_result:
-        amr_errors.append(amr["errors"]["DAVED (multi-step)"][-1])
-    amr_errors = np.array(amr_errors)
-    initial_results["errors"]["attacks"] = amr_errors
     args.save_name = "attack_result"
-    plot_results(f"{figure_path}_final_result_attack.png", results=initial_results, args=args)
-    initial_results["averaged_data_selection_results"] = averaged_data_selection_results
-    save_results_trained_model(args, initial_results)
+    plot_results(f"{figure_path}/model_training_result.png", results=benign_training_results, args=args)
+    save_results_trained_model(args, benign_training_results)
+
     # comprehensive_evaluation(
     #     X_sell_original, y_sell_original,
     #     X_sell_modified, y_sell_modified,
@@ -1685,7 +1686,7 @@ if __name__ == "__main__":
     }
 
     # Run the attack evaluation experiment
-    results = evaluate_attack(args, **experiment_params)
+    results = evaluate_poisoning_attack(args, **experiment_params)
 
     # Print final results
     print("\nFinal Attack Evaluation Metrics:")

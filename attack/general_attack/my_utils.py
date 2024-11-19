@@ -1,9 +1,11 @@
+from collections import defaultdict
 from pathlib import Path
 
 import clip
 import numpy as np
 import torch
 from PIL import Image
+from matplotlib import pyplot as plt
 from torchvision.models import resnet18
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize, Lambda
 from tqdm import tqdm
@@ -307,3 +309,201 @@ def embed_images(img_paths, model_name="clip", device="cpu", normalize_embedding
     torch.cuda.empty_cache()
 
     return embeddings
+
+
+def plot_errors_fixed(results, save_path):
+    plt.rcParams["font.family"] = "serif"
+    plt.figure(figsize=(8, 8))
+    errors = results["errors"]
+    eval_range = results["eval_range"]
+
+    quantiles = []
+    for i, (k, v) in enumerate(errors.items()):
+        err = np.array(v)
+        quantiles.append(np.quantile(err, 0.9))
+        ms = 5
+        match k:
+            case "LavaEvaluator":
+                k = "LAVA"
+            case "InfluenceSubsample":
+                k = "Influence"
+            case "LeaveOneOut":
+                k = "Leave One Out"
+            case "KNNShapley":
+                k = "KNN Shapley"
+            case "DataOob":
+                k = "Data-OOB"
+            case "attack":
+                k = "Attack-DEVAD"
+            case _:
+                k = k
+
+        match k:
+            case k if "DAVED (multi-step)" in k:
+                lw = 2
+                ls = "-"
+                marker = "*"
+                ms = ms + 5
+            case k if "random" in k.lower():
+                lw = 5
+                ls = "-"
+                marker = ""
+            case _:
+                lw = 2
+                ls = "-"
+                marker = "s"
+        plt.plot(
+            eval_range,
+            err.mean(0).squeeze(),
+            label=k,
+            marker=marker,
+            ls=ls,
+            lw=lw,
+            ms=ms,
+        )
+
+    plt.xticks(np.arange(0, max(eval_range), 10), fontsize="x-large")
+    # plt.yticks(np.arange(0, 10, 0.5), fontsize='x-large')
+    plt.ylim(0, np.median(quantiles))
+    plt.xlabel("Number of Datapoints selected", fontsize="xx-large", labelpad=8)
+    plt.ylabel("Test\nError", fontsize="xx-large", rotation=0, labelpad=30)
+    plt.legend(
+        fontsize="xx-large", bbox_to_anchor=(0.5, 1.4), loc="upper center", ncols=2
+    )
+    plt.tight_layout(pad=0, w_pad=0)
+    plt.savefig(save_path, bbox_inches="tight")
+
+
+def plot_errors_under_budget(results, save_path):
+    plt.rcParams["font.family"] = "serif"
+    plt.figure(figsize=(8, 8))
+    error_under_budgets = results["errors"]
+    eval_range = results["eval_range"]
+
+    quantiles = []
+    for i, (k, v) in enumerate(error_under_budgets.items()):
+        error_per_budget = defaultdict(list)
+        for v_i in v:
+            for b, e in v_i.items():
+                error_per_budget[b].append(e)
+
+        budgets = []
+        errors = []
+        for b, e in dict(sorted(error_per_budget.items())).items():
+            budgets.append(b)
+            errors.append(np.mean(e))
+
+        quantiles.append(np.quantile(errors, 0.9))
+        ms = 5
+        match k:
+            case "LavaEvaluator":
+                k = "LAVA"
+            case "InfluenceSubsample":
+                k = "Influence"
+            case "LeaveOneOut":
+                k = "Leave One Out"
+            case "KNNShapley":
+                k = "KNN Shapley"
+            case "DataOob":
+                k = "Data-OOB"
+            case _:
+                k = k
+
+        match k:
+            case k if "Ours" in k:
+                lw = 2
+                ls = "-"
+                marker = "*"
+                ms = ms + 5
+            case k if "random" in k.lower():
+                lw = 5
+                ls = "-"
+                marker = ""
+            case _:
+                lw = 2
+                ls = "-"
+                marker = "s"
+
+        plt.plot(budgets, errors, label=k, marker=marker, ls=ls, lw=lw, ms=ms)
+
+    plt.xticks(np.arange(0, max(eval_range), 10), fontsize="x-large")
+    # plt.yticks(np.arange(0, 10, 0.5), fontsize='x-large')
+    plt.ylim(0, np.median(quantiles))
+    plt.xlabel("Budget", fontsize="xx-large", labelpad=8)
+    plt.ylabel("Test\nError", fontsize="xx-large", rotation=0, labelpad=30)
+    plt.legend(
+        fontsize="xx-large", bbox_to_anchor=(0.5, 1.4), loc="upper center", ncols=2
+    )
+    plt.tight_layout(pad=0, w_pad=0)
+    plt.savefig(save_path, bbox_inches="tight")
+
+
+def plot_image_selection_rate(figure_path, results, eval_range):
+    plt.rcParams["font.family"] = "serif"
+    plt.figure(figsize=(8, 8))
+
+    quantiles = []
+
+    for label, data in results.items():
+        # Convert data to a numpy array for easier manipulation
+        data_array = np.array(data)  # Shape: (num_runs, len(eval_range))
+
+        ms = 5
+
+        match label:
+            case label if "benign" in label:
+                lw = 2
+                ls = "-"
+                marker = "*"
+                ms = ms + 5
+            case label if "malicious" in label.lower():
+                lw = 5
+                ls = "-"
+                marker = ""
+            case _:
+                lw = 2
+                ls = "-"
+                marker = "s"
+
+        # Compute the mean selection rate across runs
+        mean_rate = data_array.mean(axis=0)
+        std_rate = data_array.std(axis=0)  # Optional: Compute standard deviation for error bars
+
+        # Plot the mean selection rate with error bars
+        plt.plot(eval_range, mean_rate, label=label, marker=marker,
+                 ls=ls,
+                 lw=lw,
+                 ms=ms, )
+        plt.fill_between(
+            eval_range,
+            mean_rate - std_rate,
+            mean_rate + std_rate,
+            alpha=0.2
+        )  # Add shaded error bars (optional)
+
+    # Add plot labels and legend
+    plt.xlabel("Number of Datapoints selected", fontsize="xx-large", labelpad=8)
+    plt.ylabel("Selection Rate", fontsize="xx-large", rotation=0, labelpad=30)
+
+    plt.title("Average Selection Rate Across Runs")
+
+    plt.legend(
+        fontsize="xx-large", bbox_to_anchor=(0.5, 1.4), loc="upper center", ncols=2
+    )
+
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout(pad=0, w_pad=0)
+    plt.xticks(np.arange(0, max(eval_range), 10), fontsize="x-large")
+
+    # Save or show the plot
+    if figure_path:
+        plt.savefig(figure_path, bbox_inches="tight")
+        print(f"Figure saved to {figure_path}")
+    else:
+        plt.show()
+
+
+def plot_results_data_selection(plot_type, figure_path, results, eval_range):
+    if plot_type == "image_selection_rate":
+        plot_image_selection_rate(figure_path, results, eval_range)
+    print(f"Plot saved to {figure_path}".center(80, "="))
