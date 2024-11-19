@@ -418,7 +418,7 @@ def evaluate_model_raw_data(
                 model = LinearRegression(fit_intercept=True)
                 model.fit(x_k, y_k)
                 y_pred = model.predict(x_test_flat)
-
+                print(f"Shape of y_true: {y_k.shape}, Shape of y_pred: {y_pred.shape}, s : {y_test.shape}")
             else:
                 # Using pseudo-inverse for linear regression
                 beta_k = np.linalg.pinv(x_k) @ y_k
