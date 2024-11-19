@@ -13,7 +13,7 @@ from attack.general_attack.my_utils import load_model_and_preprocessor, embed_im
 
 
 class Adv:
-    def __init__(self, x_s, y_s, costs, indices, emb_model, device, img_path):
+    def __init__(self, x_s, y_s, costs, indices, emb_model, device, img_paths):
 
         # Reference the original dataset
         self.original_x = x_s.copy()
@@ -27,7 +27,7 @@ class Adv:
         if costs is not None:
             self.original_costs = costs.copy()
             self.costs = self.original_costs[self.indices]
-        self.img_path = img_path
+        self.img_path = img_paths
 
         self.emb_model, self.preprocess, self.emb_inference_func = load_model_and_preprocessor(emb_model, device)
         self.device = device

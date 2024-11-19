@@ -11,8 +11,11 @@ import clip
 import numpy as np
 import torch
 from PIL import Image
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.metrics import pairwise_distances
 from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 # CLIP model and processor
@@ -105,37 +108,6 @@ def perform_attack(x_s, unsampled_indices, selected_indices, attack_strength=0.1
         x_s_modified[idx] = original_vector + perturbation
 
     return x_s_modified, unsampled_indices  # Assuming all unsampled are modified
-
-
-def data_selection(x_s, y_s, x_b, y_b, num_iters, reg_lambda=None, costs=None):
-    """
-    Perform the initial data selection using the design_selection function.
-
-    Parameters:
-    - x_s (np.ndarray): Feature matrix for seller data.
-    - y_s (np.ndarray): Labels for seller data.
-    - x_b (np.ndarray): Feature matrix for buyer data.
-    - y_b (np.ndarray): Labels for buyer data.
-    - num_iters (int): Number of iterations for the selection algorithm.
-    - reg_lambda (float): Regularization parameter.
-
-    Returns:
-    - initial_results (dict): Results from the initial selection.
-    """
-    initial_results = frank_wolfe.design_selection(
-        x_s,
-        y_s,
-        x_b,
-        y_b,
-        num_select=10,
-        num_iters=num_iters,
-        alpha=None,
-        recompute_interval=0,
-        line_search=True,
-        costs=costs,
-        reg_lambda=reg_lambda,
-    )
-    return initial_results
 
 
 def evaluate_attack_success_selection(initial_selected, updated_selected, modified_indices, total_selected=10):
@@ -354,7 +326,145 @@ def save_json(path, results):
     print(f"Results saved to {path}".center(80, "="))
 
 
-def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None, figure_path="./figure"):
+def evaluate_model_raw_data(
+        x_test,
+        y_test,
+        x_train,
+        y_train,
+        w,
+        eval_range=range(1, 10),
+        task='classification',
+        use_sklearn=False,
+        return_list=False,
+        normalize=True,
+        reduce_dim=False,
+        dim_components=100,
+        img_paths=None,
+        test_img_indices=None,
+        sell_img_indices=None,
+
+):
+    """
+    Evaluate model performance using raw images instead of embeddings.
+
+    Parameters:
+    - x_test: NumPy array of raw test images, shape (n_test_samples, height, width, channels)
+    - y_test: NumPy array of test labels, shape (n_test_samples,)
+    - x_train: NumPy array of raw training images, shape (n_train_samples, height, width, channels)
+    - y_train: NumPy array of training labels, shape (n_train_samples,)
+    - w: NumPy array of weights for selecting training samples, shape (n_train_samples,)
+    - eval_range: Iterable of integers representing different k values for top-k selection
+    - task: String, either 'regression' or 'classification'
+    - use_sklearn: Boolean flag to use scikit-learn's models
+    - return_list: Boolean flag to return errors as a list instead of a dictionary
+    - normalize: Boolean flag to apply normalization
+    - reduce_dim: Boolean flag to apply dimensionality reduction
+    - dim_components: Number of components for PCA if reduce_dim is True
+
+    Returns:
+    - metrics: Dictionary or list of evaluation metrics for each k in eval_range
+    """
+    x_test = []
+    x_train = []
+
+    # Load and preprocess test images
+    for img_idx in tqdm(test_img_indices, desc="Load Test"):
+        img = Image.open(img_paths[img_idx])
+        img_preprocessed = preprocess(img).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
+        x_test.append(img_preprocessed)
+
+    # Load and preprocess training images
+    for img_idx in tqdm(sell_img_indices, desc="Load Train"):
+        img = Image.open(img_paths[img_idx])
+        img_preprocessed = preprocess(img).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
+        x_train.append(img_preprocessed)
+
+    # Stack tensors and move to CPU for further processing
+    x_train = torch.cat(x_train).cpu().numpy()  # Shape: (n_train, 3, 224, 224)
+    x_test = torch.cat(x_test).cpu().numpy()  # Shape: (n_test, 3, 224, 224)
+
+    # Flatten the raw images for model training
+    x_train_flat = x_train.reshape(x_train.shape[0], -1)  # Shape: (n_train, height*width*channels)
+    x_test_flat = x_test.reshape(x_test.shape[0], -1)  # Shape: (n_test, height*width*channels)
+
+    # Normalize the data if required
+    if normalize:
+        scaler = StandardScaler()
+        x_train_flat = scaler.fit_transform(x_train_flat)
+        x_test_flat = scaler.transform(x_test_flat)
+
+    # Dimensionality Reduction (Optional)
+    if reduce_dim:
+        from sklearn.decomposition import PCA
+        pca = PCA(n_components=dim_components)
+        x_train_flat = pca.fit_transform(x_train_flat)
+        x_test_flat = pca.transform(x_test_flat)
+
+    # Sort weights in descending order and get sorted indices
+    sorted_w = np.argsort(w)[::-1]
+
+    # Initialize metrics dictionary
+    metrics = {}
+    errors = {}
+    for k in eval_range:
+        # Select top-k training samples based on weights
+        selected_indices = sorted_w[:k]
+        x_k = x_train_flat[selected_indices]
+        y_k = y_train[selected_indices]
+
+        # Initialize and train the model
+        if task == 'regression':
+            if use_sklearn:
+                model = LinearRegression(fit_intercept=True)
+                model.fit(x_k, y_k)
+                y_pred = model.predict(x_test_flat)
+            else:
+                # Using pseudo-inverse for linear regression
+                beta_k = np.linalg.pinv(x_k) @ y_k
+                y_pred = x_test_flat @ beta_k
+        elif task == 'classification':
+            if use_sklearn:
+                model = LogisticRegression(max_iter=1000)
+                model.fit(x_k, y_k)
+                y_pred = model.predict(x_test_flat)
+                y_prob = model.predict_proba(x_test_flat)[:, 1] if len(np.unique(y_k)) == 2 else None
+            else:
+                raise NotImplementedError("Custom classification model not implemented.")
+        else:
+            raise ValueError("Invalid task type. Choose 'regression' or 'classification'.")
+
+        # Compute Evaluation Metrics
+        if task == 'regression':
+            mse = mean_squared_error(y_test, y_pred)
+            mae = mean_absolute_error(y_test, y_pred)
+            r2 = r2_score(y_test, y_pred)
+            metrics[k] = {'MSE': mse, 'MAE': mae, 'R2': r2}
+        elif task == 'classification':
+            # accuracy = accuracy_score(y_test, y_pred)
+            # precision = precision_score(y_test, y_pred, average='weighted', zero_division=0)
+            # recall = recall_score(y_test, y_pred, average='weighted', zero_division=0)
+            # f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
+            #
+            # if y_prob is not None:
+            #     roc_auc = roc_auc_score(y_test, y_prob)
+            #     metrics[k] = {'Accuracy': accuracy, 'Precision': precision, 'Recall': recall, 'F1-Score': f1,
+            #                   'ROC-AUC': roc_auc}
+            # else:
+            #     metrics[k] = {'Accuracy': accuracy, 'Precision': precision, 'Recall': recall, 'F1-Score': f1}
+            errors[k] = mean_squared_error(y_test, y_pred)
+
+    return list(errors.values()) if return_list else errors
+
+    # if return_list:
+    #     # Return metrics as a list ordered by eval_range
+    #     return [metrics[k] for k in eval_range]
+    # else:
+    #     # Return metrics as a dictionary
+    #     return metrics
+
+
+def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None, figure_path="./figure",
+                           img_paths=None, test_img_indices=None, sell_img_indices=None):
     # Dictionaries to store errors, runtimes, and weights for each method and test point
     errors = defaultdict(list)
     runtimes = defaultdict(list)
@@ -373,10 +483,17 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
             y_test=y_test,
             x_s=x_s,
             y_s=y_s,
-            eval_range=eval_range
+            eval_range=eval_range,
+            img_paths=img_paths,
+            test_img_indices=test_img_indices,
+            sell_img_indices=sell_img_indices,
+            task='classification',
         )
 
-        if costs is not None:
+        if True:
+            error_func = evaluate_model_raw_data
+            err_kwargs["return_list"] = True
+        elif costs is not None:
             error_func = utils.get_error_under_budget
             err_kwargs["costs"] = costs
         else:
@@ -449,70 +566,6 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         plot_results(f"{figure_path}_error_plotting.png", results=attack_model_result, args=args)
 
     return attack_model_result, test_point_info
-
-    # def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None):
-    #     errors = defaultdict(list)
-    #     runtimes = defaultdict(list)
-    #     weights = defaultdict(list)
-    #     # loop over each test point in buyer
-    #     for i, j in tqdm(enumerate(range(0, x_b.shape[0], args.batch_size))):
-    #         x_test = x_b[j: j + args.batch_size]
-    #         y_test = y_b[j: j + args.batch_size]
-    #
-    #         err_kwargs = dict(
-    #             x_test=x_test, y_test=y_test, x_s=x_s, y_s=y_s, eval_range=eval_range
-    #         )
-    #
-    #         if costs is not None:
-    #             error_func = utils.get_error_under_budget
-    #             err_kwargs["costs"] = costs
-    #         else:
-    #             error_func = utils.get_error_fixed
-    #             err_kwargs["return_list"] = True
-    #
-    #         os_start = time.perf_counter()
-    #         w_os = frank_wolfe.one_step(x_s, x_test)
-    #         os_end = time.perf_counter()
-    #         runtimes["DAVED (single step)"].append(os_end - os_start)
-    #         weights["DAVED (single step)"].append(w_os)
-    #
-    #         fw_start = time.perf_counter()
-    #         res_fw = frank_wolfe.design_selection(
-    #             x_s,
-    #             y_s,
-    #             x_test,
-    #             y_test,
-    #             num_select=10,
-    #             num_iters=args.num_iters,
-    #             alpha=None,
-    #             recompute_interval=0,
-    #             line_search=True,
-    #             costs=costs,
-    #             reg_lambda=args.reg_lambda,
-    #         )
-    #         fw_end = time.perf_counter()
-    #         w_fw = res_fw["weights"]
-    #         runtimes["DAVED (multi-step)"].append(fw_end - fw_start)
-    #         weights["DAVED (multi-step)"].append(w_fw)
-    #
-    #         errors["DAVED (multi-step)"].append(error_func(w=w_fw, **err_kwargs))
-    #         errors["DAVED (single step)"].append(error_func(w=w_os, **err_kwargs))
-    #
-    #         results = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
-    #
-    #         if i % 25 == 0:
-    #             save_results_trained_model(args=args, results=results)
-    #             plot_results(args=args, results=results)
-    #
-    #         print(f"round {i} done".center(40, "="))
-    #     if not args.skip_save:
-    #         with open(args.result_dir / f"{args.save_name}-weights.pkl", "wb") as f:
-    #             pickle.dump(weights, f)
-    #
-    #     save_results_trained_model(args=args, results=results)
-    #     plot_results(args=args, results=results)
-    #
-    #     return results, weights
 
 
 def print_evaluation_results(evaluation_results):
@@ -816,7 +869,7 @@ def evaluate_poisoning_attack(
     # adversary preparation, sample partial data for the adversary
     num_adversary_samples = int(len(x_s) * adversary_ratio)
     adversary_indices = np.random.choice(len(x_s), size=num_adversary_samples, replace=False)
-    adv = Adv(x_s, y_s, costs, adversary_indices, emb_model_name, device, img_path)
+    adv = Adv(x_s, y_s, costs, adversary_indices, emb_model=emb_model_name, device=device, img_paths=img_paths)
 
     # Evaluate the peformance
     eval_range = list(range(1, 30, 1)) + list(
@@ -826,7 +879,11 @@ def evaluate_poisoning_attack(
     benign_node_sampling_result_dict = {}
     benign_training_results, benign_selection_info = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs,
                                                                             args=args,
-                                                                            figure_path=f"{figure_path}benign")
+                                                                            figure_path=f"{figure_path}benign"
+                                                                            , img_paths=img_paths,
+                                                                            test_img_indices=index_b,
+                                                                            sell_img_indices=index_s
+                                                                            )
 
     # transform the initial result into dictionary
     for cur_info in benign_selection_info:
@@ -892,14 +949,17 @@ def evaluate_poisoning_attack(
 
         # clone the original x_s, insert perturbed embeddings into the x_s
         x_s_clone = copy.deepcopy(x_s)
-
+        img_paths_clone = copy.deepcopy(img_paths)
         for img_idx, info in manipulated_img_dict.items():
             modified_embedding = info["m_embedding"]
             x_s_clone[img_idx] = modified_embedding
+            img_paths_clone[img_idx] = info["modified_img_path"]
 
         # use the sample query to perform the attack.
         model_training_result, data_sampling_result = sampling_run_one_buyer(
-            x_test, y_test, x_s_clone, y_s, eval_range, costs=costs, args=args, figure_path=attack_result_path
+            x_test, y_test, x_s_clone, y_s, eval_range, costs=costs, args=args, figure_path=attack_result_path,
+            img_paths=img_paths_clone, test_img_indices=index_b, sell_img_indices=index_s
+
         )
 
         attack_result_dict[query_n] = {
@@ -994,7 +1054,6 @@ def evaluate_poisoning_attack(
     args.save_name = "attack_result"
     plot_results(f"{figure_path}/model_training_result.png", results=benign_training_results, args=args)
     save_results_trained_model(args, benign_training_results)
-
 
     # comprehensive_evaluation(
     #     X_sell_original, y_sell_original,

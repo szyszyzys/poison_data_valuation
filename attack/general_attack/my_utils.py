@@ -583,7 +583,8 @@ def image_modification(
                               "similarity": similarity,
                               "m_embedding": modified_embedding,
                               "modified_image": modified_image,
-                              "modified_img_original": modify_image_path
+                              "modified_img_original": modify_image_path,
+                              "modified_img_path": modified_image_path
                               }
     return modify_result
 
