@@ -1,33 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import minimize
-from sklearn.metrics import precision_score, recall_score, roc_auc_score
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-from sklearn.cluster import KMeans
-
-
-def generate_data(n_samples=200, n_features=50, selected_ratio=0.3, random_state=42):
-    """
-    Generate synthetic data with selected and unselected samples.
-
-    Parameters:
-    - n_samples (int): Total number of samples to generate.
-    - n_features (int): Number of features per sample.
-    - selected_ratio (float): Fraction of samples to be selected.
-    - random_state (int): Seed for reproducibility.
-
-    Returns:
-    - X (np.ndarray): Generated feature matrix of shape (n_samples, n_features).
-    - selected_indices (np.ndarray): Indices of selected samples.
-    - unselected_indices (np.ndarray): Indices of unselected samples.
-    """
-    np.random.seed(random_state)
-    X = np.random.normal(0, 1, (n_samples, n_features))  # Feature matrix
-    n_selected = int(selected_ratio * n_samples)
-    selected_indices = np.random.choice(n_samples, n_selected, replace=False)
-    unselected_indices = np.setdiff1d(np.arange(n_samples), selected_indices)
-    return X, selected_indices, unselected_indices
+from sklearn.metrics import roc_auc_score
 
 
 def compute_fim_refined(X, indices, weights=None, regularization=1e-5):
@@ -327,8 +303,8 @@ def fim_reverse_opt_refined(X, selected_indices, unselected_indices, dim, lambda
     - metrics (dict): Evaluation metrics.
     """
     # Compute FIMs using refined computation
-    I_selected = compute_fim_refined(X, selected_indices, weights=None, regularization=1e-5)
-    I_unselected = compute_fim_refined(X, unselected_indices, weights=None, regularization=1e-5)
+    # I_selected = compute_fim_refined(X, selected_indices, weights=None, regularization=1e-5)
+    # I_unselected = compute_fim_refined(X, unselected_indices, weights=None, regularization=1e-5)
 
     if verbose:
         print("Refined FIMs computed.")
@@ -387,19 +363,12 @@ def fim_reverse_emb_opt(x_s, selected_indices, unselected_indices, verbose=True)
     Main function to execute the refined embedding reconstruction and visualization.
     """
     # Parameters
-    n_samples = 200
-    n_features = 50
-    selected_ratio = 0.3
-    dim = n_features  # Assuming embedding dimension equals feature dimension
+    dim = x_s.shape[-1]
     lambda_reg = 0.1
     margin = 1.0
     iterations = 100
     top_n = 50
     top_k = 10
-
-    if verbose:
-        print(f"Generated data with {n_samples} samples and {n_features} features.")
-        print(f"Selected samples: {len(selected_indices)}, Unselected samples: {len(unselected_indices)}")
 
     # 2. Reconstruct Embedding and Visualize
     q, scores, metrics = fim_reverse_opt_refined(
