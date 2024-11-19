@@ -418,6 +418,7 @@ def evaluate_model_raw_data(
                 model = LinearRegression(fit_intercept=True)
                 model.fit(x_k, y_k)
                 y_pred = model.predict(x_test_flat)
+
             else:
                 # Using pseudo-inverse for linear regression
                 beta_k = np.linalg.pinv(x_k) @ y_k
@@ -439,7 +440,7 @@ def evaluate_model_raw_data(
             # mae = mean_absolute_error(y_test, y_pred)
             # r2 = r2_score(y_test, y_pred)
             # metrics[k] = {'MSE': mse, 'MAE': mae, 'R2': r2}
-            errors[k] = mean_squared_error(y_test, y_pred)
+            errors[k] = mse
         elif task == 'classification':
             # accuracy = accuracy_score(y_test, y_pred)
             # precision = precision_score(y_test, y_pred, average='weighted', zero_division=0)
