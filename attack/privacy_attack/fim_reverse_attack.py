@@ -1,9 +1,9 @@
+import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.metrics import mean_squared_error, cosine_similarity
-from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.linear_model import Ridge
-import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Set random seed for reproducibility
 np.random.seed(42)
@@ -210,9 +210,10 @@ def plot_reconstruction(x_test, x_test_hat):
 
 
 def run_experiment(
-        n_selected=100,
-        n_unselected=200,
-        n_features=10,
+        x_s,
+        x_query,
+        selected_indices,
+        unselected_indices,
         epsilon=1e-3,
         lambda_reg=1e-5,
         top_k=2,
@@ -236,18 +237,14 @@ def run_experiment(
     - results: Dictionary containing all inference results
     """
     results = {}
+    n_selected = 100,
+    n_unselected = 200,
+    n_features = 10,
 
-    # Generate synthetic test data
-    x_test = np.random.randn(n_features)
-
-    # Generate selected data points close to x_test
-    X_selected = x_test + np.random.randn(n_selected, n_features) * 0.1  # Small noise
-
-    # Generate unselected data points different from x_test
-    X_unselected = np.random.randn(n_unselected, n_features) + 2  # Shifted mean for diversity
-
+    x_selected = x_s[selected_indices]
+    x_unselected = x_s[unselected_indices]
     # Step 1: Construct Extended FIM
-    fim = compute_extended_fim(X_selected, X_unselected, epsilon=epsilon, lambda_reg=lambda_reg)
+    fim = compute_extended_fim(x_selected, x_unselected, epsilon=epsilon, lambda_reg=lambda_reg)
     results['fim'] = fim
 
     # Step 2: Compute Inverse of FIM
@@ -271,7 +268,7 @@ def run_experiment(
 
     # Step 4: Infer x_test
     x_test_hat, alpha_selected, alpha_unselected = infer_x_test_extended(
-        X_selected, X_unselected, x_test, fim_inv, lambda_reg=lambda_reg
+        x_selected, x_unselected, x_query, fim_inv, lambda_reg=lambda_reg
     )
     results['x_test_hat'] = x_test_hat
     results['alpha_selected'] = alpha_selected
@@ -280,7 +277,7 @@ def run_experiment(
         print(f"Reconstructed x_test: {x_test_hat}")
 
     # Step 5: Evaluate Inference
-    mse, cosine_sim = evaluate_inference(x_test, x_test_hat)
+    mse, cosine_sim = evaluate_inference(x_query, x_test_hat)
     results['mse'] = mse
     results['cosine_similarity'] = cosine_sim
     if verbose:
@@ -288,10 +285,10 @@ def run_experiment(
         print(f"Cosine Similarity: {cosine_sim:.6f}")
 
     # Optional: Plot reconstruction
-    plot_reconstruction(x_test, x_test_hat)
+    plot_reconstruction(x_query, x_test_hat)
 
     # Step 6: Infer Statistical Properties
-    stats = infer_statistical_properties(X_selected, X_unselected, x_test)
+    stats = infer_statistical_properties(x_selected, x_unselected, x_query)
     results['stats'] = stats
     if verbose:
         print("\n--- Statistical Properties ---")
@@ -300,7 +297,7 @@ def run_experiment(
 
     # Step 7: Additional Inference
     cluster_label, attribute_importance = additional_inference(
-        X_selected, X_unselected, x_test, eigenvectors, top_k=top_k, n_clusters=n_clusters
+        x_selected, x_unselected, x_query, eigenvectors, top_k=top_k, n_clusters=n_clusters
     )
     results['cluster_label'] = cluster_label
     results['attribute_importance'] = attribute_importance
@@ -311,7 +308,7 @@ def run_experiment(
     return results
 
 
-def main():
+def fim_reverse_math():
     """
     Main function to execute the extended Test Data Inference Attack.
     """
@@ -343,9 +340,3 @@ def main():
     print(results['alpha_selected'])
     print("\n--- Reconstruction Coefficients (Unselected) ---")
     print(results['alpha_unselected'])
-
-
-
-
-if __name__ == "__main__":
-    main()
