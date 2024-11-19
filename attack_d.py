@@ -333,8 +333,8 @@ def evaluate_model_raw_data(
         y_train,
         w,
         eval_range=range(1, 10),
-        task='classification',
-        use_sklearn=False,
+        task='regression',
+        use_sklearn=True,
         return_list=False,
         normalize=True,
         reduce_dim=False,
@@ -436,9 +436,10 @@ def evaluate_model_raw_data(
         # Compute Evaluation Metrics
         if task == 'regression':
             mse = mean_squared_error(y_test, y_pred)
-            mae = mean_absolute_error(y_test, y_pred)
-            r2 = r2_score(y_test, y_pred)
-            metrics[k] = {'MSE': mse, 'MAE': mae, 'R2': r2}
+            # mae = mean_absolute_error(y_test, y_pred)
+            # r2 = r2_score(y_test, y_pred)
+            # metrics[k] = {'MSE': mse, 'MAE': mae, 'R2': r2}
+            errors[k] = mean_squared_error(y_test, y_pred)
         elif task == 'classification':
             # accuracy = accuracy_score(y_test, y_pred)
             # precision = precision_score(y_test, y_pred, average='weighted', zero_division=0)
@@ -487,7 +488,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
             img_paths=img_paths,
             test_img_indices=test_img_indices,
             sell_img_indices=sell_img_indices,
-            task='classification',
+            task='regression',
         )
 
         if True:
