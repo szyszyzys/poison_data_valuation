@@ -842,7 +842,6 @@ def evaluate_poisoning_attack(
         cur_query_num = info_dic["query_number"]
         m_cur_weight = info_dic["multi_step_weights"]
         s_cur_weight = info_dic["single_step_weights"]
-        test_point_index = info_dic["test_point_index"]
         x_test = info_dic["test_x"]
         y_test = info_dic["test_y"]
         attack_result_path = f"./{figure_path}/poisoned_sampling_query_number_{query_n}"
@@ -867,7 +866,7 @@ def evaluate_poisoning_attack(
         modified_images_path = os.path.join(
             result_dir,
             f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}',
-            f'target_query_batch_{test_point_index}'
+            f'target_query_no_{cur_query_num}'
         )
 
         os.makedirs(modified_images_path, exist_ok=True)
