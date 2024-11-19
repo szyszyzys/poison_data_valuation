@@ -481,8 +481,8 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         err_kwargs = dict(
             x_test=x_test,
             y_test=y_test,
-            x_s=x_s,
-            y_s=y_s,
+            x_train=x_s,
+            y_train=y_s,
             eval_range=eval_range,
             img_paths=img_paths,
             test_img_indices=test_img_indices,
