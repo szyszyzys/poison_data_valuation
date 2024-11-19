@@ -1,6 +1,12 @@
+import copy
 import os
 
 import numpy as np
+
+# CLIP model and processor
+from attack.adv import Adv
+# Import your custom modules or utilities
+from attack.general_attack.my_utils import get_data
 
 
 def evaluate_poisoning_attack(

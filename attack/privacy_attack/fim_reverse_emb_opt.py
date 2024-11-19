@@ -62,16 +62,15 @@ def visualize_ranking(scores, selected_indices, unselected_indices):
     plt.show()
 
 
-def fim_reverse_opt():
+def fim_reverse_opt(x_s, selected_indices, unselected_indices):
     # Generate synthetic data
-    X, selected_indices, unselected_indices = generate_data(n_samples=100, n_features=10, selected_ratio=0.3)
 
     # Compute FIMs
-    I_selected = compute_fim(X, selected_indices)
-    I_unselected = compute_fim(X, unselected_indices)
+    I_selected = compute_fim(x_s, selected_indices)
+    I_unselected = compute_fim(x_s, unselected_indices)
 
     # Optimize query embedding
-    q = optimize_query_embedding(I_selected, I_unselected, dim=X.shape[1], lambda_reg=0.1)
+    q = optimize_query_embedding(I_selected, I_unselected, dim=x_s.shape[1], lambda_reg=0.1)
 
     # Score all samples
     scores = score_samples(X, q)

@@ -973,10 +973,10 @@ def evaluate_poisoning_attack(
             malicious_model_training_result["runtimes"]["DAVED (single step)"][0])
         m_errors["ADV DAVED (multi-step)"].append(malicious_model_training_result["errors"]["DAVED (single step)"][0])
 
-    for k, v in m_errors:
+    for k, v in m_errors.items():
         benign_training_results["errors"][k] = v
         benign_training_results["eval_range"][k] = eval_range
-    for k, v in m_runtimes:
+    for k, v in m_runtimes.items():
         benign_training_results["runtimes"][k] = v
 
     # selection_attack_result = os.path.join(
