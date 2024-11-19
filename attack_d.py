@@ -882,7 +882,8 @@ def evaluate_poisoning_attack(
             "img_preprocess": img_preprocess,
             "device": device,
             "output_dir": modified_images_path,
-            "global_selected_indices": selected_indices_initial
+            "global_selected_indices": selected_indices_initial,
+            "poison_rate": args.poison_rate
         }
 
         # manipulate the images

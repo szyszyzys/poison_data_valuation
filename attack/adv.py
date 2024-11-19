@@ -91,8 +91,8 @@ class Adv:
                 print("Applying cost_manipulation Attack...")
                 cost = self.cost_manipulation(attack_param, x_s, costs, img_path)
             case "data_manipulation":
-                target_indices = attack_param["target_indices"]
-                modify_indices = attack_param["modify_indices"]
+                target_indices = attack_param["selected_indices"]
+                modify_indices = attack_param["unselected_indices"]
                 poison_rate = attack_param["poison_rate"]
                 output_dir = attack_param["output_dir"]
 
