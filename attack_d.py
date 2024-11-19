@@ -434,11 +434,11 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         })
 
         # Save intermediate results periodically
-        if i % 25 == 0:
-            attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
-            save_results_trained_model(args=args, results=attack_model_result)
-            plot_results(f"{figure_path}_inter_r_{i}_res.png", results=attack_model_result, args=args)
-            print(f"Checkpoint: Saved results at round {i}".center(40, "="))
+        # if i % 25 == 0:
+        #     attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
+        #     save_results_trained_model(args=args, results=attack_model_result)
+        #     plot_results(f"{figure_path}_inter_r_{i}_res.png", results=attack_model_result, args=args)
+        #     print(f"Checkpoint: Saved results at round {i}".center(40, "="))
 
     # Final save of all results if not skipped
     if not args.skip_save:
@@ -446,7 +446,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         with open(f"{args.result_dir}/{args.save_name}-weights.pkl", "wb") as f:
             pickle.dump(weights, f)
         save_results_trained_model(args=args, results=attack_model_result)
-        plot_results(f"{figure_path}_error_final.png", results=attack_model_result, args=args)
+        plot_results(f"{figure_path}_error_plotting.png", results=attack_model_result, args=args)
 
     return attack_model_result, test_point_info
 
@@ -825,7 +825,8 @@ def evaluate_poisoning_attack(
 
     benign_node_sampling_result_dict = {}
     benign_training_results, benign_selection_info = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs,
-                                                                            args=args, figure_path=figure_path)
+                                                                            args=args,
+                                                                            figure_path=f"{figure_path}benign")
 
     # transform the initial result into dictionary
     for cur_info in benign_selection_info:
@@ -984,8 +985,7 @@ def evaluate_poisoning_attack(
     #     f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}',
     #     f'target_query_batch_{test_point_index}'
     # )
-    # averaged_data_selection_results = calculate_average_metrics(evaluation_results_list)
-    # print_evaluation_results(averaged_data_selection_results)
+
     # save_json(f"{selection_attack_result}/all_result_selection.json", evaluation_results_list)
     # save_json(f"{selection_attack_result}/avg_result_selection.json", averaged_data_selection_results)
     # Step 5: Perform Attack on Unselected Data Points
@@ -994,6 +994,7 @@ def evaluate_poisoning_attack(
     args.save_name = "attack_result"
     plot_results(f"{figure_path}/model_training_result.png", results=benign_training_results, args=args)
     save_results_trained_model(args, benign_training_results)
+
 
     # comprehensive_evaluation(
     #     X_sell_original, y_sell_original,
