@@ -418,7 +418,6 @@ def evaluate_model_raw_data(
                 model = LinearRegression(fit_intercept=True)
                 model.fit(x_k, y_k)
                 y_pred = model.predict(x_test_flat)
-                print(f"Shape of y_true: {y_k.shape}, Shape of y_pred: {y_pred.shape}, s : {y_test.shape}")
             else:
                 # Using pseudo-inverse for linear regression
                 beta_k = np.linalg.pinv(x_k) @ y_k
@@ -491,7 +490,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
             sell_img_indices=sell_img_indices,
             task='regression',
         )
-
+        print(f"+++++++++++++++++++++++++++++++++++++++++++{y_test.shape}")
         if True:
             error_func = evaluate_model_raw_data
             err_kwargs["return_list"] = True
