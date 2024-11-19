@@ -975,7 +975,6 @@ def evaluate_poisoning_attack(
 
     for k, v in m_errors.items():
         benign_training_results["errors"][k] = v
-        benign_training_results["eval_range"][k] = eval_range
     for k, v in m_runtimes.items():
         benign_training_results["runtimes"][k] = v
 
