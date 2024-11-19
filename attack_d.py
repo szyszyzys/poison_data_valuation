@@ -419,7 +419,6 @@ def evaluate_model_raw_data(
                 model = LinearRegression(fit_intercept=True)
                 model.fit(x_k, y_k)
                 y_pred = model.predict(x_test_flat)
-                print(f"----------------------------------{x_test_flat.shape}, {y_pred.shape}")
             else:
                 # Using pseudo-inverse for linear regression
                 beta_k = np.linalg.pinv(x_k) @ y_k
@@ -479,7 +478,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         # Get batch of test points
         x_test = x_b[j: j + args.batch_size]
         y_test = y_b[j: j + args.batch_size]
-
+        inx_test = test_img_indices[j: j + args.batch_size]
         # Prepare keyword arguments for the error function
         err_kwargs = dict(
             x_test=x_test,
@@ -488,7 +487,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
             y_train=y_s,
             eval_range=eval_range,
             img_paths=img_paths,
-            test_img_indices=test_img_indices,
+            test_img_indices=inx_test,
             sell_img_indices=sell_img_indices,
             task='regression',
         )
