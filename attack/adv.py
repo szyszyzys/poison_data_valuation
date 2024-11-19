@@ -18,7 +18,6 @@ class Adv:
         # Reference the original dataset
         self.original_x = x_s.copy()
         self.original_y = y_s.copy()
-        self.original_costs = costs.copy()
 
         # Indices for this subset
         self.indices = indices
@@ -26,6 +25,7 @@ class Adv:
         self.x = self.original_x[self.indices]
         self.y = self.original_y[self.indices]
         if costs is not None:
+            self.original_costs = costs.copy()
             self.costs = self.original_costs[self.indices]
         self.img_path = img_path
 
