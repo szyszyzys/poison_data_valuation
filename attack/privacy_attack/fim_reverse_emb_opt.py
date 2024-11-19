@@ -6,6 +6,7 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans
 
+
 def generate_data(n_samples=200, n_features=50, selected_ratio=0.3, random_state=42):
     """
     Generate synthetic data with selected and unselected samples.
@@ -27,6 +28,7 @@ def generate_data(n_samples=200, n_features=50, selected_ratio=0.3, random_state
     selected_indices = np.random.choice(n_samples, n_selected, replace=False)
     unselected_indices = np.setdiff1d(np.arange(n_samples), selected_indices)
     return X, selected_indices, unselected_indices
+
 
 def compute_fim_refined(X, indices, weights=None, regularization=1e-5):
     """
@@ -54,6 +56,7 @@ def compute_fim_refined(X, indices, weights=None, regularization=1e-5):
     fim += regularization * np.eye(fim.shape[0])
     return fim
 
+
 def contrastive_loss(e, E_selected, E_unselected, margin=1.0):
     """
     Contrastive loss function for embedding reconstruction.
@@ -80,6 +83,7 @@ def contrastive_loss(e, E_selected, E_unselected, margin=1.0):
     # Total loss
     total_loss = loss_selected + loss_unselected
     return total_loss
+
 
 def optimize_query_embedding_contrastive(E_selected, E_unselected, dim, margin=1.0, iterations=100):
     """
@@ -113,6 +117,7 @@ def optimize_query_embedding_contrastive(E_selected, E_unselected, dim, margin=1
     e_test_hat = result.x
     return e_test_hat
 
+
 def score_samples_cosine(X, q):
     """
     Compute cosine similarity scores for all samples based on the embedding q.
@@ -131,6 +136,7 @@ def score_samples_cosine(X, q):
     # Compute cosine similarity
     scores = np.dot(X_norm, q_norm)
     return scores
+
 
 def evaluate_ranking(scores, selected_indices, unselected_indices, top_k=10):
     """
@@ -170,6 +176,7 @@ def evaluate_ranking(scores, selected_indices, unselected_indices, top_k=10):
     }
     return metrics
 
+
 def visualize_ranking(scores, selected_indices, unselected_indices, top_n=50):
     """
     Visualize the ranking of selected and unselected samples based on their scores.
@@ -196,6 +203,7 @@ def visualize_ranking(scores, selected_indices, unselected_indices, top_n=50):
     plt.grid(True, axis='y')
     plt.show()
 
+
 def display_top_samples(X, ranked_indices, selected_indices, unselected_indices, top_k=10):
     """
     Display the top_k selected and unselected samples from the ranked list.
@@ -213,6 +221,7 @@ def display_top_samples(X, ranked_indices, selected_indices, unselected_indices,
     print(f"Top {top_k} Selected Samples in Ranking:", top_selected)
     print(f"Top {top_k} Unselected Samples in Ranking:", top_unselected)
 
+
 def plot_precision_recall_curve(metrics):
     """
     Plot Precision@k and Recall@k.
@@ -229,8 +238,10 @@ def plot_precision_recall_curve(metrics):
     plt.ylabel('Score')
     plt.title('Precision@k and Recall@k')
     for bar, value in zip(bars, values):
-        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() - 0.05, f"{value:.2f}", ha='center', color='white', fontsize=12)
+        plt.text(bar.get_x() + bar.get_width() / 2, bar.get_height() - 0.05, f"{value:.2f}", ha='center', color='white',
+                 fontsize=12)
     plt.show()
+
 
 def plot_roc_curve(labels, scores):
     """
@@ -247,15 +258,16 @@ def plot_roc_curve(labels, scores):
 
     plt.figure(figsize=(6, 6))
     plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
-    plt.plot([0,1], [0,1], color='navy', lw=2, linestyle='--')
-    plt.xlim([0.0,1.0])
-    plt.ylim([0.0,1.05])
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
     plt.title('Receiver Operating Characteristic (ROC) Curve')
     plt.legend(loc="lower right")
     plt.grid(True)
     plt.show()
+
 
 def visualize_embedding_space(X, q, selected_indices, unselected_indices, method='pca'):
     """
@@ -291,7 +303,9 @@ def visualize_embedding_space(X, q, selected_indices, unselected_indices, method
     plt.grid(True)
     plt.show()
 
-def fim_reverse_opt_refined(X, selected_indices, unselected_indices, dim, lambda_reg=0.1, margin=1.0, iterations=100, top_n=50, top_k=10, verbose=True):
+
+def fim_reverse_opt_refined(X, selected_indices, unselected_indices, dim, lambda_reg=0.1, margin=1.0, iterations=100,
+                            top_n=50, top_k=10, verbose=True):
     """
     Perform the full embedding reconstruction and visualization process with methodological improvements.
 
@@ -367,7 +381,8 @@ def fim_reverse_opt_refined(X, selected_indices, unselected_indices, dim, lambda
 
     return q, scores, metrics
 
-def main_refined():
+
+def fim_reverse_emb_opt(x_s, selected_indices, unselected_indices, verbose=True):
     """
     Main function to execute the refined embedding reconstruction and visualization.
     """
@@ -381,22 +396,14 @@ def main_refined():
     iterations = 100
     top_n = 50
     top_k = 10
-    verbose = True
 
-    # 1. Generate Synthetic Data
-    X, selected_indices, unselected_indices = generate_data(
-        n_samples=n_samples,
-        n_features=n_features,
-        selected_ratio=selected_ratio,
-        random_state=42
-    )
     if verbose:
         print(f"Generated data with {n_samples} samples and {n_features} features.")
         print(f"Selected samples: {len(selected_indices)}, Unselected samples: {len(unselected_indices)}")
 
     # 2. Reconstruct Embedding and Visualize
     q, scores, metrics = fim_reverse_opt_refined(
-        X,
+        x_s,
         selected_indices,
         unselected_indices,
         dim=dim,
@@ -422,6 +429,3 @@ def main_refined():
     # Save the reconstructed embedding and scores if needed
     # np.save("reconstructed_embedding.npy", q)
     # np.save("scores.npy", scores)
-
-if __name__ == "__main__":
-    main_refined()
