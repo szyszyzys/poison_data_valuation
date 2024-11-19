@@ -960,9 +960,7 @@ def evaluate_poisoning_attack(
                                 eval_range)
 
     # start combine the result for trained model performance
-    benign_training_results["errors"]
-    benign_training_results["eval_range"]
-    benign_training_results["runtimes"]
+
     m_errors = defaultdict(list)
     m_runtimes = defaultdict(list)
     for query_n in attack_result_dict.keys():
@@ -970,10 +968,10 @@ def evaluate_poisoning_attack(
         malicious_model_training_result = malicious_info["model_training_result"]
         m_runtimes["ADV DAVED (single step)"].append(
             malicious_model_training_result["runtimes"]["DAVED (single step)"][0])
-        m_errors["ADV DAVED (single step)"].append(malicious_model_training_result["error"]["DAVED (single step)"][0])
+        m_errors["ADV DAVED (single step)"].append(malicious_model_training_result["errors"]["DAVED (single step)"][0])
         m_runtimes["ADV DAVED (multi-step)"].append(
             malicious_model_training_result["runtimes"]["DAVED (single step)"][0])
-        m_errors["ADV DAVED (multi-step)"].append(malicious_model_training_result["error"]["DAVED (single step)"][0])
+        m_errors["ADV DAVED (multi-step)"].append(malicious_model_training_result["errors"]["DAVED (single step)"][0])
 
     for k, v in m_errors:
         benign_training_results["errors"][k] = v

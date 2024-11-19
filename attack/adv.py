@@ -100,7 +100,9 @@ class Adv:
                                               attack_lr=0.1,
                                               attack_reg=0.1, epsilon=0.05,
                                               output_dir=output_dir)
-            case "embedding_reconstruction":
+            case "embedding_reconstruction_math":
+                print("Applying embedding_reconstruction Attack...")
+            case "embedding_reconstruction_opt":
                 print("Applying embedding_reconstruction Attack...")
             case "embedding_space_estimation":
                 print("Applying embedding_space_estimation Attack...")

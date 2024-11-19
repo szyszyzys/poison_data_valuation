@@ -1,3 +1,8 @@
+import os
+
+import numpy as np
+
+
 def evaluate_poisoning_attack(
         args,
         dataset='./data',
@@ -67,7 +72,7 @@ def evaluate_poisoning_attack(
     x_b = data["X_buy"].astype(np.float32)
     y_b = data["y_buy"].astype(np.float32)
 
-    result_dir = f'{result_dir}/attack_{attack_type}_num_buyer_{num_buyer}_num_seller_{num_seller}_advr_{adversary_ratio}_prate_{args.poison_rate}_querys_{args.batch_size}/'
+    result_dir = f'{result_dir}/privacy/attack_{attack_type}_num_buyer_{num_buyer}_num_seller_{num_seller}_querys_{args.batch_size}/'
     figure_path = f"{result_dir}/figures/"
 
     os.makedirs(os.path.dirname(result_dir), exist_ok=True)

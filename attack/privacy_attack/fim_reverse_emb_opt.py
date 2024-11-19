@@ -62,8 +62,7 @@ def visualize_ranking(scores, selected_indices, unselected_indices):
     plt.show()
 
 
-# Full Workflow
-if __name__ == "__main__":
+def fim_reverse_opt():
     # Generate synthetic data
     X, selected_indices, unselected_indices = generate_data(n_samples=100, n_features=10, selected_ratio=0.3)
 
@@ -87,3 +86,4 @@ if __name__ == "__main__":
 
     print("Top 10 Selected Samples in Ranking:", selected_in_ranking[:10])
     print("Top 10 Unselected Samples in Ranking:", unselected_in_ranking[:10])
+
