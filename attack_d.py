@@ -956,7 +956,7 @@ def evaluate_poisoning_attack(
         selection_info["benign(multi)"].append(selection_info_bm)
         selection_info["malicious(multi)"].append(selection_info_mm)
 
-    plot_results_data_selection("image_selection_rate", f"{figure_path}/selection_eval.plot", selection_info,
+    plot_results_data_selection("image_selection_rate", f"{figure_path}/selection_eval.png", selection_info,
                                 eval_range)
 
     # start combine the result for trained model performance
