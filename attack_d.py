@@ -751,6 +751,7 @@ def evaluate_poisoning_attack(
         emb_model=None,
         img_preprocess=None,
         cost_manipulation_method="undercut_target",
+        emb_model_name="clip",
         **kwargs
 ):
     """
@@ -815,7 +816,7 @@ def evaluate_poisoning_attack(
     # adversary preparation, sample partial data for the adversary
     num_adversary_samples = int(len(x_s) * adversary_ratio)
     adversary_indices = np.random.choice(len(x_s), size=num_adversary_samples, replace=False)
-    adv = Adv(x_s, y_s, costs, adversary_indices, emb_model, device, img_path)
+    adv = Adv(x_s, y_s, costs, adversary_indices, emb_model_name, device, img_path)
 
     # Evaluate the peformance
     eval_range = list(range(1, 30, 1)) + list(
@@ -1345,6 +1346,7 @@ if __name__ == "__main__":
         "adversary_ratio": 0.25,
         "emb_model": emb_model,
         "img_preprocess": preprocess,
+        "emb_model_name": "clip"
     }
 
     # Run the attack evaluation experiment
