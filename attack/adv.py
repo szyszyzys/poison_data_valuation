@@ -9,8 +9,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 
-from attack.general_attack.my_utils import load_model_and_preprocessor, embed_image
-from attack_d import image_modification
+from attack.general_attack.my_utils import load_model_and_preprocessor, embed_image, image_modification
 
 
 class Adv:
