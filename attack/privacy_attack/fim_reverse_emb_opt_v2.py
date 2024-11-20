@@ -45,52 +45,52 @@ def optimize_test_samples_with_fim(X, selected_indices_list, unselected_indices_
 
     # Define weights for selected and unselected samples
     weight_selected = 1.0
-    weight_unselected = 0.8  # Lower weight for unselected samples
+    weight_unselected = 0.1  # Lower weight for unselected samples
 
     w_trace = 1.0
     w_alignment = 1.0
     w_reg = 0.01
+    x_test = x_tests_opt[0]  # (n_features,)
+
+    X_selected = X_tensor[selected_indices_list]  # (k, n_features)
+    X_unselected = X_tensor[unselected_indices_list]  # (n_samples - k, n_features)
+    # Assign higher weights to selected samples
+    weights_selected = torch.ones(X_selected.shape[0], device=device) * weight_selected
+    weights_unselected = torch.ones(X_unselected.shape[0], device=device) * weight_unselected
+
+    # Construct FIM for selected and unselected
+    fim_selected = construct_fim(X_selected.to(device), weights_selected.to(device))  # (n_features, n_features)
+    fim_unselected = construct_fim(X_unselected.to(device),
+                                   weights_unselected.to(device))  # (n_features, n_features)
+
+    # Total FIM
+    fim_total = fim_selected + fim_unselected  # (n_features, n_features)
+
     for it in range(n_iterations):
         optimizer.zero_grad()
         loss = 0.0
-        for i in range(n_tests):
-            x_test = x_tests_opt[i]  # (n_features,)
 
-            X_selected = X_tensor[selected_indices_list]  # (k, n_features)
-            X_unselected = X_tensor[unselected_indices_list]  # (n_samples - k, n_features)
-            # Assign higher weights to selected samples
-            weights_selected = torch.ones(X_selected.shape[0], device=device) * weight_selected
-            weights_unselected = torch.ones(X_unselected.shape[0], device=device) * weight_unselected
+        # Objective:
+        # 1. Maximize the information from selected samples: maximize trace(fim_selected)
+        # 2. Minimize the information from unselected samples: minimize trace(fim_unselected)
+        # 3. Encourage the test sample to align with the FIM_selected and misalign with FIM_unselected
 
-            # Construct FIM for selected and unselected
-            fim_selected = construct_fim(X_selected.to(device), weights_selected.to(device))  # (n_features, n_features)
-            fim_unselected = construct_fim(X_unselected.to(device),
-                                           weights_unselected.to(device))  # (n_features, n_features)
+        # Trace-based objectives
+        trace_selected = torch.trace(fim_selected)
+        trace_unselected = torch.trace(fim_unselected)
 
-            # Total FIM
-            fim_total = fim_selected + fim_unselected  # (n_features, n_features)
+        # Alignment-based objectives
+        alignment_selected = torch.matmul(x_test, torch.matmul(fim_selected, x_test))
+        alignment_unselected = torch.matmul(x_test, torch.matmul(fim_unselected, x_test))
 
-            # Objective:
-            # 1. Maximize the information from selected samples: maximize trace(fim_selected)
-            # 2. Minimize the information from unselected samples: minimize trace(fim_unselected)
-            # 3. Encourage the test sample to align with the FIM_selected and misalign with FIM_unselected
+        # Update loss computation
+        loss += (-w_trace * trace_selected + w_trace * trace_unselected)
+        loss += (-w_alignment * alignment_selected + w_alignment * alignment_unselected)
+        loss += w_reg * torch.norm(x_test, p=2)
 
-            # Trace-based objectives
-            trace_selected = torch.trace(fim_selected)
-            trace_unselected = torch.trace(fim_unselected)
-
-            # Alignment-based objectives
-            alignment_selected = torch.matmul(x_test, torch.matmul(fim_selected, x_test))
-            alignment_unselected = torch.matmul(x_test, torch.matmul(fim_unselected, x_test))
-
-            # Update loss computation
-            loss += (-w_trace * trace_selected + w_trace * trace_unselected)
-            loss += (-w_alignment * alignment_selected + w_alignment * alignment_unselected)
-            loss += w_reg * torch.norm(x_test, p=2)
-
-            # Optionally, add regularization to keep x_test within reasonable bounds
-            reg_strength = 0.01
-            loss += reg_strength * torch.norm(x_test, p=2)
+        # Optionally, add regularization to keep x_test within reasonable bounds
+        reg_strength = 0.01
+        loss += reg_strength * torch.norm(x_test, p=2)
 
         # Normalize loss by number of test samples
         loss = loss / n_tests
