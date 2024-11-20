@@ -149,7 +149,7 @@ def optimize_test_samples_with_fim(X, selected_indices_list, unselected_indices_
 def fim_reverse_emb_opt_v2(x_s, selected_indices, unselected_indices, x_query, device, save_dir="./data", verbose=True):
     # Configuration
     n_tests = x_query.shape[0]
-    n_iterations = 5000
+    n_iterations = 2000
     lr = 1e-2
 
     # Step 4: Reverse engineer test samples using optimization with FIM

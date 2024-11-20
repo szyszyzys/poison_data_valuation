@@ -112,6 +112,7 @@ def evaluate_privacy_attack(
         emb_model_name="clip",
         attack_method="math",
         device="cpu",
+        n_select=20,
         **kwargs
 ):
     """
@@ -166,7 +167,7 @@ def evaluate_privacy_attack(
     x_b = data["X_buy"].astype(np.float32)
     y_b = data["y_buy"].astype(np.float32)
 
-    result_dir = f'{result_dir}/privacy/attack_{attack_type}_num_buyer_{num_buyer}_num_seller_{num_seller}_querys_{args.batch_size}/'
+    result_dir = f'{result_dir}/privacy/attack_{attack_method}_num_buyer_{num_buyer}_num_seller_{num_seller}_querys_{args.batch_size}/'
     figure_path = f"{result_dir}/figures/"
 
     os.makedirs(os.path.dirname(result_dir), exist_ok=True)
@@ -211,7 +212,6 @@ def evaluate_privacy_attack(
     attack_result_dict = defaultdict()
 
     # todo current use fixed number
-    n_select = 20
     # For different query, perform the attacks.
     for query_n, info_dic in enumerate(benign_selection_info):
         cur_query_num = info_dic["query_number"]
@@ -238,7 +238,7 @@ def evaluate_privacy_attack(
         # }
         attack_result_dict[query_n] = cur_res
 
-    save_results_pkl(attack_result_dict)
+    save_results_pkl(attack_result_dict, result_dir)
     # for n_select in eval_range:
     # torch.save(atga)
 
@@ -429,6 +429,13 @@ if __name__ == "__main__":
         type=int,
         help="attack step",
     )
+    parser.add_argument(
+        "--num_data_select",
+        default=200,
+        type=int,
+        help="num_data_select",
+    )
+
     args = parser.parse_args()
     save_name = f'attack_evaluation_{args.dataset}_b_{args.num_buyers}_s_{args.num_seller}'
 
@@ -459,7 +466,9 @@ if __name__ == "__main__":
         "img_preprocess": preprocess,
         "emb_model_name": "clip",
         "attack_method": args.attack_method,
-        "device": device
+        "device": device,
+        "n_select": args.num_data_select,
+
     }
 
     # Run the attack evaluation experiment
