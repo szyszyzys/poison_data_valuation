@@ -3,8 +3,6 @@
 
 import argparse
 import os
-import pickle
-import time
 from collections import defaultdict
 
 import clip
@@ -14,7 +12,6 @@ from tqdm import tqdm
 
 # CLIP model and processor
 import daved.src.frank_wolfe as frank_wolfe  # Ensure this module contains the design_selection function
-from attack.adv import Adv
 # Import your custom modules or utilities
 from attack.general_attack.my_utils import get_data
 # CLIP model and processor
@@ -23,7 +20,6 @@ from attack.general_attack.my_utils import save_results_pkl
 from attack.privacy_attack.fim_reverse_attack import fim_reverse_math
 from attack.privacy_attack.fim_reverse_emb_opt_normal import fim_reverse_emb_opt_normal
 from attack.privacy_attack.fim_reverse_emb_opt_v2 import fim_reverse_emb_opt_v2
-from daved.src.main import plot_results
 
 
 def identify_selected_unsampled(weights, num_select=10):
@@ -191,7 +187,6 @@ def evaluate_privacy_attack(
     # adversary preparation, sample partial data for the adversary
     num_adversary_samples = int(len(x_s) * adversary_ratio)
     adversary_indices = np.random.choice(len(x_s), size=num_adversary_samples, replace=False)
-    adv = Adv(x_s, y_s, costs, adversary_indices, emb_model_name, device, img_path)
 
     # Evaluate the peformance
     eval_range = list(
@@ -466,6 +461,7 @@ if __name__ == "__main__":
         "attack_method": args.attack_method,
         "device": device
     }
+    print(experiment_params)
 
     # Run the attack evaluation experiment
     results = evaluate_privacy_attack(args, **experiment_params)

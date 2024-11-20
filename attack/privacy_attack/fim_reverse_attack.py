@@ -87,7 +87,8 @@ def infer_x_test_extended(X_selected, X_unselected, x_test, fim_inv, lambda_reg=
     # Ridge regression to find coefficients
     # Objective: Minimize ||x_test - X_combined.T * alpha||^2 + lambda_reg * ||alpha||^2
     ridge = Ridge(alpha=lambda_reg, fit_intercept=False)
-    ridge.fit(X_combined.T, x_test)
+    # ridge.fit(X_combined.T, x_test)
+    ridge.fit(X_combined, x_test)
     alpha = ridge.coef_  # Shape: (n_selected + n_unselected,)
 
     # Split coefficients into selected and unselected
@@ -261,7 +262,6 @@ def display_top_samples(X, ranked_indices, selected_indices, unselected_indices,
     print(f"Top {top_k} Unselected Samples in Ranking:", top_unselected)
 
 
-
 def run_experiment(
         X,
         x_query,
@@ -338,7 +338,6 @@ def run_experiment(
         print(f" Cosine Similarity: {best_cosine_similarities[i]:.4f}")
         print(f" Euclidean Distance: {best_euclidean_distances[i]:.4f}")
         print(f" Matching index: {matching_indices[i]:.4f}")
-
 
     # mse, cosine_sim = evaluate_inference(x_query, x_test_hat)
     # results['mse'] = mse
@@ -426,7 +425,6 @@ def fim_reverse_math(x_s, selected_indices, unselected_indices, x_query, device,
         n_clusters=params['n_clusters'],
         verbose=params['verbose']
     )
-
 
     # Save the experiment data and results
     save_results_pkl({**experiment_data, **results}, save_dir=save_dir)
