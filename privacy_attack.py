@@ -495,7 +495,8 @@ if __name__ == "__main__":
         "emb_model": emb_model,
         "img_preprocess": preprocess,
         "emb_model_name": "clip",
-        "attack_method": args.attack_method
+        "attack_method": args.attack_method,
+        "device": device
     }
 
     # Run the attack evaluation experiment
