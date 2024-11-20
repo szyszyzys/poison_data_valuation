@@ -79,9 +79,9 @@ def infer_x_test_extended(X_selected, X_unselected, x_test, fim_inv, lambda_reg=
     """
     # Debugging: Print shapes
     print("---- infer_x_test_extended Debugging Shapes ----")
-    print(f"Shape of X_selected: {X_selected.shape}")       # (n_selected, d)
-    print(f"Shape of X_unselected: {X_unselected.shape}")   # (n_unselected, d)
-    print(f"Shape of x_test: {x_test.shape}")               # (d,)
+    print(f"Shape of X_selected: {X_selected.shape}")  # (n_selected, d)
+    print(f"Shape of X_unselected: {X_unselected.shape}")  # (n_unselected, d)
+    print(f"Shape of x_test: {x_test.shape}")  # (d,)
 
     # Number of selected and unselected samples
     n_selected = X_selected.shape[0]
@@ -96,7 +96,7 @@ def infer_x_test_extended(X_selected, X_unselected, x_test, fim_inv, lambda_reg=
     # Combine selected and unselected data
     X_combined = np.vstack((X_selected, X_unselected))  # Shape: (n_selected + n_unselected, d)
     print("Shape of X_combined:", X_combined.shape)  # (n_total, d)
-    print("Shape of x_test:", x_test.shape)          # (d,)
+    print("Shape of x_test:", x_test.shape)  # (d,)
 
     # Regularized least squares solution
     # Solve (X_combined X_combined^T + lambda I) alpha = X_combined x_test
@@ -344,7 +344,7 @@ def run_experiment(
     # Debugging: Print shapes
     if verbose:
         print("---- run_experiment Data Shapes ----")
-        print(f"Shape of X: {X.shape}")              # (n_samples, d)
+        print(f"Shape of X: {X.shape}")  # (n_samples, d)
         print(f"Shape of x_query: {x_query.shape}")  # (n_queries, d)
 
     # Ensure selected and unselected indices are valid
@@ -491,20 +491,21 @@ def fim_reverse_math(x_s, selected_indices, unselected_indices, x_query, device,
     """
     # Define tunable parameters
     params = {
-        'n_selected': len(selected_indices),      # Number of selected data points
+        'n_selected': len(selected_indices),  # Number of selected data points
         'n_unselected': len(unselected_indices),  # Number of unselected data points
-        'n_features': x_s.shape[1],               # Number of features (ensure this matches your data)
-        'epsilon': 1e-3,                           # Weight for unselected data points in FIM
-        'lambda_reg': 1e-5,                        # Regularization parameter for FIM and regression
-        'top_k': 10,                               # Number of top principal components for attribute importance
-        'n_clusters': 3,                           # Number of clusters for KMeans
-        'verbose': verbose                         # Enable verbose output
+        'n_features': x_s.shape[1],  # Number of features (ensure this matches your data)
+        'epsilon': 1e-3,  # Weight for unselected data points in FIM
+        'lambda_reg': 1e-5,  # Regularization parameter for FIM and regression
+        'top_k': 10,  # Number of top principal components for attribute importance
+        'n_clusters': 3,  # Number of clusters for KMeans
+        'verbose': verbose  # Enable verbose output
     }
-    save_dir = os.path.join(save_dir, "reverse_math")
+    save_dir = f"{save_dir}/reverse_math"
     os.makedirs(save_dir, exist_ok=True)
 
     # Verify that x_s has the correct number of features
-    assert x_s.shape[1] == params['n_features'], f"Expected x_s to have {params['n_features']} features, but got {x_s.shape[1]}."
+    assert x_s.shape[1] == params[
+        'n_features'], f"Expected x_s to have {params['n_features']} features, but got {x_s.shape[1]}."
 
     # Ensure selected_indices and unselected_indices are arrays
     selected_indices = np.array(selected_indices)
