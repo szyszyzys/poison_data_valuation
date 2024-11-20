@@ -133,7 +133,8 @@ def evaluate_privacy_attack(
     benign_training_results, benign_selection_info = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs,
                                                                             test_img_indices=index_b,
                                                                             sell_img_indices=index_s,
-                                                                            args=args, figure_path=figure_path)
+                                                                            args=args, img_paths=img_paths,
+                                                                            figure_path=figure_path)
 
     # transform the initial result into dictionary
     for cur_info in benign_selection_info:
