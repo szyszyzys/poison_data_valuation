@@ -461,7 +461,7 @@ if __name__ == "__main__":
         "attack_method": args.attack_method,
         "device": device
     }
-    print(experiment_params)
+    print(experiment_params["num_buyer"])
 
     # Run the attack evaluation experiment
     results = evaluate_privacy_attack(args, **experiment_params)
