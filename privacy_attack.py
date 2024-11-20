@@ -139,8 +139,8 @@ def evaluate_privacy_attack(
     # fim_reverse_emb_opt_v2(x_s, selected_indices, unselected_indices, x_query, device)
     if attack_method == "math":
         attack_func = fim_reverse_math
-    elif attack_method == "opt1":
-        attack_func = fim_reverse_emb_opt_normal
+    # elif attack_method == "opt1":
+    #     attack_func = fim_reverse_emb_opt_normal
     elif attack_method == "opt2":
         attack_func = fim_reverse_emb_opt_v2
     else:
