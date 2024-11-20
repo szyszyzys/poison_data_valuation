@@ -1,7 +1,6 @@
 import copy
-import os
-
 import numpy as np
+import os
 
 # CLIP model and processor
 from attack.adv import Adv
@@ -35,6 +34,7 @@ def evaluate_poisoning_attack(
         img_preprocess=None,
         cost_manipulation_method="undercut_target",
         emb_model_name="clip",
+        attack_method="math",
         **kwargs
 ):
     """
@@ -58,6 +58,13 @@ def evaluate_poisoning_attack(
     Returns:
     - results (dict): Dictionary containing evaluation metrics and other relevant data.
     """
+    # fim_reverse_emb_opt_v2(x_s, selected_indices, unselected_indices, x_query, device)
+    if attack_method == "math":
+        attack_func = fim_reverse_math
+    elif attack_method == "opt1":
+        attack_func = fim_reverse_emb_opt_normal
+    elif attack_method == "opt2":
+        attack_func = fim_reverse_emb_opt_v2
     # Step 1: Load and preprocess data
     data = get_data(
         dataset=dataset,
@@ -102,7 +109,7 @@ def evaluate_poisoning_attack(
     adv = Adv(x_s, y_s, costs, adversary_indices, emb_model_name, device, img_path)
 
     # Evaluate the peformance
-    eval_range = list(range(1, 30, 1)) + list(
+    eval_range = list(
         range(30, args.max_eval_range, args.eval_step)
     )
 
@@ -118,73 +125,26 @@ def evaluate_poisoning_attack(
     print(f"Done initial run, number of queries: {len(benign_selection_info)}")
     # Step 3: Identify Selected and Unselected Data Points
     # For each batch (buyer query), perform the reconstruction
-    attack_result_dict = {}
+    attack_result_dict = defaultdict(list)
 
     # For different query, perform the attacks.
     for query_n, info_dic in enumerate(benign_selection_info):
         cur_query_num = info_dic["query_number"]
         m_cur_weight = info_dic["multi_step_weights"]
         s_cur_weight = info_dic["single_step_weights"]
-        x_test = info_dic["test_x"]
-        y_test = info_dic["test_y"]
+        query_x = info_dic["test_x"]
+        query_y = info_dic["test_y"]
         attack_result_path = f"./{figure_path}/poisoned_sampling_query_number_{query_n}"
-        # for current data batch, find which points are selected
-        # img = Image.open(img_path)
-        # embedding = inference_func(preprocess(img)[None].to(device))
-        # embeddings.append(embedding.cpu())
-        # Get the clean result.
-        selected_indices_initial, unsampled_indices_initial = identify_selected_unsampled(
-            weights=m_cur_weight,
-            num_select=num_select,
-        )
-        selected_adversary_indices = np.intersect1d(selected_indices_initial, adversary_indices)
-        unsampled_adversary_indices = np.intersect1d(unsampled_indices_initial, adversary_indices)
 
-        print(f"Initial Selected Indices: {len(selected_indices_initial)}")
-        print(f"Number of Unselected Data Points: {len(unsampled_indices_initial)}")
-        print(f"Initial Selected Indices from Adversary: {len(selected_adversary_indices)}")
-        print(f"Number of Unselected Data Points from Adversary: {len(unsampled_adversary_indices)}")
+        for n_select in eval_range:
+            selected_indices_initial, unsampled_indices_initial = identify_selected_unsampled(
+                weights=m_cur_weight,
+                num_select=n_select,
+            )
 
-        # Step 5: Perform Attack on Unselected Data Points
-        modified_images_path = os.path.join(
-            result_dir,
-            f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}',
-            f'target_query_no_{cur_query_num}'
-        )
-
-        os.makedirs(modified_images_path, exist_ok=True)
-
-        # start attack
-        attack_param = {
-            "target_query": cur_query_num,
-            "cost_manipulation_method": "undercut_target",
-            "selected_indices": selected_adversary_indices,
-            "unselected_indices": unsampled_adversary_indices,
-            "use_cost": False,
-            "emb_model": emb_model,
-            "img_preprocess": img_preprocess,
-            "device": device,
-            "output_dir": modified_images_path,
-            "global_selected_indices": selected_indices_initial,
-            "poison_rate": args.poison_rate
-        }
-
-        # manipulate the images
-        manipulated_img_dict = adv.attack("data_manipulation", attack_param, x_s, costs, img_paths)
-
-        # clone the original x_s, insert perturbed embeddings into the x_s
-        x_s_clone = copy.deepcopy(x_s)
-
-        for img_idx, info in manipulated_img_dict.items():
-            modified_embedding = info["m_embedding"]
-            x_s_clone[img_idx] = modified_embedding
-
-        # use the sample query to perform the attack.
-        model_training_result, data_sampling_result = sampling_run_one_buyer(
-            x_test, y_test, x_s_clone, y_s, eval_range, costs=costs, args=args, figure_path=attack_result_path
-        )
-
-        attack_result_dict[query_n] = {
-            "model_training_result": model_training_result,
-            "data_sampling_result": data_sampling_result[0]
-        }
+            # x_s, selected_indices, unselected_indices, x_query, device
+            selected_adversary_indices = np.intersect1d(selected_indices_initial, adversary_indices)
+            unsampled_adversary_indices = np.intersect1d(unsampled_indices_initial, adversary_indices)
+            cur_res = attack_func(x_s, selected_adversary_indices, unsampled_adversary_indices, query_x, device, True, attack_result_path)
+            attack_result_dict[query_n].append(cur_res)
+    torch.save(atga)
