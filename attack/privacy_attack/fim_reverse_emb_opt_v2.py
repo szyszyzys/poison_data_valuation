@@ -72,13 +72,9 @@ def optimize_test_samples_with_fim(
     # Initialize closer to the mean of selected samples with some noise
     initial_x = torch.zeros(n_tests, n_features, device=device)
     for i in range(n_tests):
-        selected_indices = selected_indices_list[i]
-        if selected_indices.shape[0] > 0:
-            mean_selected = X_tensor[selected_indices].mean(dim=0, keepdim=True)
-            initial_x[i] = mean_selected + 0.1 * torch.randn(n_features, device=device)
-        else:
-            # If no selected indices, initialize randomly
-            initial_x[i] = torch.randn(n_features, device=device) * 0.1
+        mean_selected = X_tensor[selected_indices_list].mean(dim=0, keepdim=True)
+        initial_x[i] = mean_selected + 0.1 * torch.randn(n_features, device=device)
+
     x_tests_opt = nn.Parameter(initial_x)
 
     # Initialize optimizer
