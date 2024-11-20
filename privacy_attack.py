@@ -105,8 +105,6 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
             "test_y": y_test,
             "single_step_weights": w_os,
             "multi_step_weights": w_fw,
-            "runtime_single_step": runtimes["DAVED (single step)"][-1],
-            "runtime_multi_step": runtimes["DAVED (multi-step)"][-1],
             "eval_range": eval_range
         })
 
