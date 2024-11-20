@@ -77,24 +77,34 @@ def infer_x_test_extended(X_selected, X_unselected, x_test, fim_inv, lambda_reg=
     - alpha_selected (np.ndarray): Coefficients for selected datapoints.
     - alpha_unselected (np.ndarray): Coefficients for unselected datapoints.
     """
+    # Debugging: Print shapes
+    print("---- infer_x_test_extended Debugging Shapes ----")
+    print(f"Shape of X_selected: {X_selected.shape}")       # (n_selected, d)
+    print(f"Shape of X_unselected: {X_unselected.shape}")   # (n_unselected, d)
+    print(f"Shape of x_test: {x_test.shape}")               # (d,)
+
     # Number of selected and unselected samples
     n_selected = X_selected.shape[0]
     n_unselected = X_unselected.shape[0]
-    d = X_selected.shape[1]  # Number of features
+    d_selected = X_selected.shape[1]
+    d_unselected = X_unselected.shape[1]
+    d_test = x_test.shape[0]
+
+    # Ensure all feature dimensions match
+    assert d_selected == d_unselected == d_test, f"Feature dimension mismatch: X_selected({d_selected}), X_unselected({d_unselected}), x_test({d_test})"
 
     # Combine selected and unselected data
     X_combined = np.vstack((X_selected, X_unselected))  # Shape: (n_selected + n_unselected, d)
-    print("Shape of X_combined:", X_combined.shape)  # Expected: (n_selected + n_unselected, n_features)
-    print("Shape of x_test:", x_test.shape)  # Expected: (n_features,)
+    print("Shape of X_combined:", X_combined.shape)  # (n_total, d)
+    print("Shape of x_test:", x_test.shape)          # (d,)
 
     # Regularized least squares solution
     # Solve (X_combined X_combined^T + lambda I) alpha = X_combined x_test
-    A = X_combined @ X_combined.T + lambda_reg * np.eye(
-        X_combined.shape[0])  # Shape: (n_selected + n_unselected, n_selected + n_unselected)
-    b = X_combined @ x_test  # Shape: (n_selected + n_unselected,)
+    A = X_combined @ X_combined.T + lambda_reg * np.eye(X_combined.shape[0])  # (n_total, n_total)
+    b = X_combined @ x_test  # (n_total,)
 
     try:
-        alpha = np.linalg.solve(A, b)  # Shape: (n_selected + n_unselected,)
+        alpha = np.linalg.solve(A, b)  # (n_total,)
     except np.linalg.LinAlgError:
         # If A is singular, use pseudo-inverse
         if fim_inv is not None:
@@ -108,7 +118,7 @@ def infer_x_test_extended(X_selected, X_unselected, x_test, fim_inv, lambda_reg=
     alpha_unselected = alpha[n_selected:]
 
     # Reconstruct x_test using the coefficients
-    x_test_hat = X_combined.T @ alpha  # Shape: (d,)
+    x_test_hat = X_combined.T @ alpha  # (d,)
 
     return x_test_hat, alpha_selected, alpha_unselected
 
@@ -328,6 +338,15 @@ def run_experiment(
     """
     results = {}
 
+    # Debugging: Print shapes
+    print("---- run_experiment Data Shapes ----")
+    print(f"Shape of X: {X.shape}")          # (n_samples, d)
+    print(f"Shape of x_query: {x_query.shape}")  # (d,)
+
+    # Ensure selected and unselected indices are valid
+    assert np.all(selected_indices < X.shape[0]), "Selected indices out of bounds."
+    assert np.all(unselected_indices < X.shape[0]), "Unselected indices out of bounds."
+
     # Step 1: Construct Extended FIM
     fim = compute_extended_fim(X[selected_indices], X[unselected_indices], epsilon=epsilon, lambda_reg=lambda_reg)
     results['fim'] = fim
@@ -423,19 +442,32 @@ def fim_reverse_math(x_s, selected_indices, unselected_indices, x_query, device,
     """
     # Define tunable parameters
     params = {
-        'n_selected': 100,  # Number of selected data points
-        'n_unselected': 200,  # Number of unselected data points
-        'n_features': 10,  # Number of features
-        'epsilon': 1e-3,  # Weight for unselected data points in FIM
-        'lambda_reg': 1e-5,  # Regularization parameter for FIM and regression
-        'top_k': 10,  # Number of top principal components for attribute importance
-        'n_clusters': 3,  # Number of clusters for KMeans
-        'verbose': True  # Enable verbose output
+        'n_selected': 100,      # Number of selected data points
+        'n_unselected': 200,    # Number of unselected data points
+        'n_features': 512,      # Number of features (ensure this matches your data)
+        'epsilon': 1e-3,        # Weight for unselected data points in FIM
+        'lambda_reg': 1e-5,     # Regularization parameter for FIM and regression
+        'top_k': 10,            # Number of top principal components for attribute importance
+        'n_clusters': 3,        # Number of clusters for KMeans
+        'verbose': True         # Enable verbose output
     }
     save_dir = f"{save_dir}/reverse_math/"
 
+    # Verify that x_s has the correct number of features
+    assert x_s.shape[1] == params['n_features'], f"Expected x_s to have {params['n_features']} features, but got {x_s.shape[1]}."
+
     # Define a true query vector x_query as a linear combination of some selected samples
     # For realism, assume x_query is influenced more by selected samples
+    # Example: x_query = sum(alpha_i * X_selected[i] for i in some subset)
+    # Here, we'll randomly generate it for demonstration purposes
+
+    # Ensure selected_indices and unselected_indices are arrays
+    selected_indices = np.array(selected_indices)
+    unselected_indices = np.array(unselected_indices)
+
+    # Example: Randomly select weights for the selected samples to create x_query
+    alpha_weights = np.random.uniform(0.5, 1.5, size=params['n_selected'])
+    x_query = X[selected_indices].T @ alpha_weights  # Shape: (n_features,)
 
     # Store parameters and data for potential saving
     experiment_data = {
@@ -446,8 +478,8 @@ def fim_reverse_math(x_s, selected_indices, unselected_indices, x_query, device,
     }
 
     if params['verbose']:
-        print(f"Selected samples: {selected_indices}")
-        print(f"Unselected samples: {unselected_indices}")
+        print(f"Selected samples indices: {selected_indices}")
+        print(f"Unselected samples indices: {unselected_indices}")
 
     # Run the inference experiment
     results = run_experiment(
