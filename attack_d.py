@@ -952,7 +952,7 @@ def evaluate_poisoning_attack(
         img_paths_clone = copy.deepcopy(img_paths)
         for img_idx, info in manipulated_img_dict.items():
             modified_embedding = info["m_embedding"]
-            x_s_clone[img_idx] = modified_embedding
+            x_s_clone[img_idx] = modified_embedding.cpu().numpy()
             img_paths_clone[img_idx] = info["modified_img_path"]
 
         # use the sample query to perform the attack.

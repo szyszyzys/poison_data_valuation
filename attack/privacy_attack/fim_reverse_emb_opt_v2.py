@@ -1,58 +1,8 @@
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 
 from attack.general_attack.my_utils import evaluate_reconstruction
-
-
-def generate_synthetic_data(n_samples=200, n_features=20, random_state=42):
-    """
-    Generates synthetic data for demonstration.
-    """
-    np.random.seed(random_state)
-    X = np.random.randn(n_samples, n_features)
-    return X
-
-
-def create_test_samples(X, n_tests=3, n_components=5, random_state=42):
-    """
-    Creates multiple test samples as linear combinations of selected data points.
-    """
-    np.random.seed(random_state)
-    test_samples = []
-    true_selected_indices = []
-    true_coefficients = []
-    for _ in range(n_tests):
-        selected_indices = np.random.choice(X.shape[0], n_components, replace=False)
-        coefficients = np.random.randn(n_components)
-        x_test = X[selected_indices].T @ coefficients
-        test_samples.append(x_test)
-        true_selected_indices.append(selected_indices)
-        true_coefficients.append(coefficients)
-    return np.stack(test_samples), true_selected_indices, true_coefficients
-
-
-def selection_mechanism(X, x_test, k=10):
-    """
-    Simulates the selection mechanism based on alignment with x_test.
-    Selects top-k data points that are most aligned with x_test.
-    """
-    scores = X @ x_test
-    selected_indices = np.argsort(scores)[-k:]
-    return selected_indices
-
-
-def simulate_selection(X, x_tests, k=10):
-    """
-    Simulates selection for multiple test samples.
-    Returns a list of selected indices for each test sample.
-    """
-    selected_indices_list = []
-    for x_test in x_tests:
-        selected_indices = selection_mechanism(X, x_test, k)
-        selected_indices_list.append(selected_indices)
-    return selected_indices_list
 
 
 def construct_fim(X_selected, weights):
