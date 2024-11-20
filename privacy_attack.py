@@ -46,9 +46,6 @@ def identify_selected_unsampled(weights, num_select=10):
 def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None, figure_path="./figure",
                            img_paths=None, test_img_indices=None, sell_img_indices=None):
     # Dictionaries to store errors, runtimes, and weights for each method and test point
-    errors = defaultdict(list)
-    runtimes = defaultdict(list)
-    weights = defaultdict(list)
     test_point_info = []  # To store details for each test point evaluation
 
     # Loop over each test point in buyer's data, in batches
@@ -56,27 +53,11 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         # Get batch of test points
         x_test = x_b[j: j + args.batch_size]
         y_test = y_b[j: j + args.batch_size]
-        inx_test = test_img_indices[j: j + args.batch_size]
-        # Prepare keyword arguments for the error function
-        err_kwargs = dict(
-            x_test=x_test,
-            y_test=y_test,
-            x_train=x_s,
-            y_train=y_s,
-            eval_range=eval_range,
-            img_paths=img_paths,
-            test_img_indices=inx_test,
-            sell_img_indices=sell_img_indices,
-            task='regression',
-        )
 
         # Perform single-step optimization (DAVED single step)
-        os_start = time.perf_counter()
         w_os = frank_wolfe.one_step(x_s, x_test)
-        os_end = time.perf_counter()
 
         # Perform multi-step optimization (DAVED multi-step)
-        fw_start = time.perf_counter()
         res_fw = frank_wolfe.design_selection(
             x_s,
             y_s,
@@ -90,12 +71,9 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
             costs=costs,
             reg_lambda=args.reg_lambda,
         )
-        fw_end = time.perf_counter()
 
         # Store runtime, weights, and errors for multi-step
         w_fw = res_fw["weights"]
-        runtimes["DAVED (multi-step)"].append(fw_end - fw_start)
-        weights["DAVED (multi-step)"].append(w_fw)
 
         # Store information about the test point, the indices used, and their results
         test_point_info.append({
@@ -108,13 +86,6 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
             "eval_range": eval_range
         })
 
-        # Save intermediate results periodically
-        # if i % 25 == 0:
-        #     attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
-        #     save_results_trained_model(args=args, results=attack_model_result)
-        #     plot_results(f"{figure_path}_inter_r_{i}_res.png", results=attack_model_result, args=args)
-        #     print(f"Checkpoint: Saved results at round {i}".center(40, "="))
-
     return test_point_info
 
 
@@ -122,7 +93,6 @@ def evaluate_privacy_attack(
         args,
         dataset='./data',
         data_dir='./data',
-        batch_size=16,
         csv_path="druglib/druglib.csv",
         img_path="/images",
         num_buyer=10,
@@ -183,7 +153,7 @@ def evaluate_privacy_attack(
     # Step 1: Load and preprocess data
     data = get_data(
         dataset=dataset,
-        num_buyer=num_buyer * batch_size,
+        num_buyer=num_buyer * args.batch_size,
         num_seller=num_seller,
         num_val=num_val,
         dim=num_dim,
@@ -246,7 +216,7 @@ def evaluate_privacy_attack(
     attack_result_dict = defaultdict()
 
     # todo current use fixed number
-    n_select = 500
+    n_select = 20
     # For different query, perform the attacks.
     for query_n, info_dic in enumerate(benign_selection_info):
         cur_query_num = info_dic["query_number"]
@@ -303,7 +273,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--batch_size",
-        default=1,
+        default=16,
         type=int,
         help="number of test points to optimize at once",
     )
