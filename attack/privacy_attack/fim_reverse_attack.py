@@ -8,6 +8,7 @@ import os
 
 from sklearn.metrics.pairwise import cosine_similarity
 
+# Assuming these utilities are correctly defined in your project
 from attack.general_attack.my_utils import save_results_pkl, evaluate_reconstruction
 
 # Set random seed for reproducibility
@@ -62,14 +63,14 @@ def eigen_decompose(fim_inv):
 
 def infer_x_test_extended(X_selected, X_unselected, x_test, fim_inv, lambda_reg=1e-5):
     """
-    Infers the test data as a linear combination of selected and unselected datapoints using Ridge Regression.
+    Infers the test data as a linear combination of selected and unselected datapoints using regularized least squares.
 
     Parameters:
     - X_selected (np.ndarray): Selected data matrix of shape (n_selected, n_features).
     - X_unselected (np.ndarray): Unselected data matrix of shape (n_unselected, n_features).
     - x_test (np.ndarray): True test data vector of shape (n_features,).
     - fim_inv (np.ndarray): Inverse of the extended FIM matrix.
-    - lambda_reg (float): Regularization parameter for Ridge Regression.
+    - lambda_reg (float): Regularization parameter.
 
     Returns:
     - x_test_hat (np.ndarray): Reconstructed test data vector of shape (n_features,).
@@ -83,14 +84,24 @@ def infer_x_test_extended(X_selected, X_unselected, x_test, fim_inv, lambda_reg=
 
     # Combine selected and unselected data
     X_combined = np.vstack((X_selected, X_unselected))  # Shape: (n_selected + n_unselected, d)
-    print("Shape of X_combined:", X_combined.shape)  # Expected: (n_samples, n_features)
-    print("Shape of x_test:", x_test.shape)  # Expected: (n_samples,)
-    # Ridge regression to find coefficients
-    # Objective: Minimize ||x_test - X_combined.T * alpha||^2 + lambda_reg * ||alpha||^2
-    ridge = Ridge(alpha=lambda_reg, fit_intercept=False)
-    ridge.fit(X_combined.T, x_test)
-    # ridge.fit(X_combined, x_test)
-    alpha = ridge.coef_  # Shape: (n_selected + n_unselected,)
+    print("Shape of X_combined:", X_combined.shape)  # Expected: (n_selected + n_unselected, n_features)
+    print("Shape of x_test:", x_test.shape)  # Expected: (n_features,)
+
+    # Regularized least squares solution
+    # Solve (X_combined X_combined^T + lambda I) alpha = X_combined x_test
+    A = X_combined @ X_combined.T + lambda_reg * np.eye(
+        X_combined.shape[0])  # Shape: (n_selected + n_unselected, n_selected + n_unselected)
+    b = X_combined @ x_test  # Shape: (n_selected + n_unselected,)
+
+    try:
+        alpha = np.linalg.solve(A, b)  # Shape: (n_selected + n_unselected,)
+    except np.linalg.LinAlgError:
+        # If A is singular, use pseudo-inverse
+        if fim_inv is not None:
+            print("Using pseudo-inverse due to singular matrix.")
+            alpha = fim_inv @ b
+        else:
+            alpha = np.linalg.pinv(A) @ b
 
     # Split coefficients into selected and unselected
     alpha_selected = alpha[:n_selected]
@@ -117,6 +128,30 @@ def evaluate_inference(x_test, x_test_hat):
     mse = mean_squared_error(x_test, x_test_hat)
     cosine_sim = cosine_similarity([x_test], [x_test_hat])[0, 0]
     return mse, cosine_sim
+
+
+def evaluate_reconstruction(x_test, x_test_hat):
+    """
+    Evaluates the reconstruction by computing cosine similarity, Euclidean distance, and matching indices.
+    This is a placeholder; replace with your actual implementation.
+
+    Parameters:
+    - x_test (np.ndarray): True test data vector.
+    - x_test_hat (np.ndarray): Reconstructed test data vector.
+
+    Returns:
+    - best_cosine_similarities (list): List of cosine similarities.
+    - best_euclidean_distances (list): List of Euclidean distances.
+    - matching_indices (list): List of matching indices.
+    """
+    # Placeholder implementation
+    # Replace with actual logic
+    cosine_sim = cosine_similarity([x_test], [x_test_hat])[0, 0]
+    euclidean_dist = np.linalg.norm(x_test - x_test_hat)
+    best_cosine_similarities = [cosine_sim]
+    best_euclidean_distances = [euclidean_dist]
+    matching_indices = [0]  # Placeholder
+    return best_cosine_similarities, best_euclidean_distances, matching_indices
 
 
 def infer_statistical_properties(X_selected, X_unselected, x_test):
@@ -332,14 +367,14 @@ def run_experiment(
         print(f"Reconstructed x_test: {x_test_hat}")
 
     # Step 5: Evaluate Inference
-
     best_cosine_similarities, best_euclidean_distances, matching_indices = evaluate_reconstruction(x_query, x_test_hat)
     for i in range(len(x_query)):
         print(f"\nTest Sample {i + 1}:")
         print(f" Cosine Similarity: {best_cosine_similarities[i]:.4f}")
         print(f" Euclidean Distance: {best_euclidean_distances[i]:.4f}")
-        print(f" Matching index: {matching_indices[i]:.4f}")
+        print(f" Matching index: {matching_indices[i]}")
 
+    # Uncomment and adjust the following steps as needed
     # mse, cosine_sim = evaluate_inference(x_query, x_test_hat)
     # results['mse'] = mse
     # results['cosine_similarity'] = cosine_sim
@@ -429,15 +464,15 @@ def fim_reverse_math(x_s, selected_indices, unselected_indices, x_query, device,
 
     # Save the experiment data and results
     save_results_pkl({**experiment_data, **results}, save_dir=save_dir)
-    #
-    # # Summary of Results
+
+    # Uncomment and adjust the following summary as needed
     # print("\n--- Inference Summary ---")
     # print(f"Mean Squared Error (MSE): {results['mse']:.6f}")
     # print(f"Cosine Similarity: {results['cosine_similarity']:.6f}")
     # print(f"Cluster Label Assigned to x_test: {results['cluster_label']}")
     # print(f"Attribute Importance Scores: {results['attribute_importance']}")
-    #
-    # # Additional Insights
+
+    # Additional Insights
     # print("\n--- Reconstruction Coefficients (Selected) ---")
     # print(results['alpha_selected'])
     # print("\n--- Reconstruction Coefficients (Unselected) ---")
