@@ -73,7 +73,7 @@ def optimize_test_samples_with_fim(
     initial_x = torch.zeros(n_tests, n_features, device=device)
     for i in range(n_tests):
         selected_indices = selected_indices_list[i]
-        if len(selected_indices) > 0:
+        if selected_indices.shape[0] > 0:
             mean_selected = X_tensor[selected_indices].mean(dim=0, keepdim=True)
             initial_x[i] = mean_selected + 0.1 * torch.randn(n_features, device=device)
         else:
@@ -98,7 +98,7 @@ def optimize_test_samples_with_fim(
     unselected_indices = unselected_indices_list
 
     # Handle cases where there are no selected or unselected indices
-    if len(selected_indices) > 0:
+    if selected_indices.shape[0] > 0:
         X_selected = X_tensor[selected_indices]  # (k, n_features)
         weights_selected = torch.ones(X_selected.shape[0], device=device)  # (k,)
     else:
