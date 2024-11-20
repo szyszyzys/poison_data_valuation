@@ -108,6 +108,8 @@ def optimize_test_samples_with_fim(X, selected_indices_list, unselected_indices_
 
             X_selected = X_tensor[selected]  # (k, n_features)
             X_unselected = X_tensor[unselected_indices_list]  # (n_samples - k, n_features)
+            print(f"X_selected shape: {X_selected.shape}")
+            print(f"X_selected shape: {X_unselected.shape}")
 
             # Assign higher weights to selected samples
             weights_selected = torch.ones(n_selected_samples, device=device) * weight_selected
