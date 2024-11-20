@@ -1,22 +1,125 @@
 # CLIP model and processor
 # Import your custom modules or utilities
+
 import argparse
 import os
+import pickle
+import time
 from collections import defaultdict
 
 import clip
 import numpy as np
 import torch
+from tqdm import tqdm
 
 # CLIP model and processor
+import daved.src.frank_wolfe as frank_wolfe  # Ensure this module contains the design_selection function
 from attack.adv import Adv
 # Import your custom modules or utilities
 from attack.general_attack.my_utils import get_data
+# CLIP model and processor
+# Import your custom modules or utilities
 from attack.general_attack.my_utils import save_results_pkl
 from attack.privacy_attack.fim_reverse_attack import fim_reverse_math
 from attack.privacy_attack.fim_reverse_emb_opt_normal import fim_reverse_emb_opt_normal
 from attack.privacy_attack.fim_reverse_emb_opt_v2 import fim_reverse_emb_opt_v2
-from attack_d import identify_selected_unsampled, sampling_run_one_buyer
+from daved.src.main import plot_results
+
+
+def identify_selected_unsampled(weights, num_select=10):
+    """
+    Identify which data points are selected and which are unselected based on weights.
+
+    Parameters:
+    - weights (np.ndarray): Weights assigned to each data point.
+    - num_select (int): Number of data points to select.
+
+    Returns:
+    - selected_indices (set): Indices of selected data points.
+    - unsampled_indices (list): Indices of unselected data points.
+    """
+    selected_indices = set(weights.argsort()[::-1][:num_select])
+    unsampled_indices = list(set(range(len(weights))) - selected_indices)
+    return list(selected_indices), unsampled_indices
+
+
+def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None, figure_path="./figure",
+                           img_paths=None, test_img_indices=None, sell_img_indices=None):
+    # Dictionaries to store errors, runtimes, and weights for each method and test point
+    errors = defaultdict(list)
+    runtimes = defaultdict(list)
+    weights = defaultdict(list)
+    test_point_info = []  # To store details for each test point evaluation
+
+    # Loop over each test point in buyer's data, in batches
+    for i, j in tqdm(enumerate(range(0, x_b.shape[0], args.batch_size))):
+        # Get batch of test points
+        x_test = x_b[j: j + args.batch_size]
+        y_test = y_b[j: j + args.batch_size]
+        inx_test = test_img_indices[j: j + args.batch_size]
+        # Prepare keyword arguments for the error function
+        err_kwargs = dict(
+            x_test=x_test,
+            y_test=y_test,
+            x_train=x_s,
+            y_train=y_s,
+            eval_range=eval_range,
+            img_paths=img_paths,
+            test_img_indices=inx_test,
+            sell_img_indices=sell_img_indices,
+            task='regression',
+        )
+
+        # Perform single-step optimization (DAVED single step)
+        os_start = time.perf_counter()
+        w_os = frank_wolfe.one_step(x_s, x_test)
+        os_end = time.perf_counter()
+
+        # Perform multi-step optimization (DAVED multi-step)
+        fw_start = time.perf_counter()
+        res_fw = frank_wolfe.design_selection(
+            x_s,
+            y_s,
+            x_test,
+            y_test,
+            num_select=10,
+            num_iters=args.num_iters,
+            alpha=None,
+            recompute_interval=0,
+            line_search=True,
+            costs=costs,
+            reg_lambda=args.reg_lambda,
+        )
+        fw_end = time.perf_counter()
+
+        # Store runtime, weights, and errors for multi-step
+        w_fw = res_fw["weights"]
+        runtimes["DAVED (multi-step)"].append(fw_end - fw_start)
+        weights["DAVED (multi-step)"].append(w_fw)
+
+        # Store information about the test point, the indices used, and their results
+        test_point_info.append({
+            "query_number": i,
+            "test_point_start_index": j,
+            "test_x": x_test,
+            "test_y": y_test,
+            "single_step_weights": w_os,
+            "single_step_error": errors["DAVED (single step)"][-1],
+            "multi_step_weights": w_fw,
+            "multi_step_error": errors["DAVED (multi-step)"][-1],
+            "runtime_single_step": runtimes["DAVED (single step)"][-1],
+            "runtime_multi_step": runtimes["DAVED (multi-step)"][-1],
+            "eval_range": eval_range
+        })
+
+        # Save intermediate results periodically
+        # if i % 25 == 0:
+        #     attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
+        #     save_results_trained_model(args=args, results=attack_model_result)
+        #     plot_results(f"{figure_path}_inter_r_{i}_res.png", results=attack_model_result, args=args)
+        #     print(f"Checkpoint: Saved results at round {i}".center(40, "="))
+
+    return test_point_info
 
 
 def evaluate_privacy_attack(
@@ -130,11 +233,11 @@ def evaluate_privacy_attack(
     )
 
     benign_node_sampling_result_dict = {}
-    benign_training_results, benign_selection_info = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs,
-                                                                            test_img_indices=index_b,
-                                                                            sell_img_indices=index_s,
-                                                                            args=args, img_paths=img_paths,
-                                                                            figure_path=figure_path)
+    benign_selection_info = sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=costs,
+                                                   test_img_indices=index_b,
+                                                   sell_img_indices=index_s,
+                                                   args=args, img_paths=img_paths,
+                                                   figure_path=figure_path)
 
     # transform the initial result into dictionary
     for cur_info in benign_selection_info:
