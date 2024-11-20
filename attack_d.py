@@ -387,7 +387,6 @@ def evaluate_model_raw_data(
     x_train_flat = x_train.reshape(x_train.shape[0], -1)  # Shape: (n_train, height*width*channels)
     x_test_flat = x_test.reshape(x_test.shape[0], -1)  # Shape: (n_test, height*width*channels)
 
-
     # Normalize the data if required
     if normalize:
         scaler = StandardScaler()
@@ -1388,7 +1387,7 @@ if __name__ == "__main__":
         'dataset': args.dataset,
         'data_dir': './data',
         'csv_path': "./fitzpatrick17k/fitzpatrick-mod.csv",
-        'img_path' './fitzpatrick17k/images'
+        'img_path': './fitzpatrick17k/images',
         'num_buyer': args.num_buyers,
         'num_seller': args.num_seller,
         'num_val': args.num_val,

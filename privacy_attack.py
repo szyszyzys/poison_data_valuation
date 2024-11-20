@@ -441,7 +441,7 @@ if __name__ == "__main__":
         'dataset': args.dataset,
         'data_dir': './data',
         'csv_path': "./fitzpatrick17k/fitzpatrick-mod.csv",
-        'img_path' './fitzpatrick17k/images'
+        'img_path': './fitzpatrick17k/images',
         'num_buyer': args.num_buyers,
         'num_seller': args.num_seller,
         'num_val': args.num_val,
@@ -461,7 +461,6 @@ if __name__ == "__main__":
         "attack_method": args.attack_method,
         "device": device
     }
-    print(experiment_params["num_buyer"])
 
     # Run the attack evaluation experiment
     results = evaluate_privacy_attack(args, **experiment_params)
