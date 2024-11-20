@@ -1,4 +1,5 @@
 import os
+
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.cluster import KMeans
@@ -10,6 +11,7 @@ from attack.general_attack.my_utils import save_results_pkl
 
 # Set random seed for reproducibility
 np.random.seed(42)
+
 
 def compute_extended_fim(X_selected, X_unselected, epsilon=1e-3, lambda_reg=1e-5):
     """
@@ -37,6 +39,7 @@ def compute_extended_fim(X_selected, X_unselected, epsilon=1e-3, lambda_reg=1e-5
 
     return fim
 
+
 def eigen_decompose(fim_inv):
     """
     Performs eigenvalue decomposition on the inverse FIM.
@@ -55,13 +58,15 @@ def eigen_decompose(fim_inv):
     eigenvectors = eigenvectors[:, idx]
     return eigenvalues, eigenvectors
 
-def infer_x_test_extended(X_selected, X_unselected, fim_inv, lambda_reg=1e-5):
+
+def infer_x_test_extended(X_selected, X_unselected, x_test, fim_inv, lambda_reg=1e-5):
     """
     Infers the test data as a linear combination of selected and unselected datapoints using regularized least squares.
 
     Parameters:
     - X_selected (np.ndarray): Selected data matrix of shape (n_selected, n_features).
     - X_unselected (np.ndarray): Unselected data matrix of shape (n_unselected, n_features).
+    - x_test (np.ndarray): True test data vector of shape (n_features,).
     - fim_inv (np.ndarray): Inverse of the extended FIM matrix.
     - lambda_reg (float): Regularization parameter.
 
@@ -74,39 +79,37 @@ def infer_x_test_extended(X_selected, X_unselected, fim_inv, lambda_reg=1e-5):
     print("---- infer_x_test_extended Debugging Shapes ----")
     print(f"Shape of X_selected: {X_selected.shape}")  # (n_selected, d)
     print(f"Shape of X_unselected: {X_unselected.shape}")  # (n_unselected, d)
+    print(f"Shape of x_test: {x_test.shape}")  # (d,)
 
     # Number of selected and unselected samples
     n_selected = X_selected.shape[0]
     n_unselected = X_unselected.shape[0]
     d_selected = X_selected.shape[1]
     d_unselected = X_unselected.shape[1]
+    d_test = x_test.shape[0]
 
     # Ensure all feature dimensions match
-    assert d_selected == d_unselected, f"Feature dimension mismatch: X_selected({d_selected}), X_unselected({d_unselected})"
+    assert d_selected == d_unselected == d_test, f"Feature dimension mismatch: X_selected({d_selected}), X_unselected({d_unselected}), x_test({d_test})"
 
     # Combine selected and unselected data
-    X_combined = np.vstack((X_selected, X_unselected))  # Shape: (n_total, d)
+    X_combined = np.vstack((X_selected, X_unselected))  # Shape: (n_selected + n_unselected, d)
     print("Shape of X_combined:", X_combined.shape)  # (n_total, d)
+    print("Shape of x_test:", x_test.shape)  # (d,)
 
-    # Infer alpha using FIM inverse
-    # Here, we assume that alpha should minimize the regularized energy based on FIM
-    # Since we don't have x_test, we'll set up a different approach, such as minimizing the norm of alpha
-    # weighted by fim_inv
-    # This is a placeholder; you might need to adjust based on your specific inference method
+    # Regularized least squares solution
+    # Solve (X_combined X_combined^T + lambda I) alpha = X_combined x_test
+    A = X_combined @ X_combined.T + lambda_reg * np.eye(X_combined.shape[0])  # (n_total, n_total)
+    b = X_combined @ x_test  # (n_total,)
 
-    # Example: Regularized least squares without using x_test
-    # Objective: Minimize alpha^T fim_inv alpha + lambda_reg * ||X_combined.T @ alpha||^2
-    # Taking derivative and setting to zero:
-    # fim_inv alpha + lambda_reg * X_combined X_combined.T alpha = 0
-    # => (fim_inv + lambda_reg * X_combined X_combined.T) alpha = 0
-    # To avoid the trivial solution alpha = 0, you might need additional constraints
-
-    # For demonstration, we'll use the pseudo-inverse of fim_inv to find a non-trivial alpha
     try:
-        alpha = fim_inv @ np.ones(X_combined.shape[0])  # Example: using a vector of ones
-    except Exception as e:
-        print(f"Error in computing alpha: {e}")
-        alpha = np.zeros(X_combined.shape[0])
+        alpha = np.linalg.solve(A, b)  # (n_total,)
+    except np.linalg.LinAlgError:
+        # If A is singular, use pseudo-inverse
+        if fim_inv is not None:
+            print("Using pseudo-inverse due to singular matrix.")
+            alpha = fim_inv @ b
+        else:
+            alpha = np.linalg.pinv(A) @ b
 
     # Split coefficients into selected and unselected
     alpha_selected = alpha[:n_selected]
@@ -116,6 +119,7 @@ def infer_x_test_extended(X_selected, X_unselected, fim_inv, lambda_reg=1e-5):
     x_test_hat = X_combined.T @ alpha  # (d,)
 
     return x_test_hat, alpha_selected, alpha_unselected
+
 
 def evaluate_inference(x_test, x_test_hat):
     """
@@ -132,6 +136,7 @@ def evaluate_inference(x_test, x_test_hat):
     mse = mean_squared_error(x_test, x_test_hat)
     cosine_sim = cosine_similarity([x_test], [x_test_hat])[0, 0]
     return mse, cosine_sim
+
 
 def evaluate_reconstruction_multiple(x_test_list, x_test_hat_list):
     """
@@ -158,6 +163,7 @@ def evaluate_reconstruction_multiple(x_test_list, x_test_hat_list):
         matching_indices.append(0)  # Placeholder for matching index
 
     return best_cosine_similarities, best_euclidean_distances, matching_indices
+
 
 def infer_statistical_properties(X_selected, X_unselected, x_test):
     """
@@ -190,6 +196,7 @@ def infer_statistical_properties(X_selected, X_unselected, x_test):
     }
     return stats
 
+
 def additional_inference(X_selected, X_unselected, x_test, eigenvectors, top_k=2, n_clusters=3):
     """
     Performs additional inferences such as cluster membership and attribute importance.
@@ -219,6 +226,7 @@ def additional_inference(X_selected, X_unselected, x_test, eigenvectors, top_k=2
 
     return cluster_label, attribute_importance
 
+
 def plot_eigenvalues(eigenvalues, top_k=10):
     """
     Plots the top_k eigenvalues.
@@ -234,6 +242,7 @@ def plot_eigenvalues(eigenvalues, top_k=10):
     plt.ylabel('Eigenvalue')
     plt.grid(True)
     plt.show()
+
 
 def plot_reconstruction(x_test, x_test_hat):
     """
@@ -253,6 +262,7 @@ def plot_reconstruction(x_test, x_test_hat):
     plt.legend()
     plt.grid(True)
     plt.show()
+
 
 def visualize_ranking(scores, selected_indices, unselected_indices, top_n=50):
     """
@@ -280,6 +290,7 @@ def visualize_ranking(scores, selected_indices, unselected_indices, top_n=50):
     plt.grid(True, axis='y')
     plt.show()
 
+
 def display_top_samples(X, ranked_indices, selected_indices, unselected_indices, top_k=10):
     """
     Display the top_k selected and unselected samples from the ranked list.
@@ -297,9 +308,10 @@ def display_top_samples(X, ranked_indices, selected_indices, unselected_indices,
     print(f"Top {top_k} Selected Samples in Ranking:", top_selected)
     print(f"Top {top_k} Unselected Samples in Ranking:", top_unselected)
 
+
 def run_experiment(
         X,
-        x_query,  # This should be the list of true x_test vectors for evaluation
+        x_query,
         selected_indices,
         unselected_indices,
         epsilon=1e-3,
@@ -373,9 +385,8 @@ def run_experiment(
     for idx, x_test in enumerate(x_query):
         if verbose:
             print(f"\n---- Inferring Query Sample {idx + 1}/{len(x_query)} ----")
-        # Pass the FIM inverse to infer_x_test_extended without using x_test
         x_test_hat, alpha_selected, alpha_unselected = infer_x_test_extended(
-            X[selected_indices], X_unselected= X[unselected_indices], fim_inv=fim_inv, lambda_reg=lambda_reg
+            X[selected_indices], X[unselected_indices], x_test, fim_inv, lambda_reg=lambda_reg
         )
         x_test_hat_list.append(x_test_hat)
         alpha_selected_list.append(alpha_selected)
@@ -403,7 +414,7 @@ def run_experiment(
         print(f" Euclidean Distance: {best_euclidean_distances[i]:.4f}")
         print(f" Matching index: {matching_indices[i]}")
 
-    # Optional Evaluation (Uncomment if you have true x_test available for comparison)
+    # Uncomment and adjust the following steps as needed
     # mse_list, cosine_sim_list = evaluate_inference_multiple(x_query, x_test_hat_list)
     # results['mse_list'] = mse_list
     # results['cosine_similarity_list'] = cosine_sim_list
@@ -457,6 +468,7 @@ def run_experiment(
     # display_top_samples(X, ranked_indices, selected_indices, unselected_indices, top_k=10)
 
     return results
+
 
 def fim_reverse_math(x_s, selected_indices, unselected_indices, x_query, device, save_dir="./data", verbose=True):
     """

@@ -88,8 +88,8 @@ def optimize_test_samples_with_fim(X, selected_indices_list, unselected_indices_
     X_tensor = torch.tensor(X, dtype=torch.float32).to(device)  # (n_samples, n_features)
     n_features = X.shape[1]
 
-    # Initialize test samples as parameters to optimize
-    x_tests_opt = nn.Parameter(torch.randn(n_tests, n_features, device=device) * 0.1)
+    mean_selected = X_tensor[selected_indices_list].mean(dim=0, keepdim=True)
+    x_tests_opt = nn.Parameter(mean_selected.repeat(n_tests, 1) + torch.randn(n_tests, n_features, device=device) * 0.1)
 
     optimizer = optim.Adam([x_tests_opt], lr=lr)
 
@@ -97,6 +97,9 @@ def optimize_test_samples_with_fim(X, selected_indices_list, unselected_indices_
     weight_selected = 1.0
     weight_unselected = 0.1  # Lower weight for unselected samples
 
+    w_trace = 1.0
+    w_alignment = 1.0
+    w_reg = 0.01
     for it in range(n_iterations):
         optimizer.zero_grad()
         loss = 0.0
@@ -110,8 +113,9 @@ def optimize_test_samples_with_fim(X, selected_indices_list, unselected_indices_
             weights_unselected = torch.ones(X_unselected.shape[0], device=device) * weight_unselected
 
             # Construct FIM for selected and unselected
-            fim_selected = construct_fim(X_selected, weights_selected)  # (n_features, n_features)
-            fim_unselected = construct_fim(X_unselected, weights_unselected)  # (n_features, n_features)
+            fim_selected = construct_fim(X_selected.to(device), weights_selected.to(device))  # (n_features, n_features)
+            fim_unselected = construct_fim(X_unselected.to(device),
+                                           weights_unselected.to(device))  # (n_features, n_features)
 
             # Total FIM
             fim_total = fim_selected + fim_unselected  # (n_features, n_features)
@@ -124,12 +128,15 @@ def optimize_test_samples_with_fim(X, selected_indices_list, unselected_indices_
             # Trace-based objectives
             trace_selected = torch.trace(fim_selected)
             trace_unselected = torch.trace(fim_unselected)
-            loss += -trace_selected + trace_unselected  # Want to maximize trace_selected and minimize trace_unselected
 
             # Alignment-based objectives
             alignment_selected = torch.matmul(x_test, torch.matmul(fim_selected, x_test))
             alignment_unselected = torch.matmul(x_test, torch.matmul(fim_unselected, x_test))
-            loss += -alignment_selected + alignment_unselected  # Encourage alignment with selected, discourage with unselected
+
+            # Update loss computation
+            loss += (-w_trace * trace_selected + w_trace * trace_unselected)
+            loss += (-w_alignment * alignment_selected + w_alignment * alignment_unselected)
+            loss += w_reg * torch.norm(x_test, p=2)
 
             # Optionally, add regularization to keep x_test within reasonable bounds
             reg_strength = 0.01
