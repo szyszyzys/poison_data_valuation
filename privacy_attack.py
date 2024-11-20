@@ -1,19 +1,25 @@
+# CLIP model and processor
+# Import your custom modules or utilities
+import argparse
 import os
 from collections import defaultdict
 
+import clip
 import numpy as np
+import torch
 
 # CLIP model and processor
 from attack.adv import Adv
 # Import your custom modules or utilities
-from attack.general_attack.my_utils import get_data, save_results_pkl
+from attack.general_attack.my_utils import get_data
+from attack.general_attack.my_utils import save_results_pkl
 from attack.privacy_attack.fim_reverse_attack import fim_reverse_math
 from attack.privacy_attack.fim_reverse_emb_opt_normal import fim_reverse_emb_opt_normal
 from attack.privacy_attack.fim_reverse_emb_opt_v2 import fim_reverse_emb_opt_v2
 from attack_d import identify_selected_unsampled, sampling_run_one_buyer
 
 
-def evaluate_poisoning_attack(
+def evaluate_privacy_attack(
         args,
         dataset='./data',
         data_dir='./data',
@@ -166,5 +172,232 @@ def evaluate_poisoning_attack(
         attack_result_dict[query_n] = cur_res
 
     save_results_pkl(attack_result_dict)
-        # for n_select in eval_range:
+    # for n_select in eval_range:
     # torch.save(atga)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        prog="main.py",
+        description="Data subset selection with experimental design informed loss using Frank-Wolfe optimization",
+    )
+    parser.add_argument("--random_seed", default=12345, help="random seed")
+    parser.add_argument("--figure_dir", default="./figures")
+    parser.add_argument("--result_dir", default="./results")
+    parser.add_argument("--exp_name", default=None, type=str)
+    parser.add_argument(
+        "-d",
+        "--dataset",
+        default="fitzpatrick",
+        choices=[
+            "gaussian",
+            "mimic",
+            "bone",
+            "fitzpatrick",
+            "drug",
+        ],
+        type=str,
+        help="dataset to run experiment on",
+    )
+    parser.add_argument(
+        "--batch_size",
+        default=1,
+        type=int,
+        help="number of test points to optimize at once",
+    )
+    parser.add_argument(
+        "--num_buyers",
+        default=30,
+        type=int,
+        help="number of test buyer points used in experimental design",
+    )
+    parser.add_argument(
+        "--num_seller",
+        default=1000,
+        type=int,
+        help="number of seller points used in experimental design",
+    )
+    parser.add_argument(
+        "--num_val",
+        default=100,
+        type=int,
+        help="number of validation points for baselines",
+    )
+    parser.add_argument(
+        "--num_dim",
+        default=100,
+        type=int,
+        help="dimensionality of the data samples",
+    )
+    parser.add_argument(
+        "--num_select",
+        default=500,
+        type=int,
+        help="dimensionality of the data samples",
+    )
+
+    parser.add_argument(
+        "--num_iters",
+        default=500,
+        type=int,
+        help="number of iterations to optimize experimental design",
+    )
+    parser.add_argument(
+        "--max_eval_range",
+        default=150,
+        type=int,
+        help="max number training points to select for evaluation",
+    )
+    parser.add_argument(
+        "--eval_step",
+        default=5,
+        type=int,
+        help="evaluation interval",
+    )
+
+    parser.add_argument(
+        "--attack_reg",
+        default=0,
+        type=float,
+        help="attack reg",
+    )
+    parser.add_argument(
+        "--attack_lr",
+        default=0.1,
+        type=float,
+        help="attack lr",
+    )
+
+    parser.add_argument(
+        "--baselines",
+        nargs="*",
+        default=[
+            # "AME",
+            # "BetaShapley",
+            # "DataBanzhaf",
+            "DataOob",
+            # "DataShapley",
+            "DVRL",
+            # "InfluenceSubsample",
+            "KNNShapley",
+            "LavaEvaluator",
+            # "LeaveOneOut",
+            "RandomEvaluator",
+            # "RobustVolumeShapley",
+        ],
+        type=str,
+        help="Compare to other data valution baselines in opendataval",
+    )
+    parser.add_argument("--debug", action="store_true", help="Turn on debugging mode")
+    parser.add_argument("--use_cost", action="store_true", help="If use cost")
+
+    parser.add_argument(
+        "--skip_save", action="store_true", help="Don't save weights or data"
+    )
+
+    parser.add_argument(
+        "--cost_range",
+        nargs="*",
+        default=None,
+        help="""
+    Choose range of costs to sample uniformly.
+    E.g. costs=[1, 2, 3, 9] will randomly set each seller data point
+    to one of these costs and apply the cost_func during optimization.
+    If set to None, no cost is applied during optimization.
+    Default is None.
+    """,
+    )
+    parser.add_argument(
+        "--cost_func",
+        default="linear",
+        choices=["linear", "squared", "square_root"],
+        type=str,
+        help="Choose cost function to apply.",
+    )
+
+    parser.add_argument(
+        "--save_name",
+        default="robustness_test",
+        type=str,
+        help="save_name.",
+    )
+    parser.add_argument(
+        "--cost_gen_mode",
+        default="constant",
+        choices=["random_uniform", "random_choice", "constant"],
+        type=str,
+        help="Choose cost function to apply.",
+    )
+    parser.add_argument(
+        "--attack_method",
+        default="math",
+        choices=["math", "opt1", "opt2"],
+        type=str,
+        help="Choose cost function to apply.",
+    )
+
+    parser.add_argument(
+        "--noise_level",
+        default=0,
+        type=float,
+        help="level of noise to add for cost",
+    )
+    parser.add_argument(
+        "--reg_lambda",
+        default=0.0,
+        type=float,
+        help="Regularization initial inverse information matrix to be identity. Should be between 0 and 1.",
+    )
+
+    parser.add_argument(
+        "--poison_rate",
+        default=0.2,
+        type=float,
+        help="rate of images to do poison for a buyer",
+    )
+
+    parser.add_argument(
+        "--attack_steps",
+        default=200,
+        type=int,
+        help="attack step",
+    )
+    args = parser.parse_args()
+    save_name = f'attack_evaluation_{args.dataset}_b_{args.num_buyers}_s_{args.num_seller}'
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    emb_model, preprocess = clip.load("ViT-B/32", device=device)
+    emb_model.eval()  # Set model to evaluation mode
+
+    # Define experiment parameters
+    experiment_params = {
+        'dataset': args.dataset,
+        'data_dir': './data',
+        'csv_path': "./fitzpatrick17k/fitzpatrick-mod.csv",
+        'img_path' './fitzpatrick17k/images'
+        'num_buyer': args.num_buyers,
+        'num_seller': args.num_seller,
+        'num_val': args.num_val,
+        'max_eval_range': args.max_eval_range,
+        'eval_step': args.eval_step,
+        'num_iters': args.num_iters,
+        'reg_lambda': 0.1,
+        'attack_strength': 0.1,
+        'save_results_flag': True,
+        'result_dir': 'results',
+        'save_name': save_name,
+        "num_select": args.num_select,
+        "adversary_ratio": 0.25,
+        "emb_model": emb_model,
+        "img_preprocess": preprocess,
+        "emb_model_name": "clip",
+        "attack_method": args.attack_method
+    }
+
+    # Run the attack evaluation experiment
+    results = evaluate_privacy_attack(args, **experiment_params)
+
+    # Print final results
+    print("\nFinal Attack Evaluation Metrics:")
+    # print(f"Attack Success Rate: {results['attack_success_rate'] * 100:.2f}%")
+    # print(f"Number of Successfully Selected Modified Data Points: {results['num_successfully_selected']}")
