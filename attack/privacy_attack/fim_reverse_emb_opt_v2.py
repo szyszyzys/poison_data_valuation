@@ -93,6 +93,31 @@ def optimize_test_samples_with_fim(
     prev_loss = float('inf')
     counter = 0
 
+    # Retrieve selected and unselected indices for the current test sample
+    selected_indices = selected_indices_list
+    unselected_indices = unselected_indices_list
+
+    # Handle cases where there are no selected or unselected indices
+    if len(selected_indices) > 0:
+        X_selected = X_tensor[selected_indices]  # (k, n_features)
+        weights_selected = torch.ones(X_selected.shape[0], device=device)  # (k,)
+    else:
+        # If no selected samples, use a small identity matrix
+        X_selected = torch.empty(0, n_features, device=device)
+        weights_selected = torch.tensor([], device=device)
+
+    if len(unselected_indices) > 0:
+        X_unselected = X_tensor[unselected_indices]  # (n_samples - k, n_features)
+        weights_unselected = torch.ones(X_unselected.shape[0], device=device) * 0.8  # Slightly lower weight
+    else:
+        # If no unselected samples, use a small identity matrix
+        X_unselected = torch.empty(0, n_features, device=device)
+        weights_unselected = torch.tensor([], device=device)
+
+    # Construct FIM for selected and unselected samples
+    fim_selected = construct_fim(X_selected, weights_selected)  # (n_features, n_features)
+    fim_unselected = construct_fim(X_unselected, weights_unselected)  # (n_features, n_features)
+
     # Optimization loop
     for it in tqdm(range(n_iterations), desc="Optimizing Test Samples"):
         optimizer.zero_grad()
@@ -100,31 +125,6 @@ def optimize_test_samples_with_fim(
 
         for i in range(n_tests):
             x_test = x_tests_opt[i]  # (n_features,)
-
-            # Retrieve selected and unselected indices for the current test sample
-            selected_indices = selected_indices_list[i]
-            unselected_indices = unselected_indices_list[i]
-
-            # Handle cases where there are no selected or unselected indices
-            if len(selected_indices) > 0:
-                X_selected = X_tensor[selected_indices]  # (k, n_features)
-                weights_selected = torch.ones(X_selected.shape[0], device=device)  # (k,)
-            else:
-                # If no selected samples, use a small identity matrix
-                X_selected = torch.empty(0, n_features, device=device)
-                weights_selected = torch.tensor([], device=device)
-
-            if len(unselected_indices) > 0:
-                X_unselected = X_tensor[unselected_indices]  # (n_samples - k, n_features)
-                weights_unselected = torch.ones(X_unselected.shape[0], device=device) * 0.8  # Slightly lower weight
-            else:
-                # If no unselected samples, use a small identity matrix
-                X_unselected = torch.empty(0, n_features, device=device)
-                weights_unselected = torch.tensor([], device=device)
-
-            # Construct FIM for selected and unselected samples
-            fim_selected = construct_fim(X_selected, weights_selected)  # (n_features, n_features)
-            fim_unselected = construct_fim(X_unselected, weights_unselected)  # (n_features, n_features)
 
             # Compute trace-based objectives
             trace_selected = torch.trace(fim_selected)
