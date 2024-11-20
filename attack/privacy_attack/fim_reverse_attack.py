@@ -467,7 +467,7 @@ def fim_reverse_math(x_s, selected_indices, unselected_indices, x_query, device,
 
     # Example: Randomly select weights for the selected samples to create x_query
     alpha_weights = np.random.uniform(0.5, 1.5, size=params['n_selected'])
-    x_query = X[selected_indices].T @ alpha_weights  # Shape: (n_features,)
+    x_query = x_s[selected_indices].T @ alpha_weights  # Shape: (n_features,)
 
     # Store parameters and data for potential saving
     experiment_data = {
