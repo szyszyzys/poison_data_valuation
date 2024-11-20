@@ -1,15 +1,15 @@
-import matplotlib.pyplot as plt
-import numpy as np
-from sklearn.cluster import KMeans
-from sklearn.linear_model import Ridge
-from sklearn.metrics import mean_squared_error
-import pickle
 import os
 
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from sklearn.cluster import KMeans
+from sklearn.metrics import mean_squared_error
 from sklearn.metrics.pairwise import cosine_similarity
+from torch import nn, optim
 
 # Assuming these utilities are correctly defined in your project
-from attack.general_attack.my_utils import save_results_pkl, evaluate_reconstruction as imported_evaluate_reconstruction
+from attack.general_attack.my_utils import save_results_pkl
 
 # Set random seed for reproducibility
 np.random.seed(42)
@@ -61,66 +61,132 @@ def eigen_decompose(fim_inv):
     return eigenvalues, eigenvectors
 
 
-def infer_x_test_extended(X_selected, X_unselected, x_test, fim_inv, lambda_reg=1e-5):
+def infer_x_test_extended_no_x_test(X_selected, X_unselected, fim_inv=None, lambda_reg=1e-5,
+                                    alpha_disalign=1.0, n_iterations=1000, lr=1e-2, device='cpu', verbose=True):
     """
-    Infers the test data as a linear combination of selected and unselected datapoints using regularized least squares.
+    Infers the test data as a linear combination of selected and unselected datapoints without using x_test.
 
     Parameters:
     - X_selected (np.ndarray): Selected data matrix of shape (n_selected, n_features).
     - X_unselected (np.ndarray): Unselected data matrix of shape (n_unselected, n_features).
-    - x_test (np.ndarray): True test data vector of shape (n_features,).
-    - fim_inv (np.ndarray): Inverse of the extended FIM matrix.
+    - fim_inv (np.ndarray): Inverse of the extended FIM matrix (optional, not used in this approach).
     - lambda_reg (float): Regularization parameter.
+    - alpha_disalign (float): Weight for the disalignment loss.
+    - n_iterations (int): Number of optimization steps.
+    - lr (float): Learning rate for optimizer.
+    - device (str): 'cpu' or 'cuda'.
+    - verbose (bool): If True, prints loss information during optimization.
 
     Returns:
     - x_test_hat (np.ndarray): Reconstructed test data vector of shape (n_features,).
-    - alpha_selected (np.ndarray): Coefficients for selected datapoints.
-    - alpha_unselected (np.ndarray): Coefficients for unselected datapoints.
     """
-    # Debugging: Print shapes
-    print("---- infer_x_test_extended Debugging Shapes ----")
-    print(f"Shape of X_selected: {X_selected.shape}")  # (n_selected, d)
-    print(f"Shape of X_unselected: {X_unselected.shape}")  # (n_unselected, d)
-    print(f"Shape of x_test: {x_test.shape}")  # (d,)
+    # Convert data to torch tensors
+    X_selected_tensor = torch.tensor(X_selected, dtype=torch.float32, device=device)  # (n_selected, d)
+    X_unselected_tensor = torch.tensor(X_unselected, dtype=torch.float32, device=device)  # (n_unselected, d)
 
-    # Number of selected and unselected samples
-    n_selected = X_selected.shape[0]
-    n_unselected = X_unselected.shape[0]
-    d_selected = X_selected.shape[1]
-    d_unselected = X_unselected.shape[1]
-    d_test = x_test.shape[0]
+    # Number of features
+    n_features = X_selected.shape[1]
 
-    # Ensure all feature dimensions match
-    assert d_selected == d_unselected == d_test, f"Feature dimension mismatch: X_selected({d_selected}), X_unselected({d_unselected}), x_test({d_test})"
+    # Initialize x_test_hat as a trainable parameter
+    x_test_hat = nn.Parameter(torch.randn(n_features, device=device) * 0.1)
 
-    # Combine selected and unselected data
-    X_combined = np.vstack((X_selected, X_unselected))  # Shape: (n_selected + n_unselected, d)
-    print("Shape of X_combined:", X_combined.shape)  # (n_total, d)
-    print("Shape of x_test:", x_test.shape)  # (d,)
+    # Define optimizer
+    optimizer = optim.Adam([x_test_hat], lr=lr)
 
-    # Regularized least squares solution
-    # Solve (X_combined X_combined^T + lambda I) alpha = X_combined x_test
-    A = X_combined @ X_combined.T + lambda_reg * np.eye(X_combined.shape[0])  # (n_total, n_total)
-    b = X_combined @ x_test  # (n_total,)
+    # Define loss function
+    loss_fn = nn.MSELoss()  # Placeholder, actual loss is custom
 
-    try:
-        alpha = np.linalg.solve(A, b)  # (n_total,)
-    except np.linalg.LinAlgError:
-        # If A is singular, use pseudo-inverse
-        if fim_inv is not None:
-            print("Using pseudo-inverse due to singular matrix.")
-            alpha = fim_inv @ b
-        else:
-            alpha = np.linalg.pinv(A) @ b
+    for it in range(n_iterations):
+        optimizer.zero_grad()
 
-    # Split coefficients into selected and unselected
-    alpha_selected = alpha[:n_selected]
-    alpha_unselected = alpha[n_selected:]
+        # Compute alignment with selected data
+        alignment_selected = X_selected_tensor @ x_test_hat  # (n_selected,)
+        loss_align = -torch.norm(alignment_selected, p=2)  # Maximize alignment
 
-    # Reconstruct x_test using the coefficients
-    x_test_hat = X_combined.T @ alpha  # (d,)
+        # Compute disalignment with unselected data
+        alignment_unselected = X_unselected_tensor @ x_test_hat  # (n_unselected,)
+        loss_disalign = torch.norm(alignment_unselected, p=2)  # Minimize alignment
 
-    return x_test_hat, alpha_selected, alpha_unselected
+        # Regularization
+        loss_reg = lambda_reg * torch.norm(x_test_hat, p=2)
+
+        # Total loss
+        loss = loss_align + alpha_disalign * loss_disalign + loss_reg
+
+        # Backpropagation
+        loss.backward()
+        optimizer.step()
+
+        if verbose and ((it + 1) % 100 == 0 or it == 0):
+            print(f"Iteration {it + 1}/{n_iterations}, Loss: {loss.item():.4f}, "
+                  f"Align: {loss_align.item():.4f}, Disalign: {loss_disalign.item():.4f}, Reg: {loss_reg.item():.6f}")
+
+    # Detach and move to CPU
+    x_test_hat_np = x_test_hat.detach().cpu().numpy()
+
+    return x_test_hat_np
+
+
+# def infer_x_test_extended(X_selected, X_unselected, x_test, fim_inv, lambda_reg=1e-5):
+#     """
+#     Infers the test data as a linear combination of selected and unselected datapoints using regularized least squares.
+#
+#     Parameters:
+#     - X_selected (np.ndarray): Selected data matrix of shape (n_selected, n_features).
+#     - X_unselected (np.ndarray): Unselected data matrix of shape (n_unselected, n_features).
+#     - x_test (np.ndarray): True test data vector of shape (n_features,).
+#     - fim_inv (np.ndarray): Inverse of the extended FIM matrix.
+#     - lambda_reg (float): Regularization parameter.
+#
+#     Returns:
+#     - x_test_hat (np.ndarray): Reconstructed test data vector of shape (n_features,).
+#     - alpha_selected (np.ndarray): Coefficients for selected datapoints.
+#     - alpha_unselected (np.ndarray): Coefficients for unselected datapoints.
+#     """
+#     # Debugging: Print shapes
+#     print("---- infer_x_test_extended Debugging Shapes ----")
+#     print(f"Shape of X_selected: {X_selected.shape}")  # (n_selected, d)
+#     print(f"Shape of X_unselected: {X_unselected.shape}")  # (n_unselected, d)
+#     print(f"Shape of x_test: {x_test.shape}")  # (d,)
+#
+#     # Number of selected and unselected samples
+#     n_selected = X_selected.shape[0]
+#     n_unselected = X_unselected.shape[0]
+#     d_selected = X_selected.shape[1]
+#     d_unselected = X_unselected.shape[1]
+#     d_test = x_test.shape[0]
+#
+#     # Ensure all feature dimensions match
+#     assert d_selected == d_unselected == d_test, f"Feature dimension mismatch: X_selected({d_selected}), X_unselected({d_unselected}), x_test({d_test})"
+#
+#     # Combine selected and unselected data
+#     X_combined = np.vstack((X_selected, X_unselected))  # Shape: (n_selected + n_unselected, d)
+#     print("Shape of X_combined:", X_combined.shape)  # (n_total, d)
+#     print("Shape of x_test:", x_test.shape)  # (d,)
+#
+#     # Regularized least squares solution
+#     # Solve (X_combined X_combined^T + lambda I) alpha = X_combined x_test
+#     A = X_combined @ X_combined.T + lambda_reg * np.eye(X_combined.shape[0])  # (n_total, n_total)
+#     b = X_combined @ x_test  # (n_total,)
+#
+#     try:
+#         alpha = np.linalg.solve(A, b)  # (n_total,)
+#     except np.linalg.LinAlgError:
+#         # If A is singular, use pseudo-inverse
+#         if fim_inv is not None:
+#             print("Using pseudo-inverse due to singular matrix.")
+#             alpha = fim_inv @ b
+#         else:
+#             alpha = np.linalg.pinv(A) @ b
+#
+#     # Split coefficients into selected and unselected
+#     alpha_selected = alpha[:n_selected]
+#     alpha_unselected = alpha[n_selected:]
+#
+#     # Reconstruct x_test using the coefficients
+#     x_test_hat = X_combined.T @ alpha  # (d,)
+#
+#     return x_test_hat, alpha_selected, alpha_unselected
 
 
 def evaluate_inference(x_test, x_test_hat):
