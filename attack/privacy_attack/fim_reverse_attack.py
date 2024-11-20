@@ -83,12 +83,13 @@ def infer_x_test_extended(X_selected, X_unselected, x_test, fim_inv, lambda_reg=
 
     # Combine selected and unselected data
     X_combined = np.vstack((X_selected, X_unselected))  # Shape: (n_selected + n_unselected, d)
-
+    print("Shape of X_combined:", X_combined.shape)  # Expected: (n_samples, n_features)
+    print("Shape of x_test:", x_test.shape)  # Expected: (n_samples,)
     # Ridge regression to find coefficients
     # Objective: Minimize ||x_test - X_combined.T * alpha||^2 + lambda_reg * ||alpha||^2
     ridge = Ridge(alpha=lambda_reg, fit_intercept=False)
-    # ridge.fit(X_combined.T, x_test)
-    ridge.fit(X_combined, x_test)
+    ridge.fit(X_combined.T, x_test)
+    # ridge.fit(X_combined, x_test)
     alpha = ridge.coef_  # Shape: (n_selected + n_unselected,)
 
     # Split coefficients into selected and unselected
