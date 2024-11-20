@@ -832,7 +832,7 @@ def evaluate_poisoning_attack(
     # Step 1: Load and preprocess data
     data = get_data(
         dataset=dataset,
-        num_buyer=num_buyer * batch_size,
+        num_buyer=num_buyer * args.batch_size,
         num_seller=num_seller,
         num_val=num_val,
         dim=num_dim,
