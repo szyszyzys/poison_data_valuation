@@ -1,11 +1,16 @@
-import copy
-import numpy as np
 import os
+from collections import defaultdict
+
+import numpy as np
 
 # CLIP model and processor
 from attack.adv import Adv
 # Import your custom modules or utilities
-from attack.general_attack.my_utils import get_data
+from attack.general_attack.my_utils import get_data, save_results_pkl
+from attack.privacy_attack.fim_reverse_attack import fim_reverse_math
+from attack.privacy_attack.fim_reverse_emb_opt_normal import fim_reverse_emb_opt_normal
+from attack.privacy_attack.fim_reverse_emb_opt_v2 import fim_reverse_emb_opt_v2
+from attack_d import identify_selected_unsampled, sampling_run_one_buyer
 
 
 def evaluate_poisoning_attack(
@@ -35,6 +40,7 @@ def evaluate_poisoning_attack(
         cost_manipulation_method="undercut_target",
         emb_model_name="clip",
         attack_method="math",
+        device="cpu",
         **kwargs
 ):
     """
@@ -65,6 +71,10 @@ def evaluate_poisoning_attack(
         attack_func = fim_reverse_emb_opt_normal
     elif attack_method == "opt2":
         attack_func = fim_reverse_emb_opt_v2
+    else:
+        print(f"Error attack method: {attack_method}".center(40, "="))
+        return
+
     # Step 1: Load and preprocess data
     data = get_data(
         dataset=dataset,
@@ -125,8 +135,10 @@ def evaluate_poisoning_attack(
     print(f"Done initial run, number of queries: {len(benign_selection_info)}")
     # Step 3: Identify Selected and Unselected Data Points
     # For each batch (buyer query), perform the reconstruction
-    attack_result_dict = defaultdict(list)
+    attack_result_dict = defaultdict()
 
+    # todo current use fixed number
+    n_select = 500
     # For different query, perform the attacks.
     for query_n, info_dic in enumerate(benign_selection_info):
         cur_query_num = info_dic["query_number"]
@@ -135,16 +147,24 @@ def evaluate_poisoning_attack(
         query_x = info_dic["test_x"]
         query_y = info_dic["test_y"]
         attack_result_path = f"./{figure_path}/poisoned_sampling_query_number_{query_n}"
+        selected_indices_initial, unsampled_indices_initial = identify_selected_unsampled(
+            weights=m_cur_weight,
+            num_select=n_select,
+        )
 
-        for n_select in eval_range:
-            selected_indices_initial, unsampled_indices_initial = identify_selected_unsampled(
-                weights=m_cur_weight,
-                num_select=n_select,
-            )
+        # x_s, selected_indices, unselected_indices, x_query, device
+        selected_adversary_indices = np.intersect1d(selected_indices_initial, adversary_indices)
+        unsampled_adversary_indices = np.intersect1d(unsampled_indices_initial, adversary_indices)
+        cur_res = attack_func(x_s, selected_adversary_indices, unsampled_adversary_indices, query_x, device, True,
+                              attack_result_path)
 
-            # x_s, selected_indices, unselected_indices, x_query, device
-            selected_adversary_indices = np.intersect1d(selected_indices_initial, adversary_indices)
-            unsampled_adversary_indices = np.intersect1d(unsampled_indices_initial, adversary_indices)
-            cur_res = attack_func(x_s, selected_adversary_indices, unsampled_adversary_indices, query_x, device, True, attack_result_path)
-            attack_result_dict[query_n].append(cur_res)
-    torch.save(atga)
+        # results = {
+        #     "best_cosine_similarities": best_cosine_similarities,
+        #     "best_euclidean_distances": best_euclidean_distances,
+        #     "matching_indices": matching_indices
+        # }
+        attack_result_dict[query_n] = cur_res
+
+    save_results_pkl(attack_result_dict)
+        # for n_select in eval_range:
+    # torch.save(atga)

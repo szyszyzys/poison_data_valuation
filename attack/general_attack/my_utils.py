@@ -513,6 +513,26 @@ def plot_results_data_selection(plot_type, figure_path, results, eval_range):
     print(f"Plot saved to {figure_path}".center(80, "="))
 
 
+def save_results_pkl(results, save_dir='results'):
+    """
+    Saves the inference results and plots to the specified directory.
+
+    Parameters:
+    - results (dict): Dictionary containing all inference results.
+    - save_dir (str): Directory path where results will be saved.
+    """
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    # Save numerical results using pickle
+    with open(os.path.join(save_dir, 'inference_results.pkl'), 'wb') as f:
+        pickle.dump(results, f)
+
+    print(f"Results saved to directory: {save_dir}")
+
+    # Optionally, save plots manually within other functions or here if needed
+
+
 def image_modification(
         modify_info,
         model,
@@ -846,3 +866,50 @@ def modify_image(
         final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item()
 
     return modified_image_pil, modified_embedding, final_similarity
+
+
+def evaluate_reconstruction(x_tests_true, x_tests_est):
+    """
+    Evaluates the reconstruction by comparing each reconstructed sample to all ground truth samples.
+    Selects the best match based on cosine similarity and Euclidean distance.
+
+    Parameters:
+    - x_tests_true: np.ndarray of shape (n_tests_true, n_features)
+        Ground truth test samples.
+    - x_tests_est: np.ndarray of shape (n_tests_est, n_features)
+        Reconstructed test samples.
+
+    Returns:
+    - best_cosine_similarities: list of highest cosine similarities for each reconstructed sample.
+    - best_euclidean_distances: list of lowest Euclidean distances for each reconstructed sample.
+    - matching_indices: list of indices of ground truth samples that best match each reconstructed sample.
+    """
+    from sklearn.metrics.pairwise import cosine_similarity
+    import numpy as np
+
+    n_tests_est = x_tests_est.shape[0]
+    n_tests_true = x_tests_true.shape[0]
+
+    # Compute pairwise cosine similarities and Euclidean distances
+    cosine_sim_matrix = cosine_similarity(x_tests_est, x_tests_true)  # Shape: (n_tests_est, n_tests_true)
+    euclidean_dist_matrix = np.linalg.norm(
+        x_tests_est[:, np.newaxis, :] - x_tests_true[np.newaxis, :, :],
+        axis=2
+    )  # Shape: (n_tests_est, n_tests_true)
+
+    best_cosine_similarities = []
+    best_euclidean_distances = []
+    matching_indices = []
+
+    # For each reconstructed sample, find the best match in ground truth samples
+    for i in range(n_tests_est):
+        best_match_idx = np.argmax(cosine_sim_matrix[i])  # Index of best cosine similarity
+        best_cosine_similarity = cosine_sim_matrix[i, best_match_idx]
+        best_euclidean_distance = euclidean_dist_matrix[i, best_match_idx]
+
+        # Store the results
+        best_cosine_similarities.append(best_cosine_similarity)
+        best_euclidean_distances.append(best_euclidean_distance)
+        matching_indices.append(best_match_idx)
+
+    return best_cosine_similarities, best_euclidean_distances, matching_indices

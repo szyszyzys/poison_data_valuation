@@ -2,7 +2,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import matplotlib.pyplot as plt
+
+from attack.general_attack.my_utils import evaluate_reconstruction
 
 
 def generate_synthetic_data(n_samples=200, n_features=20, random_state=42):
@@ -67,7 +68,7 @@ def construct_fim(X_selected, weights):
     return fim
 
 
-def optimize_test_samples_with_fim(X, selected_indices_list, n_tests=3, k=10,
+def optimize_test_samples_with_fim(X, selected_indices_list, unselected_indices_list, n_tests=3,
                                    n_iterations=5000, lr=1e-2, device='cpu'):
     """
     Infers test samples using an optimization-based method incorporating the Fisher Information Matrix (FIM).
@@ -85,7 +86,9 @@ def optimize_test_samples_with_fim(X, selected_indices_list, n_tests=3, k=10,
     - x_tests_opt: torch.Tensor of shape (n_tests, n_features), optimized test samples
     """
     X_tensor = torch.tensor(X, dtype=torch.float32).to(device)  # (n_samples, n_features)
-    n_samples, n_features = X_tensor.shape
+    n_features = selected_indices_list.shape[1]
+    n_selected_samples = selected_indices_list.shape[0]
+    n_unselected_samples = selected_indices_list.shape[0]
 
     # Initialize test samples as parameters to optimize
     x_tests_opt = nn.Parameter(torch.randn(n_tests, n_features, device=device) * 0.1)
@@ -102,15 +105,13 @@ def optimize_test_samples_with_fim(X, selected_indices_list, n_tests=3, k=10,
         for i in range(n_tests):
             x_test = x_tests_opt[i]  # (n_features,)
             selected = selected_indices_list[i]
-            non_selected = torch.tensor([idx for idx in range(n_samples) if idx not in selected], dtype=torch.long).to(
-                device)
 
             X_selected = X_tensor[selected]  # (k, n_features)
-            X_unselected = X_tensor[non_selected]  # (n_samples - k, n_features)
+            X_unselected = X_tensor[unselected_indices_list]  # (n_samples - k, n_features)
 
             # Assign higher weights to selected samples
-            weights_selected = torch.ones(k, device=device) * weight_selected
-            weights_unselected = torch.ones(n_samples - k, device=device) * weight_unselected
+            weights_selected = torch.ones(n_selected_samples, device=device) * weight_selected
+            weights_unselected = torch.ones(n_unselected_samples, device=device) * weight_unselected
 
             # Construct FIM for selected and unselected
             fim_selected = construct_fim(X_selected, weights_selected)  # (n_features, n_features)
@@ -149,75 +150,30 @@ def optimize_test_samples_with_fim(X, selected_indices_list, n_tests=3, k=10,
     return x_tests_opt.detach().cpu().numpy()
 
 
-def evaluate_reconstruction(x_tests_true, x_tests_est):
-    """
-    Evaluates the reconstruction by computing cosine similarity and Euclidean distance.
-
-    Parameters:
-    - x_tests_true: np.ndarray of shape (n_tests, n_features)
-    - x_tests_est: np.ndarray of shape (n_tests, n_features)
-
-    Returns:
-    - cosine_similarities: list of cosine similarities for each test sample
-    - euclidean_distances: list of Euclidean distances for each test sample
-    """
-    from sklearn.metrics.pairwise import cosine_similarity
-    cosine_similarities = []
-    euclidean_distances = []
-    for true, est in zip(x_tests_true, x_tests_est):
-        cos_sim = cosine_similarity(true.reshape(1, -1), est.reshape(1, -1))[0][0]
-        euclidean = np.linalg.norm(true - est)
-        cosine_similarities.append(cos_sim)
-        euclidean_distances.append(euclidean)
-    return cosine_similarities, euclidean_distances
-
-
-def fim_reverse_emb_opt_v2(x_s, selected_indices, unselected_indices, x_query, device, verbose=True):
+def fim_reverse_emb_opt_v2(x_s, selected_indices, unselected_indices, x_query, device, save_dir="./data", verbose=True):
     # Configuration
-    n_samples = 200
-    n_features = 20
-    n_tests = 3
-    n_components = 5
-    k = 10
+    n_tests = x_query.shape[0]
     n_iterations = 5000
     lr = 1e-2
 
     # Step 4: Reverse engineer test samples using optimization with FIM
     x_tests_est = optimize_test_samples_with_fim(
-        x_s, selected_indices, n_tests=n_tests, k=k,
+        x_s, selected_indices, unselected_indices, n_tests=n_tests,
         n_iterations=n_iterations, lr=lr, device=device
     )
 
     # Step 5: Evaluation
-    cosine_similarities, euclidean_distances = evaluate_reconstruction(x_query, x_tests_est)
+    best_cosine_similarities, best_euclidean_distances, matching_indices = evaluate_reconstruction(x_query, x_tests_est)
     for i in range(n_tests):
         print(f"\nTest Sample {i + 1}:")
-        print(f" Cosine Similarity: {cosine_similarities[i]:.4f}")
-        print(f" Euclidean Distance: {euclidean_distances[i]:.4f}")
+        print(f" Cosine Similarity: {best_cosine_similarities[i]:.4f}")
+        print(f" Euclidean Distance: {best_euclidean_distances[i]:.4f}")
+        print(f" Matching index: {matching_indices[i]:.4f}")
 
-    # Visualization for each test sample
-    for i in range(n_tests):
-        plt.figure(figsize=(12, 5))
+    results = {
+        "best_cosine_similarities": best_cosine_similarities,
+        "best_euclidean_distances": best_euclidean_distances,
+        "matching_indices": matching_indices
+    }
 
-        # Original vs Estimated
-        plt.subplot(1, 2, 1)
-        plt.plot(x_tests_true[i], label='Original x_test')
-        plt.plot(x_tests_est[i], label='Estimated x_test', linestyle='--')
-        plt.legend()
-        plt.title(f'Test Sample {i + 1}: Original vs Estimated')
-        plt.xlabel('Feature Index')
-        plt.ylabel('Value')
-
-        # Scatter plot comparison
-        plt.subplot(1, 2, 2)
-        plt.scatter(x_tests_true[i], x_tests_est[i], alpha=0.7)
-        plt.plot([x_tests_true[i].min(), x_tests_true[i].max()],
-                 [x_tests_true[i].min(), x_tests_true[i].max()],
-                 'r--', label='Ideal')
-        plt.legend()
-        plt.title(f'Test Sample {i + 1}: Scatter Comparison')
-        plt.xlabel('Original x_test')
-        plt.ylabel('Estimated x_test')
-
-        plt.tight_layout()
-        plt.show()
+    return results

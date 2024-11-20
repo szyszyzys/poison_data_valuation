@@ -5,6 +5,8 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.metrics import roc_auc_score
 
+from attack.general_attack.my_utils import evaluate_reconstruction
+
 
 def compute_fim_refined(X, indices, weights=None, regularization=1e-5):
     """
@@ -358,11 +360,13 @@ def fim_reverse_opt_refined(X, selected_indices, unselected_indices, dim, lambda
     return q, scores, metrics
 
 
-def fim_reverse_emb_opt(x_s, selected_indices, unselected_indices, verbose=True):
+def fim_reverse_emb_opt(x_s, selected_indices, unselected_indices, x_query, device, save_dir="./data", verbose=True):
     """
     Main function to execute the refined embedding reconstruction and visualization.
     """
     # Parameters
+    save_dir = f"{save_dir}/reverse_opt_v1/"
+
     dim = x_s.shape[-1]
     lambda_reg = 0.1
     margin = 1.0
@@ -384,17 +388,9 @@ def fim_reverse_emb_opt(x_s, selected_indices, unselected_indices, verbose=True)
         verbose=verbose
     )
 
-    # Additional Evaluation Metrics (Optional)
-    # For example, visualize the distribution of scores
-    plt.figure(figsize=(10, 6))
-    plt.hist(scores[selected_indices], bins=30, alpha=0.5, label='Selected', color='green')
-    plt.hist(scores[unselected_indices], bins=30, alpha=0.5, label='Unselected', color='red')
-    plt.title("Score Distribution: Selected vs Unselected Samples")
-    plt.xlabel("Score (Cosine Similarity)")
-    plt.ylabel("Frequency")
-    plt.legend()
-    plt.show()
 
-    # Save the reconstructed embedding and scores if needed
-    # np.save("reconstructed_embedding.npy", q)
-    # np.save("scores.npy", scores)
+    results = {
+
+    }
+
+    return results
