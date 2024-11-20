@@ -18,7 +18,6 @@ from attack.general_attack.my_utils import get_data
 # Import your custom modules or utilities
 from attack.general_attack.my_utils import save_results_pkl
 from attack.privacy_attack.fim_reverse_attack import fim_reverse_math
-from attack.privacy_attack.fim_reverse_emb_opt_normal import fim_reverse_emb_opt_normal
 from attack.privacy_attack.fim_reverse_emb_opt_v2 import fim_reverse_emb_opt_v2
 
 
