@@ -53,18 +53,17 @@ def optimize_test_samples_with_fim(X, selected_indices_list, unselected_indices_
     x_test = x_tests_opt[0]  # (n_features,)
 
     X_selected = X_tensor[selected_indices_list]  # (k, n_features)
-    X_unselected = X_tensor[unselected_indices_list]  # (n_samples - k, n_features)
+    # X_unselected = X_tensor[unselected_indices_list]  # (n_samples - k, n_features)
     # Assign higher weights to selected samples
     weights_selected = torch.ones(X_selected.shape[0], device=device) * weight_selected
-    weights_unselected = torch.ones(X_unselected.shape[0], device=device) * weight_unselected
+    # weights_unselected = torch.ones(X_unselected.shape[0], device=device) * weight_unselected
 
     # Construct FIM for selected and unselected
     fim_selected = construct_fim(X_selected.to(device), weights_selected.to(device))  # (n_features, n_features)
-    fim_unselected = construct_fim(X_unselected.to(device),
-                                   weights_unselected.to(device))  # (n_features, n_features)
+    # fim_unselected = construct_fim(X_unselected.to(device),    weights_unselected.to(device))  # (n_features, n_features)
 
     # Total FIM
-    fim_total = fim_selected + fim_unselected  # (n_features, n_features)
+    # fim_total = fim_selected + fim_unselected  # (n_features, n_features)
 
     for it in range(n_iterations):
         optimizer.zero_grad()
@@ -77,15 +76,18 @@ def optimize_test_samples_with_fim(X, selected_indices_list, unselected_indices_
 
         # Trace-based objectives
         trace_selected = torch.trace(fim_selected)
-        trace_unselected = torch.trace(fim_unselected)
+        # trace_unselected = torch.trace(fim_unselected)
 
         # Alignment-based objectives
         alignment_selected = torch.matmul(x_test, torch.matmul(fim_selected, x_test))
-        alignment_unselected = torch.matmul(x_test, torch.matmul(fim_unselected, x_test))
+        # alignment_unselected = torch.matmul(x_test, torch.matmul(fim_unselected, x_test))
 
         # Update loss computation
-        loss += (-w_trace * trace_selected + w_trace * trace_unselected)
-        loss += (-w_alignment * alignment_selected + w_alignment * alignment_unselected)
+        # loss += (-w_trace * trace_selected + w_trace * trace_unselected)
+        # loss += (-w_alignment * alignment_selected + w_alignment * alignment_unselected)
+        loss += (-w_trace * trace_selected)
+        loss += (-w_alignment * alignment_selected)
+
         loss += w_reg * torch.norm(x_test, p=2)
 
         # Optionally, add regularization to keep x_test within reasonable bounds
