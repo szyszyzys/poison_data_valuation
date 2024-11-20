@@ -104,9 +104,8 @@ def optimize_test_samples_with_fim(X, selected_indices_list, unselected_indices_
         loss = 0.0
         for i in range(n_tests):
             x_test = x_tests_opt[i]  # (n_features,)
-            selected = selected_indices_list[i]
 
-            X_selected = X_tensor[selected]  # (k, n_features)
+            X_selected = X_tensor[selected_indices_list]  # (k, n_features)
             X_unselected = X_tensor[unselected_indices_list]  # (n_samples - k, n_features)
             print(f"X_selected shape: {X_selected.shape}")
             print(f"X_selected shape: {X_unselected.shape}")
