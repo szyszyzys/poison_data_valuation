@@ -9,7 +9,7 @@ import os
 from sklearn.metrics.pairwise import cosine_similarity
 
 # Assuming these utilities are correctly defined in your project
-from attack.general_attack.my_utils import save_results_pkl, evaluate_reconstruction
+from attack.general_attack.my_utils import save_results_pkl, evaluate_reconstruction as imported_evaluate_reconstruction
 
 # Set random seed for reproducibility
 np.random.seed(42)
@@ -140,27 +140,30 @@ def evaluate_inference(x_test, x_test_hat):
     return mse, cosine_sim
 
 
-def evaluate_reconstruction(x_test, x_test_hat):
+def evaluate_reconstruction_multiple(x_test_list, x_test_hat_list):
     """
-    Evaluates the reconstruction by computing cosine similarity, Euclidean distance, and matching indices.
-    This is a placeholder; replace with your actual implementation.
+    Evaluates the reconstruction for multiple samples by computing cosine similarity, Euclidean distance, and matching indices.
 
     Parameters:
-    - x_test (np.ndarray): True test data vector.
-    - x_test_hat (np.ndarray): Reconstructed test data vector.
+    - x_test_list (list or np.ndarray): List of true test data vectors.
+    - x_test_hat_list (list or np.ndarray): List of reconstructed test data vectors.
 
     Returns:
-    - best_cosine_similarities (list): List of cosine similarities.
-    - best_euclidean_distances (list): List of Euclidean distances.
-    - matching_indices (list): List of matching indices.
+    - best_cosine_similarities (list): List of cosine similarities for each sample.
+    - best_euclidean_distances (list): List of Euclidean distances for each sample.
+    - matching_indices (list): List of matching indices (placeholder) for each sample.
     """
-    # Placeholder implementation
-    # Replace with actual logic
-    cosine_sim = cosine_similarity([x_test], [x_test_hat])[0, 0]
-    euclidean_dist = np.linalg.norm(x_test - x_test_hat)
-    best_cosine_similarities = [cosine_sim]
-    best_euclidean_distances = [euclidean_dist]
-    matching_indices = [0]  # Placeholder
+    best_cosine_similarities = []
+    best_euclidean_distances = []
+    matching_indices = []
+
+    for i, (x_true, x_hat) in enumerate(zip(x_test_list, x_test_hat_list)):
+        cosine_sim = cosine_similarity([x_true], [x_hat])[0, 0]
+        euclidean_dist = np.linalg.norm(x_true - x_hat)
+        best_cosine_similarities.append(cosine_sim)
+        best_euclidean_distances.append(euclidean_dist)
+        matching_indices.append(0)  # Placeholder for matching index
+
     return best_cosine_similarities, best_euclidean_distances, matching_indices
 
 
@@ -324,7 +327,7 @@ def run_experiment(
 
     Parameters:
     - X (np.ndarray): Feature matrix of shape (n_samples, n_features).
-    - x_query (np.ndarray): True test data vector of shape (n_features,).
+    - x_query (np.ndarray): True test data vectors of shape (n_queries, n_features).
     - selected_indices (np.ndarray): Indices of selected samples.
     - unselected_indices (np.ndarray): Indices of unselected samples.
     - epsilon (float): Weight for unselected data points in FIM.
@@ -339,9 +342,10 @@ def run_experiment(
     results = {}
 
     # Debugging: Print shapes
-    print("---- run_experiment Data Shapes ----")
-    print(f"Shape of X: {X.shape}")          # (n_samples, d)
-    print(f"Shape of x_query: {x_query.shape}")  # (d,)
+    if verbose:
+        print("---- run_experiment Data Shapes ----")
+        print(f"Shape of X: {X.shape}")              # (n_samples, d)
+        print(f"Shape of x_query: {x_query.shape}")  # (n_queries, d)
 
     # Ensure selected and unselected indices are valid
     assert np.all(selected_indices < X.shape[0]), "Selected indices out of bounds."
@@ -375,18 +379,37 @@ def run_experiment(
     # Optional: Plot eigenvalues
     plot_eigenvalues(eigenvalues, top_k=top_k)
 
-    # Step 4: Infer x_test
-    x_test_hat, alpha_selected, alpha_unselected = infer_x_test_extended(
-        X[selected_indices], X[unselected_indices], x_query, fim_inv, lambda_reg=lambda_reg
-    )
-    results['x_test_hat'] = x_test_hat
-    results['alpha_selected'] = alpha_selected
-    results['alpha_unselected'] = alpha_unselected
-    if verbose:
-        print(f"Reconstructed x_test: {x_test_hat}")
+    # Step 4: Infer x_test for each query sample
+    x_test_hat_list = []
+    alpha_selected_list = []
+    alpha_unselected_list = []
 
-    # Step 5: Evaluate Inference
-    best_cosine_similarities, best_euclidean_distances, matching_indices = evaluate_reconstruction(x_query, x_test_hat)
+    for idx, x_test in enumerate(x_query):
+        if verbose:
+            print(f"\n---- Inferring Query Sample {idx + 1}/{len(x_query)} ----")
+        x_test_hat, alpha_selected, alpha_unselected = infer_x_test_extended(
+            X[selected_indices], X[unselected_indices], x_test, fim_inv, lambda_reg=lambda_reg
+        )
+        x_test_hat_list.append(x_test_hat)
+        alpha_selected_list.append(alpha_selected)
+        alpha_unselected_list.append(alpha_unselected)
+        if verbose:
+            print(f"Reconstructed x_test[{idx}]: {x_test_hat}")
+
+    results['x_test_hat'] = np.array(x_test_hat_list)
+    results['alpha_selected'] = np.array(alpha_selected_list)
+    results['alpha_unselected'] = np.array(alpha_unselected_list)
+
+    # Step 5: Evaluate Inference for all query samples
+    best_cosine_similarities, best_euclidean_distances, matching_indices = evaluate_reconstruction_multiple(
+        x_query, x_test_hat_list
+    )
+    results['best_cosine_similarities'] = best_cosine_similarities
+    results['best_euclidean_distances'] = best_euclidean_distances
+    results['matching_indices'] = matching_indices
+
+    # Print evaluation results
+    print("\n--- Reconstruction Evaluation for All Query Samples ---")
     for i in range(len(x_query)):
         print(f"\nTest Sample {i + 1}:")
         print(f" Cosine Similarity: {best_cosine_similarities[i]:.4f}")
@@ -394,37 +417,51 @@ def run_experiment(
         print(f" Matching index: {matching_indices[i]}")
 
     # Uncomment and adjust the following steps as needed
-    # mse, cosine_sim = evaluate_inference(x_query, x_test_hat)
-    # results['mse'] = mse
-    # results['cosine_similarity'] = cosine_sim
+    # mse_list, cosine_sim_list = evaluate_inference_multiple(x_query, x_test_hat_list)
+    # results['mse_list'] = mse_list
+    # results['cosine_similarity_list'] = cosine_sim_list
     # if verbose:
-    #     print(f"Reconstruction Mean Squared Error (MSE): {mse:.6f}")
-    #     print(f"Reconstruction Cosine Similarity: {cosine_sim:.6f}")
+    #     for i in range(len(x_query)):
+    #         print(f"Reconstruction Mean Squared Error (MSE) for Sample {i + 1}: {mse_list[i]:.6f}")
+    #         print(f"Reconstruction Cosine Similarity for Sample {i + 1}: {cosine_sim_list[i]:.6f}")
     #
-    # # Optional: Plot reconstruction
-    # plot_reconstruction(x_query, x_test_hat)
+    # # Optional: Plot reconstructions for each sample
+    # for i in range(len(x_query)):
+    #     plot_reconstruction(x_query[i], x_test_hat_list[i])
     #
-    # # Step 6: Infer Statistical Properties
-    # stats = infer_statistical_properties(X[selected_indices], X[unselected_indices], x_query)
-    # results['stats'] = stats
+    # # Step 6: Infer Statistical Properties for each sample
+    # stats_list = []
+    # for i in range(len(x_query)):
+    #     stats = infer_statistical_properties(X[selected_indices], X[unselected_indices], x_query[i])
+    #     stats_list.append(stats)
+    # results['stats_list'] = stats_list
     # if verbose:
-    #     print("\n--- Statistical Properties ---")
-    #     for key, value in stats.items():
-    #         print(f"{key}: {value}")
+    #     for i, stats in enumerate(stats_list):
+    #         print(f"\n--- Statistical Properties for Test Sample {i + 1} ---")
+    #         for key, value in stats.items():
+    #             print(f"{key}: {value}")
     #
-    # # Step 7: Additional Inference
-    # cluster_label, attribute_importance = additional_inference(
-    #     X[selected_indices], X[unselected_indices], x_query, eigenvectors, top_k=top_k, n_clusters=n_clusters
-    # )
-    # results['cluster_label'] = cluster_label
-    # results['attribute_importance'] = attribute_importance
+    # # Step 7: Additional Inference for each sample
+    # cluster_labels = []
+    # attribute_importances = []
+    # for i in range(len(x_query)):
+    #     cluster_label, attribute_importance = additional_inference(
+    #         X[selected_indices], X[unselected_indices], x_query[i], eigenvectors, top_k=top_k, n_clusters=n_clusters
+    #     )
+    #     cluster_labels.append(cluster_label)
+    #     attribute_importances.append(attribute_importance)
+    # results['cluster_labels'] = cluster_labels
+    # results['attribute_importances'] = attribute_importances
     # if verbose:
-    #     print(f"\nCluster Label Assigned to x_test: {cluster_label}")
-    #     print(f"Attribute Importance Scores: {attribute_importance}")
+    #     for i in range(len(x_query)):
+    #         print(f"\nCluster Label Assigned to Test Sample {i + 1}: {cluster_labels[i]}")
+    #         print(f"Attribute Importance Scores for Test Sample {i + 1}: {attribute_importances[i]}")
     #
     # # Step 8: Ranking Visualization
-    # # Compute scores based on alignment with reconstructed x_test
-    # scores = cosine_similarity(X, [x_test_hat]).flatten()
+    # # Compute scores based on alignment with reconstructed x_test for all queries
+    # # This might involve aggregating or averaging scores; adjust as needed
+    # # For simplicity, we can compute scores for the first query sample
+    # scores = cosine_similarity(X, [x_test_hat_list[0]]).flatten()
     # results['scores'] = scores
     # visualize_ranking(scores, selected_indices, unselected_indices, top_n=50)
     #
@@ -438,36 +475,40 @@ def run_experiment(
 def fim_reverse_math(x_s, selected_indices, unselected_indices, x_query, device, save_dir="./data", verbose=True):
     """
     Main function to execute the extended Test Data Inference Attack.
-    Generates synthetic data, selects samples, defines a query, and performs inference.
+    Generates synthetic data, selects samples, defines queries, and performs inference.
+
+    Parameters:
+    - x_s (np.ndarray): Feature matrix of shape (n_samples, n_features).
+    - selected_indices (list or np.ndarray): Indices of selected samples.
+    - unselected_indices (list or np.ndarray): Indices of unselected samples.
+    - x_query (np.ndarray): Query data vectors of shape (n_queries, n_features).
+    - device: Device specification (unused in current context).
+    - save_dir (str): Directory to save the results.
+    - verbose (bool): If True, prints detailed information.
+
+    Returns:
+    - results (dict): Dictionary containing all inference results.
     """
     # Define tunable parameters
     params = {
-        'n_selected': 100,      # Number of selected data points
-        'n_unselected': 200,    # Number of unselected data points
-        'n_features': 512,      # Number of features (ensure this matches your data)
-        'epsilon': 1e-3,        # Weight for unselected data points in FIM
-        'lambda_reg': 1e-5,     # Regularization parameter for FIM and regression
-        'top_k': 10,            # Number of top principal components for attribute importance
-        'n_clusters': 3,        # Number of clusters for KMeans
-        'verbose': True         # Enable verbose output
+        'n_selected': len(selected_indices),      # Number of selected data points
+        'n_unselected': len(unselected_indices),  # Number of unselected data points
+        'n_features': x_s.shape[1],               # Number of features (ensure this matches your data)
+        'epsilon': 1e-3,                           # Weight for unselected data points in FIM
+        'lambda_reg': 1e-5,                        # Regularization parameter for FIM and regression
+        'top_k': 10,                               # Number of top principal components for attribute importance
+        'n_clusters': 3,                           # Number of clusters for KMeans
+        'verbose': verbose                         # Enable verbose output
     }
-    save_dir = f"{save_dir}/reverse_math/"
+    save_dir = os.path.join(save_dir, "reverse_math")
+    os.makedirs(save_dir, exist_ok=True)
 
     # Verify that x_s has the correct number of features
     assert x_s.shape[1] == params['n_features'], f"Expected x_s to have {params['n_features']} features, but got {x_s.shape[1]}."
 
-    # Define a true query vector x_query as a linear combination of some selected samples
-    # For realism, assume x_query is influenced more by selected samples
-    # Example: x_query = sum(alpha_i * X_selected[i] for i in some subset)
-    # Here, we'll randomly generate it for demonstration purposes
-
     # Ensure selected_indices and unselected_indices are arrays
     selected_indices = np.array(selected_indices)
     unselected_indices = np.array(unselected_indices)
-
-    # Example: Randomly select weights for the selected samples to create x_query
-    alpha_weights = np.random.uniform(0.5, 1.5, size=params['n_selected'])
-    x_query = x_s[selected_indices].T @ alpha_weights  # Shape: (n_features,)
 
     # Store parameters and data for potential saving
     experiment_data = {
@@ -499,15 +540,18 @@ def fim_reverse_math(x_s, selected_indices, unselected_indices, x_query, device,
 
     # Uncomment and adjust the following summary as needed
     # print("\n--- Inference Summary ---")
-    # print(f"Mean Squared Error (MSE): {results['mse']:.6f}")
-    # print(f"Cosine Similarity: {results['cosine_similarity']:.6f}")
-    # print(f"Cluster Label Assigned to x_test: {results['cluster_label']}")
-    # print(f"Attribute Importance Scores: {results['attribute_importance']}")
+    # for i in range(len(x_query)):
+    #     print(f"Test Sample {i + 1}:")
+    #     print(f" Mean Squared Error (MSE): {results['mse_list'][i]:.6f}")
+    #     print(f" Cosine Similarity: {results['cosine_similarity_list'][i]:.6f}")
+    #     print(f" Cluster Label: {results['cluster_labels'][i]}")
+    #     print(f" Attribute Importance: {results['attribute_importances'][i]}")
 
     # Additional Insights
-    # print("\n--- Reconstruction Coefficients (Selected) ---")
-    # print(results['alpha_selected'])
-    # print("\n--- Reconstruction Coefficients (Unselected) ---")
-    # print(results['alpha_unselected'])
+    # for i in range(len(x_query)):
+    #     print(f"\n--- Reconstruction Coefficients for Selected Samples (Query {i + 1}) ---")
+    #     print(results['alpha_selected'][i])
+    #     print(f"--- Reconstruction Coefficients for Unselected Samples (Query {i + 1}) ---")
+    #     print(results['alpha_unselected'][i])
 
     return results
