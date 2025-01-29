@@ -515,7 +515,7 @@ def reverse_engineer_query_workflow():
         "best_euclidean_distances": best_euclidean_distances,
         "matching_indices": matching_indices
     }
-    save_results_pkl(results, save_dir="./data/reverse_engineering_results")
+    save_results_pkl(results, save_dir="../data/reverse_engineering_results")
 
     return results
 

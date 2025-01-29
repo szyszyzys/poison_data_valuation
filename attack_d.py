@@ -475,18 +475,19 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
     # Loop over each test point in buyer's data, in batches
     for i, j in tqdm(enumerate(range(0, x_b.shape[0], args.batch_size))):
         # Get batch of test points
-        x_test = x_b[j: j + args.batch_size]
-        y_test = y_b[j: j + args.batch_size]
-        inx_test = test_img_indices[j: j + args.batch_size]
+        x_query = x_b[j: j + args.batch_size]
+        y_query = y_b[j: j + args.batch_size]
+        index_query = test_img_indices[j: j + args.batch_size]
+
         # Prepare keyword arguments for the error function
         err_kwargs = dict(
-            x_test=x_test,
-            y_test=y_test,
+            x_test=x_query,
+            y_test=y_query,
             x_train=x_s,
             y_train=y_s,
             eval_range=eval_range,
             img_paths=img_paths,
-            test_img_indices=inx_test,
+            test_img_indices=index_query,
             sell_img_indices=sell_img_indices,
             task='regression',
         )
@@ -502,7 +503,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
 
         # Perform single-step optimization (DAVED single step)
         os_start = time.perf_counter()
-        w_os = frank_wolfe.one_step(x_s, x_test)
+        w_os = frank_wolfe.one_step(x_s, x_query)
         os_end = time.perf_counter()
 
         # Store runtime and weights for single-step
@@ -517,8 +518,8 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         res_fw = frank_wolfe.design_selection(
             x_s,
             y_s,
-            x_test,
-            y_test,
+            x_query,
+            y_query,
             num_select=10,
             num_iters=args.num_iters,
             alpha=None,
@@ -539,8 +540,8 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         test_point_info.append({
             "query_number": i,
             "test_point_start_index": j,
-            "test_x": x_test,
-            "test_y": y_test,
+            "test_x": x_query,
+            "test_y": y_query,
             "single_step_weights": w_os,
             "single_step_error": errors["DAVED (single step)"][-1],
             "multi_step_weights": w_fw,
@@ -549,13 +550,6 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
             "runtime_multi_step": runtimes["DAVED (multi-step)"][-1],
             "eval_range": eval_range
         })
-
-        # Save intermediate results periodically
-        # if i % 25 == 0:
-        #     attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
-        #     save_results_trained_model(args=args, results=attack_model_result)
-        #     plot_results(f"{figure_path}_inter_r_{i}_res.png", results=attack_model_result, args=args)
-        #     print(f"Checkpoint: Saved results at round {i}".center(40, "="))
 
     # Final save of all results if not skipped
     if not args.skip_save:

@@ -1,3 +1,4 @@
+import json
 import os
 import pickle
 from collections import defaultdict
@@ -275,44 +276,6 @@ def embed_image(img, model, preprocess, inference_func, device="cpu", normalize_
         return embedding  # Remain on the device
     except Exception as e:
         raise ValueError(f"Error processing image: {e}")
-
-
-def embed_images(img_paths, model_name="clip", device="cpu", normalize_embeddings=True):
-    """
-    Embed multiple images using a specified model (CLIP or ResNet).
-
-    Args:
-        img_paths (list[str]): List of paths to images.
-        model_name (str): Model to use for embedding. Options: "clip", "resnet".
-        device (str): Device to run the model on ("cpu" or "cuda").
-        normalize_embeddings (bool): Whether to normalize embeddings to unit vectors.
-
-    Returns:
-        torch.Tensor: Concatenated embeddings of all images.
-    """
-    # Load model and preprocessing pipeline
-    model, preprocess, inference_func = load_model_and_preprocessor(model_name, device)
-
-    embeddings = []
-
-    # Process images and extract embeddings
-    with torch.inference_mode():
-        for img_path in tqdm(img_paths, desc=f"Embedding images with {model_name}"):
-            try:
-                img = Image.open(img_path).convert("RGB")  # Ensure all images are RGB
-                embedding = embed_image(img, model, preprocess, inference_func, device, normalize_embeddings)
-                embeddings.append(embedding)
-            except Exception as e:
-                print(e)
-
-    # Concatenate embeddings
-    embeddings = torch.cat(embeddings, dim=0)
-
-    # Clean up to release resources
-    del model
-    torch.cuda.empty_cache()
-
-    return embeddings
 
 
 def plot_errors_fixed(results, save_path):
@@ -706,17 +669,6 @@ def load_image(image_path):
     return Image.open(image_path)
 
 
-def preprocess_image(image):
-    """
-    Preprocess the image for CLIP.
-    """
-    preprocess = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-    ])
-    return preprocess(image)
-
-
 def modify_image(
         image_path,
         target_vector,
@@ -913,3 +865,60 @@ def evaluate_reconstruction(x_tests_true, x_tests_est):
         matching_indices.append(best_match_idx)
 
     return best_cosine_similarities, best_euclidean_distances, matching_indices
+
+
+def embed_images(img_paths, model, preprocess, device):
+    """
+    Embed images using CLIP's encode_image function.
+
+    Parameters:
+    - img_paths (list of str): Paths to the images to be embedded.
+    - model (CLIPModel): Pre-trained CLIP model.
+    - preprocess (callable): CLIP's preprocess function.
+    - device (str): Device to run computations on ('cpu' or 'cuda').
+
+    Returns:
+    - embeddings (torch.Tensor): Concatenated embeddings of all images.
+    """
+    embeddings = []
+    with torch.no_grad():
+        for img_path in tqdm(img_paths, desc="Embedding Images"):
+            img_preprocessed = preprocess_image(img_path, preprocess, device)
+            embedding = model.encode_image(img_preprocessed)
+            embedding = embedding / embedding.norm(dim=-1, keepdim=True)  # Normalize embedding
+            embeddings.append(embedding.cpu())
+    return torch.cat(embeddings)
+
+
+def preprocess_image(image_path, preprocess, device):
+    img = Image.open(image_path)
+    img_preprocessed = preprocess(img).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
+    return img_preprocessed
+
+
+def convert_arrays_to_lists(obj):
+    """Recursively convert NumPy arrays to lists in a nested structure."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_arrays_to_lists(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_arrays_to_lists(element) for element in obj]
+    else:
+        return obj
+
+
+def save_results_trained_model(args, results):
+    for k, v in vars(args).items():
+        if k not in results:
+            if isinstance(v, Path):
+                v = str(v)
+            results[k] = v
+        else:
+            print(f"Found {k} in results. Skipping.")
+
+    result_path = f"{args.result_dir}/{args.save_name}-results.json"
+    results = convert_arrays_to_lists(results)
+    with open(result_path, "w") as f:
+        json.dump(results, f, default=float)
+    print(f"Results saved to {result_path}".center(80, "="))

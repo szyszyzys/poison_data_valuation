@@ -17,6 +17,7 @@ from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import Dataset
+from torchvision.models import resnet18
 from torchvision.transforms import (CenterCrop, Compose, Lambda, Resize,
                                     ToTensor)
 from tqdm import tqdm
