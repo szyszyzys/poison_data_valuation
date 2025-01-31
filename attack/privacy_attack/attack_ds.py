@@ -223,3 +223,253 @@ def metropolis_hastings(S_obs, X_sell, prior_mean, prior_cov, num_samples=1000, 
         samples[t] = q_current
 
     return samples
+
+
+def reconstruction_loss_nwe(
+        X_buy_hat,  # shape (B, d) if you have B "buy" samples or (d,) if single
+        S_obs,  # shape (k, d) the data you want the "selection" to match
+        X_sell,  # shape (n, d)
+        k
+):
+    """
+    Compute reconstruction loss using:
+      - 'nearest neighbors' in X_sell for the S_obs samples => selected_mask
+      - L2-norm-based softmax scores in whitened space
+      - cross-entropy with the selected_mask
+      - correct chain rule for the norm
+    """
+    # Ensure 2D shape for X_buy_hat
+    if X_buy_hat.ndim == 1:
+        X_buy_hat = X_buy_hat[np.newaxis, :]
+
+    B, d = X_buy_hat.shape
+    n = X_sell.shape[0]
+
+    # --- Compute whitening transform ---
+    mu_sell = np.mean(X_sell, axis=0)
+    cov_sell = np.cov(X_sell, rowvar=False)
+    inv_cov_sell = np.linalg.pinv(cov_sell)
+    W = sqrtm(inv_cov_sell)  # shape (d, d)
+
+    # Whiten X_buy_hat
+    X_buy_hat_whitened = (X_buy_hat - mu_sell) @ W  # shape (B, d)
+
+    # --- Determine which indices in X_sell get "selected" ---
+    # For simplicity, pick 1-NN for each S_obs row.
+    # If S_obs has shape (k, d), then we get k indices
+    nbrs = NearestNeighbors(n_neighbors=1).fit(X_sell)
+    _, selected_indices = nbrs.kneighbors(S_obs)
+    selected_indices = selected_indices.flatten()  # shape (k,)
+
+    selected_mask = np.zeros(n, dtype=float)
+    selected_mask[selected_indices] = 1.0
+    # If your S_obs has multiple rows, you might want to consider
+    # counting them or using a multi-label approach; here we just mark 1 for each found index.
+
+    # --- Compute the L2 norm scores in whitened space ---
+    # M = X_buy_hat_whitened @ X_sell^T => shape (B, n)
+    # We'll interpret each "column" i as the vector M[:, i], whose norm is our score.
+    M = X_buy_hat_whitened @ X_sell.T  # shape (B, n)
+    # s[i] = || M[:, i] ||_2
+    # i.e. the norm over the "B" dimension (row dimension)
+    s = np.sqrt(np.sum(M ** 2, axis=0) + 1e-8)  # shape (n,)
+
+    # --- Softmax over s ---
+    temperature = 0.1
+    s_scaled = s / temperature
+    exp_s = np.exp(s_scaled)
+    soft_probs = exp_s / (np.sum(exp_s) + 1e-12)  # shape (n,)
+
+    # --- Cross-entropy loss ---
+    # If we treat selected_mask as a distribution, you might want a multi-hot or multi-label approach.
+    # But for demonstration, we do standard "cross-entropy" with a distribution soft_probs vs. 0/1 mask
+    loss = -np.sum(selected_mask * np.log(soft_probs + 1e-12))
+
+    # --- Gradient w.r.t. the scores s ---
+    # d(loss)/d(s[i]) = (1/T)*(soft_probs[i] - selected_mask[i])
+    ds = (soft_probs - selected_mask) / temperature  # shape (n,)
+
+    # --- Gradient w.r.t. M ---
+    # Each s[i] = || M[:, i] ||_2
+    # => d(s[i])/d(M[:, i]) = M[:, i] / s[i]
+    # => d(loss)/d(M[:, i]) = ds[i] * ( M[:, i] / s[i] )
+    # We'll do this in a vectorized way:
+    factor = ds / (s + 1e-12)  # shape (n,)
+    # so grad_M[:, i] = factor[i] * M[:, i]
+    grad_M = M * factor[np.newaxis, :]  # shape (B, n)
+
+    # --- Gradient w.r.t. X_buy_hat_whitened ---
+    # M = X_buy_hat_whitened @ X_sell.T
+    # => d(M[:, i])/d(X_buy_hat_whitened) involves X_sell[i]
+    # grad_X_buy_hat_whitened = grad_M @ X_sell
+    # But we have shape (B, n) in grad_M, and X_sell is (n, d)
+    grad_X_buy_hat_whitened = grad_M @ X_sell  # shape (B, d)
+
+    # --- Chain rule for the whitening transform ---
+    # X_buy_hat_whitened = (X_buy_hat - mu_sell) @ W
+    # => d(X_buy_hat_whitened)/d(X_buy_hat) = W
+    # => final gradient = grad_X_buy_hat_whitened @ W^T
+    grad = grad_X_buy_hat_whitened @ W.T  # shape (B, d)
+
+    return loss, grad
+
+
+def reconstruct_X_buy_new(
+        S_obs,
+        X_sell,
+        k,
+        X_buy_hat_init,
+        alpha=0.01,
+        max_iter=100,
+        tol=1e-6,
+        project_unit_sphere=False
+):
+    """
+    Reconstruct X_buy by gradient descent on the objective that
+    tries to match the selection pattern on X_sell for S_obs.
+    """
+    # Ensure 2D shape
+    if X_buy_hat_init.ndim == 1:
+        X_buy_hat = X_buy_hat_init[np.newaxis, :].copy()
+    else:
+        X_buy_hat = X_buy_hat_init.copy()
+
+    prev_loss = np.inf
+    for t in range(max_iter):
+        loss, grad = reconstruction_loss(X_buy_hat, S_obs, X_sell, k)
+
+        # Simple stopping criterion
+        if abs(loss - prev_loss) < tol:
+            break
+        prev_loss = loss
+
+        # Gradient update
+        X_buy_hat -= alpha * grad
+
+        # (Optional) project each row to the unit sphere
+        if project_unit_sphere:
+            norms = np.linalg.norm(X_buy_hat, axis=1, keepdims=True) + 1e-12
+            X_buy_hat = X_buy_hat / norms
+
+    # Return 1D if we started with 1D
+    if X_buy_hat.shape[0] == 1:
+        return X_buy_hat.squeeze()
+    return X_buy_hat
+
+
+def reconstruction_loss_fim(X_buy_hat, S_obs, X_sell, k, temperature=0.1):
+    """
+    Compute a differentiable loss so that the 'selected' data points
+    in X_sell have higher softmax scores than the 'unselected' ones.
+
+    Args:
+        X_buy_hat (np.array): Current guess of buyer data, shape (d,).
+        S_obs (np.array): Observed selected seller data, shape (k, d).
+        X_sell (np.array): All seller data, shape (n, d).
+        k (int): Number of selected points.
+        temperature (float): Softmax temperature (lower => more 'peaky').
+
+    Returns:
+        loss (float): Cross-entropy loss (lower is better).
+        grad (np.array): Gradient of the loss w.r.t. X_buy_hat (shape (d,)).
+    """
+    n = len(X_sell)
+
+    # -------------------------------------------------------
+    # 1) Identify which seller points were selected
+    #    using nearest-neighbor to S_obs
+    # -------------------------------------------------------
+    nbrs = NearestNeighbors(n_neighbors=1).fit(X_sell)
+    _, indices = nbrs.kneighbors(S_obs)  # shape (k, 1)
+    selected_indices = indices.flatten()  # shape (k,)
+    # Build a mask: 1.0 for selected, 0.0 for unselected
+    selected_mask = np.zeros(n, dtype=float)
+    selected_mask[selected_indices] = 1.0
+
+    # -------------------------------------------------------
+    # 2) Define a "score" that depends on X_buy_hat
+    #    For each x_i in X_sell, score_i = -||X_buy_hat - x_i||^2
+    #
+    #    If we want multiple buyer vectors (m, d), we'd handle that differently.
+    # -------------------------------------------------------
+    # Distances: shape (n,)
+    dists_sq = np.sum((X_buy_hat - X_sell) ** 2, axis=1)
+    scores = -dists_sq  # higher => smaller distance
+
+    # -------------------------------------------------------
+    # 3) Softmax over scores => probability distribution
+    # -------------------------------------------------------
+    s_scaled = scores / temperature
+    # For numerical stability, subtract max(s_scaled) before exponent
+    exp_s = np.exp(s_scaled - np.max(s_scaled))
+    soft_probs = exp_s / np.sum(exp_s)  # shape (n,)
+
+    # -------------------------------------------------------
+    # 4) Cross-entropy loss w.r.t. the "selected_mask"
+    # -------------------------------------------------------
+    # If selected_mask is in {0,1} for each index:
+    #     loss = - sum_i [ selected_mask[i] * log(soft_probs[i]) ]
+    # Alternatively, if we had multi-hot or a distribution in selected_mask,
+    # we do the usual cross-entropy. (Here it's 1 for selected, 0 for unselected.)
+    loss = -np.sum(selected_mask * np.log(soft_probs + 1e-12))
+
+    # -------------------------------------------------------
+    # 5) Gradient w.r.t. X_buy_hat
+    # -------------------------------------------------------
+    #
+    # d(loss)/d(score_i) = (soft_probs[i] - selected_mask[i]) / temperature
+    # and score_i = -|| X_buy_hat - X_sell[i] ||^2
+    # => d(score_i)/d(X_buy_hat) = - d/dX_buy_hat [ (X_buy_hat - X_sell[i])^T (X_buy_hat - X_sell[i]) ]
+    # =>                       = - 2 (X_buy_hat - X_sell[i])
+    #
+    # => d(loss)/d(X_buy_hat) = sum_i [ d(loss)/d(score_i) * d(score_i)/d(X_buy_hat) ]
+    # =>                       = sum_i [ (soft_probs[i] - selected_mask[i])/T * ( -2 (X_buy_hat - X_sell[i]) ) ]
+    #
+    dloss_ds = (soft_probs - selected_mask) / temperature  # shape (n,)
+    grad = np.zeros_like(X_buy_hat)  # shape (d,)
+    for i in range(n):
+        grad += dloss_ds[i] * (-2.0 * (X_buy_hat - X_sell[i]))
+
+    return loss, grad
+
+
+def reconstruct_X_buy_fim(
+        S_obs,
+        X_sell,
+        k,
+        X_buy_hat_init,
+        alpha=0.001,
+        max_iter=1000,
+        tol=1e-6
+):
+    """
+    Reconstruct X_buy by gradient descent to match which points in X_sell
+    are 'selected' for S_obs.
+
+    Args:
+        S_obs (np.array): Observed selected points from X_sell, shape (k, d).
+        X_sell (np.array): Seller data, shape (n, d).
+        k (int): Number of selected points.
+        X_buy_hat_init (np.array): Initial guess for buyer data, shape (d,).
+        alpha (float): Learning rate.
+        max_iter (int): Maximum iteration count.
+        tol (float): Convergence tolerance on the loss improvement.
+
+    Returns:
+        X_buy_hat (np.array): Reconstructed buyer data, shape (d,).
+    """
+    X_buy_hat = X_buy_hat_init.copy()
+    prev_loss = None
+
+    for t in range(max_iter):
+        loss, grad = reconstruction_loss(X_buy_hat, S_obs, X_sell, k)
+
+        # Gradient update
+        X_buy_hat -= alpha * grad
+
+        # Check convergence
+        if prev_loss is not None and abs(prev_loss - loss) < tol:
+            break
+        prev_loss = loss
+
+    return X_buy_hat
