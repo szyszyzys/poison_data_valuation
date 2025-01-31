@@ -17,18 +17,19 @@ class DataMarketplace:
         """Get latest data from all sellers"""
         x_s, y_s, costs, seller_ids = [], [], [], []
 
+
         for seller_id, seller in self.sellers.items():
-            seller_data = seller.get_data()
+            seller_data = seller.get_data
             if seller_data['X'] is not None:
                 x_s.append(seller_data['X'])
                 y_s.append(seller_data.get('y', np.zeros(len(seller_data['X']))))
-                costs.append(seller_data.get('costs', np.zeros(len(seller_data['X']))))
+                costs.append(seller_data.get('costs', np.ones(len(seller_data['X']))))
                 seller_ids.extend([seller_id] * len(seller_data['X']))
 
         return (np.vstack(x_s) if x_s else np.array([]),
                 np.concatenate(y_s) if y_s else np.array([]),
                 np.concatenate(costs) if costs else np.array([]),
-                seller_ids)
+                np.array(seller_ids))
 
     def update_selection(self, s_method):
         self.selection_method = s_method
@@ -64,6 +65,23 @@ class DataMarketplace:
             'total_cost': np.sum(costs[indices]) if len(costs) > 0 else 0,
             "indices": indices
         }
+
+    def get_select_info(self,
+                        x_buy: np.ndarray,
+                        y_buy: np.ndarray,
+                        select_method: SelectionStrategy,
+                        **kwargs):
+        """Select data using latest seller data"""
+        # Get current market data
+        x_s, y_s, costs, seller_ids = self.get_current_market_data()
+        if len(x_s) == 0:
+            raise ValueError("No data available in marketplace")
+
+        self.selector.set_sell(x_s, y_s, costs)
+
+        weights = self.selector.select_data(x_buy, y_buy, select_method)
+
+        return weights, seller_ids
 
     def register_seller(self, seller_id: str, seller: BaseSeller):
         """Register a seller in the marketplace"""

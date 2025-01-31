@@ -1,5 +1,5 @@
 import json
-from abc import abstractmethod, ABC
+from abc import ABC
 from typing import List, Dict
 
 import numpy as np
@@ -32,7 +32,7 @@ class BaseSeller(ABC):
         self.price_variation = price_variation
 
         # Initialize statistics
-        self.stats = SellerStats(total_points=len(dataset))
+        self.stats = SellerStats()
         self.prices = self._generate_prices()
         self.selection_history: List[Dict] = []
         self.cur_data = self.dataset

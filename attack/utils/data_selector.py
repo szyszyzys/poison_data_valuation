@@ -1,7 +1,7 @@
 import time
 from enum import Enum
 from statistics import LinearRegression
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, Union
 
 import numpy as np
 from opendataval import dataval
@@ -409,8 +409,8 @@ class DataSelector:
         self.y_sell = y_sell.astype(np.single) if y_sell is not None else None
         self.x_val = x_val.astype(np.single) if x_val is not None else None
         self.y_val = y_val.astype(np.single) if y_val is not None else None
-        self.costs = costs
-        self.n_samples = len(x_sell)
+        self.costs = costs if costs is not None else None
+        self.n_samples = len(x_sell) if x_sell is not None else None
 
     def get_error(self,
                   w_fw,
@@ -440,14 +440,51 @@ class DataSelector:
         err = error_func(w=w_fw, **err_kwargs)
         return err
 
-    def set_sell(self, x_sell=None, y_sell=None, costs=None):
-        if x_sell:
+    def set_sell(
+        self,
+        x_sell: Optional[np.ndarray] = None,
+        y_sell: Optional[np.ndarray] = None,
+        costs: Optional[Union[np.ndarray, list]] = None
+    ) -> None:
+        """
+        Sets the seller data.
+
+        Parameters:
+            x_sell (Optional[np.ndarray]): Features for sellers.
+            y_sell (Optional[np.ndarray]): Labels for sellers.
+            costs (Optional[Union[np.ndarray, list]]): Costs associated with sellers.
+
+        Raises:
+            TypeError: If inputs are not of expected types.
+            ValueError: If provided arrays have mismatched lengths.
+        """
+        if x_sell is not None:
+            if not isinstance(x_sell, np.ndarray):
+                raise TypeError("x_sell must be a NumPy array.")
             self.x_sell = x_sell
-        if y_sell:
+
+        if y_sell is not None:
+            if not isinstance(y_sell, np.ndarray):
+                raise TypeError("y_sell must be a NumPy array.")
             self.y_sell = y_sell
-        if costs:
+
+        if costs is not None:
+            if not isinstance(costs, (np.ndarray, list)):
+                raise TypeError("costs must be a NumPy array or a list.")
             self.costs = costs
-        self.n_samples = len(x_sell)
+
+        # Update n_samples only if x_sell is provided
+        if x_sell is not None:
+            self.n_samples = len(x_sell)
+            # Validate that y_sell and costs have compatible lengths
+            if y_sell is not None and len(y_sell) != len(x_sell):
+                raise ValueError("y_sell must have the same number of samples as x_sell.")
+            if costs is not None and len(costs) != len(x_sell):
+                raise ValueError("costs must have the same number of samples as x_sell.")
+        elif hasattr(self, 'x_sell') and self.x_sell is not None:
+            self.n_samples = len(self.x_sell)
+        else:
+            self.n_samples = 0
 
     def select_data(self,
                     x_buy: np.ndarray,
@@ -542,12 +579,12 @@ class DataSelector:
         """Shapley value based selection"""
         """Data Shapley selection method"""
         weights, time = get_selection_general(
+            self.x_sell,
+            self.y_sell,
             x_buy,
             y_buy,
-            self.x_val,
-            self.y_val,
-            self.x_val,
-            self.y_val,
+            x_buy,
+            y_buy,
             baselines="DataShapley",
             baseline_kwargs=
             {"mc_epochs": 100, "models_per_iteration": 10}
@@ -567,12 +604,12 @@ class DataSelector:
         """Shapley value based selection"""
         """Data Shapley selection method"""
         weights, time = get_selection_general(
+            self.x_sell,
+            self.y_sell,
             x_buy,
             y_buy,
-            self.x_val,
-            self.y_val,
-            self.x_val,
-            self.y_val,
+            x_buy,
+            y_buy,
             baselines="BetaShapley",
             baseline_kwargs=
             {"mc_epochs": 100, "models_per_iteration": 10}
@@ -587,12 +624,12 @@ class DataSelector:
                            **kwargs) -> np.ndarray:
         """Banzhaf value based selection"""
         weights, time = get_selection_general(
+            self.x_sell,
+            self.y_sell,
             x_buy,
             y_buy,
-            self.x_val,
-            self.y_val,
-            self.x_val,
-            self.y_val,
+            x_buy,
+            y_buy,
             baselines="DataBanzhaf",
             baseline_kwargs=
             {"mc_epochs": 100, "models_per_iteration": 10}
@@ -606,12 +643,12 @@ class DataSelector:
                            **kwargs) -> np.ndarray:
         """Influence-based selection"""
         weights, time = get_selection_general(
+            self.x_sell,
+            self.y_sell,
             x_buy,
             y_buy,
-            self.x_val,
-            self.y_val,
-            self.x_val,
-            self.y_val,
+            x_buy,
+            y_buy,
             baselines="DataBanzhaf",
             baseline_kwargs={"num_models": 500},
         )
@@ -625,12 +662,12 @@ class DataSelector:
                              **kwargs) -> np.ndarray:
         """Influence-based selection"""
         weights, time = get_selection_general(
+            self.x_sell,
+            self.y_sell,
             x_buy,
             y_buy,
-            self.x_val,
-            self.y_val,
-            self.x_val,
-            self.y_val,
+            x_buy,
+            y_buy,
             baselines="InfluenceSubsample",
             baseline_kwargs=
             {"num_models": 500}

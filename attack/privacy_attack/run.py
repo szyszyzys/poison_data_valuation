@@ -1,9 +1,15 @@
-from attack_pipeline import *
+from collections import defaultdict
 
+import numpy as np
+from matplotlib import pyplot as plt
+
+from attack.privacy_attack.attack_ds import reconstruct_X_buy
+from attack.privacy_attack.evaluation import evaluate_embeddings
 from attack.privacy_attack.malicious_seller import AdversarySeller
 from attack.privacy_attack.seller import BaseSeller
 from attack.utils.data_manager import DatasetManager
 from attack.utils.data_market import DataMarketplace
+from attack.utils.data_selector import SelectionStrategy
 
 
 # def run_attack_experiments():
@@ -130,30 +136,92 @@ from attack.utils.data_market import DataMarketplace
 #             print(f"  Privacy Breach Rate: {metrics['privacy_breach_rate']:.3f}")
 #             print(f"  Mean Distance: {metrics['mean_distance']:.3f}")
 
-def run_attack_experiment(dataset_type="gaussian", selection_method="frank_wolfe", num_seller=1000, num_buyer=100,
-                          dim=100):
+def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
+                          num_buyer=100,
+                          adversary_ratio=0.25, seller_configs=None):
     data_manager = DatasetManager(
         dataset_type=dataset_type,
         num_seller=num_seller,
         num_buyer=num_buyer,
-        dim=dim
+        dim=dim,
+        use_cost=False
     )
 
-    marketplace, seller_dict = setup(data_manager, selection_method)
+    marketplace, seller_dict = setup(data_manager, adversary_ratio, seller_configs)
 
-    print(data_manager.get_dataset_stats())
+    weights, seller_ids = marketplace.get_select_info(data_manager.X_buy, data_manager.y_buy,
+                                                      SelectionStrategy.DAVED_MULTI_STEP)
+    mask = seller_ids == 'adv1'
+    adv_weights = weights[mask]
+    adv = seller_dict["adv1"]
+
+    # --- Attack & Evaluation ---
+    eval_results = defaultdict(list)
+    for k in range(50, min(len(adv.cur_data) // 2, 500), 50):  # Ensure k doesn't exceed data size
+        # Select top-k adversarial samples
+        selected_indices = np.argsort(adv_weights)[-k:]
+        X_adv_selected = adv.cur_data[selected_indices]
+
+        # Reconstruction: Simple mean initialization + gradient-based refinement
+        X_buy_hat_init = np.mean(X_adv_selected, axis=0)
+        X_buy_hat = reconstruct_X_buy(X_adv_selected, adv.cur_data, k, X_buy_hat_init, alpha=0.01, max_iter=100)
+
+        # Baseline: Mean of selected points
+        baseline_res = np.mean(X_adv_selected, axis=0)
+
+        # Evaluate
+        eval_results["our"].append(evaluate_embeddings(data_manager.X_buy, X_buy_hat))
+        eval_results["baseline"].append(evaluate_embeddings(data_manager.X_buy, baseline_res))
+
+    return eval_results
 
 
-def setup(data_manager: DatasetManager,
-          selection_method="frank_wolfe", exp_config=None):
+def plot_results(eval_results):
+    ks = list(range(50, 500, 50))[:len(eval_results["our"])]  # Match evaluated k values
+
+    plt.figure(figsize=(12, 4))
+
+    # Plot Cosine Similarity
+    plt.subplot(131)
+    plt.plot(ks, [res["cosine_sim_mean"] for res in eval_results["our"]], label="Our Method")
+    plt.plot(ks, [res["cosine_sim_mean"] for res in eval_results["baseline"]], label="Baseline (Mean)")
+
+    plt.xlabel("Number of Selected Samples (k)")
+    plt.ylabel("Cosine Similarity mean")
+    plt.legend()
+
+    # plt.subplot(132)
+    # plt.plot(ks, [res["cosine_sim_std"] for res in eval_results["our"]], label="Our Method")
+    # plt.plot(ks, [res["cosine_sim_std"] for res in eval_results["baseline"]], label="Baseline (Mean)")
+    # plt.xlabel("Number of Selected Samples (k)")
+    # plt.ylabel("Cosine Similarity std")
+    # plt.legend()
+
+    # Plot MSE
+    plt.subplot(132)
+    plt.plot(ks, [res["mse"] for res in eval_results["our"]], label="Our Method")
+    plt.plot(ks, [res["mse"] for res in eval_results["baseline"]], label="Baseline (Mean)")
+    plt.xlabel("Number of Selected Samples (k)")
+    plt.ylabel("MSE")
+    plt.legend()
+
+    # Plot Neighborhood Overlap
+    plt.subplot(133)
+    plt.plot(ks, [res["neighborhood_overlap"] for res in eval_results["our"]], label="Our Method")
+    plt.plot(ks, [res["neighborhood_overlap"] for res in eval_results["baseline"]], label="Baseline (Mean)")
+    plt.xlabel("Number of Selected Samples (k)")
+    plt.ylabel("Neighborhood Overlap")
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
+def setup(data_manager: DatasetManager, adversary_ratio=0.25, seller_configs=None):
     """Setup marketplace with normal and adversarial sellers"""
 
     # Create marketplace
-    marketplace = DataMarketplace(selection_method=selection_method)
-
-    seller_configs = exp_config["seller_configs"]
-
-    adversary_ratio = exp_config["adversary_ratio"]
+    marketplace = DataMarketplace()
     # Get data allocations
 
     allocations = data_manager.allocate_data_to_sellers(
@@ -186,21 +254,31 @@ if __name__ == "__main__":
     # Run experiments
 
     exp_config = {
-        "adversary_ratio": 0.25,
+        "adversary_ratio": 1,
         "num_seller_points": 1000,
         "num_buyer_points": 100,
         "seller_configs": [
             {'id': 'adv1', 'type': 'adversary'},
-            {'id': 'normal1', 'type': 'normal'},
-            {'id': 'normal2', 'type': 'normal'},
-            {'id': 'normal3', 'type': 'normal'}
+            # {'id': 'normal1', 'type': 'normal'},
+            # {'id': 'normal2', 'type': 'normal'},
+            # {'id': 'normal3', 'type': 'normal'}
         ]
     }
-    num_seller_points = exp_config["num_seller_points"]
-    num_buyer_points = exp_config["num_buyer_points"]
-    adv_name = "adv1"
 
-    run_attack_experiment(dataset_type="gaussian", selection_method="frank_wolfe", num_seller=num_seller_points,
-                          num_buyer=num_buyer_points,
-                          dim=100)
-    results, analysis = run_attack_experiment(exp_config)
+    # Create a mapping for the parameter names
+    param_mapping = {
+        "num_seller": exp_config.get("num_seller_points", 1000),
+        "num_buyer": exp_config.get("num_buyer_points", 100),
+        "adversary_ratio": exp_config.get("adversary_ratio", 0.0),
+        "seller_configs": exp_config.get("seller_configs", [])
+    }
+
+    eval_results = run_attack_experiment(
+        dataset_type="fitzpatrick",
+        dim=100,
+        **param_mapping  # Unpack the mapped parameters
+    )
+
+    # Plot results
+    plot_results(eval_results)
+    print(eval_results)
