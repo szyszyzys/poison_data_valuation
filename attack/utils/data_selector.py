@@ -441,10 +441,10 @@ class DataSelector:
         return err
 
     def set_sell(
-        self,
-        x_sell: Optional[np.ndarray] = None,
-        y_sell: Optional[np.ndarray] = None,
-        costs: Optional[Union[np.ndarray, list]] = None
+            self,
+            x_sell: Optional[np.ndarray] = None,
+            y_sell: Optional[np.ndarray] = None,
+            costs: Optional[Union[np.ndarray, list]] = None
     ) -> None:
         """
         Sets the seller data.
@@ -585,7 +585,7 @@ class DataSelector:
             y_buy,
             x_buy,
             y_buy,
-            baselines="DataShapley",
+            selection_method="DataShapley",
             baseline_kwargs=
             {"mc_epochs": 100, "models_per_iteration": 10}
             ,
@@ -610,7 +610,7 @@ class DataSelector:
             y_buy,
             x_buy,
             y_buy,
-            baselines="BetaShapley",
+            selection_method="BetaShapley",
             baseline_kwargs=
             {"mc_epochs": 100, "models_per_iteration": 10}
             ,
@@ -630,7 +630,7 @@ class DataSelector:
             y_buy,
             x_buy,
             y_buy,
-            baselines="DataBanzhaf",
+            selection_method="DataBanzhaf",
             baseline_kwargs=
             {"mc_epochs": 100, "models_per_iteration": 10}
         )
@@ -649,7 +649,7 @@ class DataSelector:
             y_buy,
             x_buy,
             y_buy,
-            baselines="DataBanzhaf",
+            selection_method="DataBanzhaf",
             baseline_kwargs={"num_models": 500},
         )
 
@@ -668,7 +668,7 @@ class DataSelector:
             y_buy,
             x_buy,
             y_buy,
-            baselines="InfluenceSubsample",
+            selection_method="InfluenceSubsample",
             baseline_kwargs=
             {"num_models": 500}
         )
