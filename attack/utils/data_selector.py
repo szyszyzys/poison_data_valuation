@@ -570,7 +570,7 @@ class DataSelector:
                                      costs=self.costs,
                                      reg_lambda=reg_lambda, )
         # Add implementation here
-        return res["weights"]
+        return res
 
     def _data_shapley_selection(self,
                                 x_buy: np.ndarray,

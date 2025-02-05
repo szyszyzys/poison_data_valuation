@@ -19,6 +19,22 @@ from daved.src.utils import get_gaussian_data, get_mimic_data, get_fitzpatrick_d
     split_data, get_cost_function
 
 
+def read_csv(filename):
+    """
+    Read the attack results from a CSV file into a Pandas DataFrame.
+
+    :param filename: The name of the CSV file to read.
+    :return: Pandas DataFrame containing the attack results.
+    """
+    try:
+        df = pd.read_csv(filename)
+        print(f"Successfully loaded results from {filename}")
+        return df
+    except Exception as e:
+        print(f"Error loading file {filename}: {e}")
+        return None
+
+
 def manipulate_cost_function(costs, method="scale", factor=1.0, offset=0.0, power=1.0):
     """
     Manipulate the cost function to apply different transformations.
@@ -403,6 +419,14 @@ def plot_errors_under_budget(results, save_path):
     )
     plt.tight_layout(pad=0, w_pad=0)
     plt.savefig(save_path, bbox_inches="tight")
+
+
+def plot_results_utility(figure_path, results, cost_range):
+    if cost_range is not None:
+        plot_errors_under_budget(results, figure_path)
+    else:
+        plot_errors_fixed(results, figure_path)
+    print(f"Plot saved to {figure_path}".center(80, "="))
 
 
 def plot_image_selection_rate(figure_path, results, eval_range):
@@ -922,3 +946,101 @@ def save_results_trained_model(args, results):
     with open(result_path, "w") as f:
         json.dump(results, f, default=float)
     print(f"Results saved to {result_path}".center(80, "="))
+
+
+import pandas as pd
+import datetime
+
+
+def save_dict_to_df(data: dict, file_prefix: str = "output"):
+    """
+    Save a dictionary to a DataFrame and export it to a CSV file with a timestamped filename.
+
+    :param data: Dictionary to be saved
+    :param file_prefix: Prefix for the output file name
+    """
+    # Convert dictionary to DataFrame
+    df = pd.DataFrame(data)
+
+    # Generate timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Generate filename
+    filename = f"{file_prefix}_{timestamp}.csv"
+
+    # Save to CSV
+    df.to_csv(filename, index=False)
+
+    print(f"DataFrame saved as {filename}")
+
+def get_error_fixed(
+        x_test,
+        y_test,
+        x_s,
+        y_s,
+        w,
+        eval_range=range(1, 10),
+        use_sklearn=False,
+        return_list=False,
+):
+    sorted_w = w.argsort()[::-1]
+
+    errors = {}
+    for k in eval_range:
+        selected = sorted_w[:k]
+        x_k = x_s[selected]
+        y_k = y_s[selected]
+
+        if use_sklearn:
+            LR = LinearRegression(fit_intercept=False)
+            LR.fit(x_k, y_k)
+            y_hat = LR.predict(x_test)
+        else:
+            beta_k = np.linalg.pinv(x_k) @ y_k
+            y_hat = x_test @ beta_k
+
+        errors[k] = mean_squared_error(y_test, y_hat)
+
+    return list(errors.values()) if return_list else errors
+
+
+def get_error_under_budget(
+        x_test,
+        y_test,
+        x_s,
+        y_s,
+        w,
+        costs=None,
+        eval_range=range(1, 10),
+        use_sklearn=False,
+        return_list=False,
+):
+    assert costs is not None, "Missing costs"
+    sorted_w = w.argsort()[::-1]
+    cum_cost = np.cumsum(costs[sorted_w])
+
+    errors = {}
+    for budget in eval_range:
+        under_budget_index = np.searchsorted(cum_cost, budget, side="left")
+
+        # Could not find any points under budget constraint
+        if under_budget_index == 0:
+            continue
+
+        selected = sorted_w[:under_budget_index]
+        x_budget = x_s[selected]
+        y_budget = y_s[selected]
+
+        if use_sklearn:
+            LR = LinearRegression(fit_intercept=False)
+            LR.fit(x_budget, y_budget)
+            y_hat = LR.predict(x_test)
+        else:
+            beta_budget = np.linalg.pinv(x_budget) @ y_budget
+            y_hat = x_test @ beta_budget
+
+        errors[budget] = mean_squared_error(y_test, y_hat)
+
+    # Remove keys with values under budget
+    # errors = {k: v for k, v in errors.items() if v is not None}
+    return list(errors.values()) if return_list else errors

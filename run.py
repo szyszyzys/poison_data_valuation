@@ -3,6 +3,7 @@ from collections import defaultdict
 import numpy as np
 from matplotlib import pyplot as plt
 
+from attack.general_attack.my_utils import get_error_under_budget, get_error_fixed
 from attack.privacy_attack.attack_ds import reconstruct_X_buy, reconstruct_X_buy_fim
 from attack.privacy_attack.evaluation import evaluate_embeddings
 from attack.privacy_attack.malicious_seller import AdversarySeller
@@ -15,7 +16,8 @@ from attack.utils.data_selector import SelectionStrategy
 def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
                           num_buyer=100,
                           adversary_ratio=0.25, seller_configs=None,
-                          selection_method=SelectionStrategy.DAVED_MULTI_STEP, attack_method=""):
+                          selection_method=SelectionStrategy.DAVED_MULTI_STEP, attack_method="",
+                          max_eval_range_selection_num=500, eval_step=50, n_runs=100):
     data_manager = DatasetManager(
         dataset_type=dataset_type,
         num_seller=num_seller,
@@ -24,43 +26,65 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
         use_cost=False
     )
 
+    eval_range = list(
+        range(10, max_eval_range_selection_num, eval_step)
+    )
+
     marketplace, seller_dict = setup(data_manager, adversary_ratio, seller_configs)
-
-    weights, seller_ids = marketplace.get_select_info(data_manager.X_buy, data_manager.y_buy,
-                                                      selection_method)
-    mask = seller_ids == 'adv1'
-    adv_weights = weights[mask]
-    adv = seller_dict["adv1"]
-
-    # --- Attack & Evaluation ---
     eval_results = defaultdict(list)
-    for k in range(50, min(len(adv.cur_data) // 2, 500), 50):  # Ensure k doesn't exceed data size
-        # Select top-k adversarial samples
-        selected_indices = np.argsort(adv_weights)[-k:]
-        X_adv_selected = adv.cur_data[selected_indices]
 
-        # Reconstruction: Simple mean initialization + gradient-based refinement
-        X_buy_hat_init = np.mean(X_adv_selected, axis=0)
-        match attack_method:
-            case "ds1":
-                X_buy_hat = reconstruct_X_buy(X_adv_selected, adv.cur_data, k, X_buy_hat_init, alpha=0.1, max_iter=100)
-            case "ds2":
-                X_buy_hat_fim = reconstruct_X_buy_fim(selected_indices, adv.cur_data, X_buy_hat_init, alpha=0.1,
-                                                      max_iter=1000)
-            case "o1":
-                X_buy_hat_fim = reconstruct_X_buy_fim(selected_indices, adv.cur_data, X_buy_hat_init, alpha=0.1,
-                                                      max_iter=1000)
-            case _:
-                raise Exception("Attack not found")
+    for i in range(n_runs):
+        weights, seller_ids = marketplace.get_select_info(data_manager.X_buy, data_manager.y_buy,
+                                                          selection_method)
+        x_s, y_s, costs, seller_ids = marketplace.get_current_market_data()
 
-        # Baseline: Mean of selected points
-        baseline_res = np.mean(X_adv_selected, axis=0)
-        # Evaluate
-        eval_results["our"].append(evaluate_embeddings(data_manager.X_buy, X_buy_hat))
-        eval_results["baseline"].append(evaluate_embeddings(data_manager.X_buy, baseline_res))
-        eval_results["random"].append(evaluate_embeddings(data_manager.X_buy, baseline_res))
-        # eval_results["our new"].append(evaluate_embeddings(data_manager.X_buy, X_buy_hat_new))
-        eval_results["our fim"].append(evaluate_embeddings(data_manager.X_buy, X_buy_hat_fim))
+        err_kwargs = dict(
+            x_test=data_manager.X_buy, y_test=data_manager.y_buy, x_s=x_s, y_s=y_s, eval_range=eval_range
+        )
+
+        if costs is not None:
+            print("Current using cost")
+            error_func = get_error_under_budget
+            err_kwargs["costs"] = costs
+        else:
+            print("Not using cost")
+            error_func = get_error_fixed
+            err_kwargs["return_list"] = True
+
+        selection_error = error_func(w=weights, **err_kwargs)
+        mask = seller_ids == 'adv1'
+        adv_weights = weights[mask]
+        adv = seller_dict["adv1"]
+
+        # --- Attack & Evaluation ---
+        for k in range(50, min(len(adv.cur_data) // 2, 500), 50):  # Ensure k doesn't exceed data size
+            # Select top-k adversarial samples
+            selected_indices = np.argsort(adv_weights)[-k:]
+            X_adv_selected = adv.cur_data[selected_indices]
+
+            # Reconstruction: Simple mean initialization + gradient-based refinement
+            X_buy_hat_init = np.mean(X_adv_selected, axis=0)
+            match attack_method:
+                case "ds1":
+                    X_buy_hat = reconstruct_X_buy(X_adv_selected, adv.cur_data, k, X_buy_hat_init, alpha=0.1,
+                                                  max_iter=100)
+                case "ds2":
+                    X_buy_hat_fim = reconstruct_X_buy_fim(selected_indices, adv.cur_data, X_buy_hat_init, alpha=0.1,
+                                                          max_iter=1000)
+                case "o1":
+                    X_buy_hat_fim = reconstruct_X_buy_fim(selected_indices, adv.cur_data, X_buy_hat_init, alpha=0.1,
+                                                          max_iter=1000)
+                case _:
+                    raise Exception("Attack not found")
+
+            # Baseline: Mean of selected points
+            baseline_res = np.mean(X_adv_selected, axis=0)
+            # Evaluate
+            eval_results["our"].append(evaluate_embeddings(data_manager.X_buy, X_buy_hat))
+            eval_results["baseline"].append(evaluate_embeddings(data_manager.X_buy, baseline_res))
+            eval_results["random"].append(evaluate_embeddings(data_manager.X_buy, baseline_res))
+            # eval_results["our new"].append(evaluate_embeddings(data_manager.X_buy, X_buy_hat_new))
+            eval_results["our fim"].append(evaluate_embeddings(data_manager.X_buy, X_buy_hat_fim))
 
     return eval_results
 
@@ -114,6 +138,7 @@ def setup(data_manager: DatasetManager, adversary_ratio=0.25, seller_configs=Non
         adversary_ratio=adversary_ratio
     )
     seller_dict = {}
+    print(f"Current seller info {seller_dict}")
     # Create and register sellers
     for config in seller_configs:
         seller_id = config['id']

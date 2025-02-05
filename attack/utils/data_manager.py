@@ -12,7 +12,7 @@ from daved.src.utils import get_data
 class DatasetManager:
     """Manages dataset loading, preprocessing, and distribution among sellers"""
 
-    def __init__(self, 
+    def __init__(self,
                  dataset_type: str = "gaussian",
                  data_dir: str = "./data",
                  random_state: int = 0,
@@ -23,7 +23,7 @@ class DatasetManager:
                  noise_level: float = 1.0,
                  cost_range: Optional[List[float]] = None,
                  cost_func: str = "linear",
-                 selection_method: str = "random",  # New parameter
+                 buyer_query_selection_method: str = "random",  # New parameter
                  selection_params: Optional[Dict] = None,  # Parameters for selection methods
                  use_cost = False
                  ):
@@ -65,8 +65,8 @@ class DatasetManager:
         self.index_val = self.data.get("index_val")
 
         # Set selection method
-        self.selection_method = selection_method
-        self.selection_params = selection_params if selection_params else {}
+        self.buyer_query_selection_method = buyer_query_selection_method
+        self.buyer_selection_params = selection_params if selection_params else {}
 
         # Perform buyer data selection
         self.X_buy, self.y_buy, self.index_buy = self.select_buyer_data()
@@ -140,7 +140,7 @@ class DatasetManager:
                     'y': self.y_sell[seller_indices],
                     'costs': self.costs_sell[seller_indices] if self.costs_sell is not None else None,
                     'indices': self.index_sell[seller_indices] if self.index_sell is not None else None,
-                    'img_paths': [self.img_paths[i] for i in seller_indices] if self.img_paths is not None else None
+                    # 'img_paths': [self.img_paths[i] for i in seller_indices] if self.img_paths is not None else None
                 }
         
         self.seller_data = allocations
@@ -179,18 +179,18 @@ class DatasetManager:
 
     def select_buyer_data(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Select buyer data based on the specified selection method."""
-        if self.selection_method == "random":
+        if self.buyer_query_selection_method == "random":
             return self._random_selection()
-        elif self.selection_method == "cluster":
+        elif self.buyer_query_selection_method == "cluster":
             return self._cluster_based_selection()
-        elif self.selection_method == "diversity":
+        elif self.buyer_query_selection_method == "diversity":
             return self._diversity_based_selection()
-        elif self.selection_method == "uncertainty":
+        elif self.buyer_query_selection_method == "uncertainty":
             return self._uncertainty_based_selection()
-        elif self.selection_method == "stratified":
+        elif self.buyer_query_selection_method == "stratified":
             return self._stratified_selection()
         else:
-            raise ValueError(f"Unknown selection method: {self.selection_method}")
+            raise ValueError(f"Unknown selection method: {self.buyer_query_selection_method}")
 
     def _random_selection(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Randomly select buyer data."""
@@ -204,7 +204,7 @@ class DatasetManager:
     def _cluster_based_selection(self, n_clusters: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Select buyer data using K-Means clustering to ensure coverage of all clusters."""
         if n_clusters is None:
-            n_clusters = self.selection_params.get("n_clusters", 10)
+            n_clusters = self.buyer_selection_params.get("n_clusters", 10)
 
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(self.X_buy_full)
