@@ -14,7 +14,8 @@ from attack.utils.data_selector import SelectionStrategy
 
 def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
                           num_buyer=100,
-                          adversary_ratio=0.25, seller_configs=None, selection_method = SelectionStrategy.DAVED_MULTI_STEP, attack_method = ""):
+                          adversary_ratio=0.25, seller_configs=None,
+                          selection_method=SelectionStrategy.DAVED_MULTI_STEP, attack_method=""):
     data_manager = DatasetManager(
         dataset_type=dataset_type,
         num_seller=num_seller,
@@ -36,7 +37,6 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
     for k in range(50, min(len(adv.cur_data) // 2, 500), 50):  # Ensure k doesn't exceed data size
         # Select top-k adversarial samples
         selected_indices = np.argsort(adv_weights)[-k:]
-        if
         X_adv_selected = adv.cur_data[selected_indices]
 
         # Reconstruction: Simple mean initialization + gradient-based refinement
@@ -45,9 +45,11 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
             case "ds1":
                 X_buy_hat = reconstruct_X_buy(X_adv_selected, adv.cur_data, k, X_buy_hat_init, alpha=0.1, max_iter=100)
             case "ds2":
-                X_buy_hat_fim = reconstruct_X_buy_fim(selected_indices, adv.cur_data, X_buy_hat_init, alpha=0.1, max_iter=1000)
+                X_buy_hat_fim = reconstruct_X_buy_fim(selected_indices, adv.cur_data, X_buy_hat_init, alpha=0.1,
+                                                      max_iter=1000)
             case "o1":
-                X_buy_hat_fim = reconstruct_X_buy_fim(selected_indices, adv.cur_data, X_buy_hat_init, alpha=0.1, max_iter=1000)
+                X_buy_hat_fim = reconstruct_X_buy_fim(selected_indices, adv.cur_data, X_buy_hat_init, alpha=0.1,
+                                                      max_iter=1000)
             case _:
                 raise Exception("Attack not found")
 
@@ -133,7 +135,6 @@ def setup(data_manager: DatasetManager, adversary_ratio=0.25, seller_configs=Non
     return marketplace, seller_dict
 
 
-
 if __name__ == "__main__":
     # Run experiments
 
@@ -162,7 +163,6 @@ if __name__ == "__main__":
     #         case "fitzpatrick":
     #         case "bone":
     # case "drug":
-
 
     eval_results = run_attack_experiment(
         dataset_type="gaussian",
