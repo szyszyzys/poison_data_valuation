@@ -308,8 +308,6 @@ def reconstruct_query(
 
     def single_run(x_query=None):
         # x_query shape: (k, d)
-        if not x_query:
-            x_query = torch.randn(num_query_points, d, device=device, dtype=torch.float, requires_grad=True)
         optimizer = optim.Adam([x_query], lr=lr)
         loss_history = []
 
@@ -370,6 +368,12 @@ def reconstruct_query(
 
     for r in range(num_restarts):
         x_query_hat, hist = single_run(initial_guess)
+        noise_std = 0.01
+
+        # Generate noise with the same shape as x_query and add it
+        noise = torch.randn_like(initial_guess) * noise_std
+        x_query = initial_guess + noise
+        initial_guess = x_query
         final_loss = hist[-1]
         if verbose:
             print(f"[Restart {r + 1}/{num_restarts}] Final Loss: {final_loss:.6f}")
