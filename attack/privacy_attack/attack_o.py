@@ -526,7 +526,7 @@ def reconstruction_attack(full_seller_data, selected_indices, attack_scenario, a
                 full_seller_data,
                 selected_indices,
                 scenario='selection_only',
-                top_k_selection=selected_indices.shape[1],
+                top_k_selection=selected_indices.shape[0],
                 ranking_loss_type='hinge',
                 margin=0.1,
                 verbose=True,
