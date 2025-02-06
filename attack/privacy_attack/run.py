@@ -432,7 +432,9 @@ def parse_args():
     parser.add_argument("--max_eval_range_selection_num", type=int, default=50, help="Number of seller points")
     parser.add_argument("--eval_step", type=int, default=50, help="Number of seller points")
     parser.add_argument("--num_seller", type=int, default=1000, help="Number of seller points")
-    parser.add_argument("--num_buyer", type=int, default=100, help="Number of buyer points")
+    parser.add_argument("--num_buyer", type=int, default=1, help="Number of buyer points")
+    parser.add_argument("--num_buyer", type=int, default=1, help="Number of buyer points")
+
     parser.add_argument("--adversary_ratio", type=float, default=1.0, help="Adversary ratio in the dataset")
     parser.add_argument("--seller_configs", type=str, default="adv1:adversary",
                         help="Comma-separated list of seller configurations (format: id:type, e.g., adv1:adversary,normal1:normal)")
@@ -469,6 +471,7 @@ if __name__ == "__main__":
         dataset_type=args.dataset,
         dim=100,
         device=args.device,
+        buyer_size=args.buyer_size,
         max_eval_range_selection_num=args.max_eval_range_selection_num, eval_step=args.eval_step,
         **param_mapping  # Unpack arguments
     )
