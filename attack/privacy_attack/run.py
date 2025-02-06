@@ -225,8 +225,6 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
     selection_errors = defaultdict(list)
     attack_result = defaultdict(list)
     x_s, y_s, costs, seller_ids = marketplace.get_current_market_data()
-    # x_s = torch.tensor(x_s, dtype=torch.float32)
-    # y_s = torch.tensor(y_s)
     for i, j in tqdm(enumerate(range(0, num_buyer, buyer_size))):
         x_buy = data_manager.X_buy[j: j + buyer_size]
         y_buy = data_manager.y_buy[j: j + buyer_size]
@@ -264,14 +262,22 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
             score_known = run_reconstruction_attack_eval(x_s, selected_indices, x_buy,
                                                          scenario="score_known", observed_scores=weights_tensor,
                                                          device=device)
-            score_unknown_ranking = run_reconstruction_attack_eval(x_s, selected_indices,
-                                                                   x_buy,
-                                                                   scenario="selection_only", attack_method="ranking",
-                                                                   device=device)
-            score_unknown_topk = run_reconstruction_attack_eval(x_s, selected_indices,
-                                                                x_buy,
-                                                                scenario="selection_only", attack_method="topk",
-                                                                device=device)
+            # score_unknown_ranking_hinge = run_reconstruction_attack_eval(x_s, selected_indices,
+            #                                                              x_buy,
+            #                                                              scenario="selection_only",
+            #                                                              attack_method="ranking",
+            #                                                              ranking_loss_type="hinge",
+            #                                                              device=device)
+            # score_unknown_ranking_logistic = run_reconstruction_attack_eval(x_s, selected_indices,
+            #                                                                 x_buy,
+            #                                                                 scenario="selection_only",
+            #                                                                 attack_method="ranking",
+            #                                                                 ranking_loss_type="logistic",
+            #                                                                 device=device)
+            # score_unknown_topk = run_reconstruction_attack_eval(x_s, selected_indices,
+            #                                                     x_buy,
+            #                                                     scenario="selection_only", attack_method="topk",
+            #                                                     device=device)
 
             def append_result(attack_name, result_dict):
                 """
@@ -288,7 +294,8 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
             append_result("random", base_random)
             append_result("centroid", base_centroid)
             append_result("score_known", score_known)
-            append_result("score_unknown_ranking", score_unknown_ranking)
+            append_result("score_unknown_ranking_hinge", score_unknown_ranking_hinge)
+            append_result("score_unknown_ranking_logistic", score_unknown_ranking_logistic)
             append_result("score_unknown_topk", score_unknown_topk)
 
     plot_results_utility(result_path, results, costs)

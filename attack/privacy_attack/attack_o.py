@@ -380,7 +380,8 @@ def reconstruct_query(
 
 
 def reconstruction_attack(full_seller_data, selected_indices, attack_scenario, attack_method="ranking",
-                          observed_scores=None, num_restarts: int = 10, num_query_points: int = 1):
+                          observed_scores=None, num_restarts: int = 10, num_query_points: int = 1,
+                          ranking_loss_type='hinge'):
     if attack_scenario == "score_known":
         x_recon, hist = reconstruct_query(
             full_seller_data,
@@ -399,7 +400,7 @@ def reconstruction_attack(full_seller_data, selected_indices, attack_scenario, a
                 scenario='selection_only',
                 num_query_points=num_query_points,
                 aggregation_method='mean',  # average them to get the final "score"
-                ranking_loss_type='hinge',
+                ranking_loss_type=ranking_loss_type,
                 margin=0.2,
                 reg_weight=1e-3,
                 real_data_prior_weight=0.01,
@@ -559,7 +560,8 @@ def run_reconstruction_attack_eval(
     2) Evaluate quality vs x_query_true in multiple ways.
     3) Return a dict of metrics + the reconstructed query.
     """
-    print(f"start attack: recontruction, scenario: {scenario} method {attack_method}, device: {device}")
+    print(
+        f"start attack: recontruction, scenario: {scenario} method {attack_method}, device: {device}, ranking loss: {ranking_loss_type}")
     d = full_seller_data.shape[1]
     x_query_true = torch.tensor(x_query_true, dtype=torch.float)
     # 1) Get reconstructed query x_query_recon
@@ -572,7 +574,8 @@ def run_reconstruction_attack_eval(
         seller_data_tensor = torch.tensor(full_seller_data, dtype=torch.float).to(device)
         x_query_recon, loss_history = reconstruction_attack(seller_data_tensor, selected_indices,
                                                             attack_scenario=scenario, attack_method=attack_method,
-                                                            observed_scores=observed_scores)
+                                                            observed_scores=observed_scores,
+                                                            ranking_loss_type=ranking_loss_type)
 
     res_score = evaluate_query_reconstruction(x_query_true,
                                               x_query_recon, compute_selection_overlap=False)
