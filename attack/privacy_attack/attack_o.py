@@ -174,7 +174,8 @@ def hinge_margin_ranking_loss(pred_scores, sel_mask, margin=0.1):
 def logistic_ranking_loss(pred_scores, sel_mask, temperature=1.0):
     """
     Pairwise logistic ranking loss:
-    sum_{i in sel, j in not_sel} log(1 + exp( -(score[i] - score[j]) ))
+    sum_{i in sel, j in not_sel} log(1 + exp( -(score[i] - score[j]) / temperature ))
+    Implemented in a numerically stable way using softplus.
     """
     selected_indices = torch.where(sel_mask > 0)[0]
     not_selected_indices = torch.where(sel_mask <= 0)[0]
@@ -183,8 +184,8 @@ def logistic_ranking_loss(pred_scores, sel_mask, temperature=1.0):
     for i in selected_indices:
         for j in not_selected_indices:
             diff = (pred_scores[i] - pred_scores[j]) / temperature
-            # logistic pairwise: log(1 + exp(-diff))
-            loss_ij = torch.log1p(torch.exp(-diff))
+            # Use softplus for numerical stability: softplus(-diff) = log(1 + exp(-diff))
+            loss_ij = F.softplus(-diff)
             loss += loss_ij
             count += 1
     if count > 0:
