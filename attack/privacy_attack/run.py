@@ -263,22 +263,22 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
                                                          num_restarts=num_restarts,
                                                          device=device)
 
-            # score_unknown_ranking_hinge = run_reconstruction_attack_eval(x_s, selected_indices,
-            #                                                              x_buy,
-            #                                                              scenario="selection_only",
-            #                                                              attack_method="ranking",
-            #                                                              ranking_loss_type="hinge",
-            #                                                              device=device)
+            score_unknown_ranking_hinge = run_reconstruction_attack_eval(x_s, selected_indices,
+                                                                         x_buy,
+                                                                         scenario="selection_only",
+                                                                         attack_method="ranking",
+                                                                         ranking_loss_type="hinge",
+                                                                         device=device)
             # score_unknown_ranking_logistic = run_reconstruction_attack_eval(x_s, selected_indices,
             #                                                                 x_buy,
             #                                                                 scenario="selection_only",
             #                                                                 attack_method="ranking",
             #                                                                 ranking_loss_type="logistic",
             #                                                                 device=device)
-            # score_unknown_topk = run_reconstruction_attack_eval(x_s, selected_indices,
-            #                                                     x_buy,
-            #                                                     scenario="selection_only", attack_method="topk",
-            #                                                     device=device)
+            score_unknown_topk = run_reconstruction_attack_eval(x_s, selected_indices,
+                                                                x_buy,
+                                                                scenario="selection_only", attack_method="topk",
+                                                                device=device)
 
             def append_result(attack_name, result_dict):
                 """
@@ -295,9 +295,9 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
             append_result("random", base_random)
             append_result("centroid", base_centroid)
             append_result("score_known", score_known)
-            # append_result("score_unknown_ranking_hinge", score_unknown_ranking_hinge)
+            append_result("score_unknown_ranking_hinge", score_unknown_ranking_hinge)
             # append_result("score_unknown_ranking_logistic", score_unknown_ranking_logistic)
-            # append_result("score_unknown_topk", score_unknown_topk)
+            append_result("score_unknown_topk", score_unknown_topk)
 
     plot_results_utility(result_path, {"errors": selection_errors, "eval_range": eval_range},
                          None)
@@ -430,10 +430,10 @@ def parse_args():
     parser.add_argument("--device", type=str, default=default_device,
                         help="Device to run on, e.g. 'cuda' or 'cpu' (default: cuda if available)")
 
-    parser.add_argument("--max_eval_range_selection_num", type=int, default=50, help="Number of seller points")
+    parser.add_argument("--max_eval_range_selection_num", type=int, default=300, help="Number of seller points")
     parser.add_argument("--eval_step", type=int, default=50, help="Number of seller points")
     parser.add_argument("--num_seller", type=int, default=1000, help="Number of seller points")
-    parser.add_argument("--num_buyer", type=int, default=1, help="Number of buyer points")
+    parser.add_argument("--num_buyer", type=int, default=30, help="Number of buyer points")
     parser.add_argument("--buyer_size", type=int, default=1, help="size of buyer points")
 
     parser.add_argument("--adversary_ratio", type=float, default=1.0, help="Adversary ratio in the dataset")
@@ -473,11 +473,11 @@ if __name__ == "__main__":
         dim=100,
         device=args.device,
         buyer_size=args.buyer_size,
-        max_eval_range_selection_num=args.max_eval_range_selection_num, eval_step=args.eval_step, num_restarts=1,
+        max_eval_range_selection_num=args.max_eval_range_selection_num, eval_step=args.eval_step, num_restarts=10,
         **param_mapping
         # Unpack arguments
     )
 
     # Plot and print results
-    plot_results(eval_results, eval_range)
-    print(eval_results)
+    # plot_results(eval_results, eval_range)
+    # print(eval_results)
