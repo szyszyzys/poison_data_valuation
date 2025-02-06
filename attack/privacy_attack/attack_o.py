@@ -370,9 +370,11 @@ def reconstruct_query(
         x_query_hat, hist = single_run(initial_guess)
         noise_std = 0.01
 
-        # Generate noise with the same shape as x_query and add it
+        # Generate noise with the same shape as initial_guess and add it, creating a new leaf tensor:
         noise = torch.randn_like(initial_guess) * noise_std
-        x_query = initial_guess + noise
+        x_query = (initial_guess + noise).detach().clone().requires_grad_(True)
+
+        # If you want to update the initial guess with the noisy version:
         initial_guess = x_query
         final_loss = hist[-1]
         if verbose:
