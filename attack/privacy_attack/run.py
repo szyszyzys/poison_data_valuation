@@ -44,7 +44,7 @@ def plot_and_save_metrics(avg_metrics_by_attack, save_dir="plots"):
     # Create the directory if it doesn't exist
     os.makedirs(save_dir, exist_ok=True)
 
-    metrics = ["total_distance", "avg_distance", "matching", "mse"]
+    metrics = ["total_distance", "avg_distance", "mse"]
 
     for metric in metrics:
         plt.figure(figsize=(8, 6))
@@ -100,7 +100,6 @@ def compute_avg_metrics_by_n_selected_and_attack(filename):
     grouped = df.groupby(["n_selected", "attack_type"]).agg({
         "total_distance": "mean",
         "avg_distance": "mean",
-        "matching": "mean",
         "mse": "mean"
     }).reset_index()
 
@@ -118,14 +117,13 @@ def compute_avg_metrics_by_n_selected_and_attack(filename):
         result[attack] = {
             "total_distance": attack_df["total_distance"].tolist(),
             "avg_distance": attack_df["avg_distance"].tolist(),
-            "matching": attack_df["matching"].tolist(),
             "mse": attack_df["mse"].tolist()
         }
 
     return result
 
 
-def save_attack_results(results_list, file_prefix="attack_results"):
+def save_attack_results(results_list, save_path, file_prefix="attack_results"):
     """
     Convert a list of dictionaries to a DataFrame and save to a timestamped CSV file.
 
@@ -140,7 +138,7 @@ def save_attack_results(results_list, file_prefix="attack_results"):
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Create the filename
-    filename = f"{file_prefix}_{timestamp}.csv"
+    filename = f"{save_path}/{file_prefix}_{timestamp}.csv"
 
     # Save DataFrame to CSV
     df.to_csv(filename, index=False)
@@ -305,7 +303,7 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
                          None)
 
     # After the loop, save all accumulated results to a single CSV file.
-    filename = save_attack_results(results)
+    filename = save_attack_results(results, save_path=result_path)
     ave_attack_res = compute_avg_metrics_by_n_selected_and_attack(filename)
     plot_and_save_metrics(ave_attack_res, save_dir=result_path)
     return results
