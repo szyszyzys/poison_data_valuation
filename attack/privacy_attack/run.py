@@ -262,6 +262,7 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
             score_known = run_reconstruction_attack_eval(x_s, selected_indices, x_buy,
                                                          scenario="score_known", observed_scores=weights_tensor,
                                                          device=device)
+
             # score_unknown_ranking_hinge = run_reconstruction_attack_eval(x_s, selected_indices,
             #                                                              x_buy,
             #                                                              scenario="selection_only",
@@ -307,8 +308,8 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
     return results
 
 
-def plot_results(eval_results):
-    ks = list(range(50, 500, 50))[:len(eval_results["our"])]  # Match evaluated k values
+def plot_results(eval_results, eval_range):
+    ks = list(eval_range)[:len(eval_results["our"])]  # Match evaluated k values
 
     plt.figure(figsize=(12, 4))
 
@@ -427,6 +428,9 @@ def parse_args():
     default_device = "cuda" if torch.cuda.is_available() else "cpu"
     parser.add_argument("--device", type=str, default=default_device,
                         help="Device to run on, e.g. 'cuda' or 'cpu' (default: cuda if available)")
+
+    parser.add_argument("--max_eval_range_selection_num", type=int, default=50, help="Number of seller points")
+    parser.add_argument("--eval_step", type=int, default=50, help="Number of seller points")
     parser.add_argument("--num_seller", type=int, default=1000, help="Number of seller points")
     parser.add_argument("--num_buyer", type=int, default=100, help="Number of buyer points")
     parser.add_argument("--adversary_ratio", type=float, default=1.0, help="Adversary ratio in the dataset")
@@ -457,14 +461,18 @@ if __name__ == "__main__":
     print("start reconstruction attack")
     print(param_mapping)
 
+    eval_range = list(
+        range(10, args.max_eval_range_selection_num, args.eval_step)
+    )
     # Run experiment with parsed arguments
     eval_results = run_attack_experiment(
         dataset_type=args.dataset,
         dim=100,
         device=args.device,
+        max_eval_range_selection_num=args.max_eval_range_selection_num, eval_step=args.eval_step,
         **param_mapping  # Unpack arguments
     )
 
     # Plot and print results
-    plot_results(eval_results)
+    plot_results(eval_results, eval_range)
     print(eval_results)
