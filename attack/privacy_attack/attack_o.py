@@ -1,12 +1,9 @@
-import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from scipy.optimize import linear_sum_assignment
-
-
+from torch import nn
 
 
 def pairwise_dist_matrix(X, Y, metric='euclidean'):
@@ -44,8 +41,8 @@ def match_query_sets(x_query_true, x_query_recon, metric='euclidean'):
     k_true = x_query_true.shape[0]
     k_recon = x_query_recon.shape[0]
 
-    X = x_query_true.cpu().numpy()
-    Y = x_query_recon.cpu().numpy()
+    X = x_query_true
+    Y = x_query_recon
 
     # compute cost matrix: shape (k_true, k_recon)
     cost_matrix = pairwise_dist_matrix(X, Y, metric=metric)
@@ -94,7 +91,7 @@ def baseline_centroid_of_selected(full_data, selected_indices, num_query_points=
     as a naive guess for x_query.
     """
     selected_data = full_data[selected_indices]
-    centroid = selected_data.mean(dim=0, keepdim=True)  # shape (1, d)
+    centroid = torch.Tensor(np.mean(selected_data, axis=0, keepdims=True))  # works for numpy arrays
     if num_query_points == 1:
         return centroid  # shape (1, d)
     else:
@@ -107,6 +104,7 @@ def compute_fisher_information(selected_data, lambda_reg=1e-3):
     Dummy placeholder for computing Fisher inverse: I_inv.
     Replace or adapt with the real function as needed.
     """
+    print("computing FIM")
     # Suppose: I = selected_data^T * selected_data + lambda_reg * I_d
     # Return I_inv = inv(...)
     N, d = selected_data.shape
@@ -262,7 +260,7 @@ def reconstruct_query(
         aggregation_method: str = 'sum',  # 'sum' or 'mean' for multiple query vectors
         ranking_loss_type: str = 'hinge',  # 'hinge' or 'logistic' for selection-only scenario
         top_k_selection: int = None,  # if you want top-K style selection
-        real_data_prior_weight: float = 0.0  # encourage x_query near some real data
+        real_data_prior_weight: float = 0.0,  # encourage x_query near some real data,
 ):
     """
     High-level function to reconstruct a query (possibly multiple vectors)
@@ -296,10 +294,8 @@ def reconstruct_query(
     # 1. Compute Fisher inverse from the selected data
     selected_data = full_seller_data[selected_indices]
     I_inv = compute_fisher_information(selected_data, lambda_reg=lambda_reg)
-
     # 2. We'll consider the entire full_seller_data as "candidates" for scoring or selection
     candidate_data = full_seller_data
-
     # Convert selected_indices to a mask if needed
     # (for pairwise ranking). We'll do it once here.
     if selected_indices.dtype == torch.bool:
@@ -310,7 +306,7 @@ def reconstruct_query(
 
     def single_run():
         # x_query shape: (k, d)
-        x_query = torch.randn(num_query_points, d, device=device, requires_grad=True)
+        x_query = torch.randn(num_query_points, d, device=device, dtype=torch.float, requires_grad=True)
         optimizer = optim.Adam([x_query], lr=lr)
         loss_history = []
 
@@ -383,14 +379,16 @@ def reconstruct_query(
 
 
 def reconstruction_attack(full_seller_data, selected_indices, attack_scenario, attack_method="ranking",
-                          observed_scores=None):
+                          observed_scores=None, num_restarts: int = 10, num_query_points: int = 1):
     if attack_scenario == "score_known":
         x_recon, hist = reconstruct_query(
             full_seller_data,
             selected_indices,
             scenario='score_known',
             observed_scores=observed_scores,
-            verbose=True
+            verbose=True,
+            num_restarts=num_restarts,
+            num_query_points=num_query_points,
         )
     elif attack_scenario == "selection_only":
         if attack_method == "ranking":
@@ -398,24 +396,26 @@ def reconstruction_attack(full_seller_data, selected_indices, attack_scenario, a
                 full_seller_data,
                 selected_indices,
                 scenario='selection_only',
-                num_query_points=3,  # reconstruct 3 vectors
+                num_query_points=num_query_points,
                 aggregation_method='mean',  # average them to get the final "score"
                 ranking_loss_type='logistic',
                 margin=0.2,
                 reg_weight=1e-3,
                 real_data_prior_weight=0.01,
-                num_restarts=3,
-                verbose=True
+                num_restarts=num_restarts,
+                verbose=True,
             )
         elif attack_method == "topk":
             x_recon, hist = reconstruct_query(
                 full_seller_data,
                 selected_indices,
                 scenario='selection_only',
-                top_k_selection=4,
+                top_k_selection=selected_indices.shape[1],
                 ranking_loss_type='hinge',
                 margin=0.1,
-                verbose=True
+                verbose=True,
+                num_restarts=num_restarts,
+                num_query_points=num_query_points,
             )
         else:
             raise NotImplementedError(
@@ -462,11 +462,12 @@ def evaluate_query_reconstruction(
     results = {}
 
     # 1) Match the reconstructed query with the true query
+    x_query_true = x_query_true.cpu()
+    x_query_recon = x_query_recon.cpu()
     total_dist, avg_dist, matching = match_query_sets(x_query_true, x_query_recon, metric=metric)
     results['total_distance'] = float(total_dist)
     results['avg_distance'] = float(avg_dist)
     results['matching'] = matching  # list of (i_true, i_recon) pairs
-
     # 2) MSE if both have the same cardinality
     # We'll directly compute MSE between matched pairs.
     # (If different cardinalities, we only handle matched pairs.)
@@ -549,17 +550,17 @@ def run_reconstruction_attack_eval(
         reg_weight=1e-3,
         margin=0.1,
         num_restarts=1,
-        verbose=False
+        verbose=False,
+        device="cuda"
 ):
     """
     1) Either run the reconstruction_attack or a baseline.
     2) Evaluate quality vs x_query_true in multiple ways.
     3) Return a dict of metrics + the reconstructed query.
     """
-
-    device = full_seller_data.device
+    print(f"start attack: recontruction, scenario: {scenario} method {attack_method}, device: {device}")
     d = full_seller_data.shape[1]
-
+    x_query_true = torch.tensor(x_query_true, dtype=torch.float)
     # 1) Get reconstructed query x_query_recon
     if use_baseline == 'random':
         x_query_recon = baseline_random_guess(num_query_points, d)
@@ -567,7 +568,8 @@ def run_reconstruction_attack_eval(
         x_query_recon = baseline_centroid_of_selected(full_seller_data, selected_indices, num_query_points)
     else:
         # use the gradient-based reconstruct_query
-        x_query_recon, loss_history = reconstruction_attack(full_seller_data, selected_indices,
+        seller_data_tensor = torch.tensor(full_seller_data, dtype=torch.float).to(device)
+        x_query_recon, loss_history = reconstruction_attack(seller_data_tensor, selected_indices,
                                                             attack_scenario=scenario, attack_method=attack_method,
                                                             observed_scores=observed_scores)
 

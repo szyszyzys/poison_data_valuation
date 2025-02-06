@@ -11,6 +11,8 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 from PIL import Image
 from matplotlib import pyplot as plt
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
 from torchvision.models import resnet18
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize, Lambda
 from tqdm import tqdm
@@ -984,7 +986,6 @@ def get_error_fixed(
         return_list=False,
 ):
     sorted_w = w.argsort()[::-1]
-
     errors = {}
     for k in eval_range:
         selected = sorted_w[:k]

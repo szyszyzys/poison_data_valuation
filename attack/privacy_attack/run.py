@@ -1,7 +1,16 @@
-import numpy as np
-from matplotlib import pyplot as plt
+import argparse
+import datetime
+from collections import defaultdict
+from pathlib import Path
 
-from attack.general_attack.my_utils import read_csv
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import torch
+from tqdm import tqdm
+
+from attack.general_attack.my_utils import get_error_under_budget, get_error_fixed, plot_results_utility
 from attack.privacy_attack.attack_o import run_reconstruction_attack_eval
 from attack.privacy_attack.malicious_seller import AdversarySeller
 from attack.privacy_attack.seller import BaseSeller
@@ -10,129 +19,111 @@ from attack.utils.data_market import DataMarketplace
 from attack.utils.data_selector import SelectionStrategy
 
 
-# def run_attack_experiments():
-#     # Define experiment configuration
-#     config = ExperimentConfig(
-#         n_queries=100,
-#         n_rounds=10,
-#         query_types=["random", "cluster", "mixture"],
-#         attack_types=[
-#             AttackType.INFO_MATRIX,
-#             AttackType.GRADIENT,
-#             AttackType.SELECTION_PATTERN,
-#             AttackType.ENSEMBLE
-#         ],
-#         embedding_dims=[32, 64, 128],
-#         n_seller_points=[1000, 5000, 10000],
-#         noise_levels=[0.0, 0.1, 0.2]
-#     )
-#
-#     # Example scenarios to test:
-#     scenarios = [
-#         # Scenario 1: Basic vulnerability testing
-#         {
-#             'name': 'basic_vulnerability',
-#             'embedding_dim': 64,
-#             'n_points': 1000,
-#             'query_type': 'random',
-#             'noise_level': 0.0
-#         },
-#
-#         # Scenario 2: High dimensionality
-#         {
-#             'name': 'high_dim',
-#             'embedding_dim': 128,
-#             'n_points': 1000,
-#             'query_type': 'random',
-#             'noise_level': 0.0
-#         },
-#
-#         # Scenario 3: Large dataset
-#         {
-#             'name': 'large_dataset',
-#             'embedding_dim': 64,
-#             'n_points': 10000,
-#             'query_type': 'random',
-#             'noise_level': 0.0
-#         },
-#
-#         # Scenario 4: Clustered queries
-#         {
-#             'name': 'clustered',
-#             'embedding_dim': 64,
-#             'n_points': 1000,
-#             'query_type': 'cluster',
-#             'noise_level': 0.0
-#         },
-#
-#         # Scenario 5: Noisy environment
-#         {
-#             'name': 'noisy',
-#             'embedding_dim': 64,
-#             'n_points': 1000,
-#             'query_type': 'random',
-#             'noise_level': 0.2
-#         },
-#
-#         # Scenario 6: Mixed distribution
-#         {
-#             'name': 'mixed',
-#             'embedding_dim': 64,
-#             'n_points': 1000,
-#             'query_type': 'mixture',
-#             'noise_level': 0.0
-#         }
-#     ]
-#
-#     # Initialize pipeline
-#     pipeline = AttackPipeline(daved_func=daved_selection, config=config)
-#
-#     # Run experiments for each scenario
-#     all_results = {}
-#     for scenario in scenarios:
-#         print(f"\nRunning scenario: {scenario['name']}")
-#
-#         # Run experiments
-#         results = pipeline.run_single_experiment(
-#             seller_embeddings=pipeline.generate_experiment_data(
-#                 n_points=scenario['n_points'],
-#                 dim=scenario['embedding_dim'],
-#                 query_type=scenario['query_type'],
-#                 noise_level=scenario['noise_level']
-#             )['seller_embeddings'],
-#             query=pipeline.generate_experiment_data(
-#                 n_points=1,
-#                 dim=scenario['embedding_dim'],
-#                 query_type=scenario['query_type'],
-#                 noise_level=scenario['noise_level']
-#             )['query'],
-#             attack_type=AttackType.ENSEMBLE  # Run all attacks via ensemble
-#         )
-#
-#         all_results[scenario['name']] = results
-#
-#     # Analyze results
-#     analysis = pipeline.analyze_results(all_results)
-#
-#     # Visualize results
-#     pipeline.visualize_results(analysis, save_path='experiment_results')
-#
-#     return all_results, analysis
-#
-# # Function to print detailed results
-# def print_experiment_results(analysis: Dict):
-#     print("\nExperiment Results Summary:")
-#     print("==========================")
-#
-#     for scenario, results in analysis.items():
-#         print(f"\nScenario: {scenario}")
-#         print("-" * (len(scenario) + 10))
-#
-#         for attack_type, metrics in results.items():
-#             print(f"\n{attack_type.value}:")
-#             print(f"  Success Rate: {metrics['mean_success']:.3f} ± {metrics['std_success']:.3f}")
-#             print(f"  Privacy Breach Rate: {metrics['privacy_breach_rate']:.3f}")
-#             print(f"  Mean Distance: {metrics['mean_distance']:.3f}")
+def plot_and_save_metrics(avg_metrics_by_attack, save_dir="plots"):
+    """
+    For each metric (total_distance, avg_distance, matching, mse), plot a separate graph
+    showing the performance for each attack type over different n_selected values,
+    then save the plots to files.
+
+    :param avg_metrics_by_attack: Dictionary containing metrics for each attack type.
+           Expected format:
+           {
+               "attack_type1": {
+                   "n_selected": [...],
+                   "total_distance": [...],
+                   "avg_distance": [...],
+                   "matching": [...],
+                   "mse": [...]
+               },
+               "attack_type2": { ... },
+               ...
+           }
+    :param save_dir: Directory where the plots will be saved.
+    """
+    import os
+    # Create the directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+
+    metrics = ["total_distance", "avg_distance", "matching", "mse"]
+
+    for metric in metrics:
+        plt.figure(figsize=(8, 6))
+        lines = []
+
+        for attack, values in avg_metrics_by_attack.items():
+            n_selected = values.get("n_selected", [])
+            metric_values = values.get(metric, [])
+
+            if n_selected and metric_values:
+                line, = plt.plot(n_selected, metric_values, marker='o', label=str(attack))
+                lines.append(line)
+
+        plt.xlabel("n_selected")
+        plt.ylabel(metric)
+        plt.title(f"Average {metric} vs n_selected")
+        if lines:
+            plt.legend(title="Attack Type")
+        else:
+            print(f"No valid data to plot for metric: {metric}")
+
+        plt.grid(True)
+
+        # Build the filename and save the figure
+        filename = os.path.join(save_dir, f"{metric}_vs_n_selected.png")
+        plt.savefig(filename, bbox_inches='tight')
+        print(f"Saved plot to {filename}")
+
+        # Optionally, if you also want to show the plot, uncomment the following line:
+        # plt.show()
+        plt.close()
+
+
+def compute_avg_metrics_by_n_selected_and_attack(filename):
+    """
+    Reads the CSV file and computes the average metrics for each unique combination of n_selected and attack_type.
+    The averages are computed over all query_no values.
+
+    The final result is a dictionary mapping each attack_type to a dictionary containing:
+      - 'n_selected': A list of n_selected values (ascending order)
+      - 'total_distance': A list of averaged total_distance values
+      - 'avg_distance': A list of averaged avg_distance values
+      - 'matching': A list of averaged matching values
+      - 'mse': A list of averaged mse values
+
+    :param filename: Name (or path) of the CSV file.
+    :return: Dictionary containing the grouped average metrics by attack_type.
+    """
+    # Read the CSV file into a DataFrame.
+    df = pd.read_csv(filename)
+
+    # Group by both n_selected and attack_type, compute the mean for the metrics.
+    grouped = df.groupby(["n_selected", "attack_type"]).agg({
+        "total_distance": "mean",
+        "avg_distance": "mean",
+        "matching": "mean",
+        "mse": "mean"
+    }).reset_index()
+
+    # Initialize a dictionary to store results per attack type.
+    result = {}
+
+    # Get unique attack types.
+    attack_types = grouped["attack_type"].unique()
+
+    # Process each attack type separately.
+    for attack in attack_types:
+        # Filter for the current attack type.
+        attack_df = grouped[grouped["attack_type"] == attack].sort_values("n_selected")
+
+        result[attack] = {
+            "total_distance": attack_df["total_distance"].tolist(),
+            "avg_distance": attack_df["avg_distance"].tolist(),
+            "matching": attack_df["matching"].tolist(),
+            "mse": attack_df["mse"].tolist()
+        }
+
+    return result
+
 
 def save_attack_results(results_list, file_prefix="attack_results"):
     """
@@ -208,7 +199,12 @@ def plot_metric_across_selection_sizes(df, metric='selection_f1', title=None):
 
 def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
                           num_buyer=100,
-                          adversary_ratio=0.25, seller_configs=None):
+                          adversary_ratio=0.25, seller_configs=None,
+                          selection_method=SelectionStrategy.DAVED_MULTI_STEP, attack_method="",
+                          max_eval_range_selection_num=500, eval_step=50, buyer_size=1, use_cost=False, device="cpu"):
+    result_path = f'./result/{dataset_type}/total_sell_{num_seller}_adv_ratio_{adversary_ratio}/'
+
+    Path(result_path).mkdir(parents=True, exist_ok=True)
     data_manager = DatasetManager(
         dataset_type=dataset_type,
         num_seller=num_seller,
@@ -217,63 +213,90 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
         use_cost=False
     )
 
-    marketplace, seller_dict = setup(data_manager, adversary_ratio, seller_configs)
+    eval_range = list(
+        range(10, max_eval_range_selection_num, eval_step)
+    )
 
-    weights, seller_ids = marketplace.get_select_info(data_manager.X_buy, data_manager.y_buy,
-                                                      SelectionStrategy.DAVED_MULTI_STEP)
-    mask = seller_ids == 'adv1'
-    adv_weights = weights[mask]
-    adv = seller_dict["adv1"]
+    marketplace, seller_dict = setup(data_manager, adversary_ratio, seller_configs)
 
     # --- Attack & Evaluation ---
     results = []
 
-    # Example: looping over different k values
-    # (Replace adv.cur_data, adv_weights, marketplace, data_manager, and run_reconstruction_attack_eval with your actual objects/functions.)
-    for k in range(50, min(len(adv.cur_data) // 2, 500), 50):  # Ensure k doesn't exceed data size
-        # Select top-k adversarial samples
-        selected_indices = np.argsort(adv_weights)[-k:]
+    selection_errors = defaultdict(list)
+    attack_result = defaultdict(list)
+    x_s, y_s, costs, seller_ids = marketplace.get_current_market_data()
+    # x_s = torch.tensor(x_s, dtype=torch.float32)
+    # y_s = torch.tensor(y_s)
+    for i, j in tqdm(enumerate(range(0, num_buyer, buyer_size))):
+        x_buy = data_manager.X_buy[j: j + buyer_size]
+        y_buy = data_manager.y_buy[j: j + buyer_size]
+        weights, seller_ids = marketplace.get_select_info(x_buy, y_buy,
+                                                          selection_method)
 
-        # Get current market data once per iteration
-        current_market_data = marketplace.get_current_market_data()
+        err_kwargs = dict(
+            x_test=x_buy, y_test=y_buy, x_s=x_s, y_s=y_s, eval_range=eval_range
+        )
 
-        # Run different reconstruction attacks
-        base_random = run_reconstruction_attack_eval(current_market_data, selected_indices, data_manager.X_buy,
-                                                     use_baseline="random")
-        base_centroid = run_reconstruction_attack_eval(current_market_data, selected_indices, data_manager.X_buy,
-                                                       use_baseline="centroid")
-        score_known = run_reconstruction_attack_eval(current_market_data, selected_indices, data_manager.X_buy,
-                                                     scenario="score_known")
-        score_unknown_ranking = run_reconstruction_attack_eval(current_market_data, selected_indices,
-                                                               data_manager.X_buy,
-                                                               scenario="selection_only", attack_method="ranking")
-        score_unknown_topk = run_reconstruction_attack_eval(current_market_data, selected_indices, data_manager.X_buy,
-                                                            scenario="selection_only", attack_method="topk")
+        if use_cost:
+            print("Current using cost")
+            error_func = get_error_under_budget
+            err_kwargs["costs"] = costs
+        else:
+            print("Not using cost")
+            error_func = get_error_fixed
+            err_kwargs["return_list"] = True
 
-        # Create a helper to accumulate each attack's result.
-        def append_result(attack_name, result_dict):
-            """
-            Copy the result dictionary, add metadata, and append to the results list.
-            """
-            # Make a copy to avoid modifying the original dictionary.
-            entry = result_dict.copy()
-            entry["attack_type"] = attack_name
-            entry["n_selected"] = k
-            results.append(entry)
+        selection_error = error_func(w=weights, **err_kwargs)
+        selection_errors["DAVED"].append(selection_error)
+        for k in eval_range:  # Ensure k doesn't exceed data size
+            # Select top-k adversarial samples
+            selected_indices = np.argsort(weights)[-k:]
+            weights_tensor = torch.tensor(weights, dtype=torch.float)
 
-        # Append each attack's results.
-        append_result("random", base_random)
-        append_result("centroid", base_centroid)
-        append_result("score_known", score_known)
-        append_result("score_unknown_ranking", score_unknown_ranking)
-        append_result("score_unknown_topk", score_unknown_topk)
+            # Get current market data once per iteration
+
+            # Run different reconstruction attacks
+
+            base_random = run_reconstruction_attack_eval(x_s, selected_indices, x_buy,
+                                                         use_baseline="random")
+            base_centroid = run_reconstruction_attack_eval(x_s, selected_indices, x_buy,
+                                                           use_baseline="centroid")
+            score_known = run_reconstruction_attack_eval(x_s, selected_indices, x_buy,
+                                                         scenario="score_known", observed_scores=weights_tensor,
+                                                         device=device)
+            score_unknown_ranking = run_reconstruction_attack_eval(x_s, selected_indices,
+                                                                   x_buy,
+                                                                   scenario="selection_only", attack_method="ranking",
+                                                                   device=device)
+            score_unknown_topk = run_reconstruction_attack_eval(x_s, selected_indices,
+                                                                x_buy,
+                                                                scenario="selection_only", attack_method="topk",
+                                                                device=device)
+
+            def append_result(attack_name, result_dict):
+                """
+                Copy the result dictionary, add metadata, and append to the results list.
+                """
+                # Make a copy to avoid modifying the original dictionary.
+                entry = result_dict.copy()
+                entry["query_no"] = i
+                entry["attack_type"] = attack_name
+                entry["n_selected"] = k
+                results.append(entry)
+
+            # Append each attack's results.
+            append_result("random", base_random)
+            append_result("centroid", base_centroid)
+            append_result("score_known", score_known)
+            append_result("score_unknown_ranking", score_unknown_ranking)
+            append_result("score_unknown_topk", score_unknown_topk)
+
+    plot_results_utility(result_path, results, costs)
 
     # After the loop, save all accumulated results to a single CSV file.
     filename = save_attack_results(results)
-    res_df = read_csv(filename)
-    for m in ['total_distance', 'avg_distance', 'matching', 'mse']:
-        plot_metric_across_selection_sizes(res_df, metric=m, title=f"attack performance ({m})")
-
+    ave_attack_res = compute_avg_metrics_by_n_selected_and_attack(filename)
+    plot_and_save_metrics(ave_attack_res, save_dir=result_path)
     return results
 
 
@@ -393,7 +416,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run attack experiment with configurable parameters.")
 
     # Add arguments with default values from exp_config
-    parser.add_argument("--dataset", type=str, default="fitzpatrick", help="Target dataset")
+    parser.add_argument("--dataset", type=str, default="gaussian", help="gaussian mimic fitzpatrick bone")
+    default_device = "cuda" if torch.cuda.is_available() else "cpu"
+    parser.add_argument("--device", type=str, default=default_device,
+                        help="Device to run on, e.g. 'cuda' or 'cpu' (default: cuda if available)")
     parser.add_argument("--num_seller", type=int, default=1000, help="Number of seller points")
     parser.add_argument("--num_buyer", type=int, default=100, help="Number of buyer points")
     parser.add_argument("--adversary_ratio", type=float, default=1.0, help="Adversary ratio in the dataset")
@@ -421,13 +447,14 @@ def parse_args():
 if __name__ == "__main__":
     # Parse command-line arguments
     param_mapping, args = parse_args()
-    print("start reconstrunction attack")
+    print("start reconstruction attack")
     print(param_mapping)
 
     # Run experiment with parsed arguments
     eval_results = run_attack_experiment(
         dataset_type=args.dataset,
         dim=100,
+        device=args.device,
         **param_mapping  # Unpack arguments
     )
 

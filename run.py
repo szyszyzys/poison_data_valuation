@@ -2,6 +2,7 @@ from collections import defaultdict
 
 import numpy as np
 from matplotlib import pyplot as plt
+from tqdm import tqdm
 
 from attack.general_attack.my_utils import get_error_under_budget, get_error_fixed
 from attack.privacy_attack.attack_ds import reconstruct_X_buy, reconstruct_X_buy_fim
@@ -17,7 +18,7 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
                           num_buyer=100,
                           adversary_ratio=0.25, seller_configs=None,
                           selection_method=SelectionStrategy.DAVED_MULTI_STEP, attack_method="",
-                          max_eval_range_selection_num=500, eval_step=50, n_runs=100):
+                          max_eval_range_selection_num=500, eval_step=50, n_runs=100, buyer_size=1):
     data_manager = DatasetManager(
         dataset_type=dataset_type,
         num_seller=num_seller,
@@ -32,11 +33,15 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
 
     marketplace, seller_dict = setup(data_manager, adversary_ratio, seller_configs)
     eval_results = defaultdict(list)
+    x_s, y_s, costs, seller_ids = marketplace.get_current_market_data()
+    selection_errors = defaultdict(list)
+    attack_result = defaultdict(list)
 
-    for i in range(n_runs):
-        weights, seller_ids = marketplace.get_select_info(data_manager.X_buy, data_manager.y_buy,
+    for i, j in tqdm(enumerate(range(0, num_buyer, buyer_size))):
+        x_buy = data_manager.X_buy[j: j + buyer_size]
+        y_buy = data_manager.y_buy[j: j + buyer_size]
+        weights, seller_ids = marketplace.get_select_info(x_buy, y_buy,
                                                           selection_method)
-        x_s, y_s, costs, seller_ids = marketplace.get_current_market_data()
 
         err_kwargs = dict(
             x_test=data_manager.X_buy, y_test=data_manager.y_buy, x_s=x_s, y_s=y_s, eval_range=eval_range
@@ -52,12 +57,13 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
             err_kwargs["return_list"] = True
 
         selection_error = error_func(w=weights, **err_kwargs)
+        selection_errors["DAVED"].append(selection_error)
         mask = seller_ids == 'adv1'
         adv_weights = weights[mask]
         adv = seller_dict["adv1"]
 
         # --- Attack & Evaluation ---
-        for k in range(50, min(len(adv.cur_data) // 2, 500), 50):  # Ensure k doesn't exceed data size
+        for k in eval_range:  # Ensure k doesn't exceed data size
             # Select top-k adversarial samples
             selected_indices = np.argsort(adv_weights)[-k:]
             X_adv_selected = adv.cur_data[selected_indices]
@@ -166,7 +172,7 @@ if __name__ == "__main__":
     exp_config = {
         "adversary_ratio": 1,
         "num_seller_points": 2000,
-        "num_buyer_points": 1,
+        "num_buyer_points": 100,
         "seller_configs": [
             {'id': 'adv1', 'type': 'adversary'},
             # {'id': 'normal1', 'type': 'normal'},
