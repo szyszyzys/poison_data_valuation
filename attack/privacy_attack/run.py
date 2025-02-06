@@ -226,6 +226,7 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
     attack_result = defaultdict(list)
     x_s, y_s, costs, seller_ids = marketplace.get_current_market_data()
     for i, j in tqdm(enumerate(range(0, num_buyer, buyer_size))):
+        print(f"Running attack, Current Buyer no: {i}/{num_buyer // buyer_size}")
         x_buy = data_manager.X_buy[j: j + buyer_size]
         y_buy = data_manager.y_buy[j: j + buyer_size]
         weights, seller_ids = marketplace.get_select_info(x_buy, y_buy,
@@ -247,7 +248,7 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
         selection_error = error_func(w=weights, **err_kwargs)
         selection_errors["DAVED"].append(selection_error)
         for k in eval_range:  # Ensure k doesn't exceed data size
-            print(f"Running attack, change selection num: {k}/max_eval_range_selection_num")
+            print(f"Running attack, change selection num: {k}/{max_eval_range_selection_num}")
             # Select top-k adversarial samples
             selected_indices = np.argsort(weights)[-k:]
             weights_tensor = torch.tensor(weights, dtype=torch.float)
