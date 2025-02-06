@@ -309,17 +309,9 @@ def reconstruct_query(
 
     def single_run(
             x_query=None,
-            lr=0.1,
-            num_iters=1000,
             patience=50,
             min_delta=1e-5,
-            reg_weight=1e-3,
-            real_data_prior_weight=0.0,
-            margin=0.1,
-            top_k_selection=None,
-            scenario='score_known',
-            ranking_loss_type='hinge',
-            verbose=False
+
     ):
         """
         Single reconstruction run with early stopping and learning rate scheduling.
