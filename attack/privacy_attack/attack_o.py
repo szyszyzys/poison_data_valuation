@@ -399,7 +399,7 @@ def reconstruction_attack(full_seller_data, selected_indices, attack_scenario, a
                 scenario='selection_only',
                 num_query_points=num_query_points,
                 aggregation_method='mean',  # average them to get the final "score"
-                ranking_loss_type='logistic',
+                ranking_loss_type='hinge',
                 margin=0.2,
                 reg_weight=1e-3,
                 real_data_prior_weight=0.01,
