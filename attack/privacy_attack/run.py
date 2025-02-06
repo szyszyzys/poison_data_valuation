@@ -433,7 +433,7 @@ def parse_args():
     parser.add_argument("--eval_step", type=int, default=50, help="Number of seller points")
     parser.add_argument("--num_seller", type=int, default=1000, help="Number of seller points")
     parser.add_argument("--num_buyer", type=int, default=1, help="Number of buyer points")
-    parser.add_argument("--num_buyer", type=int, default=1, help="Number of buyer points")
+    parser.add_argument("--buyer_size", type=int, default=1, help="size of buyer points")
 
     parser.add_argument("--adversary_ratio", type=float, default=1.0, help="Adversary ratio in the dataset")
     parser.add_argument("--seller_configs", type=str, default="adv1:adversary",
