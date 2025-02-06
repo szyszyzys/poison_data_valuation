@@ -201,7 +201,8 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
                           num_buyer=100,
                           adversary_ratio=0.25, seller_configs=None,
                           selection_method=SelectionStrategy.DAVED_MULTI_STEP, attack_method="",
-                          max_eval_range_selection_num=500, eval_step=50, buyer_size=1, use_cost=False, device="cpu"):
+                          max_eval_range_selection_num=500, eval_step=50, buyer_size=1, use_cost=False, device="cpu",
+                          num_restarts=1):
     result_path = f'./result/{dataset_type}/total_sell_{num_seller}_adv_ratio_{adversary_ratio}/'
 
     Path(result_path).mkdir(parents=True, exist_ok=True)
@@ -261,6 +262,7 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
                                                            use_baseline="centroid")
             score_known = run_reconstruction_attack_eval(x_s, selected_indices, x_buy,
                                                          scenario="score_known", observed_scores=weights_tensor,
+                                                         num_restarts=num_restarts,
                                                          device=device)
 
             # score_unknown_ranking_hinge = run_reconstruction_attack_eval(x_s, selected_indices,
@@ -472,8 +474,9 @@ if __name__ == "__main__":
         dim=100,
         device=args.device,
         buyer_size=args.buyer_size,
-        max_eval_range_selection_num=args.max_eval_range_selection_num, eval_step=args.eval_step,
-        **param_mapping  # Unpack arguments
+        max_eval_range_selection_num=args.max_eval_range_selection_num, eval_step=args.eval_step, num_restarts=1,
+        **param_mapping
+        # Unpack arguments
     )
 
     # Plot and print results

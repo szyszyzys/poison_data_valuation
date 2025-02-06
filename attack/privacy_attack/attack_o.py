@@ -575,6 +575,7 @@ def run_reconstruction_attack_eval(
         x_query_recon, loss_history = reconstruction_attack(seller_data_tensor, selected_indices,
                                                             attack_scenario=scenario, attack_method=attack_method,
                                                             observed_scores=observed_scores,
+                                                            num_restarts = num_restarts,
                                                             ranking_loss_type=ranking_loss_type)
 
     res_score = evaluate_query_reconstruction(x_query_true,
