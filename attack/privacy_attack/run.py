@@ -301,7 +301,7 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
             # append_result("score_unknown_ranking_logistic", score_unknown_ranking_logistic)
             # append_result("score_unknown_topk", score_unknown_topk)
 
-    plot_results_utility(result_path, results, costs)
+    plot_results_utility(result_path, {"errors": selection_errors["DAVED"]}, costs)
 
     # After the loop, save all accumulated results to a single CSV file.
     filename = save_attack_results(results)
