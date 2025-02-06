@@ -294,9 +294,9 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
             append_result("random", base_random)
             append_result("centroid", base_centroid)
             append_result("score_known", score_known)
-            append_result("score_unknown_ranking_hinge", score_unknown_ranking_hinge)
-            append_result("score_unknown_ranking_logistic", score_unknown_ranking_logistic)
-            append_result("score_unknown_topk", score_unknown_topk)
+            # append_result("score_unknown_ranking_hinge", score_unknown_ranking_hinge)
+            # append_result("score_unknown_ranking_logistic", score_unknown_ranking_logistic)
+            # append_result("score_unknown_topk", score_unknown_topk)
 
     plot_results_utility(result_path, results, costs)
 
