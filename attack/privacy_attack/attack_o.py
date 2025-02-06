@@ -494,6 +494,7 @@ def reconstruct_query(
 def reconstruction_attack(full_seller_data, selected_indices, attack_scenario, attack_method="ranking",
                           observed_scores=None, num_restarts: int = 10, num_query_points: int = 1,
                           ranking_loss_type='hinge', initial_guess=None):
+    print(selected_indices.shape[0])
     if attack_scenario == "score_known":
         x_recon, hist = reconstruct_query(
             full_seller_data,
