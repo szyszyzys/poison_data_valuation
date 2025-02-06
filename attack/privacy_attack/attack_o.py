@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from scipy.optimize import linear_sum_assignment
 from torch import nn
+from torch.optim.lr_scheduler import StepLR
 
 
 def pairwise_dist_matrix(X, Y, metric='euclidean'):
@@ -306,18 +307,57 @@ def reconstruct_query(
         sel_mask = torch.zeros(len(candidate_data), dtype=torch.float, device=device)
         sel_mask[selected_indices] = 1.0
 
-    def single_run(x_query=None):
-        # x_query shape: (k, d)
+    def single_run(
+            x_query=None,
+            lr=0.1,
+            num_iters=1000,
+            patience=50,
+            min_delta=1e-5,
+            reg_weight=1e-3,
+            real_data_prior_weight=0.0,
+            margin=0.1,
+            top_k_selection=None,
+            scenario='score_known',
+            ranking_loss_type='hinge',
+            verbose=False
+    ):
+        """
+        Single reconstruction run with early stopping and learning rate scheduling.
+
+        Args:
+            x_query: Initial guess for the query tensor (requires_grad=True).
+            lr: Initial learning rate for Adam.
+            num_iters: Maximum number of iterations.
+            patience: Early stopping patience (stop if no improvement after 'patience' iterations).
+            min_delta: Minimum improvement required to reset the patience counter.
+            reg_weight, real_data_prior_weight, margin, top_k_selection, scenario, ranking_loss_type:
+                       same meaning as in your original function.
+            verbose: If True, print progress logs.
+
+        Returns:
+            best_x_query: The best solution found (torch.Tensor).
+            loss_history: A list of losses at each iteration.
+        """
+        # Example: define your optimizer
         optimizer = optim.Adam([x_query], lr=lr)
+
+        # Example: define a Step LR scheduler (reduce LR every step_size iterations)
+        scheduler = StepLR(optimizer, step_size=max(num_iters // 3, 1), gamma=0.1)
+
         loss_history = []
+
+        # Early stopping trackers
+        best_loss = float('inf')
+        best_x_query = x_query.detach().clone()
+        epochs_no_improve = 0
 
         for it in range(num_iters):
             optimizer.zero_grad()
 
             # 1) Compute predicted scores
-            pred_scores = score_function(x_query, I_inv, candidate_data, aggregation_method=aggregation_method)
-
-            # 2) Loss components
+            pred_scores = score_function(
+                x_query, I_inv, candidate_data, aggregation_method=aggregation_method
+            )
 
             # 2a) L2 prior on x_query
             reg_loss = reg_weight * (x_query ** 2).mean()
@@ -327,20 +367,16 @@ def reconstruct_query(
             if real_data_prior_weight > 0.0:
                 rd_loss = real_data_prior_weight * real_data_prior_loss(x_query, full_seller_data)
 
-            # 2c) Scenario: 'score_known' => MSE
+            # 2c) or 2d) main loss based on scenario
             if scenario == 'score_known':
                 if observed_scores is None:
                     raise ValueError("observed_scores must be provided for 'score_known' scenario.")
                 loss_main = F.mse_loss(pred_scores, observed_scores.to(device))
-
-            # 2d) Scenario: 'selection_only' => ranking or top-K
             elif scenario == 'selection_only':
                 if top_k_selection is not None and top_k_selection > 0:
-                    # Use top-K margin approach
                     loss_main = top_k_margin_loss(pred_scores, selected_indices,
                                                   k=top_k_selection, margin=margin)
                 else:
-                    # Pairwise selected vs unselected approach
                     if ranking_loss_type == 'hinge':
                         loss_main = hinge_margin_ranking_loss(pred_scores, sel_mask, margin=margin)
                     elif ranking_loss_type == 'logistic':
@@ -353,13 +389,89 @@ def reconstruct_query(
             total_loss = loss_main + reg_loss + rd_loss
             total_loss.backward()
             optimizer.step()
-            loss_history.append(total_loss.item())
 
+            # Step the scheduler (with StepLR, we step every iteration)
+            scheduler.step()
+
+            current_loss = total_loss.item()
+            loss_history.append(current_loss)
+
+            # Early stopping check
+            if current_loss < best_loss - min_delta:
+                best_loss = current_loss
+                best_x_query = x_query.detach().clone()
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+
+            # Print progress occasionally
             if verbose and (it + 1) % max(1, num_iters // 10) == 0:
-                print(f"Iter {it + 1}/{num_iters}, Loss={total_loss.item():.6f} "
-                      f"(Main={loss_main.item():.4f}, Reg={reg_loss.item():.4f}, RD={rd_loss:.4f})")
+                print(f"Iter {it + 1}/{num_iters}, Loss={current_loss:.6f} "
+                      f"(Main={loss_main.item():.4f}, Reg={reg_loss.item():.4f}, RD={rd_loss:.4f}, LR={scheduler.get_last_lr()[0]:.6f})")
 
-        return x_query.detach().clone(), loss_history
+            # If no improvement over 'patience' iterations, stop
+            if epochs_no_improve >= patience:
+                if verbose:
+                    print(f"Early stopping at iteration {it + 1} due to no improvement.")
+                break
+
+        # Return the best found solution and the loss history
+        return best_x_query, loss_history
+
+    # def single_run(x_query=None):
+    #     # x_query shape: (k, d)
+    #     optimizer = optim.Adam([x_query], lr=lr)
+    #     loss_history = []
+    #
+    #     for it in range(num_iters):
+    #         optimizer.zero_grad()
+    #
+    #         # 1) Compute predicted scores
+    #         pred_scores = score_function(x_query, I_inv, candidate_data, aggregation_method=aggregation_method)
+    #
+    #         # 2) Loss components
+    #
+    #         # 2a) L2 prior on x_query
+    #         reg_loss = reg_weight * (x_query ** 2).mean()
+    #
+    #         # 2b) Real-data prior
+    #         rd_loss = 0.0
+    #         if real_data_prior_weight > 0.0:
+    #             rd_loss = real_data_prior_weight * real_data_prior_loss(x_query, full_seller_data)
+    #
+    #         # 2c) Scenario: 'score_known' => MSE
+    #         if scenario == 'score_known':
+    #             if observed_scores is None:
+    #                 raise ValueError("observed_scores must be provided for 'score_known' scenario.")
+    #             loss_main = F.mse_loss(pred_scores, observed_scores.to(device))
+    #
+    #         # 2d) Scenario: 'selection_only' => ranking or top-K
+    #         elif scenario == 'selection_only':
+    #             if top_k_selection is not None and top_k_selection > 0:
+    #                 # Use top-K margin approach
+    #                 loss_main = top_k_margin_loss(pred_scores, selected_indices,
+    #                                               k=top_k_selection, margin=margin)
+    #             else:
+    #                 # Pairwise selected vs unselected approach
+    #                 if ranking_loss_type == 'hinge':
+    #                     loss_main = hinge_margin_ranking_loss(pred_scores, sel_mask, margin=margin)
+    #                 elif ranking_loss_type == 'logistic':
+    #                     loss_main = logistic_ranking_loss(pred_scores, sel_mask, temperature=1.0)
+    #                 else:
+    #                     raise ValueError("Unknown ranking_loss_type. Use 'hinge' or 'logistic'.")
+    #         else:
+    #             raise ValueError("Unknown scenario. Use 'score_known' or 'selection_only'.")
+    #
+    #         total_loss = loss_main + reg_loss + rd_loss
+    #         total_loss.backward()
+    #         optimizer.step()
+    #         loss_history.append(total_loss.item())
+    #
+    #         if verbose and (it + 1) % max(1, num_iters // 10) == 0:
+    #             print(f"Iter {it + 1}/{num_iters}, Loss={total_loss.item():.6f} "
+    #                   f"(Main={loss_main.item():.4f}, Reg={reg_loss.item():.4f}, RD={rd_loss:.4f})")
+    #
+    #     return x_query.detach().clone(), loss_history
 
     # 3. Multi-Restart
     best_x_query = None
