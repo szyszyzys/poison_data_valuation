@@ -201,7 +201,8 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
                           selection_method=SelectionStrategy.DAVED_MULTI_STEP, attack_method="",
                           max_eval_range_selection_num=500, eval_step=50, buyer_size=1, use_cost=False, device="cpu",
                           num_restarts=1):
-    result_path = f'./result/{dataset_type}/total_sell_{num_seller}_adv_ratio_{adversary_ratio}/'
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    result_path = f'./result/{dataset_type}/total_sell_{num_seller}_adv_ratio_{adversary_ratio}/{timestamp}/'
 
     Path(result_path).mkdir(parents=True, exist_ok=True)
     data_manager = DatasetManager(
@@ -246,6 +247,7 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
         selection_error = error_func(w=weights, **err_kwargs)
         selection_errors["DAVED"].append(selection_error)
         for k in eval_range:  # Ensure k doesn't exceed data size
+            print(f"Running attack, change selection num: {k}/max_eval_range_selection_num")
             # Select top-k adversarial samples
             selected_indices = np.argsort(weights)[-k:]
             weights_tensor = torch.tensor(weights, dtype=torch.float)
@@ -263,22 +265,24 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
                                                          num_restarts=num_restarts,
                                                          device=device)
 
-            score_unknown_ranking_hinge = run_reconstruction_attack_eval(x_s, selected_indices,
-                                                                         x_buy,
-                                                                         scenario="selection_only",
-                                                                         attack_method="ranking",
-                                                                         ranking_loss_type="hinge",
-                                                                         device=device)
+            # score_unknown_ranking_hinge = run_reconstruction_attack_eval(x_s, selected_indices,
+            #                                                              x_buy,
+            #                                                              scenario="selection_only",
+            #                                                              attack_method="ranking",
+            #                                                              ranking_loss_type="hinge",
+            #                                                              num_restarts=num_restarts,
+            #                                                              device=device)
             # score_unknown_ranking_logistic = run_reconstruction_attack_eval(x_s, selected_indices,
             #                                                                 x_buy,
             #                                                                 scenario="selection_only",
             #                                                                 attack_method="ranking",
             #                                                                 ranking_loss_type="logistic",
             #                                                                 device=device)
-            score_unknown_topk = run_reconstruction_attack_eval(x_s, selected_indices,
-                                                                x_buy,
-                                                                scenario="selection_only", attack_method="topk",
-                                                                device=device)
+            # score_unknown_topk = run_reconstruction_attack_eval(x_s, selected_indices,
+            #                                                     x_buy,
+            #                                                     scenario="selection_only", attack_method="topk",
+            #                                                     num_restarts=num_restarts,
+            #                                                     device=device)
 
             def append_result(attack_name, result_dict):
                 """
@@ -295,9 +299,9 @@ def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
             append_result("random", base_random)
             append_result("centroid", base_centroid)
             append_result("score_known", score_known)
-            append_result("score_unknown_ranking_hinge", score_unknown_ranking_hinge)
+            # append_result("score_unknown_ranking_hinge", score_unknown_ranking_hinge)
             # append_result("score_unknown_ranking_logistic", score_unknown_ranking_logistic)
-            append_result("score_unknown_topk", score_unknown_topk)
+            # append_result("score_unknown_topk", score_unknown_topk)
 
     plot_results_utility(result_path, {"errors": selection_errors, "eval_range": eval_range},
                          None)
