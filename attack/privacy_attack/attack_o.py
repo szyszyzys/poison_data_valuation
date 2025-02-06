@@ -91,7 +91,7 @@ def baseline_centroid_of_selected(full_data, selected_indices, num_query_points=
     as a naive guess for x_query.
     """
     selected_data = full_data[selected_indices]
-    centroid = torch.Tensor(np.mean(selected_data, axis=0, keepdims=True))  # works for numpy arrays
+    centroid = torch.tensor(np.mean(selected_data, axis=0, keepdims=True))  # works for numpy arrays
     if num_query_points == 1:
         return centroid  # shape (1, d)
     else:
@@ -262,6 +262,7 @@ def reconstruct_query(
         ranking_loss_type: str = 'hinge',  # 'hinge' or 'logistic' for selection-only scenario
         top_k_selection: int = None,  # if you want top-K style selection
         real_data_prior_weight: float = 0.0,  # encourage x_query near some real data,
+        initial_guess=None,
 ):
     """
     High-level function to reconstruct a query (possibly multiple vectors)
@@ -305,9 +306,10 @@ def reconstruct_query(
         sel_mask = torch.zeros(len(candidate_data), dtype=torch.float, device=device)
         sel_mask[selected_indices] = 1.0
 
-    def single_run():
+    def single_run(x_query=None):
         # x_query shape: (k, d)
-        x_query = torch.randn(num_query_points, d, device=device, dtype=torch.float, requires_grad=True)
+        if not x_query:
+            x_query = torch.randn(num_query_points, d, device=device, dtype=torch.float, requires_grad=True)
         optimizer = optim.Adam([x_query], lr=lr)
         loss_history = []
 
@@ -367,7 +369,7 @@ def reconstruct_query(
     best_history = None
 
     for r in range(num_restarts):
-        x_query_hat, hist = single_run()
+        x_query_hat, hist = single_run(initial_guess)
         final_loss = hist[-1]
         if verbose:
             print(f"[Restart {r + 1}/{num_restarts}] Final Loss: {final_loss:.6f}")
@@ -381,7 +383,7 @@ def reconstruct_query(
 
 def reconstruction_attack(full_seller_data, selected_indices, attack_scenario, attack_method="ranking",
                           observed_scores=None, num_restarts: int = 10, num_query_points: int = 1,
-                          ranking_loss_type='hinge'):
+                          ranking_loss_type='hinge', initial_guess=None):
     if attack_scenario == "score_known":
         x_recon, hist = reconstruct_query(
             full_seller_data,
@@ -391,6 +393,7 @@ def reconstruction_attack(full_seller_data, selected_indices, attack_scenario, a
             verbose=True,
             num_restarts=num_restarts,
             num_query_points=num_query_points,
+            initial_guess=initial_guess
         )
     elif attack_scenario == "selection_only":
         if attack_method == "ranking":
@@ -406,6 +409,7 @@ def reconstruction_attack(full_seller_data, selected_indices, attack_scenario, a
                 real_data_prior_weight=0.01,
                 num_restarts=num_restarts,
                 verbose=True,
+                initial_guess=initial_guess
             )
         elif attack_method == "topk":
             x_recon, hist = reconstruct_query(
@@ -418,6 +422,7 @@ def reconstruction_attack(full_seller_data, selected_indices, attack_scenario, a
                 verbose=True,
                 num_restarts=num_restarts,
                 num_query_points=num_query_points,
+                initial_guess=initial_guess
             )
         else:
             raise NotImplementedError(
@@ -553,7 +558,8 @@ def run_reconstruction_attack_eval(
         margin=0.1,
         num_restarts=1,
         verbose=False,
-        device="cuda"
+        device="cuda",
+        initial_mode="mean",
 ):
     """
     1) Either run the reconstruction_attack or a baseline.
@@ -572,11 +578,17 @@ def run_reconstruction_attack_eval(
     else:
         # use the gradient-based reconstruct_query
         seller_data_tensor = torch.tensor(full_seller_data, dtype=torch.float).to(device)
+        if initial_mode == "mean":
+            initial_guess = baseline_centroid_of_selected(full_seller_data, selected_indices, num_query_points)
+            initial_guess = torch.tensor(initial_guess, device=device, dtype=torch.float, requires_grad=True)
+        else:
+            initial_guess = torch.randn(num_query_points, d, device=device, dtype=torch.float, requires_grad=True)
         x_query_recon, loss_history = reconstruction_attack(seller_data_tensor, selected_indices,
                                                             attack_scenario=scenario, attack_method=attack_method,
                                                             observed_scores=observed_scores,
-                                                            num_restarts = num_restarts,
-                                                            ranking_loss_type=ranking_loss_type)
+                                                            num_restarts=num_restarts,
+                                                            ranking_loss_type=ranking_loss_type,
+                                                            initial_guess=initial_guess)
 
     res_score = evaluate_query_reconstruction(x_query_true,
                                               x_query_recon, compute_selection_overlap=False)
