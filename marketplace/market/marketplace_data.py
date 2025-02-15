@@ -3,11 +3,12 @@ from typing import Dict, Union, Tuple, List
 import numpy as np
 
 from attack.privacy_attack.malicious_seller import AdversarySeller
-from attack.privacy_attack.seller import BaseSeller
-from attack.utils.data_selector import DataSelector, SelectionStrategy
+from marketplace.seller.seller import BaseSeller
+from marketplace.market.data_market import DataMarketplace
+from marketplace.data_selector import DataSelector, SelectionStrategy
 
 
-class DataMarketplace:
+class DataMarketplaceData(DataMarketplace):
     def __init__(self, selection_method: str = "frank_wolfe"):
         self.selection_method = selection_method
         self.sellers: Dict[str, Union[BaseSeller, AdversarySeller]] = {}
@@ -16,8 +17,6 @@ class DataMarketplace:
     def get_current_market_data(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[str]]:
         """Get latest data from all sellers"""
         x_s, y_s, costs, seller_ids = [], [], [], []
-
-
         for seller_id, seller in self.sellers.items():
             seller_data = seller.get_data
             if seller_data['X'] is not None:
@@ -31,7 +30,8 @@ class DataMarketplace:
                 np.concatenate(costs) if costs else np.array([]),
                 np.array(seller_ids))
 
-    def update_selection(self, s_method):
+    def update_selection(self, s_method: str):
+        """Change the selection method."""
         self.selection_method = s_method
 
     def select_data(self,
@@ -40,17 +40,16 @@ class DataMarketplace:
                     select_method: SelectionStrategy,
                     num_select: int = 10,
                     **kwargs) -> Dict:
-        """Select data using latest seller data"""
+        """Select data using the latest seller data"""
         # Get current market data
         x_s, y_s, costs, seller_ids = self.get_current_market_data()
         if len(x_s) == 0:
             raise ValueError("No data available in marketplace")
 
         self.selector.set_sell(x_s, y_s, costs)
-
         weights = self.selector.select_data(x_buy, y_buy, select_method)
-
         indices = self.selector.get_top_k(weights, num_select, return_indices=True)
+
         # Record selections for each seller
         selected_seller_ids = [seller_ids[i] for i in indices]
         for seller_id in self.sellers:
@@ -63,7 +62,7 @@ class DataMarketplace:
             'seller_ids': selected_seller_ids,
             'weights': weights,
             'total_cost': np.sum(costs[indices]) if len(costs) > 0 else 0,
-            "indices": indices
+            'indices': indices
         }
 
     def get_select_info(self,
@@ -71,24 +70,21 @@ class DataMarketplace:
                         y_buy: np.ndarray,
                         select_method: SelectionStrategy,
                         **kwargs):
-        """Select data using latest seller data"""
-        # Get current market data
+        """Select data using the latest seller data, but only return the weights and seller_ids."""
         x_s, y_s, costs, seller_ids = self.get_current_market_data()
         if len(x_s) == 0:
             raise ValueError("No data available in marketplace")
 
         self.selector.set_sell(x_s, y_s, costs)
-
         weights = self.selector.select_data(x_buy, y_buy, select_method)
-
         return weights, seller_ids
 
     def register_seller(self, seller_id: str, seller: BaseSeller):
-        """Register a seller in the marketplace"""
+        """Register a seller in the marketplace."""
         self.sellers[seller_id] = seller
 
     def get_market_status(self) -> Dict:
-        """Get current market status"""
+        """Get current market status."""
         return {
             'num_sellers': len(self.sellers),
             'total_datapoints': sum(len(s.get_synthetic_data()['X']) for s in self.sellers.values()),

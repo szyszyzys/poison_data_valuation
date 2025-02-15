@@ -8,10 +8,10 @@ from attack.general_attack.my_utils import get_error_under_budget, get_error_fix
 from attack.privacy_attack.attack_ds import reconstruct_X_buy, reconstruct_X_buy_fim
 from attack.privacy_attack.evaluation import evaluate_embeddings
 from attack.privacy_attack.malicious_seller import AdversarySeller
-from attack.privacy_attack.seller import BaseSeller
-from attack.utils.data_manager import DatasetManager
-from attack.utils.data_market import DataMarketplace
-from attack.utils.data_selector import SelectionStrategy
+from marketplace.seller.seller import BaseSeller
+from marketplace.data_manager import DatasetManager
+from marketplace.market.data_market import DataMarketplaceData
+from marketplace.data_selector import SelectionStrategy
 
 
 def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
@@ -136,7 +136,7 @@ def setup(data_manager: DatasetManager, adversary_ratio=0.25, seller_configs=Non
     """Setup marketplace with normal and adversarial sellers"""
 
     # Create marketplace
-    marketplace = DataMarketplace()
+    marketplace = DataMarketplaceData()
     # Get data allocations
 
     allocations = data_manager.allocate_data_to_sellers(

@@ -4,7 +4,7 @@ from scipy.spatial.distance import mahalanobis
 from typing import List, Tuple, Optional
 import seaborn as sns
 
-from attack.privacy_attack.seller import AdversarySeller
+from marketplace.seller.seller import AdversarySeller
 
 
 ###############################################################################

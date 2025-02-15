@@ -13,10 +13,10 @@ from tqdm import tqdm
 from attack.general_attack.my_utils import get_error_under_budget, get_error_fixed, plot_results_utility
 from attack.privacy_attack.attack_o import run_reconstruction_attack_eval
 from attack.privacy_attack.malicious_seller import AdversarySeller
-from attack.privacy_attack.seller import BaseSeller
-from attack.utils.data_manager import DatasetManager
-from attack.utils.data_market import DataMarketplace
-from attack.utils.data_selector import SelectionStrategy
+from marketplace.seller.seller import BaseSeller
+from marketplace.data_manager import DatasetManager
+from marketplace.market.data_market import DataMarketplaceData
+from marketplace.data_selector import SelectionStrategy
 
 
 def plot_and_save_metrics(avg_metrics_by_attack, save_dir="plots"):
@@ -359,7 +359,7 @@ def setup(data_manager: DatasetManager, adversary_ratio=0.25, seller_configs=Non
     """Setup marketplace with normal and adversarial sellers"""
 
     # Create marketplace
-    marketplace = DataMarketplace()
+    marketplace = DataMarketplaceData()
     # Get data allocations
 
     allocations = data_manager.allocate_data_to_sellers(

@@ -3,7 +3,7 @@ from typing import List, Dict, Tuple
 import numpy as np
 from matplotlib import pyplot as plt
 
-from attack.privacy_attack.seller import BaseSeller
+from marketplace.seller.seller import BaseSeller
 
 
 def evaluate_reconstruction(x_true: np.ndarray, x_hat: np.ndarray) -> Tuple[float, float]:
