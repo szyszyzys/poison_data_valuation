@@ -8,5 +8,5 @@ python attack/privacy_attack/run.py --dataset gaussian --num_buyer 10 ; python a
 python attack/privacy_attack/run.py --dataset mimic
 
 
-#python attack/privacy_attack/run.py --dataset bone
+#python attack/privacy_attack/run_data_market.py --dataset bone
 

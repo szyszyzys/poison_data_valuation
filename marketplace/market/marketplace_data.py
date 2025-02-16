@@ -2,7 +2,7 @@ from typing import Dict, Union, Tuple, List
 
 import numpy as np
 
-from attack.privacy_attack.malicious_seller import AdversarySeller
+from attack.privacy_attack.malicious_seller import MaliciousDataSeller
 from marketplace.seller.seller import BaseSeller
 from marketplace.market.data_market import DataMarketplace
 from marketplace.data_selector import DataSelector, SelectionStrategy
@@ -11,7 +11,7 @@ from marketplace.data_selector import DataSelector, SelectionStrategy
 class DataMarketplaceData(DataMarketplace):
     def __init__(self, selection_method: str = "frank_wolfe"):
         self.selection_method = selection_method
-        self.sellers: Dict[str, Union[BaseSeller, AdversarySeller]] = {}
+        self.sellers: Dict[str, Union[BaseSeller, MaliciousDataSeller]] = {}
         self.selector = DataSelector()
 
     def get_current_market_data(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[str]]:

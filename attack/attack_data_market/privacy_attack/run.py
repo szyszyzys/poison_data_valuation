@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from attack.general_attack.my_utils import get_error_under_budget, get_error_fixed, plot_results_utility
 from attack.privacy_attack.attack_o import run_reconstruction_attack_eval
-from attack.privacy_attack.malicious_seller import AdversarySeller
+from attack.privacy_attack.malicious_seller import MaliciousDataSeller
 from marketplace.seller.seller import BaseSeller
 from marketplace.data_manager import DatasetManager
 from marketplace.market.data_market import DataMarketplaceData
@@ -373,7 +373,7 @@ def setup(data_manager: DatasetManager, adversary_ratio=0.25, seller_configs=Non
         seller_data = allocations[seller_id]
 
         if config['type'] == 'adversary':
-            seller = AdversarySeller(
+            seller = MaliciousDataSeller(
                 seller_id=seller_id,
                 dataset=seller_data['X'],
             )
