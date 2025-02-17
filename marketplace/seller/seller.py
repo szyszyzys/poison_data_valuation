@@ -1,9 +1,10 @@
 import json
 from abc import ABC
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 import numpy as np
 import pandas as pd
+import torch
 
 
 class SellerStats:
@@ -26,7 +27,7 @@ class BaseSeller(ABC):
 
     def __init__(self,
                  seller_id: str,
-                 dataset: np.ndarray,
+                 dataset: List[Tuple[torch.Tensor, int]],
                  price_strategy: str = 'uniform',
                  base_price: float = 1.0,
                  price_variation: float = 0.2):

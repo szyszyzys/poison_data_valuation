@@ -313,7 +313,7 @@ def get_cost_function(cost_func, bias=0):
             raise Exception(f"not supported")
 
 
-def get_data(
+def get_data_data_market(
         dataset="gaussian",
         data_dir="./data",
         random_state=0,
@@ -887,3 +887,6 @@ def run_exp(
         finetune_random_mse=finetune_random_mse,
     )
     return results
+
+
+

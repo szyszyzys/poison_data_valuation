@@ -1,12 +1,10 @@
-import random
-import threading
 from typing import Dict
 
 import numpy as np
 import torch
 from torch import nn
 
-from marketplace.utils.gradient_market_utils.clustering import kmeans, gap
+from marketplace.utils.gradient_market_utils.clustering import optimal_k, kmeans_1d
 from marketplace.utils.model_utils import load_model, save_model
 
 
@@ -15,7 +13,7 @@ from marketplace.utils.model_utils import load_model, save_model
 #   from train import train_model, evaluate_model, kappa
 #   from quant_aggregation import integrated_quant_aggregation
 #   from model_saver import load_model, save_model, get_backup_name_from_model_name
-#   from cluster import gap, kmeans
+#   from cluster import optimal_k, kmeans
 #   from dataset import dataset_output_dim
 #   from homo_encryption import private_model_evaluation
 #
@@ -190,14 +188,14 @@ class Aggregator:
         diameter = np.max(np_cosine_result) - np.min(np_cosine_result)
         print("Diameter:", diameter)
 
-        # Determine the optimal number of clusters using a gap statistic function.
-        n_clusters = gap(np_cosine_result)
-        # Heuristic: if gap suggests 1 cluster but the diameter is large, force 2 clusters.
+        # Determine the optimal number of clusters using a optimal_k statistic function.
+        n_clusters = optimal_k(np_cosine_result)
+        # Heuristic: if optimal_k suggests 1 cluster but the diameter is large, force 2 clusters.
         if n_clusters == 1 and diameter > 0.05:
             n_clusters = 2
 
         # Perform k-means clustering on the cosine similarities.
-        clusters, centroids = kmeans(np_cosine_result, n_clusters)
+        clusters, centroids = kmeans_1d(np_cosine_result, n_clusters)
         print("Centroids:", centroids)
         print(f"{n_clusters} Clusters:", clusters)
 
@@ -209,7 +207,7 @@ class Aggregator:
         if n_clusters == 1:
             clusters_secondary = [1] * self.n_seller
         else:
-            clusters_secondary, _ = kmeans(np_cosine_result, 2)
+            clusters_secondary, _ = kmeans_1d(np_cosine_result, 2)
         print("Secondary Clustering:", clusters_secondary)
 
         # 7. Determine the border for outlier detection.

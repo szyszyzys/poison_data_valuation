@@ -14,7 +14,7 @@ import daved.src.utils as utils
 
 
 def main(args):
-    data = utils.get_data(
+    data = utils.get_data_data_market(
         dataset=args.dataset,
         num_buyer=args.num_buyers * args.batch_size,
         num_seller=args.num_seller,

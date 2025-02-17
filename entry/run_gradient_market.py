@@ -5,7 +5,7 @@
 from collections import defaultdict
 
 from attack.privacy_attack.malicious_seller import MaliciousDataSeller
-from marketplace.market.markplace_fl import DataMarketplaceFederated
+from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.seller import BaseSeller
 from marketplace.data_manager import DatasetManager

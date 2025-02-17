@@ -1,4 +1,6 @@
-import numpy as np
+from typing import List, Tuple
+
+import torch
 
 from marketplace.seller.seller import BaseSeller
 
@@ -11,7 +13,7 @@ class DataSeller(BaseSeller):
 
     def __init__(self,
                  seller_id: str,
-                 dataset: np.ndarray,
+                 dataset: List[Tuple[torch.Tensor, int]],
                  price_strategy: str = 'uniform',
                  base_price: float = 1.0,
                  price_variation: float = 0.2):
@@ -26,4 +28,3 @@ class DataSeller(BaseSeller):
 
     # (Optionally, override get_data if you want different logic.)
     # Otherwise, the base .get_data is fine, returning { "X": self.cur_data, "cost": self.cur_price }.
-

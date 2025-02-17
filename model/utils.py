@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""
+fl_training.py
+
+This file defines:
+  - A simple neural network model (SimpleMLP) for demonstration.
+  - A local training routine that trains a local copy of the global model on local data.
+  - Functions to compute the gradient update as the difference between the trained and initial model parameters.
+  - A helper to flatten the gradient into a single vector (useful for federated aggregation).
+
+Usage (within a seller’s get_gradient method):
+    flat_update, data_size = local_training_and_get_gradient(model, train_dataset, batch_size=16, device, local_epochs=1, lr=0.01)
+    # flat_update is a numpy array representing the update from local training.
+"""
+
+import copy
+import os
+from typing import List, Tuple
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+
+from model.text_model import TEXTCNN
+from model.vision_model import CNN_CIFAR, CNN_FMNIST
+
+
+def train_local_model(model: nn.Module,
+                      train_loader: DataLoader,
+                      criterion: nn.Module,
+                      optimizer: optim.Optimizer,
+                      device: torch.device,
+                      epochs: int = 1) -> nn.Module:
+    """
+    Train the model on the given train_loader for a specified number of epochs.
+    """
+    model.train()
+    for epoch in range(epochs):
+        for batch_data, batch_labels in train_loader:
+            batch_data = batch_data.to(device)
+            batch_labels = batch_labels.to(device)
+            optimizer.zero_grad()
+            outputs = model(batch_data)
+            loss = criterion(outputs, batch_labels)
+            loss.backward()
+            optimizer.step()
+    return model
+
+
+def compute_gradient_update(initial_model: nn.Module,
+                            trained_model: nn.Module) -> List[torch.Tensor]:
+    """
+    Compute the gradient update as the difference between the trained model's parameters
+    and the initial model's parameters. Returns a list of tensors.
+    """
+    grad_update = []
+    for init_param, trained_param in zip(initial_model.parameters(), trained_model.parameters()):
+        # The update is defined as (trained - initial)
+        grad_update.append(trained_param.detach().cpu() - init_param.detach().cpu())
+    return grad_update
+
+
+def flatten_gradients(grad_list: List[torch.Tensor]) -> np.ndarray:
+    """
+    Flatten a list of gradient tensors into a single 1D numpy array.
+    """
+    flat_grad = torch.cat([g.view(-1) for g in grad_list])
+    return flat_grad.numpy()
+
+
+def local_training_and_get_gradient(model: nn.Module,
+                                    train_dataset: TensorDataset,
+                                    batch_size: int,
+                                    device: torch.device,
+                                    local_epochs: int = 1,
+                                    lr: float = 0.01) -> Tuple[np.ndarray, int]:
+    """
+    Perform local training on a copy of the given model using the provided dataset.
+    Returns:
+      - flat_update: a flattened numpy array representing the gradient update (trained - initial)
+      - data_size: the number of samples in the train_dataset
+
+    This function is intended to be used by a seller in a federated learning setup.
+    """
+    # Create a local copy of the model for training
+    local_model = copy.deepcopy(model)
+    local_model.to(device)
+
+    # Create a DataLoader for the local dataset
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+
+    # Use a standard loss function and optimizer
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(local_model.parameters(), lr=lr)
+
+    # Save a copy of the initial model parameters for computing the update
+    initial_model = copy.deepcopy(local_model)
+
+    # Train the local model for a few epochs
+    local_model = train_local_model(local_model, train_loader, criterion, optimizer, device, epochs=local_epochs)
+
+    # Compute the gradient update as (trained_model - initial_model)
+    grad_update = compute_gradient_update(initial_model, local_model)
+
+    # Flatten the list of gradients into a single vector
+    flat_update = flatten_gradients(grad_update)
+
+    return flat_update, len(train_dataset)
+
+
+# ---------------------------
+# Model Saving/Loading Utilities
+# ---------------------------
+
+def save_model(model: nn.Module, path: str):
+    """
+    Save the model's state_dict to the specified file path.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    torch.save(model.state_dict(), path)
+    print(f"Model saved to {path}")
+
+
+def load_model(model: nn.Module, path: str, device: torch.device):
+    """
+    Load a model's state_dict from the specified file path.
+    """
+    state_dict = torch.load(path, map_location=device)
+    model.load_state_dict(state_dict)
+    print(f"Model loaded from {path}")
+    return model
+
+
+def get_model(dataset_name):
+    match dataset_name:
+        case "CIFAR":
+            model = CNN_CIFAR
+        case "FMINIST":
+            model = CNN_FMNIST
+        case ["TREC", "AG_NEWS"]:
+            model = TEXTCNN
+        case _:
+            raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
+    return model

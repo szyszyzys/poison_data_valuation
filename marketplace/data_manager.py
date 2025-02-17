@@ -6,7 +6,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import pairwise_distances_argmin_min
 from sklearn.preprocessing import StandardScaler
 
-from daved.src.utils import get_data
+from daved.src.utils import get_data_data_market
 
 
 class DatasetManager:
@@ -34,7 +34,7 @@ class DatasetManager:
         self.seller_data = {}
         
         # Load data using get_data function
-        self.data = get_data(
+        self.data = get_data_data_market(
             dataset=dataset_type,
             data_dir=data_dir,
             random_state=random_state,
