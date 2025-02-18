@@ -1,40 +1,80 @@
-
-
-
-
-from collections import defaultdict
-
 from attack.privacy_attack.malicious_seller import MaliciousDataSeller
-from marketplace.market.markplace_gradient import DataMarketplaceFederated
-from marketplace.market_mechanism.martfl import Aggregator
-from marketplace.seller.seller import BaseSeller
+
 from marketplace.data_manager import DatasetManager
 from marketplace.data_selector import SelectionStrategy
+from marketplace.market.markplace_gradient import DataMarketplaceFederated
+from marketplace.market_mechanism.martfl import Aggregator
+from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller
+from marketplace.seller.seller import BaseSeller
+from marketplace.utils.gradient_market_utils.data_processor import get_data_set
 
 
-def run_fl_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
-                      num_buyer=100,
-                      adversary_ratio=0.25, seller_configs=None,
-                      selection_method=SelectionStrategy.DAVED_MULTI_STEP, attack_method="",
-                      max_eval_range_selection_num=500, eval_step=50, n_runs=100, buyer_size=1):
-    data_manager = DatasetManager(
-        dataset_type=dataset_type,
-        num_seller=num_seller,
-        num_buyer=num_buyer,
-        dim=dim,
-        use_cost=False
-    )
+def run_fl_experiment(dataset_name, seller_config, buyer_config, n_sellers, n_adversaries, model_structure,
+                      global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", exp_name="/"):
+    # load the dataset
+    save_path = f"/results/{exp_name}/"
+    n_buyer = 1
+    buyer_cid = 0
+    # setup the data set for the participants
+    client_loaders = get_data_set(dataset_name, num_clients=n_sellers + n_buyer, iid=True)
 
-    marketplace, seller_dict = setup(data_manager, adversary_ratio, seller_configs)
-    eval_results = defaultdict(list)
-    x_s, y_s, costs, seller_ids = marketplace.get_current_market_data()
-    selection_errors = defaultdict(list)
-    attack_result = defaultdict(list)
-    aggregator = Aggregator(global_model=model, device=torch.device("cpu"), experiment_name="my_exp")
-    marketplace = DataMarketplaceFederated(aggregator=aggregator,
-                                           selection_method="fedavg",
-                                           learning_rate=0.01)
+    # config the buyer
+    buyer = GradientSeller(seller_id="buyer", local_data=client_loaders[buyer_cid], dataset_name=dataset_name,
+                           save_path=save_path)
+
+    # config the marketplace
+    aggregator = Aggregator(save_path=save_path,
+                            n_seller=n_sellers,
+                            n_adversaries=n_adversaries,
+                            model_structure=model_structure,
+                            dataset_name=dataset_name,
+                            quantization=False,
+                            )
+    marketplace = DataMarketplaceFederated(aggregator,
+                                           selection_method="martfl")
+
+    # config the seller
+    for cid, loader in client_loaders.items():
+        if cid == buyer_cid:
+            # set the buyer as cid 0 for data
+            continue
+        if cid <= n_adversaries:
+            cur_id = f"adv_{cid}"
+            current_seller = AdvancedBackdoorAdversarySeller(seller_id=cur_id,
+                                                             local_data=loader,
+                                                             target_label=backdoor_target_label,
+                                                             trigger_type=trigger_type
+                                                             )
+        else:
+            cur_id = f"seller_{cid}"
+            current_seller = GradientSeller(seller_id=cur_id, local_data=client_loaders[buyer_cid],
+                                            dataset_name=dataset_name, save_path=save_path)
+        marketplace.register_seller(cur_id, current_seller)
+
+    # config the attack test set.
+
+    # Start gloal round
+    for gr in range(global_rounds):
+        # compute the buyer gradient as the reference point
+        buyer_gradient = buyer.get_gradient()
+        # train the attack model
+        marketplace.train_federated_round(round_number=gr,
+                                          buyer_gradient = buyer_gradient,
+                                          test_dataloader_buyer_local=None,
+                                          test_dataloader_global=None,
+                                          clean_loader=None, triggered_loader=None,
+                                          loss_fn=None, )
+
+        # test the attack performance of each round
+
+    # record the result for each seller
+    for s in seller:
+        s.save_statistics()
+
+    # record the attack result for the final round
+
     return eval_results
+
 
 def setup(data_manager: DatasetManager, adversary_ratio=0.25, seller_configs=None):
     """Setup marketplace with normal and adversarial sellers"""

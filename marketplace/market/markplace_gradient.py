@@ -1,15 +1,13 @@
-import numpy as np
-from typing import Dict, Union, List, Tuple
+from typing import Dict, Union, List, Tuple, Any
 
+import numpy as np
 import torch
 
-from attack.privacy_attack.malicious_seller import MaliciousDataSeller
+from attack.evaluation import evaluate_attack_performance_backdoor_poison
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.seller import BaseSeller
 
-import numpy as np
-from typing import Dict, Union, List, Tuple, Any
 
 # Import your aggregator and seller classes
 # from attack.privacy_attack.malicious_seller import MaliciousDataSeller
@@ -21,7 +19,8 @@ class DataMarketplaceFederated(DataMarketplace):
     def __init__(self,
                  aggregator: Aggregator,
                  selection_method: str = "fedavg",
-                 learning_rate: float = 1.0):
+                 learning_rate: float = 1.0,
+                 broadcast_local=False):
         """
         A marketplace for federated learning where each seller provides gradient updates.
 
@@ -33,7 +32,7 @@ class DataMarketplaceFederated(DataMarketplace):
         self.aggregator = aggregator
         self.selection_method = selection_method
         self.learning_rate = learning_rate
-
+        self.broadcast_local = broadcast_local
         # Each seller might be a BaseSeller or an AdversarySeller, etc.
         self.sellers: Dict[str, Union[BaseSeller, Any]] = {}
 
@@ -71,6 +70,7 @@ class DataMarketplaceFederated(DataMarketplace):
         # e.g. you might pass the aggregator's self.global_model directly
 
         for seller_id, seller in self.sellers.items():
+            # for martfl, local have no access to the global params
             grad_np, local_size = seller.get_gradient(current_params)
             # Expect get_gradient(...) -> (np.ndarray, int) or similar
             gradients.append(grad_np)
@@ -101,13 +101,15 @@ class DataMarketplaceFederated(DataMarketplace):
 
         return selected_grads, selected_sizes, selected_seller_ids
 
-    def aggregate_gradients(self,
-                            gradients: List[np.ndarray],
+    def aggregate_gradients(self, round_number,
+                            seller_updates: List[np.ndarray],
+                            buyer_updates: List[np.ndarray],
                             sizes: List[int]) -> np.ndarray:
         """
         Use the aggregator to compute an aggregated gradient.
         """
-        aggregated_grad = self.aggregator.aggregate(gradients, sizes, method=self.selection_method)
+        aggregated_grad = self.aggregator.aggregate(round_number, seller_updates, buyer_updates, sizes,
+                                                    method=self.selection_method)
         return aggregated_grad
 
     def update_global_model(self, aggregated_gradient: np.ndarray):
@@ -127,9 +129,12 @@ class DataMarketplaceFederated(DataMarketplace):
 
     def train_federated_round(self,
                               round_number: int,
+                              buyer_gradient,
                               num_select: int = None,
-                              test_dataloader=None,
+                              test_dataloader_buyer_local=None,
+                              test_dataloader_global=None,
                               loss_fn=None,
+                              clean_loader=None, triggered_loader=None,
                               **kwargs) -> Dict:
         """
         Perform one round of federated training:
@@ -150,48 +155,67 @@ class DataMarketplaceFederated(DataMarketplace):
         """
 
         # 1. get gradients from sellers
-        gradients, sizes, seller_ids = self.get_current_market_gradients()
-
-        # 2. select gradients if needed
-        selected_grads, selected_sizes, selected_sellers = self.select_gradients(
-            gradients, sizes, seller_ids, num_select=num_select, **kwargs
-        )
-
-        # 3. aggregate
-        agg_gradient = self.aggregate_gradients(selected_grads, selected_sizes)
+        seller_gradients, sizes, seller_ids = self.get_current_market_gradients()
+        # 2. perform aggregation
+        aggregated_gradient, selected_ids, outlier_ids, baseline_similarities = self.aggregator.aggregate(round_number,
+                                                                                                          seller_gradients,
+                                                                                                          buyer_gradient,
+                                                                                                          sizes,
+                                                                                                          method=self.selection_method)
 
         # 4. update global model
-        self.update_global_model(agg_gradient)
+        self.update_global_model(aggregated_gradient)
 
-        # 5. broadcast updated global model
-        self.broadcast_global_model()
+        # 5. broadcast updated global model, in martfl the local no broadcast happen
+        if self.broadcast_local:
+            self.broadcast_global_model()
 
         # 6. Evaluate the final global model if test_dataloader is provided
-        final_perf = None
-        if test_dataloader is not None and loss_fn is not None:
+        final_perf_local = None
+        if test_dataloader_buyer_local is not None and loss_fn is not None:
             # Evaluate aggregator.global_model on test set
-            final_perf = self.evaluate_global_model(test_dataloader, loss_fn)
+            final_perf_local = self.evaluate_global_model(test_dataloader_buyer_local, loss_fn)
+
+        final_perf_global = None
+        if test_dataloader_buyer_local is not None and loss_fn is not None:
+            # Evaluate aggregator.global_model on test set
+            final_perf_global = self.evaluate_global_model(test_dataloader_buyer_local, loss_fn)
+
+        poison_metrics = None
+        if clean_loader is not None and triggered_loader is not None:
+            poison_metrics = evaluate_attack_performance_backdoor_poison(self.aggregator.global_model, clean_loader,
+                                                                         triggered_loader,
+                                                                         self.aggregator.device,
+                                                                         target_label=None, plot=True)
 
         # 7. Log round info to aggregator (optional)
         extra_info = {}
-        if final_perf is not None:
-            extra_info["val_loss"] = final_perf["loss"]
-            extra_info["val_acc"] = final_perf["acc"]
+        if final_perf_global is not None:
+            extra_info["val_loss_global"] = final_perf_global["loss"]
+            extra_info["val_acc_global"] = final_perf_global["acc"]
 
+        if final_perf_local is not None:
+            extra_info["val_loss_local"] = final_perf_local["loss"]
+            extra_info["val_acc_local"] = final_perf_local["acc"]
+
+        if poison_metrics is not None:
+            extra_info["poison_metrics"] = poison_metrics
+        extra_info["outlier_ids"] = outlier_ids
         self.aggregator.log_round_info(
             round_number=round_number,
-            selected_sellers=selected_sellers,
-            aggregated_gradient=agg_gradient,
+            selected_sellers=selected_ids,
+            aggregated_gradient=aggregated_gradient,
             extra_info=extra_info
         )
 
         # 8. Also store a high-level record in the marketplace logs
         round_record = {
             "round_number": round_number,
-            "used_sellers": selected_sellers,
-            "num_sellers_selected": len(selected_sellers),
+            "used_sellers": selected_ids,
+            "outlier_ids": outlier_ids,
+            "num_sellers_selected": len(selected_ids),
             "selection_method": self.selection_method,
-            "aggregated_grad_norm": float(np.linalg.norm(agg_gradient)) if agg_gradient.size > 0 else 0.0,
+            "aggregated_grad_norm": float(np.linalg.norm(aggregated_gradient)) if aggregated_gradient.size > 0 else 0.0,
             "final_perf": final_perf
         }
         self.round_logs.append(round_record)
@@ -199,7 +223,7 @@ class DataMarketplaceFederated(DataMarketplace):
         # 9. Update each seller about whether they were selected
         for sid in self.sellers:
             # Mark "is_selected" if in selected_sellers
-            is_selected = (sid in selected_sellers)
+            is_selected = (sid in selected_ids)
             self.sellers[sid].record_federated_round(round_number, is_selected)
 
         return round_record
@@ -254,7 +278,9 @@ class DataMarketplaceFederated(DataMarketplace):
         with open(path, "w") as f:
             json.dump(self.round_logs, f, indent=2)
 
-
+    @property
+    def get_all_sellers(self):
+        return self.sellers
 # class DataMarketplaceFederated(DataMarketplace):
 #     def __init__(self,
 #                  aggregator: Aggregator,

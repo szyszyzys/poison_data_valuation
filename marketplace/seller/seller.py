@@ -1,5 +1,6 @@
 import json
 from abc import ABC
+from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
 import numpy as np
@@ -30,7 +31,8 @@ class BaseSeller(ABC):
                  dataset: List[Tuple[torch.Tensor, int]],
                  price_strategy: str = 'uniform',
                  base_price: float = 1.0,
-                 price_variation: float = 0.2):
+                 price_variation: float = 0.2,
+                 save_path=""):
         self.seller_id = seller_id
         self.dataset = dataset  # Full dataset (whether used for data selling or gradient).
         self.price_strategy = price_strategy
@@ -51,6 +53,9 @@ class BaseSeller(ABC):
         # "Current" data and price that might be offered to the market
         self.cur_data = self.dataset
         self.cur_price = self.prices
+        self.save_path = save_path
+
+        Path(self.exp_save_path).mkdir(parents=True, exist_ok=True)
 
     @property
     def get_data(self) -> Dict[str, Any]:
@@ -120,13 +125,17 @@ class BaseSeller(ABC):
             'market_share': self.stats.market_share,
         }
 
-    def save_statistics(self, output_path: str):
+    def save_statistics(self):
         """Save statistics and selection/federated round history to a JSON file."""
         stats_data = {
             'statistics': self.get_statistics(),
             'selection_history': self.selection_history,
             'federated_round_history': self.federated_round_history,
         }
-
+        output_path = f"{self.exp_save_path}/result.json"
         with open(output_path, 'w') as f:
             json.dump(stats_data, f, indent=2)
+
+    @property
+    def exp_save_path(self):
+        return f'{self.save_path}/{self.seller_id}'

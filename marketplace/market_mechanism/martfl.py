@@ -6,6 +6,7 @@ from torch import nn
 
 from marketplace.utils.gradient_market_utils.clustering import optimal_k, kmeans_1d
 from marketplace.utils.model_utils import load_model, save_model
+from model.utils import get_model
 
 
 # -----------------------------------------------------
@@ -31,16 +32,15 @@ class Aggregator:
     """
 
     def __init__(self,
-                 exp_name: str,
+                 save_path: str,
                  n_seller: int,
                  n_adversaries: int,
-                 backup_models: list,
-                 client_models: list,
+                 dataset_name: str,
                  model_structure: nn.Module = None,
                  quantization: bool = False,
                  device=None):
         """
-        :param exp_name:         Name/identifier of the current experiment.
+        :param save_path:         Name/identifier of the current experiment.
         :param n_seller:   Total number of participant clients.
         :param n_adversaries:    Number of adversarial clients (not always used).
         :param backup_models:    List of model checkpoints (names) used as "backup."
@@ -49,7 +49,7 @@ class Aggregator:
         :param quantization:     Whether to do quantized aggregation.
         :param device:           Torch device (CPU/GPU) to run computations.
         """
-        self.exp_name = exp_name
+        self.exp_name = save_path
         self.n_seller = n_seller
         self.n_adversaries = n_adversaries
         self.backup_models = backup_models
@@ -58,7 +58,7 @@ class Aggregator:
         self.device = device
         self.server = 0
         self.quantization = quantization
-
+        self.global_model = get_model(dataset_name)
         # An example to track "best candidate" or further logic if you need:
         self.max_indexes = [0]
 
@@ -126,168 +126,154 @@ class Aggregator:
                 # Update rule (SGD):
                 tensor[...] = tensor - learning_rate * grad_slice
 
+    def aggregate(self, global_epoch, seller_updates, buyer_updates, sizes, method="martfl"):
+        return self.martFL(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates = buyer_updates)
+
     # ---------------------------
     # Main Federated Aggregation (martFL)
     # ---------------------------
     def martFL(self,
                global_epoch: int,
-               server_dataloader,
-               loss_fn,
-               buyer_updates,
                seller_updates,
-               change_base: bool,
+               buyer_updates,
+               change_base: bool = False,
                ground_truth_model=None):
         """
-        Performs the martFL algorithm:
-          1) Calculate each client's gradient update (vs. its own old model).
-          2) Compute a 'cosine' score vs. the server's gradient update.
-          3) Cluster clients, identify outliers or malicious updates,
-             optionally rotate 'server' to the best candidate in that cluster.
-          4) Aggregate the selected (non-outlier) updates, with weighting.
-          5) Update all client models, optionally with quantized integration.
-        :param global_epoch:       Current global epoch index.
-        :param server_dataloader:  Dataloader for evaluating potential server models.
-        :param loss_fn:            Loss function used in evaluation.
-        :param change_base:        If True, attempt to change the "server" client based on cluster logic.
-        :param ground_truth_model: A reference model to compare with (for baseline scoring).
-        :return: (weight, self.server, baseline_score)
-        """
+        Performs the martFL aggregation:
+          1) Compute each client's flattened & clipped gradient update.
+          2) Compute the cosine similarity of each client’s update to the server’s update.
+          3) Cluster the cosine similarities to identify outliers.
+          4) Normalize the resulting “non-outlier” scores to derive weights.
+          5) For each seller, compute its cosine similarity to a baseline update (from a ground-truth model).
+          6) Aggregate the updates using the computed weights.
+          7) Update client models accordingly.
 
+        Returns:
+           aggregated_gradient: the aggregated update (list of tensors, same structure as model parameters)
+           selected_ids: list of indices of sellers whose gradients are selected (non-outliers)
+           outlier_ids: list of indices of sellers whose gradients are labeled as outliers
+           baseline_similarities: list of cosine similarities of each seller's update to the baseline update.
+        """
         print("change_base :", change_base)
         print("global_epoch :", global_epoch)
 
-        # 1. Initialize an empty aggregated gradient container.
-        # Using torch.zeros_like ensures we create tensors with the same shape and device.
+        # Number of sellers
+        self.n_seller = len(seller_updates)
+
+        # 1. Initialize aggregated_gradient as zeros (same shape as each parameter)
         aggregated_gradient = [
             torch.zeros_like(param, device=self.device)
             for param in self.model_structure.parameters()
         ]
 
-        # 2. Compute each client's clipped gradient update.
-        #    The update is flattened and clipped to a norm bound (e.g., 0.01).
+        # 2. For each seller update, clip and flatten it
         clients_update_flattened = [
             flatten(clip_gradient_update(update, clip_norm=0.01))
             for update in seller_updates
         ]
 
-        # 3. Get the server's update.
-        #    Here we clone and detach to ensure the update is not part of any gradient computation.
-        server_update_flattened = seller_updates.clone().detach()
+        # 3. Define the server update (using the seller indexed by self.server)
+        server_update_flattened = clients_update_flattened[self.server]
 
-        # 4. Compute similarity (using an encrypted cosine function) between the server update
-        #    and each client's flattened update. We assume that seller_updates includes the server,
-        #    so if needed, skip the server during further processing.
+        # 4. Compute cosine similarities between server's update and each seller's update.
         cosine_result = [
             encrypted_cosine_xy(server_update_flattened, clients_update_flattened[i])
             for i in range(self.n_seller)
         ]
-        np_cosine_result = np.array(cosine_result)  # For numerical operations in clustering
+        np_cosine_result = np.array(cosine_result)
 
-        # 5. Run clustering on the cosine similarities.
-        #    Compute the diameter (max difference) of the similarity values.
+        # 5. Clustering on cosine similarities:
         diameter = np.max(np_cosine_result) - np.min(np_cosine_result)
         print("Diameter:", diameter)
-
-        # Determine the optimal number of clusters using a optimal_k statistic function.
         n_clusters = optimal_k(np_cosine_result)
-        # Heuristic: if optimal_k suggests 1 cluster but the diameter is large, force 2 clusters.
         if n_clusters == 1 and diameter > 0.05:
             n_clusters = 2
-
-        # Perform k-means clustering on the cosine similarities.
         clusters, centroids = kmeans_1d(np_cosine_result, n_clusters)
         print("Centroids:", centroids)
         print(f"{n_clusters} Clusters:", clusters)
+        center = centroids[-1] if len(centroids) > 0 else 0.0
 
-        # Choose a reference center from the centroids.
-        # Here, we use the last centroid if available (consider adapting this logic as needed).
-        center = centroids[-1] if centroids else 0.0
-
-        # 6. Secondary clustering check with k=2 for further outlier detection.
+        # 6. Secondary clustering for further outlier detection (with k=2)
         if n_clusters == 1:
             clusters_secondary = [1] * self.n_seller
         else:
             clusters_secondary, _ = kmeans_1d(np_cosine_result, 2)
         print("Secondary Clustering:", clusters_secondary)
 
-        # 7. Determine the border for outlier detection.
-        #    We compute the maximum absolute distance from the reference center,
-        #    skipping the server (assumed to be at index 0 or a specified index self.server).
+        # 7. Determine border for outlier detection (max distance from center, skipping server)
         border = 0.0
         for i, (cos_sim, sec_cluster) in enumerate(zip(cosine_result, clusters_secondary)):
             if i == 0 or i == self.server:
                 continue
-
-            # For the main cluster (or if only one cluster was identified), measure the distance.
             if n_clusters == 1 or sec_cluster != 0:
                 dist = abs(center - cos_sim)
                 if dist > border:
                     border = dist
         print("Border:", border)
 
-        # 8. Mark outliers:
-        #    Here we initialize a marker list where 1.0 indicates a non-outlier (kept)
-        #    and 0.0 will later indicate an outlier.
-        non_outliers = [1.0] * self.n_seller
+        # 8. Mark outliers: Build a list of non_outlier scores.
+        non_outliers = [1.0 for _ in range(self.n_seller)]
         candidate_server = []
-
         for i in range(self.n_seller):
             if clusters_secondary[i] == 0 or cosine_result[i] == 0.0:
-                # Mark potential “attackers”
-                non_outliers[i] = 0.0
+                non_outliers[i] = 0.0  # mark as outlier
             else:
-                # We measure how far from the center
                 dist = abs(center - cosine_result[i])
                 non_outliers[i] = 1.0 - dist / (border + 1e-6)
-                # If it is in the last cluster (n_clusters-1), consider it a candidate
                 if clusters[i] == n_clusters - 1:
                     candidate_server.append(i)
-                    non_outliers[i] = 1.0
+                    non_outliers[i] = 1.0  # force inlier for candidate server
 
-        # 8. Combine outlier factor with the original cosines
+        # Identify selected (inlier) and outlier seller indices.
+        selected_ids = [i for i in range(self.n_seller) if non_outliers[i] > 0.0]
+        outlier_ids = [i for i in range(self.n_seller) if non_outliers[i] == 0.0]
+
+        # 9. Use the non_outlier scores as final weights.
+        # (Overwrite cosine_result with non_outliers)
         for i in range(self.n_seller):
             cosine_result[i] = non_outliers[i]
-
-        # 9. Normalize to get final weights
-        cosine_weight = torch.tensor(cosine_result, dtype=torch.float)
+        cosine_weight = torch.tensor(cosine_result, dtype=torch.float, device=self.device)
         denom = torch.sum(torch.abs(cosine_weight)) + 1e-6
         weight = cosine_weight / denom
 
-        # -------------------------------------------
-        # Compare to “ground_truth_model” for baseline_score
-        # -------------------------------------------
+        # 10. Compute baseline cosine similarity for each seller.
+        # Compute the baseline update from a ground-truth model.
         ground_truth_updates = compute_ground_truth_updates(
             self.exp_name, self.backup_models[0], ground_truth_model, self.device
         )
         ground_truth_updates_flat = flatten(ground_truth_updates)
-        baseline_updates_flat = clients_update_flattened[self.server]
-        baseline_score = cosine_xy(ground_truth_updates_flat, baseline_updates_flat)
-        print("baseline_score", baseline_score)
+        baseline_similarities = []
+        for i in range(self.n_seller):
+            bs = cosine_xy(ground_truth_updates_flat, clients_update_flattened[i])
+            baseline_similarities.append(bs)
+        print("Baseline similarities:", baseline_similarities)
 
-        # -------------------------------------------
-        # Final aggregation: sum up all updates with 'weight'
-        # -------------------------------------------
-        update_gradients = self.get_update_gradients()
+        # 11. Final aggregation: sum weighted gradients.
+        update_gradients = self.get_update_gradients()  # Should return a list of updates (each update is list of tensors)
         for gradient, wt in zip(update_gradients, weight):
             add_gradient_updates(aggregated_gradient, gradient, weight=wt)
 
-        # -------------------------------------------
-        # Update each client model
-        # -------------------------------------------
+        # 12. Update each client model (here using classic update; quantization not implemented)
         if self.quantization:
-            raise NotImplementedError("quantization not implemented.")
+            raise NotImplementedError("Quantization not implemented.")
         else:
-            # Classic approach: update each client by applying aggregated_gradient
             for i, model_name in enumerate(self.client_models):
-                model = load_model(
-                    self.exp_name,
-                    get_backup_name_from_model_name(model_name),
-                    self.device
-                )
+                model = load_model(self.exp_name, get_backup_name_from_model_name(model_name), self.device)
                 updated_model = add_update_to_model(model, aggregated_gradient, weight=1.0, device=self.device)
                 save_model(self.exp_name, model_name, updated_model)
 
-        return weight, self.server, baseline_score
+        # Return aggregated gradient, selected seller IDs, outlier seller IDs, and baseline similarities.
+        return aggregated_gradient, selected_ids, outlier_ids, baseline_similarities
+
+    def log_round_info(self,
+                       round_number=round_number,
+                       selected_sellers=selected_sellers,
+                       aggregated_gradient=agg_gradient,
+                       extra_info=extra_info
+                       ):
+
+
+# todo
 
 
 # ---------------------------------------------------------

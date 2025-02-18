@@ -134,7 +134,7 @@ def get_data_set(dataset_name, num_clients=10, iid=True):
     splits = split_dataset(dataset, num_clients, iid=iid)
     client_loaders = create_client_dataloaders(dataset, splits, batch_size=64)
     print("IID Splits:")
-    for cid, loader in client_loaders_iid.items():
+    for cid, loader in client_loaders.items():
         print(f"  Client {cid}: {len(loader.dataset)} samples")
     return client_loaders
 

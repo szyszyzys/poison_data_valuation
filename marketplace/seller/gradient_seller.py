@@ -5,6 +5,7 @@ import pandas as pd
 import torch
 
 from marketplace.seller.seller import BaseSeller
+from model.utils import get_model, load_model, local_training_and_get_gradient
 
 
 # You already have these classes in your project:
@@ -22,8 +23,10 @@ class GradientSeller(BaseSeller):
                  seller_id: str,
                  local_data: List[Tuple[torch.Tensor, int]],
                  price_strategy: str = 'uniform',
+                 dataset_name: str = 'dataset',
                  base_price: float = 1.0,
-                 price_variation: float = 0.2):
+                 price_variation: float = 0.2,
+                 save_path=""):
         """
         :param seller_id: Unique ID for the seller.
         :param local_data: The local dataset this seller holds for gradient computation.
@@ -36,36 +39,65 @@ class GradientSeller(BaseSeller):
             dataset=local_data,  # We store the local dataset internally.
             price_strategy=price_strategy,
             base_price=base_price,
-            price_variation=price_variation
+            price_variation=price_variation, save_path=save_path
         )
 
         # Possibly store local model parameters or placeholders.
         # E.g., we might keep them in this field after each training round:
+        self.dataset_name = dataset_name
         self.local_model_params: Optional[np.ndarray] = None
 
     def set_local_model_params(self, params: np.ndarray):
         """Set (or update) local model parameters before computing gradient."""
         self.local_model_params = params
 
-    def get_gradient(self, global_params: np.ndarray) -> (np.ndarray, int):
+    def get_gradient(self, global_params: np.ndarray = None) -> (np.ndarray, int):
         """
         Compute the gradient w.r.t. the global model using this seller's local data.
 
         :param global_params: The current global model parameters.
         :return: (gradient, data_size), for example
         """
-        # ---- Example / Pseudocode below: ----
-        # 1. Possibly set local model = global_params
-        #    or do a few local steps
-        # 2. Compute gradient from local_data
-        # 3. Return the gradient and local data size
+        """
+        Return a single 'final' gradient that merges:
+          1) benign gradient
+          2) backdoor gradient
+          3) partial alignment w/ a guessed server gradient
+        """
+        # 1) Compute benign gradient
+        if global_params is not None:
+            base_param = global_params
+        else:
+            base_param = load_model(model, path, device)
+        gradient = self._compute_local_grad(base_param, self.dataset)
+        gradient_np = gradient.cpu().numpy()
 
-        # For demonstration, let's just do a dummy gradient:
-        data_size = len(self.dataset)
-        # Suppose the model params and data are 1D for demonstration
-        # Real code would depend on how your model is structured
-        gradient = np.random.randn(*global_params.shape)  # dummy gradient
-        return gradient, data_size
+        # store for analysis
+        # self.last_benign_grad = np.clip(g_benign_np, -self.clip_value, self.clip_value)
+        # self.last_poisoned_grad = final_poisoned
+
+        return gradient, len(self.dataset)
+
+    def _compute_local_grad(self, global_params: Dict[str, torch.Tensor],
+                            dataset: List[Tuple[torch.Tensor, int]]) -> torch.Tensor:
+        """
+        In practice:
+         1) Build local model from 'global_params'
+         2) Run forward/backward on `dataset`
+         3) Return flattened gradient
+        We do a dummy example here for demonstration.
+        """
+        model = get_model(self.dataset_name)
+        model = load_model(model=model, path=self.client_path, device=self.device)
+        flat_update, train_size = local_training_and_get_gradient(model, self.dataset,
+                                                                  batch_size=64,
+                                                                  device=self.device,
+                                                                  local_epochs=self.local_epochs,
+                                                                  lr=0.01)
+
+        # 4. Free the model (or let it go out of scope)
+        del model  # Free memory if necessary
+        return flat_update
 
     def record_federated_round(self,
                                round_number: int,
@@ -110,106 +142,9 @@ class GradientSeller(BaseSeller):
     def get_federated_history(self):
         return self.federated_round_history
 
-
-class AdversaryGradientSeller(GradientSeller):
-    """
-    A malicious seller that returns adversarial (fake) gradients
-    in order to poison the global model.
-    """
-
-    def __init__(self,
-                 seller_id: str,
-                 local_data: np.ndarray,
-                 attack_type: str = "flip",
-                 attack_scale: float = 10.0,
-                 price_strategy: str = 'uniform',
-                 base_price: float = 1.0,
-                 price_variation: float = 0.2):
-        """
-        :param seller_id: Unique ID
-        :param local_data: The local dataset (unused if you are returning fake gradients).
-        :param attack_type: Type of attack, e.g. "flip", "scale", "random", "targeted" ...
-        :param attack_scale: Magnitude factor for certain attacks.
-        :param price_strategy: If needed for pricing, else 'none'.
-        :param base_price: Base price for each data point (if used).
-        :param price_variation: Variation in price (if used).
-        """
-        super().__init__(
-            seller_id=seller_id,
-            local_data=local_data,
-            price_strategy=price_strategy,
-            base_price=base_price,
-            price_variation=price_variation
-        )
-        self.attack_type = attack_type
-        self.attack_scale = attack_scale
-
-    def get_gradient(self, global_params: np.ndarray):
-        """
-        Override the parent's gradient calculation with a malicious/fake gradient.
-        """
-        # 1) Compute the honest gradient (if you want to base your attack on it)
-        honest_grad, data_size = super().get_gradient(global_params)
-
-        # 2) Transform it (or ignore it) to produce a malicious gradient
-        malicious_grad = self.perform_attack(honest_grad)
-
-        # 3) Record adversarial participation
-        #    You might store this round number if the aggregator or marketplace passes it in as well.
-        round_number = len(self.federated_round_history) + 1
-        self.record_federated_round(round_number=round_number,
-                                    is_selected=True,  # or some logic
-                                    final_model_params=None,
-                                    is_adversarial=True)
-
-        return malicious_grad, data_size
-
-    def perform_attack(self, honest_grad: List[torch.Tensor]) -> List[torch.Tensor]:
-        """
-        Given the 'honest' gradient, produce a malicious gradient.
-        You can implement many strategies here.
-        """
-        if self.attack_type == "flip":
-            # Flip the sign
-            return [(-1.0 * g) for g in honest_grad]
-
-        elif self.attack_type == "scale":
-            # Multiply by some large scalar
-            return [(self.attack_scale * g) for g in honest_grad]
-
-        elif self.attack_type == "random":
-            # Replace with random noise of the same shape
-            return [torch.randn_like(g) * self.attack_scale for g in honest_grad]
-
-        elif self.attack_type == "zeros":
-            # Nullify the gradient entirely
-            return [torch.zeros_like(g) for g in honest_grad]
-
-        # Add more custom logic if you want targeted poisoning
-        # e.g., based on certain classes or specially crafted updates.
-
-        # Default: do nothing (still return honest gradient)
-        return honest_grad
-
-    def record_federated_round(self,
-                               round_number: int,
-                               is_selected: bool,
-                               final_model_params: Optional[np.ndarray] = None,
-                               is_adversarial: bool = False):
-        """
-        Extended to tag this as an adversarial event if 'is_adversarial=True'.
-        """
-        record = {
-            'event_type': 'federated_round',
-            'round_number': round_number,
-            'timestamp': pd.Timestamp.now().isoformat(),
-            'selected': is_selected,
-            'adversarial': is_adversarial
-        }
-        if final_model_params is not None:
-            record['final_model_params'] = final_model_params.tolist()
-
-        self.federated_round_history.append(record)
+    @property
+    def local_model_path(self):
+        return {self.exp_save_path}
 
 
 class AdvancedBackdoorAdversarySeller(GradientSeller):
@@ -228,7 +163,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  alpha_align: float = 0.5,
                  poison_strength: float = 0.7,
                  clip_value: float = 0.01,
-                 trigger_type: str = "blended_patch"):
+                 trigger_type: str = "blended_patch", save_path=""):
         """
         :param local_data:        List[(image_tensor, label_int)] for the local training set.
         :param target_label:      The label the attacker wants the model to predict for triggered images.
@@ -238,7 +173,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         :param clip_value:        Max abs value for gradient components (aggregator clamp).
         :param trigger_type:      e.g. "blended_patch", "invisible", "random_noise_patch", etc.
         """
-        super().__init__(seller_id, local_data)
+        super().__init__(seller_id, local_data, save_path=save_path)
         self.target_label = target_label
         self.trigger_fraction = trigger_fraction
         self.alpha_align = alpha_align
@@ -336,19 +271,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         self.last_poisoned_grad = final_poisoned
 
         return final_poisoned, len(self.local_data)
-
-    def _compute_local_grad(self, global_params: Dict[str, torch.Tensor],
-                            dataset: List[Tuple[torch.Tensor, int]]) -> torch.Tensor:
-        """
-        In practice:
-         1) Build local model from 'global_params'
-         2) Run forward/backward on `dataset`
-         3) Return flattened gradient
-        We do a dummy example here for demonstration.
-        """
-        dim = 200  # e.g., bigger dimension
-        grad = torch.randn(dim) * 0.001
-        return grad
 
     def record_federated_round(self, round_number: int, is_selected: bool,
                                final_model_params: Optional[np.ndarray] = None):
