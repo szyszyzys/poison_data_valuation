@@ -133,6 +133,14 @@ def load_model(model: nn.Module, path: str, device: torch.device):
     return model
 
 
+def load_param(path: str, device: torch.device):
+    """
+    Load a model's state_dict from the specified file path.
+    """
+    state_dict = torch.load(path, map_location=device)
+    print(f"Model loaded from {path}")
+    return state_dict
+
 def get_model(dataset_name):
     match dataset_name:
         case "CIFAR":

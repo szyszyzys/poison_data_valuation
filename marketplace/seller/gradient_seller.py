@@ -5,7 +5,7 @@ import pandas as pd
 import torch
 
 from marketplace.seller.seller import BaseSeller
-from model.utils import get_model, load_model, local_training_and_get_gradient
+from model.utils import get_model, local_training_and_get_gradient, load_param
 
 
 # You already have these classes in your project:
@@ -46,67 +46,100 @@ class GradientSeller(BaseSeller):
         # E.g., we might keep them in this field after each training round:
         self.dataset_name = dataset_name
         self.local_model_params: Optional[np.ndarray] = None
+        self.current_round = 0
 
     def set_local_model_params(self, params: np.ndarray):
         """Set (or update) local model parameters before computing gradient."""
         self.local_model_params = params
 
-    def get_gradient(self, global_params: np.ndarray = None) -> (np.ndarray, int):
+    def get_gradient(self, global_params: Optional[Dict[str, torch.Tensor]] = None) -> (torch.Tensor, int):
         """
-        Compute the gradient w.r.t. the global model using this seller's local data.
+        Compute the gradient with respect to a base model using this seller's local data.
+        If global_params is provided, use them to initialize the local model.
+        Otherwise, load the previously saved local model (if available) or fallback to a default.
 
-        :param global_params: The current global model parameters.
-        :return: (gradient, data_size), for example
+        :param global_params: Optional global model parameters.
+        :return: Tuple (flattened_gradient, data_size)
         """
-        """
-        Return a single 'final' gradient that merges:
-          1) benign gradient
-          2) backdoor gradient
-          3) partial alignment w/ a guessed server gradient
-        """
-        # 1) Compute benign gradient
+        # 1. Determine the base parameters for local training.
         if global_params is not None:
-            base_param = global_params
+            base_params = global_params
         else:
-            base_param = load_model(model, path, device)
-        gradient = self._compute_local_grad(base_param, self.dataset)
-        gradient_np = gradient.cpu().numpy()
+            try:
+                base_params = self.load_local_model()
+                print(f"[{self.seller_id}] Loaded previous local model.")
+            except Exception as e:
+                print(f"[{self.seller_id}] No saved local model found; using default initialization.")
+                base_params = load_param("f")  # fallback default
 
-        # store for analysis
-        # self.last_benign_grad = np.clip(g_benign_np, -self.clip_value, self.clip_value)
-        # self.last_poisoned_grad = final_poisoned
+        # 2. Train locally starting from base_params, obtain the local gradient update
+        gradient, updated_model = self._compute_local_grad(base_params, self.dataset)
 
+        # 3. Save the updated local model for future rounds.
+        self.save_local_model(updated_model)
+
+        self.current_round += 1
         return gradient, len(self.dataset)
 
-    def _compute_local_grad(self, global_params: Dict[str, torch.Tensor],
-                            dataset: List[Tuple[torch.Tensor, int]]) -> torch.Tensor:
+    def _compute_local_grad(self, base_params: Dict[str, torch.Tensor],
+                            dataset: List[Tuple[torch.Tensor, int]]) -> (torch.Tensor, torch.nn.Module):
         """
-        In practice:
-         1) Build local model from 'global_params'
-         2) Run forward/backward on `dataset`
-         3) Return flattened gradient
-        We do a dummy example here for demonstration.
-        """
-        model = get_model(self.dataset_name)
-        model = load_model(model=model, path=self.client_path, device=self.device)
-        flat_update, train_size = local_training_and_get_gradient(model, self.dataset,
-                                                                  batch_size=64,
-                                                                  device=self.device,
-                                                                  local_epochs=self.local_epochs,
-                                                                  lr=0.01)
+        Build and update a local model using the base parameters and local data.
+        This function:
+          1) Builds a local model using get_model()
+          2) Loads the base parameters into the model
+          3) Trains the model locally and computes a flattened gradient update.
+          4) Returns the flattened gradient and the updated model.
 
-        # 4. Free the model (or let it go out of scope)
-        del model  # Free memory if necessary
-        return flat_update
+        :param base_params: The initial parameters for the local model.
+        :param dataset: Local data as a list of (image, label) tuples.
+        :return: Tuple (flattened_gradient, updated_model)
+        """
+        # Create a new model instance
+        model = get_model(self.dataset_name)
+        # Load base parameters into the model
+        model.load_state_dict(base_params)
+        model = model.to(self.device)
+
+        # Perform local training and get the flattened gradient update.
+        flat_update, train_size = local_training_and_get_gradient(
+            model, dataset, batch_size=64, device=self.device,
+            local_epochs=self.local_epochs, lr=0.01
+        )
+
+        # Optionally, you might want to clip the gradient here.
+        # flat_update = torch.clamp(flat_update, -self.clip_value, self.clip_value)
+
+        return flat_update, model
+
+    def save_local_model(self, model: torch.nn.Module):
+        """
+        Save the local model parameters to disk for future rounds.
+        """
+        # Build the save path based on client_path and seller_id.
+        save_path = f"{self.save_path}/local_model_{self.seller_id}.pt"
+        torch.save(model.state_dict(), save_path)
+        print(f"[{self.seller_id}] Saved local model to {save_path}.")
+
+    def load_local_model(self) -> Dict[str, torch.Tensor]:
+        """
+        Load the local model parameters from disk.
+        """
+        load_path = f"{self.save_path}/local_model_{self.seller_id}.pt"
+        state_dict = torch.load(load_path, map_location=self.device)
+        return state_dict
 
     def record_federated_round(self,
                                round_number: int,
                                is_selected: bool,
-                               final_model_params: Optional[np.ndarray] = None):
+                               final_model_params: Optional[Dict[str, torch.Tensor]] = None):
         """
-        Record the seller's participation in a federated round.
-        E.g. whether it computed a gradient, whether it was chosen for the final model,
-        and possibly store its local or final model parameters.
+        Record this seller's participation in a federated round.
+        This may include whether it was selected, and (optionally) its final local model parameters.
+
+        :param round_number: The current round index.
+        :param is_selected:  Whether this seller's update was selected.
+        :param final_model_params: Optionally, the final local model parameters.
         """
         record = {
             'event_type': 'federated_round',
@@ -115,17 +148,9 @@ class GradientSeller(BaseSeller):
             'selected': is_selected
         }
         if final_model_params is not None:
-            # You might store them as a list or as a separate file if large
-            record['final_model_params'] = final_model_params.tolist()
-
+            # Convert state_dict tensors to lists (or use another serialization as needed).
+            record['final_model_params'] = {k: v.cpu().numpy().tolist() for k, v in final_model_params.items()}
         self.federated_round_history.append(record)
-
-        # Optionally update some stats about FL participation.
-        # For instance:
-        # self.stats.rounds_participated += 1
-        # if is_selected:
-        #     self.stats.rounds_selected += 1
-        # etc.
 
     # If you don't need the .get_data() returning "X" and "cost", you can override it:
     @property
@@ -163,7 +188,9 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  alpha_align: float = 0.5,
                  poison_strength: float = 0.7,
                  clip_value: float = 0.01,
-                 trigger_type: str = "blended_patch", save_path=""):
+                 trigger_type: str = "blended_patch",
+                 backdoor_generator=None,
+                 save_path=""):
         """
         :param local_data:        List[(image_tensor, label_int)] for the local training set.
         :param target_label:      The label the attacker wants the model to predict for triggered images.
@@ -187,6 +214,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         # Pre-split data
         self.backdoor_data, self.clean_data = self._inject_triggers(local_data, trigger_fraction)
+        self.backdoor_generator = backdoor_generator
 
     def _inject_triggers(self, data: List[Tuple[torch.Tensor, int]], fraction: float):
         """
@@ -204,7 +232,10 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         for i, (img, label) in enumerate(data):
             if i in idxs:
                 # create a triggered version of 'img'
-                triggered_img = self._apply_stealth_trigger(img)
+                if self.backdoor_generator is None:
+                    triggered_img = self._apply_stealth_trigger(img)
+                else:
+                    triggered_img = self.backdoor_generator.apply_trigger_tensor(img)
                 backdoor_data.append((triggered_img, self.target_label))
             else:
                 clean_data.append((img, label))

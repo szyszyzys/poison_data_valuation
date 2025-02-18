@@ -31,6 +31,7 @@ stealth_grad = stealth_backdoor_attack(honest_grad, pattern_vector,
 """
 
 import numpy as np
+import torch
 
 
 def raw_backdoor_attack(honest_gradient: np.ndarray,
@@ -192,3 +193,105 @@ def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
     if norm1 < 1e-12 or norm2 < 1e-12:
         return 0.0
     return dot_val / (norm1 * norm2)
+
+
+class BackdoorImageGenerator:
+    def __init__(self,
+                 trigger_pattern: torch.Tensor,
+                 target_label: int,
+                 alpha: float = 0.1,
+                 location: str = "bottom_right",
+                 randomize_location: bool = False):
+        """
+        :param trigger_pattern: A torch.Tensor of shape (h, w, c) representing the trigger.
+                                It should have the same number of channels as your input images.
+        :param target_label: The target label to assign to poisoned samples.
+        :param alpha: Blending factor (e.g. 0.1 means 10% trigger, 90% original).
+        :param location: Placement for the trigger: "bottom_right", "top_left", or "center".
+        :param randomize_location: If True, place the trigger at a random location.
+        """
+        self.trigger_pattern = trigger_pattern.float()
+        self.target_label = target_label
+        self.alpha = alpha
+        self.location = location
+        self.randomize_location = randomize_location
+
+    def apply_trigger_tensor(self, image: torch.Tensor) -> torch.Tensor:
+        """
+        Applies the trigger pattern to a single image using torch operations directly.
+
+        :param image: A torch.Tensor of shape (H, W, C) with pixel values in [0, 255].
+        :return: A new torch.Tensor with the trigger applied.
+        """
+        # Ensure image is float32 for processing.
+        image = image.float()
+        H, W, C = image.shape
+        h, w, _ = self.trigger_pattern.shape
+
+        # Determine placement of the trigger.
+        if self.randomize_location:
+            x = torch.randint(0, max(W - w, 1), (1,)).item()
+            y = torch.randint(0, max(H - h, 1), (1,)).item()
+        else:
+            if self.location == "bottom_right":
+                x = W - w
+                y = H - h
+            elif self.location == "top_left":
+                x = 0
+                y = 0
+            elif self.location == "center":
+                x = (W - w) // 2
+                y = (H - h) // 2
+            else:
+                # Default to bottom_right if unknown location.
+                x = W - w
+                y = H - h
+
+        # Create a copy of the image to avoid modifying the original.
+        poisoned = image.clone()
+
+        # Extract the region where the trigger will be applied.
+        region = poisoned[y:y + h, x:x + w, :]
+
+        # Apply alpha blending: new_pixel = (1 - alpha) * original + alpha * trigger.
+        # Make sure the trigger is on the same device as the image.
+        blended_region = (1 - self.alpha) * region + self.alpha * self.trigger_pattern.to(region.device)
+
+        # Clamp the pixel values to [0, 255] and update the region.
+        poisoned[y:y + h, x:x + w, :] = torch.clamp(blended_region, 0, 255)
+
+        # Convert back to the original dtype (e.g., uint8 if needed)
+        return poisoned.to(image.dtype)
+
+    def generate_poisoned_dataset(self, X: torch.Tensor, y: torch.Tensor, poison_rate: float = 0.1) -> (
+            torch.Tensor, torch.Tensor):
+        """
+        Given a clean dataset (images and labels as torch.Tensors), randomly poison a subset of the data
+        by applying the backdoor trigger and changing their label to the target label.
+
+        :param X: A torch.Tensor of shape (N, H, W, C) representing the dataset images.
+        :param y: A torch.Tensor of shape (N,) representing the original labels.
+        :param poison_rate: Fraction of samples to poison (e.g., 0.1 for 10%).
+        :return: Tuple (X_poisoned, y_poisoned) where triggered images are modified and labels are set to the target.
+        """
+        X_poisoned = X.clone()
+        y_poisoned = y.clone()
+        N = X.size(0)
+        num_poison = int(poison_rate * N)
+        idxs = torch.randperm(N)[:num_poison]
+
+        for idx in idxs:
+            X_poisoned[idx] = self.apply_trigger_tensor(X_poisoned[idx])
+            y_poisoned[idx] = self.target_label
+
+        return X_poisoned, y_poisoned
+
+    def generate_poisoned_samples(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Given a set of clean samples as a torch.Tensor, apply the trigger to all samples.
+        This is useful for testing the attack.
+
+        :param X: A torch.Tensor of shape (N, H, W, C) representing the input samples.
+        :return: A torch.Tensor of shape (N, H, W, C) containing triggered samples.
+        """
+        return torch.stack([self.apply_trigger_tensor(x) for x in X])

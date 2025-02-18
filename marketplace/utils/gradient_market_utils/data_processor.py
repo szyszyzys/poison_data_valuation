@@ -130,13 +130,12 @@ def get_data_set(dataset_name, num_clients=10, iid=True):
             dataset = load_cifar10_dataset(train=True, download=True)
         case _:
             raise NotImplementedError(f"No current dataset {dataset_name}")
-    # IID split:
     splits = split_dataset(dataset, num_clients, iid=iid)
     client_loaders = create_client_dataloaders(dataset, splits, batch_size=64)
     print("IID Splits:")
     for cid, loader in client_loaders.items():
         print(f"  Client {cid}: {len(loader.dataset)} samples")
-    return client_loaders
+    return client_loaders, dataset
 
 
 if __name__ == "__main__":
@@ -159,3 +158,5 @@ if __name__ == "__main__":
     print("\nNon-IID Splits:")
     for cid, loader in client_loaders_noniid.items():
         print(f"  Client {cid}: {len(loader.dataset)} samples")
+
+

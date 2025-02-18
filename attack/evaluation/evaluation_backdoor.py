@@ -1,11 +1,12 @@
-import numpy as np
-import torch
 import matplotlib.pyplot as plt
+import numpy as np
 import seaborn as sns
+import torch
 from sklearn.metrics import confusion_matrix
 
 
-def evaluate_attack_performance_backdoor_poison(model, clean_loader, triggered_loader, device, target_label=None, plot=True):
+def evaluate_attack_performance_backdoor_poison(model, clean_loader, triggered_loader, device, target_label=None,
+                                                plot=True):
     """
     Evaluate the final model performance in a poisoning/backdoor scenario.
 
@@ -134,7 +135,8 @@ if __name__ == "__main__":
     triggered_loader = DataLoader(triggered_dataset, batch_size=32, shuffle=False)
 
     # Evaluate with target label 0 for backdoor attack.
-    metrics = evaluate_attack_performance_backdoor_poison(model, clean_loader, triggered_loader, device, target_label=0, plot=True)
+    metrics = evaluate_attack_performance_backdoor_poison(model, clean_loader, triggered_loader, device, target_label=0,
+                                                          plot=True)
     print("Evaluation Metrics:")
     for k, v in metrics.items():
         if k != "confusion_matrix_triggered":
