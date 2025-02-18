@@ -47,6 +47,7 @@ class GradientSeller(BaseSeller):
         self.dataset_name = dataset_name
         self.local_model_params: Optional[np.ndarray] = None
         self.current_round = 0
+        self.selected_last_round = False
 
     def set_local_model_params(self, params: np.ndarray):
         """Set (or update) local model parameters before computing gradient."""
@@ -147,6 +148,7 @@ class GradientSeller(BaseSeller):
             'timestamp': pd.Timestamp.now().isoformat(),
             'selected': is_selected
         }
+        self.selected_last_round = is_selected
         if final_model_params is not None:
             # Convert state_dict tensors to lists (or use another serialization as needed).
             record['final_model_params'] = {k: v.cpu().numpy().tolist() for k, v in final_model_params.items()}
@@ -318,4 +320,5 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             "poisoned_grad_norm": float(
                 np.linalg.norm(self.last_poisoned_grad)) if self.last_poisoned_grad is not None else None
         }
+        self.selected_last_round = is_selected
         self.federated_round_history.append(record)
