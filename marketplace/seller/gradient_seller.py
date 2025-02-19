@@ -282,7 +282,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         return triggered_img
 
-    def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> np.ndarray:
+    def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> [np.ndarray]:
         """
         Return a single 'final' gradient that merges:
           1) benign gradient
@@ -330,9 +330,9 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             # final_poisoned_flt = g_backdoor_flt
             final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
             original_shapes = [param.shape for param in g_backdoor_update]
-            final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
         self.last_poisoned_grad = final_poisoned_flt
-        final_poisoned = global_clip_np(final_poisoned, 1)
+        final_poisoned = global_clip_np(final_poisoned_flt, 1)
+        final_poisoned = unflatten_np(final_poisoned, original_shapes)
         cur_local_model = get_model(self.dataset_name)
         updated_params_flat = flatten_state_dict(base_params) - final_poisoned_flt
         new_state_dict = unflatten_state_dict(cur_local_model, updated_params_flat)
