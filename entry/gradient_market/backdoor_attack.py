@@ -174,7 +174,8 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
     # record the result for each seller
     all_sellers = marketplace.get_all_sellers
     for seller_id, seller in all_sellers.items():
-        save_history_to_json(seller.get_federated_history, f"{save_path}/local_log_{seller_id}.json")
+        converted_logs_user = convert_np(seller.get_federated_history)
+        save_history_to_json(converted_logs_user, f"{save_path}/local_log_{seller_id}.json")
 
     # record the attack result for the final round
 

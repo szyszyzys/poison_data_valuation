@@ -7,8 +7,9 @@ echo $PYTHONPATH
 
 # Define arrays for the parameters you want to vary.
 n_sellers_list=(10)
-n_adversaries_list=(1 0)
+n_adversaries_list=(1)
 poison_strength_list=(1.0 0.5)
+
 
 # Set fixed parameters.
 dataset_name="FMINIST"
@@ -21,6 +22,9 @@ seed=42
 gpu_ids="6"
 poison_test_sample=10000
 # Loop over each combination.
+
+IFS=',' read -r -a n_adversaries_list <<< "$n_adversaries_arg"
+
 for n_sellers in "${n_sellers_list[@]}"; do
     for n_adversaries in "${n_adversaries_list[@]}"; do
         for poison_strength in "${poison_strength_list[@]}"; do
