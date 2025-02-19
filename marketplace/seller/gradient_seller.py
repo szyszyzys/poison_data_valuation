@@ -323,23 +323,22 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             self.last_benign_grad = np.clip(g_benign_flt, -self.clip_value, self.clip_value)
         else:
             g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
-            final_poisoned = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
-
+            final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
+            final_poisoned = np.clip(g_backdoor_update, -self.clip_value, self.clip_value)
         # store for analysis
-        self.last_poisoned_grad = final_poisoned
+        self.last_poisoned_grad = final_poisoned_flt
         cur_local_model = get_model(self.dataset_name)
-        updated_params_flat = flatten_state_dict(base_params) - final_poisoned
+        updated_params_flat = flatten_state_dict(base_params) - final_poisoned_flt
 
         # Convert the updated flat parameters back into the model's state dict format.
         new_state_dict = unflatten_state_dict(cur_local_model, updated_params_flat)
-        gradient_final = unflatten_state_dict(cur_local_model, final_poisoned)
         cur_local_model.load_state_dict(new_state_dict)
         # Load the updated parameters into the model.
 
         # Load the updated parameters into the model.
         self.save_local_model(cur_local_model)
 
-        return gradient_final
+        return final_poisoned
 
     def record_federated_round(self, round_number: int, is_selected: bool,
                                final_model_params: Optional[np.ndarray] = None):
