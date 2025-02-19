@@ -155,34 +155,6 @@ class Aggregator:
         # Number of sellers
         self.n_seller = len(seller_updates)
 
-        # 1. Initialize aggregated_gradient as zeros (same shape as each parameter)
-        # print("start gradient aggregation")
-        # aggregated_gradient = [
-        #     torch.zeros_like(param, device=self.device)
-        #     for param in self.model_structure.parameters()
-        # ]
-        #
-        # print("start flatten and clipping")
-        # # 2. For each seller update, clip and flatten it
-        # clients_update_flattened = [
-        #     flatten(clip_gradient_update(update, clip_norm=0.01))
-        #     for update in seller_updates
-        # ]
-        #
-        # # 3. Define the server update
-        # baseline_update_flattened = flatten(buyer_updates)
-        #
-        # # 4. Compute cosine similarities between server's update and each seller's update.
-        # print("start cosine baseline")
-        # cosine_result = [
-        #     cosine_xy(baseline_update_flattened, clients_update_flattened[i])
-        #     for i in range(self.n_seller)
-        # ]
-        # np_cosine_result = np.array(cosine_result)
-        #
-        # # 5. Clustering on cosine similarities:
-        # diameter = np.max(np_cosine_result) - np.min(np_cosine_result)
-
         print("start gradient aggregation")
         aggregated_gradient = [
             torch.zeros_like(param, device=self.device)
@@ -258,6 +230,8 @@ class Aggregator:
         cosine_weight = torch.tensor(np_cosine_result, dtype=torch.float, device=self.device)
         denom = torch.sum(torch.abs(cosine_weight)) + 1e-6
         weight = cosine_weight / denom
+        print(f"current_weight: {weight}")
+        print(f"similarity: {np_cosine_result}")
 
         # 10. Compute baseline cosine similarity for each seller.
         # Compute the baseline update from a ground-truth model.
