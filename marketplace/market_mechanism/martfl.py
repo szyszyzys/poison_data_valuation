@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from marketplace.utils.gradient_market_utils.clustering import kmeans, gap
+from marketplace.utils.gradient_market_utils.clustering import kmeans, optimal_k_gap
 from model.utils import get_model, load_model
 
 
@@ -179,7 +179,7 @@ class Aggregator:
         # 5. Clustering on cosine similarities:
         diameter = np.max(np_cosine_result) - np.min(np_cosine_result)
         print("Diameter:", diameter)
-        n_clusters = gap(np_cosine_result)
+        n_clusters = optimal_k_gap(np_cosine_result)
         if n_clusters == 1 and diameter > 0.05:
             n_clusters = 2
         clusters, centroids = kmeans(np_cosine_result, n_clusters)

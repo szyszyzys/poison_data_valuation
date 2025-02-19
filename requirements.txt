@@ -8,7 +8,6 @@ ecos==2.0.14
 fqdn==1.5.1
 fsspec==2024.10.0
 ftfy==6.3.1
-gap-stat
 geomloss==0.2.6
 gpytorch==1.13
 huggingface-hub==0.26.2

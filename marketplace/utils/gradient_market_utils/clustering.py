@@ -1,6 +1,5 @@
 import kmeans1d
 import numpy as np
-from gap_statistic import OptimalK
 from sklearn.datasets import make_blobs
 
 
@@ -9,27 +8,73 @@ def kmeans(x, k):
     return clusters, centroids
 
 
-def gap(x, cluster_array=np.arange(1, 5)):
+def optimal_k_gap(X, k_max=10, B=10, random_state=42):
     """
-    Determine the optimal number of clusters using the gap statistic.
+    Compute the optimal number of clusters for data X using the Gap Statistic.
 
-    Parameters:
-      x : numpy array, shape (n_samples, n_features)
-         The data to be clustered.
-      cluster_array : array-like, optional
-         The candidate numbers of clusters to try (default is np.arange(1, 11)).
+    Parameters
+    ----------
+    X : ndarray, shape (n_samples, n_features)
+        The data to be clustered.
+    k_max : int, default=10
+        Maximum number of clusters to evaluate (i.e., k = 1, 2, ..., k_max).
+    B : int, default=10
+        Number of reference datasets (bootstraps) to generate.
+    random_state : int, default=42
+        Random seed for reproducibility.
 
-    Returns:
-      n_clusters : int
-         The optimal number of clusters, even if it is 1.
+    Returns
+    -------
+    optimal_k : int
+        The estimated optimal number of clusters. (May be 1 if that is optimal.)
     """
-    if cluster_array is None:
-        cluster_array = np.arange(1, 11)  # Try cluster counts from 1 to 10 by default.
+    np.random.seed(random_state)
+    n_samples, n_features = X.shape
+    ks = np.arange(1, k_max + 1)
 
-    optimalK = OptimalK(n_jobs=1)
-    n_clusters = optimalK(x, cluster_array=cluster_array)
-    return n_clusters
+    def compute_dispersion(data, k):
+        """
+        Compute within-cluster dispersion for data given k clusters.
+        """
+        kmeans = KMeans(n_clusters=k, random_state=random_state, n_init='auto')
+        kmeans.fit(data)
+        dispersion = 0.0
+        for j in range(k):
+            # Get data points in cluster j
+            cluster_data = data[kmeans.labels_ == j]
+            if cluster_data.shape[0] > 0:
+                center = np.mean(cluster_data, axis=0)
+                dispersion += np.sum((cluster_data - center) ** 2)
+        return dispersion
 
+    # Compute dispersion for the actual data for each k
+    Wks = np.array([compute_dispersion(X, k) for k in ks])
+
+    # Generate B reference datasets and compute their dispersions for each k
+    mins = np.min(X, axis=0)
+    maxs = np.max(X, axis=0)
+    Wkbs = np.zeros((len(ks), B))
+    for b in range(B):
+        # Generate a reference dataset uniformly at random within the bounding box of X.
+        X_ref = np.random.uniform(low=mins, high=maxs, size=(n_samples, n_features))
+        for i, k in enumerate(ks):
+            Wkbs[i, b] = compute_dispersion(X_ref, k)
+
+    # Compute the gap statistic for each k
+    logWks = np.log(Wks)
+    logWkbs = np.log(Wkbs)
+    gap = np.mean(logWkbs, axis=1) - logWks
+    sdk = np.std(logWkbs, axis=1) * np.sqrt(1 + 1.0 / B)
+
+    # Select the smallest k such that:
+    #   gap(k) >= gap(k+1) - sdk(k+1)
+    optimal_k = ks[-1]  # default to the largest k in case none meet the condition
+    for i in range(len(ks) - 1):
+        if gap[i] >= gap[i + 1] - sdk[i + 1]:
+            optimal_k = ks[i]
+            break
+
+    return optimal_k
 
 # def gap(x):
 #     optimalK = OptimalK()
