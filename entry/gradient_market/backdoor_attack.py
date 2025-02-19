@@ -1,6 +1,7 @@
 import argparse
 import os
 import random
+import shutil
 
 import numpy as np
 import torch
@@ -226,6 +227,33 @@ def get_device(args) -> str:
     return device_str
 
 
+def clear_work_path(path):
+    """
+    Delete all files and subdirectories in the specified path.
+
+    Parameters:
+        path (str): The directory path to clear.
+    """
+    if not os.path.exists(path):
+        print(f"Path '{path}' does not exist.")
+        return
+
+    # List all items in the directory.
+    for filename in os.listdir(path):
+        file_path = os.path.join(path, filename)
+        try:
+            # Remove a file or symbolic link.
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+                print(f"Deleted file: {file_path}")
+            # Remove a directory and its contents.
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+                print(f"Deleted directory: {file_path}")
+        except Exception as e:
+            print(f"Failed to delete {file_path}. Reason: {e}")
+
+
 if __name__ == "__main__":
     args = parse_args()
     t_model = get_model(args.dataset_name)
@@ -233,6 +261,7 @@ if __name__ == "__main__":
     set_seed(args.seed)
     device = get_device(args)
     save_path = f"./results/backdoor/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}/"
+    clear_work_path(save_path)
     eval_results = backdoor_attack(
         dataset_name=args.dataset_name,
         n_sellers=args.n_sellers,
