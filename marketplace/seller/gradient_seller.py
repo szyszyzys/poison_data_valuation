@@ -110,7 +110,7 @@ class GradientSeller(BaseSeller):
 
         # Perform local training and get the flattened gradient update.
         grad_update, grad_update_flt, local_model = local_training_and_get_gradient(
-            model, list_to_tensor_dataset(self.dataset), batch_size=64, device=self.device,
+            model, list_to_tensor_dataset(dataset), batch_size=64, device=self.device,
             local_epochs=self.local_epochs, lr=0.01
         )
 
@@ -282,7 +282,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         return triggered_img
 
-
     def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> np.ndarray:
         """
         Return a single 'final' gradient that merges:
@@ -306,12 +305,14 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         # 1) Compute benign gradient
         if self.poison_strength != 1:
-            grad_benign_update, g_benign_flt, local_model_benign = self._compute_local_grad(base_params, self.clean_data)
+            grad_benign_update, g_benign_flt, local_model_benign = self._compute_local_grad(base_params,
+                                                                                            self.clean_data)
             print(grad_benign_update)
             original_shapes = [param.shape for param in grad_benign_update]
 
             # 2) Compute backdoor gradient
-            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
+            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
+                                                                                                self.backdoor_data)
 
             # 3) Combine them:
             final_poisoned_flt = (1 - self.poison_strength) * g_benign_flt + (self.poison_strength) * g_backdoor_flt
@@ -324,7 +325,8 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
             self.last_benign_grad = np.clip(g_benign_flt, -self.clip_value, self.clip_value)
         else:
-            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
+            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
+                                                                                                self.backdoor_data)
             print(g_backdoor_update)
             final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
             original_shapes = [param.shape for param in g_backdoor_update]
