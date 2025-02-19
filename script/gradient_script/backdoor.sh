@@ -1,6 +1,9 @@
 #!/bin/bash
 # run_experiments.sh
 # This script runs the Python script with varying parameters.
+WORK_DIR="/scratch/zzs5287/poison_data_valuation"
+export PYTHONPATH="$WORK_DIR:$PYTHONPATH"
+echo $PYTHONPATH
 
 # Define arrays for the parameters you want to vary.
 n_sellers_list=(10)
