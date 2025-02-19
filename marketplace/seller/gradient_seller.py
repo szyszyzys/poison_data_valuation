@@ -330,8 +330,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             # final_poisoned_flt = g_backdoor_flt
             final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
             original_shapes = [param.shape for param in g_backdoor_update]
-            # final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
-            final_poisoned = g_backdoor_update
+            final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
         self.last_poisoned_grad = final_poisoned_flt
         final_poisoned = global_clip_np(final_poisoned, 1)
         cur_local_model = get_model(self.dataset_name)
@@ -427,20 +426,10 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         self.federated_round_history.append(record)
 
 
-def global_clip_np(arr: np.ndarray, max_norm: float) -> np.ndarray:
-    """
-    Globally clip a numpy array by its L2 norm.
-
-    Parameters:
-      arr (np.ndarray): The input array (typically a flattened gradient vector).
-      max_norm (float): The maximum allowed L2 norm.
-
-    Returns:
-      np.ndarray: The clipped array.
-    """
+def global_clip_np(arr, max_norm: float) -> np.ndarray:
     current_norm = np.linalg.norm(arr)
     if current_norm > max_norm:
-        scale = max_norm / current_norm
+        scale = max_norm / (current_norm + 1e-8)
         return arr * scale
     return arr
 
@@ -465,29 +454,48 @@ def unflatten_state_dict(model, flat_params: np.ndarray) -> dict:
     return new_state_dict
 
 
-def unflatten_np(flat_array: np.ndarray, param_shapes: list):
+def unflatten_np(flat_array, shapes):
     """
-    Unflatten a 1D numpy array into a list of numpy arrays with specified shapes.
+    Unflatten a 1D NumPy array back into a list of arrays with the provided shapes.
 
-    Parameters
-    ----------
-    flat_array : np.ndarray
-        The flattened array (1D).
-    param_shapes : list of tuple
-        A list of shapes (e.g., [(3, 3), (3,), ...]) corresponding to each parameter.
+    Parameters:
+      flat_array (np.ndarray): The flattened array.
+      shapes (list of tuple): List of shapes corresponding to the original arrays.
 
-    Returns
-    -------
-    list of np.ndarray
-        A list of numpy arrays reshaped to the corresponding shapes.
+    Returns:
+      arrays (list of np.ndarray): The unflattened arrays.
     """
-    results = []
-    current_pos = 0
-    for shape in param_shapes:
-        # Calculate how many elements this parameter has.
+    arrays = []
+    start = 0
+    for shape in shapes:
         num_elements = np.prod(shape)
-        # Extract the segment and reshape it.
-        segment = flat_array[current_pos:current_pos + num_elements].reshape(shape)
-        results.append(segment)
-        current_pos += num_elements
-    return results
+        segment = flat_array[start:start + num_elements]
+        arrays.append(segment.reshape(shape))
+        start += num_elements
+    return arrays
+# def unflatten_np(flat_array: np.ndarray, param_shapes: list):
+#     """
+#     Unflatten a 1D numpy array into a list of numpy arrays with specified shapes.
+#
+#     Parameters
+#     ----------
+#     flat_array : np.ndarray
+#         The flattened array (1D).
+#     param_shapes : list of tuple
+#         A list of shapes (e.g., [(3, 3), (3,), ...]) corresponding to each parameter.
+#
+#     Returns
+#     -------
+#     list of np.ndarray
+#         A list of numpy arrays reshaped to the corresponding shapes.
+#     """
+#     results = []
+#     current_pos = 0
+#     for shape in param_shapes:
+#         # Calculate how many elements this parameter has.
+#         num_elements = np.prod(shape)
+#         # Extract the segment and reshape it.
+#         segment = flat_array[current_pos:current_pos + num_elements].reshape(shape)
+#         results.append(segment)
+#         current_pos += num_elements
+#     return results
