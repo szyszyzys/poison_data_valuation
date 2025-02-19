@@ -229,6 +229,8 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         # Pre-split data
         self.backdoor_generator = backdoor_generator
         self.backdoor_data, self.clean_data = self._inject_triggers(local_data, trigger_fraction)
+        print(self.backdoor_data[0])
+        print(self.clean_data[0])
 
     def _inject_triggers(self, data: List[Tuple[torch.Tensor, int]], fraction: float):
         """
