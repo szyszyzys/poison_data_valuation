@@ -7,7 +7,7 @@ from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_ba
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.martfl import Aggregator, flatten
 from marketplace.seller.seller import BaseSeller
-from model.utils import test_local_model
+from model.utils import test_local_model, apply_gradient
 
 
 class DataMarketplaceFederated(DataMarketplace):
@@ -204,7 +204,11 @@ class DataMarketplaceFederated(DataMarketplace):
             # Mark "is_selected" if in selected_sellers
             is_selected = (sid in selected_ids)
             self.sellers[sid].record_federated_round(round_number, is_selected)
-            s_local_model = seller.load_local_model()
+            try:
+                s_local_model = seller.load_local_model()
+            except Exception as e:
+                s_local_model = None  # or load_param("f") as your fallback
+
             cur_local_model = apply_gradient(s_local_model, aggregated_gradient)
             # update local model
 
