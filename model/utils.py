@@ -23,7 +23,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
-from model.text_model import TEXTCNN
+# from model.text_model import TEXTCNN
 from model.vision_model import CNN_CIFAR, CNN_FMNIST
 
 
@@ -75,7 +75,7 @@ def local_training_and_get_gradient(model: nn.Module,
                                     batch_size: int,
                                     device: torch.device,
                                     local_epochs: int = 1,
-                                    lr: float = 0.01) -> Tuple[np.ndarray, int]:
+                                    lr: float = 0.01):
     """
     Perform local training on a copy of the given model using the provided dataset.
     Returns:
@@ -107,7 +107,7 @@ def local_training_and_get_gradient(model: nn.Module,
     # Flatten the list of gradients into a single vector
     flat_update = flatten_gradients(grad_update)
 
-    return flat_update, len(train_dataset)
+    return flat_update, local_model
 
 
 # ---------------------------
@@ -141,14 +141,15 @@ def load_param(path: str, device: torch.device):
     print(f"Model loaded from {path}")
     return state_dict
 
+
 def get_model(dataset_name):
     match dataset_name:
         case "CIFAR":
-            model = CNN_CIFAR
+            model = CNN_CIFAR()
         case "FMINIST":
-            model = CNN_FMNIST
-        case ["TREC", "AG_NEWS"]:
-            model = TEXTCNN
+            model = CNN_FMNIST()
+        # case ["TREC", "AG_NEWS"]:
+        #     model = TEXTCNN
         case _:
             raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
     return model

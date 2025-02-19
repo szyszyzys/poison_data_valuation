@@ -4,8 +4,9 @@ import numpy as np
 import pandas as pd
 import torch
 
+from general_utils.data_utils import list_to_tensor_dataset
 from marketplace.seller.seller import BaseSeller
-from model.utils import get_model, local_training_and_get_gradient, load_param
+from model.utils import get_model, local_training_and_get_gradient
 
 
 # You already have these classes in your project:
@@ -26,7 +27,9 @@ class GradientSeller(BaseSeller):
                  dataset_name: str = 'dataset',
                  base_price: float = 1.0,
                  price_variation: float = 0.2,
-                 save_path=""):
+                 save_path="",
+                 device="cpu",
+                 local_epochs=2):
         """
         :param seller_id: Unique ID for the seller.
         :param local_data: The local dataset this seller holds for gradient computation.
@@ -40,6 +43,7 @@ class GradientSeller(BaseSeller):
             price_strategy=price_strategy,
             base_price=base_price,
             price_variation=price_variation, save_path=save_path
+            , device=device
         )
 
         # Possibly store local model parameters or placeholders.
@@ -48,6 +52,7 @@ class GradientSeller(BaseSeller):
         self.local_model_params: Optional[np.ndarray] = None
         self.current_round = 0
         self.selected_last_round = False
+        self.local_epochs = local_epochs
 
     def set_local_model_params(self, params: np.ndarray):
         """Set (or update) local model parameters before computing gradient."""
@@ -71,16 +76,16 @@ class GradientSeller(BaseSeller):
                 print(f"[{self.seller_id}] Loaded previous local model.")
             except Exception as e:
                 print(f"[{self.seller_id}] No saved local model found; using default initialization.")
-                base_params = load_param("f")  # fallback default
+                base_params = None  # or load_param("f") as your fallback
 
         # 2. Train locally starting from base_params, obtain the local gradient update
-        gradient, updated_model = self._compute_local_grad(base_params, self.dataset)
+        gradient_flt, updated_model = self._compute_local_grad(base_params, self.dataset)
 
         # 3. Save the updated local model for future rounds.
         self.save_local_model(updated_model)
 
         self.current_round += 1
-        return gradient, len(self.dataset)
+        return gradient_flt
 
     def _compute_local_grad(self, base_params: Dict[str, torch.Tensor],
                             dataset: List[Tuple[torch.Tensor, int]]) -> (torch.Tensor, torch.nn.Module):
@@ -99,19 +104,20 @@ class GradientSeller(BaseSeller):
         # Create a new model instance
         model = get_model(self.dataset_name)
         # Load base parameters into the model
-        model.load_state_dict(base_params)
+        if base_params:
+            model.load_state_dict(base_params)
         model = model.to(self.device)
 
         # Perform local training and get the flattened gradient update.
-        flat_update, train_size = local_training_and_get_gradient(
-            model, dataset, batch_size=64, device=self.device,
+        grad_update_flt, local_model = local_training_and_get_gradient(
+            model, list_to_tensor_dataset(self.dataset), batch_size=64, device=self.device,
             local_epochs=self.local_epochs, lr=0.01
         )
 
         # Optionally, you might want to clip the gradient here.
         # flat_update = torch.clamp(flat_update, -self.clip_value, self.clip_value)
 
-        return flat_update, model
+        return grad_update_flt, local_model
 
     def save_local_model(self, model: torch.nn.Module):
         """
@@ -192,7 +198,12 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  clip_value: float = 0.01,
                  trigger_type: str = "blended_patch",
                  backdoor_generator=None,
-                 save_path=""):
+                 device='cpu',
+                 save_path="",
+                 local_epochs=2,
+                 dataset_name=""
+
+                 ):
         """
         :param local_data:        List[(image_tensor, label_int)] for the local training set.
         :param target_label:      The label the attacker wants the model to predict for triggered images.
@@ -202,7 +213,8 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         :param clip_value:        Max abs value for gradient components (aggregator clamp).
         :param trigger_type:      e.g. "blended_patch", "invisible", "random_noise_patch", etc.
         """
-        super().__init__(seller_id, local_data, save_path=save_path)
+        super().__init__(seller_id, local_data, save_path=save_path, device=device, local_epochs=local_epochs,
+                         dataset_name=dataset_name)
         self.target_label = target_label
         self.trigger_fraction = trigger_fraction
         self.alpha_align = alpha_align
@@ -215,8 +227,8 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         self.last_poisoned_grad = None
 
         # Pre-split data
-        self.backdoor_data, self.clean_data = self._inject_triggers(local_data, trigger_fraction)
         self.backdoor_generator = backdoor_generator
+        self.backdoor_data, self.clean_data = self._inject_triggers(local_data, trigger_fraction)
 
     def _inject_triggers(self, data: List[Tuple[torch.Tensor, int]], fraction: float):
         """
@@ -270,40 +282,63 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         return triggered_img
 
-    def get_gradient(self, global_params: Dict[str, torch.Tensor]) -> Tuple[np.ndarray, int]:
+    def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> Tuple[np.ndarray, int]:
         """
         Return a single 'final' gradient that merges:
           1) benign gradient
           2) backdoor gradient
           3) partial alignment w/ a guessed server gradient
         """
+        if global_params is not None:
+            base_params = global_params
+        else:
+            try:
+                base_params = self.load_local_model()
+                print(f"[{self.seller_id}] Loaded previous local model.")
+            except Exception as e:
+                print(f"[{self.seller_id}] No saved local model found; using default initialization.")
+                model = get_model(self.dataset_name)
+                base_params = model.state_dict()  # or load_param("f") as your fallback
+
         # 1) Compute benign gradient
-        g_benign = self._compute_local_grad(global_params, self.clean_data)
-        g_benign_np = g_benign.cpu().numpy()
+        if self.poison_strength != 1:
+            g_benign_flt, local_model_benign = self._compute_local_grad(base_params, self.clean_data)
 
-        # 2) Compute backdoor gradient
-        g_backdoor = self._compute_local_grad(global_params, self.backdoor_data)
-        g_backdoor_np = g_backdoor.cpu().numpy()
+            # 2) Compute backdoor gradient
+            g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
 
-        # 3) Combine them:
-        #    raw_poison = benign_grad + poison_strength*(backdoor_grad - benign_grad)
-        #               = (1 - poison_strength)*benign_grad + (poison_strength)*backdoor_grad
-        raw_poison = (1 - self.poison_strength) * g_benign_np + (self.poison_strength) * g_backdoor_np
+            # 3) Combine them:
+            #    raw_poison = benign_grad + poison_strength*(backdoor_grad - benign_grad)
+            #               = (1 - poison_strength)*benign_grad + (poison_strength)*backdoor_grad
+            final_poisoned = (1 - self.poison_strength) * g_benign_flt + (self.poison_strength) * g_backdoor_flt
+            if align_global:
+                # 4) Estimate server grad (in black-box, we might guess near zero or track old updates)
+                server_guess = np.random.randn(final_poisoned.shape[0]) * 0.0001
 
-        # 4) Estimate server grad (in black-box, we might guess near zero or track old updates)
-        server_guess = np.random.randn(raw_poison.shape[0]) * 0.0001
+                # 5) final_poisoned = alpha_align * raw_poison + (1 - alpha_align)*server_guess
+                final_poisoned = self.alpha_align * final_poisoned + (1 - self.alpha_align) * server_guess
 
-        # 5) final_poisoned = alpha_align * raw_poison + (1 - alpha_align)*server_guess
-        final_poisoned = self.alpha_align * raw_poison + (1 - self.alpha_align) * server_guess
-
-        # 6) Clip to aggregator’s clamp
-        final_poisoned = np.clip(final_poisoned, -self.clip_value, self.clip_value)
+            # 6) Clip to aggregator’s clamp
+            final_poisoned = np.clip(final_poisoned, -self.clip_value, self.clip_value)
+            self.last_benign_grad = np.clip(g_benign_flt, -self.clip_value, self.clip_value)
+        else:
+            g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
+            final_poisoned = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
 
         # store for analysis
-        self.last_benign_grad = np.clip(g_benign_np, -self.clip_value, self.clip_value)
         self.last_poisoned_grad = final_poisoned
+        cur_local_model = get_model(self.dataset_name)
+        updated_params_flat = flatten_state_dict(base_params) - final_poisoned
 
-        return final_poisoned, len(self.local_data)
+        # Convert the updated flat parameters back into the model's state dict format.
+        new_state_dict = unflatten_state_dict(cur_local_model, updated_params_flat)
+        cur_local_model.load_state_dict(new_state_dict)
+        # Load the updated parameters into the model.
+
+        # Load the updated parameters into the model.
+        self.save_local_model(cur_local_model)
+
+        return final_poisoned
 
     def record_federated_round(self, round_number: int, is_selected: bool,
                                final_model_params: Optional[np.ndarray] = None):
@@ -322,3 +357,23 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         }
         self.selected_last_round = is_selected
         self.federated_round_history.append(record)
+
+
+def flatten_state_dict(state_dict: dict) -> np.ndarray:
+    flat_params = []
+    for key, param in state_dict.items():
+        flat_params.append(param.detach().cpu().numpy().ravel())
+    return np.concatenate(flat_params)
+
+
+def unflatten_state_dict(model, flat_params: np.ndarray) -> dict:
+    new_state_dict = {}
+    pointer = 0
+    for key, param in model.state_dict().items():
+        numel = param.numel()
+        # Slice the flat_params to match this parameter's number of elements.
+        param_flat = flat_params[pointer:pointer + numel]
+        # Reshape to the original shape.
+        new_state_dict[key] = torch.tensor(param_flat.reshape(param.shape), dtype=param.dtype)
+        pointer += numel
+    return new_state_dict

@@ -4,9 +4,8 @@ import numpy as np
 import torch
 from torch import nn
 
-from marketplace.utils.gradient_market_utils.clustering import optimal_k, kmeans_1d
-from marketplace.utils.model_utils import load_model, save_model
-from model.utils import get_model
+from marketplace.utils.gradient_market_utils.clustering import kmeans, gap
+from model.utils import get_model, load_model
 
 
 # -----------------------------------------------------
@@ -43,20 +42,15 @@ class Aggregator:
         :param save_path:         Name/identifier of the current experiment.
         :param n_seller:   Total number of participant clients.
         :param n_adversaries:    Number of adversarial clients (not always used).
-        :param backup_models:    List of model checkpoints (names) used as "backup."
-        :param client_models:    List of current client model checkpoints.
         :param model_structure:  A torch.nn.Module structure (uninitialized) used to get param shapes.
         :param quantization:     Whether to do quantized aggregation.
         :param device:           Torch device (CPU/GPU) to run computations.
         """
-        self.exp_name = save_path
+        self.save_path = save_path
         self.n_seller = n_seller
         self.n_adversaries = n_adversaries
-        self.backup_models = backup_models
-        self.client_models = client_models
         self.model_structure = model_structure
         self.device = device
-        self.server = 0
         self.quantization = quantization
         self.global_model = get_model(dataset_name)
         # An example to track "best candidate" or further logic if you need:
@@ -71,7 +65,7 @@ class Aggregator:
         i.e. delta = (client_model_i - backup_model_i).
         """
         return [
-            compute_update_gradients(self.exp_name, old_m, new_m, self.device)
+            compute_update_gradients(self.save_path, old_m, new_m, self.device)
             for old_m, new_m in zip(self.backup_models, self.client_models)
         ]
 
@@ -82,7 +76,7 @@ class Aggregator:
         """
         server_backup = self.backup_models[0]
         return [
-            compute_update_gradients(self.exp_name, server_backup, new_m, self.device)
+            compute_update_gradients(self.save_path, server_backup, new_m, self.device)
             for new_m in self.client_models
         ]
 
@@ -126,8 +120,8 @@ class Aggregator:
                 # Update rule (SGD):
                 tensor[...] = tensor - learning_rate * grad_slice
 
-    def aggregate(self, global_epoch, seller_updates, buyer_updates, sizes, method="martfl"):
-        return self.martFL(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates = buyer_updates)
+    def aggregate(self, global_epoch, seller_updates, buyer_updates, method="martfl"):
+        return self.martFL(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates)
 
     # ---------------------------
     # Main Federated Aggregation (martFL)
@@ -172,12 +166,12 @@ class Aggregator:
             for update in seller_updates
         ]
 
-        # 3. Define the server update (using the seller indexed by self.server)
-        server_update_flattened = clients_update_flattened[self.server]
+        # 3. Define the server update
+        baseline_update_flattened = flatten(buyer_updates)
 
         # 4. Compute cosine similarities between server's update and each seller's update.
         cosine_result = [
-            encrypted_cosine_xy(server_update_flattened, clients_update_flattened[i])
+            cosine_xy(baseline_update_flattened, clients_update_flattened[i])
             for i in range(self.n_seller)
         ]
         np_cosine_result = np.array(cosine_result)
@@ -185,10 +179,10 @@ class Aggregator:
         # 5. Clustering on cosine similarities:
         diameter = np.max(np_cosine_result) - np.min(np_cosine_result)
         print("Diameter:", diameter)
-        n_clusters = optimal_k(np_cosine_result)
+        n_clusters = gap(np_cosine_result)
         if n_clusters == 1 and diameter > 0.05:
             n_clusters = 2
-        clusters, centroids = kmeans_1d(np_cosine_result, n_clusters)
+        clusters, centroids = kmeans(np_cosine_result, n_clusters)
         print("Centroids:", centroids)
         print(f"{n_clusters} Clusters:", clusters)
         center = centroids[-1] if len(centroids) > 0 else 0.0
@@ -197,14 +191,12 @@ class Aggregator:
         if n_clusters == 1:
             clusters_secondary = [1] * self.n_seller
         else:
-            clusters_secondary, _ = kmeans_1d(np_cosine_result, 2)
+            clusters_secondary, _ = kmeans(np_cosine_result, 2)
         print("Secondary Clustering:", clusters_secondary)
 
         # 7. Determine border for outlier detection (max distance from center, skipping server)
         border = 0.0
         for i, (cos_sim, sec_cluster) in enumerate(zip(cosine_result, clusters_secondary)):
-            if i == 0 or i == self.server:
-                continue
             if n_clusters == 1 or sec_cluster != 0:
                 dist = abs(center - cos_sim)
                 if dist > border:
@@ -238,15 +230,15 @@ class Aggregator:
 
         # 10. Compute baseline cosine similarity for each seller.
         # Compute the baseline update from a ground-truth model.
-        ground_truth_updates = compute_ground_truth_updates(
-            self.exp_name, self.backup_models[0], ground_truth_model, self.device
-        )
-        ground_truth_updates_flat = flatten(ground_truth_updates)
-        baseline_similarities = []
-        for i in range(self.n_seller):
-            bs = cosine_xy(ground_truth_updates_flat, clients_update_flattened[i])
-            baseline_similarities.append(bs)
-        print("Baseline similarities:", baseline_similarities)
+        # ground_truth_updates = compute_ground_truth_updates(
+        #     self.save_path, self.backup_models[0], ground_truth_model, self.device
+        # )
+        # ground_truth_updates_flat = flatten(ground_truth_updates)
+        # baseline_similarities = []
+        # for i in range(self.n_seller):
+        #     bs = cosine_xy(ground_truth_updates_flat, clients_update_flattened[i])
+        #     baseline_similarities.append(bs)
+        # print("Baseline similarities:", baseline_similarities)
 
         # 11. Final aggregation: sum weighted gradients.
         update_gradients = self.get_update_gradients()  # Should return a list of updates (each update is list of tensors)
@@ -254,23 +246,16 @@ class Aggregator:
             add_gradient_updates(aggregated_gradient, gradient, weight=wt)
 
         # 12. Update each client model (here using classic update; quantization not implemented)
-        if self.quantization:
-            raise NotImplementedError("Quantization not implemented.")
-        else:
-            for i, model_name in enumerate(self.client_models):
-                model = load_model(self.exp_name, get_backup_name_from_model_name(model_name), self.device)
-                updated_model = add_update_to_model(model, aggregated_gradient, weight=1.0, device=self.device)
-                save_model(self.exp_name, model_name, updated_model)
+        # if self.quantization:
+        #     raise NotImplementedError("Quantization not implemented.")
+        # else:
+        #     for i, model_name in enumerate(self.client_models):
+        #         # model = load_model(, get_backup_name_from_model_name(model_name), self.device)
+        #         # updated_model = add_update_to_model(model, aggregated_gradient, weight=1.0, device=self.device)
+        #         # save_model(self.exp_name, model_name, updated_model)
 
         # Return aggregated gradient, selected seller IDs, outlier seller IDs, and baseline similarities.
-        return aggregated_gradient, selected_ids, outlier_ids, baseline_similarities
-
-    def log_round_info(self,
-                       round_number=round_number,
-                       selected_sellers=selected_sellers,
-                       aggregated_gradient=agg_gradient,
-                       extra_info=extra_info
-                       ):
+        return aggregated_gradient, selected_ids, outlier_ids
 
 
 # todo
@@ -282,10 +267,17 @@ class Aggregator:
 
 def clip_gradient_update(grad_update, clip_norm: float):
     """
-    Clamp each parameter update to [-grad_clip, grad_clip].
+    Clamp each parameter update to [-clip_norm, clip_norm].
+    If an update is a numpy array/scalar, it will be converted to a torch tensor.
     """
     clipped_updates = []
     for param in grad_update:
+        # Convert numpy arrays or scalars to torch tensors
+        if isinstance(param, np.ndarray):
+            param = torch.tensor(param)
+        elif isinstance(param, (np.float32, np.float64)):
+            param = torch.tensor(param)
+        # Clamp the value and add it to the list.
         update = torch.clamp(param, min=-clip_norm, max=clip_norm)
         clipped_updates.append(update)
     return clipped_updates
@@ -323,23 +315,32 @@ def compute_update_gradients(exp_name, old_model_name, new_model_name, device=No
 
 def flatten(grad_update):
     """
-    Concatenate all parameter tensors into a single 1D vector.
+    Flatten a list of gradient updates (tensors) into a single 1D tensor.
+    If an element is not a tensor, convert it to one.
     """
-    return torch.cat([param.view(-1) for param in grad_update], dim=0)
+    flattened = []
+    for param in grad_update:
+        # Convert non-tensor elements to a tensor.
+        if not isinstance(param, torch.Tensor):
+            param = torch.tensor(param)
+        flattened.append(param.view(-1))
+    return torch.cat(flattened, dim=0)
 
 
 def unflatten(flattened: torch.Tensor, normal_shape):
     """
-    Reshape a flat vector back into the original param shapes in 'normal_shape'.
-    'normal_shape' must be a list of Tensors (or nn.Parameter) from which we
+    Reshape a flat vector back into the original parameter shapes in 'normal_shape'.
+    'normal_shape' should be a list of tensors (or nn.Parameters) from which we
     know the dimension sizes.
     """
     grad_update = []
     current_pos = 0
     for param in normal_shape:
         num_params = param.numel()
+        # Get the slice of the flattened tensor corresponding to the current parameter.
         slice_ = flattened[current_pos:current_pos + num_params]
-        grad_update.append(slice_.reshape(param.shape))
+        # Use tuple(param.shape) to ensure the shape is a tuple.
+        grad_update.append(slice_.reshape(tuple(param.shape)))
         current_pos += num_params
     return grad_update
 
@@ -376,11 +377,3 @@ def cosine_xy(x: torch.Tensor, y: torch.Tensor) -> float:
     y = y.detach().cpu()
     cos_val = torch.cosine_similarity(x, y, dim=0)
     return cos_val.item()
-
-
-def encrypted_cosine_xy(x: torch.Tensor, y: torch.Tensor) -> float:
-    """
-    Example placeholder for homomorphic-encrypted cosine similarity.
-    Currently calls `private_model_evaluation(x, y)`.
-    """
-    return private_model_evaluation(x, y)

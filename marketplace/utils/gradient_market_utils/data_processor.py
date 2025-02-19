@@ -124,9 +124,9 @@ def create_client_dataloaders(dataset, splits, batch_size=32, shuffle=True):
 def get_data_set(dataset_name, num_clients=10, iid=True):
     # Load dataset (train split)
     match dataset_name:
-        case "fmnist":
+        case "FMINIST":
             dataset = load_fmnist_dataset(train=True, download=True)
-        case "cifar":
+        case "CIFAR":
             dataset = load_cifar10_dataset(train=True, download=True)
         case _:
             raise NotImplementedError(f"No current dataset {dataset_name}")

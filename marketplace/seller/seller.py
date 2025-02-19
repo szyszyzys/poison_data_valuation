@@ -32,13 +32,14 @@ class BaseSeller(ABC):
                  price_strategy: str = 'uniform',
                  base_price: float = 1.0,
                  price_variation: float = 0.2,
-                 save_path=""):
+                 save_path="",
+                 device='cpu'):
         self.seller_id = seller_id
         self.dataset = dataset  # Full dataset (whether used for data selling or gradient).
         self.price_strategy = price_strategy
         self.base_price = base_price
         self.price_variation = price_variation
-
+        self.device = device
         # Initialize statistics
         self.stats = SellerStats()
         self.stats.total_points = len(dataset)  # <--- important initialization

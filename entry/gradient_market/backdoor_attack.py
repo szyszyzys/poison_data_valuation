@@ -1,16 +1,17 @@
 import argparse
+import os
 import random
 
+import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import Subset, TensorDataset, DataLoader
 
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
-from marketplace.data_manager import DatasetManager
+from general_utils.file_utils import save_history_to_json
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller
-from marketplace.seller.seller import BaseSeller
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
 from model.utils import get_model
 
@@ -85,11 +86,12 @@ def generate_attack_test_set(full_dataset, backdoor_generator, n_samples=1000):
 
 
 def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
-                    global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", exp_name="/"):
+                    global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", save_path="/",
+                    device='cpu', poison_strength=1, poison_test_sample=100):
     # load the dataset
-    save_path = f"/results/{exp_name}/"
     loss_fn = nn.CrossEntropyLoss()
-    backdoor_generator = BackdoorImageGenerator(backdoor_target_label)
+    backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
+                                                channels=1)
 
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
     n_buyer = 1
@@ -123,101 +125,114 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                              local_data=loader.dataset,
                                                              target_label=backdoor_target_label,
                                                              trigger_type=trigger_type, save_path=save_path,
-                                                             backdoor_generator=backdoor_generator
+                                                             backdoor_generator=backdoor_generator,
+                                                             device=device,
+                                                             poison_strength=poison_strength,
+                                                             dataset_name=dataset_name
                                                              )
         else:
             cur_id = f"seller_{cid}"
             current_seller = GradientSeller(seller_id=cur_id, local_data=loader.dataset,
-                                            dataset_name=dataset_name, save_path=save_path)
+                                            dataset_name=dataset_name, save_path=save_path, device=device)
         marketplace.register_seller(cur_id, current_seller)
 
     # config the attack test set.
-    clean_loader, triggered_loader = generate_attack_test_set(full_dataset, backdoor_generator, 10000)
+    clean_loader, triggered_loader = generate_attack_test_set(full_dataset, backdoor_generator, poison_test_sample)
 
     # Start gloal round
+    fl_record_list = []
     for gr in range(global_rounds):
         # compute the buyer gradient as the reference point
+        # todo new baseline selection
         buyer_gradient = buyer.get_gradient()
         # train the attack model
-        marketplace.train_federated_round(round_number=gr,
-                                          buyer_gradient=buyer_gradient,
-                                          test_dataloader_buyer_local=client_loaders[buyer_cid],
-                                          test_dataloader_global=clean_loader,
-                                          clean_loader=clean_loader, triggered_loader=triggered_loader,
-                                          loss_fn=loss_fn)
+        round_record = marketplace.train_federated_round(round_number=gr,
+                                                         buyer_gradient=buyer_gradient,
+                                                         test_dataloader_buyer_local=client_loaders[buyer_cid],
+                                                         test_dataloader_global=clean_loader,
+                                                         clean_loader=clean_loader, triggered_loader=triggered_loader,
+                                                         loss_fn=loss_fn)
 
     # post fl process, test the final model.
-    aggregator.global_model
+    save_history_to_json(marketplace.round_logs, f"{save_path}/market_log.json")
     # record the result for each seller
-    for s in seller:
-        s.save_statistics()
+    all_sellers = marketplace.get_all_sellers
+    for seller_id, seller in all_sellers.items():
+        save_history_to_json(seller.get_federated_history, f"{save_path}/local_log_{seller_id}.json")
 
     # record the attack result for the final round
 
     return eval_results
 
 
-def setup(data_manager: DatasetManager, adversary_ratio=0.25, seller_configs=None):
-    """Setup marketplace with normal and adversarial sellers"""
-
-    # Create marketplace
-    marketplace = DataMarketplaceData()
-    # Get data allocations
-
-    allocations = data_manager.allocate_data_to_sellers(
-        seller_configs,
-        adversary_ratio=adversary_ratio
-    )
-    seller_dict = {}
-    print(f"Current seller info {seller_dict}")
-    # Create and register sellers
-    for config in seller_configs:
-        seller_id = config['id']
-        seller_data = allocations[seller_id]
-
-        if config['type'] == 'adversary':
-            seller = MaliciousDataSeller(
-                seller_id=seller_id,
-                dataset=seller_data['X'],
-            )
-        else:
-            seller = BaseSeller(
-                seller_id=seller_id,
-                dataset=seller_data['X']
-            )
-        seller_dict[seller_id] = seller
-        marketplace.register_seller(seller_id, seller)
-
-    return marketplace, seller_dict
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Run Backdoor Attack Experiment")
 
     # Required arguments
-    parser.add_argument('--dataset_name', type=str, required=True, help='Name of the dataset (e.g., MNIST, CIFAR10)')
-    parser.add_argument('--n_sellers', type=int, required=True, help='Number of sellers')
-    parser.add_argument('--n_adversaries', type=int, required=True, help='Number of adversaries')
+    parser.add_argument('--dataset_name', type=str, default='FMINIST',
+                        help='Name of the dataset (e.g., MNIST, CIFAR10)')
+    parser.add_argument('--n_sellers', type=int, default=10, help='Number of sellers')
+    parser.add_argument('--n_adversaries', type=int, default=1, help='Number of adversaries')
 
     # Optional arguments with defaults
-    parser.add_argument('--global_rounds', type=int, default=100, help='Number of global training rounds')
+    parser.add_argument('--global_rounds', type=int, default=1, help='Number of global training rounds')
     parser.add_argument('--backdoor_target_label', type=int, default=0, help='Target label for backdoor attack')
     parser.add_argument('--trigger_type', type=str, default="blended_patch", help='Type of backdoor trigger')
     parser.add_argument('--exp_name', type=str, default="/", help='Experiment name for logging')
+    parser.add_argument('--poison_test_sample', type=int, default=1, help='Number of global training rounds')
+
+    parser.add_argument('--poison_strength', type=float, default=1, help='Strength of poisoning')
 
     # Model architecture argument
     parser.add_argument('--model_arch', type=str, default='resnet18',
                         choices=['resnet18', 'resnet34', 'mlp'],
                         help='Model architecture (resnet18, resnet34, mlp)')
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
+    parser.add_argument("--gpu_ids", type=str, default="0", help="Comma-separated GPU IDs (e.g., '0,1').")
 
     args = parser.parse_args()
     return args
 
 
+def set_seed(seed: int):
+    """Set the seed for random, numpy, and torch (CPU and CUDA)."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # Ensures that CUDA selects deterministic algorithms when available.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    print(f"[INFO] Seed set to: {seed}")
+
+
+def get_device(args) -> str:
+    """
+    Returns a string representing the device based on available GPUs and args.gpu_ids.
+    The --gpu_ids argument should be a comma-separated string of GPU indices (e.g., "0,1,2").
+    """
+    if torch.cuda.is_available():
+        # Parse the gpu_ids argument into a list of integers.
+        gpu_ids = [int(id_) for id_ in args.gpu_ids.split(',')]
+        # Set CUDA_VISIBLE_DEVICES so that only these GPUs are visible.
+        os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(map(str, gpu_ids))
+        # Return the first GPU as the default device string.
+        device_str = "cuda:0"
+        print(f"[INFO] Using GPUs: {gpu_ids}. Default device set to {device_str}.")
+    else:
+        device_str = "cpu"
+        print("[INFO] CUDA not available. Using CPU.")
+    return device_str
+
+
 if __name__ == "__main__":
     args = parse_args()
     t_model = get_model(args.dataset_name)
-
+    print(f"start backdoor attack, current dataset: {args.dataset_name}, n_sellers: {args.n_sellers} ")
+    set_seed(args.seed)
+    device = get_device(args)
+    save_path = f"/results/backdoor/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}/"
     eval_results = backdoor_attack(
         dataset_name=args.dataset_name,
         n_sellers=args.n_sellers,
@@ -226,7 +241,10 @@ if __name__ == "__main__":
         global_rounds=args.global_rounds,
         backdoor_target_label=args.backdoor_target_label,
         trigger_type=args.trigger_type,
-        exp_name=args.exp_name
+        save_path=save_path,
+        device=device,
+        poison_strength=args.poison_strength,
+        poison_test_sample=args.poison_test_sample
     )
 
     print("Evaluation Results:", eval_results)

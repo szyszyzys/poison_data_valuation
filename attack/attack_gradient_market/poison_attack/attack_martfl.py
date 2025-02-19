@@ -29,6 +29,7 @@ stealth_grad = stealth_backdoor_attack(honest_grad, pattern_vector,
                                        alpha=2.0,
                                        desired_cosine=0.95)
 """
+from typing import Tuple
 
 import numpy as np
 import torch
@@ -197,32 +198,87 @@ def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
 
 class BackdoorImageGenerator:
     def __init__(self,
-                 trigger_pattern: torch.Tensor,
+                 trigger_type: str,
                  target_label: int,
+                 channels: int,
+                 trigger_size: Tuple[int, int] = (5, 5),
                  alpha: float = 0.1,
                  location: str = "bottom_right",
                  randomize_location: bool = False):
         """
-        :param trigger_pattern: A torch.Tensor of shape (h, w, c) representing the trigger.
-                                It should have the same number of channels as your input images.
+        Initialize the backdoor trigger.
+
+        :param trigger_type: A string determining which pattern to generate. Options:
+                             "blended_patch", "checkerboard", "noise", or "gradient".
         :param target_label: The target label to assign to poisoned samples.
-        :param alpha: Blending factor (e.g. 0.1 means 10% trigger, 90% original).
+        :param channels: Number of channels in your input images.
+        :param trigger_size: A tuple (height, width) for the trigger pattern.
+        :param alpha: Blending factor (e.g., 0.1 means 10% trigger, 90% original).
         :param location: Placement for the trigger: "bottom_right", "top_left", or "center".
         :param randomize_location: If True, place the trigger at a random location.
         """
-        self.trigger_pattern = trigger_pattern.float()
+        self.trigger_pattern = self.generate_trigger_pattern(trigger_type, channels, trigger_size)
         self.target_label = target_label
         self.alpha = alpha
         self.location = location
         self.randomize_location = randomize_location
 
+    @staticmethod
+    def generate_trigger_pattern(trigger_type: str, channels: int,
+                                 trigger_size: Tuple[int, int] = (5, 5)) -> torch.Tensor:
+        """
+        Generate a backdoor trigger pattern based on the specified type.
+
+        :param trigger_type: The type of trigger pattern to generate. Options:
+                             - "blended_patch": A solid patch (e.g., a white square).
+                             - "checkerboard": A checkerboard pattern.
+                             - "noise": A random noise pattern.
+                             - "gradient": A horizontal gradient from 0 to 1.
+        :param channels: Number of channels for the trigger (should match input image channels).
+        :param trigger_size: Tuple (height, width) specifying the size of the trigger.
+        :return: A torch.Tensor of shape (height, width, channels) with values in [0, 1].
+        """
+        height, width = trigger_size
+
+        if trigger_type == "blended_patch":
+            # A solid patch: for instance, a white square (all ones)
+            trigger_pattern = torch.ones(height, width, channels)
+        elif trigger_type == "checkerboard":
+            # Create a checkerboard pattern: alternating 0 and 1
+            trigger_pattern = torch.zeros(height, width, channels)
+            for i in range(height):
+                for j in range(width):
+                    if (i + j) % 2 == 0:
+                        trigger_pattern[i, j] = 1.0
+        elif trigger_type == "noise":
+            # A noise pattern: random values in [0, 1]
+            trigger_pattern = torch.rand(height, width, channels)
+        elif trigger_type == "gradient":
+            # A horizontal gradient: values linearly increase from 0 to 1
+            # First create a 1D gradient then expand to match the desired shape and channels
+            gradient = torch.linspace(0, 1, steps=width).unsqueeze(0).repeat(height, 1)
+            trigger_pattern = gradient.unsqueeze(-1).repeat(1, 1, channels)
+        else:
+            raise ValueError(f"Unknown trigger type: {trigger_type}")
+
+        return trigger_pattern.float()
+
     def apply_trigger_tensor(self, image: torch.Tensor) -> torch.Tensor:
         """
         Applies the trigger pattern to a single image using torch operations directly.
 
-        :param image: A torch.Tensor of shape (H, W, C) with pixel values in [0, 255].
-        :return: A new torch.Tensor with the trigger applied.
+        :param image: A torch.Tensor representing an image.
+                      It can be in (H, W, C) or (C, H, W) format.
+                      Expected pixel values are in [0, 255].
+        :return: A new torch.Tensor with the trigger applied in the original format.
         """
+        # Determine if image is in (C, H, W) format.
+        original_format = "HWC"
+        if image.ndim == 3 and image.shape[0] in [1, 3]:
+            # Convert from (C, H, W) to (H, W, C)
+            image = image.permute(1, 2, 0)
+            original_format = "CHW"
+
         # Ensure image is float32 for processing.
         image = image.float()
         H, W, C = image.shape
@@ -254,11 +310,14 @@ class BackdoorImageGenerator:
         region = poisoned[y:y + h, x:x + w, :]
 
         # Apply alpha blending: new_pixel = (1 - alpha) * original + alpha * trigger.
-        # Make sure the trigger is on the same device as the image.
         blended_region = (1 - self.alpha) * region + self.alpha * self.trigger_pattern.to(region.device)
 
         # Clamp the pixel values to [0, 255] and update the region.
         poisoned[y:y + h, x:x + w, :] = torch.clamp(blended_region, 0, 255)
+
+        # If the original format was CHW, convert it back.
+        if original_format == "CHW":
+            poisoned = poisoned.permute(2, 0, 1)
 
         # Convert back to the original dtype (e.g., uint8 if needed)
         return poisoned.to(image.dtype)

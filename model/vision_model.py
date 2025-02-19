@@ -48,9 +48,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
-
-from model.utils import save_model
 
 
 # ---------------------------
@@ -113,9 +110,6 @@ class CNN_CIFAR(nn.Module):
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
         return x
-
-
-
 
 
 # ---------------------------
@@ -196,41 +190,40 @@ def local_training_and_get_gradient(model: nn.Module,
     data_size = len(train_loader.dataset)
     return flat_update, data_size
 
-
 # ---------------------------
 # Example Main (for testing)
 # ---------------------------
 
-if __name__ == "__main__":
-    # For testing, you can switch between FMNIST and CIFAR.
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Train CNN on FMNIST or CIFAR for FL simulation")
-    parser.add_argument("--dataset", type=str, default="FMNIST", choices=["FMNIST", "CIFAR"])
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=1)
-    parser.add_argument("--lr", type=float, default=0.01)
-    args = parser.parse_args()
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    if args.dataset.upper() == "FMNIST":
-        train_loader, test_loader = get_fmnist_dataloaders(batch_size=args.batch_size)
-        model = CNN_FMNIST(num_classes=10)
-    else:
-        train_loader, test_loader = get_cifar_dataloaders(batch_size=args.batch_size)
-        model = CNN_CIFAR(num_classes=10)
-
-    model.to(device)
-    print(f"Training {args.dataset} model on {device}...")
-
-    # Train locally and get gradient update
-    flat_update, data_size = local_training_and_get_gradient(model, train_loader,
-                                                             device=device,
-                                                             local_epochs=args.epochs,
-                                                             lr=args.lr)
-    print("Gradient update shape:", flat_update.shape)
-    print("Local dataset size:", data_size)
-
-    # Save the model for this round (e.g., round1)
-    save_model(model, f"saved_models/{args.dataset.lower()}_model_round1.pt")
+# if __name__ == "__main__":
+#     # For testing, you can switch between FMNIST and CIFAR.
+#     import argparse
+#
+#     parser = argparse.ArgumentParser(description="Train CNN on FMNIST or CIFAR for FL simulation")
+#     parser.add_argument("--dataset", type=str, default="FMNIST", choices=["FMNIST", "CIFAR"])
+#     parser.add_argument("--batch_size", type=int, default=64)
+#     parser.add_argument("--epochs", type=int, default=1)
+#     parser.add_argument("--lr", type=float, default=0.01)
+#     args = parser.parse_args()
+#
+#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#
+#     if args.dataset.upper() == "FMNIST":
+#         train_loader, test_loader = get_fmnist_dataloaders(batch_size=args.batch_size)
+#         model = CNN_FMNIST(num_classes=10)
+#     else:
+#         train_loader, test_loader = get_cifar_dataloaders(batch_size=args.batch_size)
+#         model = CNN_CIFAR(num_classes=10)
+#
+#     model.to(device)
+#     print(f"Training {args.dataset} model on {device}...")
+#
+#     # Train locally and get gradient update
+#     flat_update, data_size = local_training_and_get_gradient(model, train_loader,
+#                                                              device=device,
+#                                                              local_epochs=args.epochs,
+#                                                              lr=args.lr)
+#     print("Gradient update shape:", flat_update.shape)
+#     print("Local dataset size:", data_size)
+#
+#     # Save the model for this round (e.g., round1)
+#     save_model(model, f"saved_models/{args.dataset.lower()}_model_round1.pt")
