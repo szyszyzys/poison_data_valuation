@@ -302,29 +302,39 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         # 1) Compute benign gradient
         if self.poison_strength != 1:
-            grad_benign_update, g_benign_flt, local_model_benign = self._compute_local_grad(base_params, self.clean_data)
+            grad_benign_update, g_benign_flt, local_model_benign = self._compute_local_grad(base_params,
+                                                                                            self.clean_data)
+
+            # Example usage:
+            # Suppose grad_benign_update is a list of tensors (or numpy arrays) that you flattened.
+            # Get the original shapes:
+            original_shapes = [param.shape for param in grad_benign_update]
 
             # 2) Compute backdoor gradient
-            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
+            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
+                                                                                                self.backdoor_data)
 
             # 3) Combine them:
             #    raw_poison = benign_grad + poison_strength*(backdoor_grad - benign_grad)
             #               = (1 - poison_strength)*benign_grad + (poison_strength)*backdoor_grad
-            final_poisoned = (1 - self.poison_strength) * g_benign_flt + (self.poison_strength) * g_backdoor_flt
+            final_poisoned_flt = (1 - self.poison_strength) * g_benign_flt + (self.poison_strength) * g_backdoor_flt
             if align_global:
                 # 4) Estimate server grad (in black-box, we might guess near zero or track old updates)
-                server_guess = np.random.randn(final_poisoned.shape[0]) * 0.0001
+                server_guess = np.random.randn(final_poisoned_flt.shape[0]) * 0.0001
 
                 # 5) final_poisoned = alpha_align * raw_poison + (1 - alpha_align)*server_guess
-                final_poisoned = self.alpha_align * final_poisoned + (1 - self.alpha_align) * server_guess
+                final_poisoned = self.alpha_align * final_poisoned_flt + (1 - self.alpha_align) * server_guess
 
             # 6) Clip to aggregator’s clamp
-            final_poisoned = np.clip(final_poisoned, -self.clip_value, self.clip_value)
+            final_poisoned_flt = np.clip(final_poisoned_flt, -self.clip_value, self.clip_value)
+            final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
             self.last_benign_grad = np.clip(g_benign_flt, -self.clip_value, self.clip_value)
         else:
-            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
+            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
+                                                                                                self.backdoor_data)
             final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
-            final_poisoned = np.clip(g_backdoor_update, -self.clip_value, self.clip_value)
+            original_shapes = [param.shape for param in g_backdoor_update]
+            final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
         # store for analysis
         self.last_poisoned_grad = final_poisoned_flt
         cur_local_model = get_model(self.dataset_name)
@@ -377,3 +387,31 @@ def unflatten_state_dict(model, flat_params: np.ndarray) -> dict:
         new_state_dict[key] = torch.tensor(param_flat.reshape(param.shape), dtype=param.dtype)
         pointer += numel
     return new_state_dict
+
+
+def unflatten_np(flat_array: np.ndarray, param_shapes: list):
+    """
+    Unflatten a 1D numpy array into a list of numpy arrays with specified shapes.
+
+    Parameters
+    ----------
+    flat_array : np.ndarray
+        The flattened array (1D).
+    param_shapes : list of tuple
+        A list of shapes (e.g., [(3, 3), (3,), ...]) corresponding to each parameter.
+
+    Returns
+    -------
+    list of np.ndarray
+        A list of numpy arrays reshaped to the corresponding shapes.
+    """
+    results = []
+    current_pos = 0
+    for shape in param_shapes:
+        # Calculate how many elements this parameter has.
+        num_elements = np.prod(shape)
+        # Extract the segment and reshape it.
+        segment = flat_array[current_pos:current_pos + num_elements].reshape(shape)
+        results.append(segment)
+        current_pos += num_elements
+    return results
