@@ -69,17 +69,6 @@ class Aggregator:
             for old_m, new_m in zip(self.backup_models, self.client_models)
         ]
 
-    def get_update_gradients_toserver(self):
-        """
-        Compute each local model's update relative to the *server* old model (index 0).
-        i.e. delta_i = (client_model_i - backup_model_0).
-        """
-        server_backup = self.backup_models[0]
-        return [
-            compute_update_gradients(self.save_path, server_backup, new_m, self.device)
-            for new_m in self.client_models
-        ]
-
     def get_params(self) -> Dict[str, torch.Tensor]:
         """
         Return the current global model parameters as a dict or a
@@ -243,7 +232,8 @@ class Aggregator:
         # print("Baseline similarities:", baseline_similarities)
 
         # 11. Final aggregation: sum weighted gradients.
-        update_gradients = self.get_update_gradients()  # Should return a list of updates (each update is list of tensors)
+        # update_gradients = self.get_update_gradients()  # Should return a list of updates (each update is list of tensors)
+        update_gradients = seller_updates
         for gradient, wt in zip(update_gradients, weight):
             add_gradient_updates(aggregated_gradient, gradient, weight=wt)
 
