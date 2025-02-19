@@ -232,7 +232,7 @@ if __name__ == "__main__":
     print(f"start backdoor attack, current dataset: {args.dataset_name}, n_sellers: {args.n_sellers} ")
     set_seed(args.seed)
     device = get_device(args)
-    save_path = f"/results/backdoor/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}/"
+    save_path = f"./results/backdoor/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}/"
     eval_results = backdoor_attack(
         dataset_name=args.dataset_name,
         n_sellers=args.n_sellers,
