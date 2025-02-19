@@ -29,7 +29,7 @@ class GradientSeller(BaseSeller):
                  price_variation: float = 0.2,
                  save_path="",
                  device="cpu",
-                 local_epochs=2):
+                 local_epochs=2, local_training_params={}):
         """
         :param seller_id: Unique ID for the seller.
         :param local_data: The local dataset this seller holds for gradient computation.
@@ -53,6 +53,7 @@ class GradientSeller(BaseSeller):
         self.current_round = 0
         self.selected_last_round = False
         self.local_epochs = local_epochs
+        self.local_training_params = local_training_params
 
     def set_local_model_params(self, params: np.ndarray):
         """Set (or update) local model parameters before computing gradient."""
@@ -201,8 +202,8 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  device='cpu',
                  save_path="",
                  local_epochs=2,
-                 dataset_name=""
-
+                 dataset_name="",
+                 local_training_params={}
                  ):
         """
         :param local_data:        List[(image_tensor, label_int)] for the local training set.
@@ -214,7 +215,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         :param trigger_type:      e.g. "blended_patch", "invisible", "random_noise_patch", etc.
         """
         super().__init__(seller_id, local_data, save_path=save_path, device=device, local_epochs=local_epochs,
-                         dataset_name=dataset_name)
+                         dataset_name=dataset_name, local_training_params=local_training_params)
         self.target_label = target_label
         self.trigger_fraction = trigger_fraction
         self.alpha_align = alpha_align
