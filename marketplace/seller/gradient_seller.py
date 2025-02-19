@@ -254,7 +254,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             else:
                 clean_data.append((img, label))
 
-
         return backdoor_data, clean_data
 
     def _apply_stealth_trigger(self, img_tensor: torch.Tensor) -> torch.Tensor:
@@ -322,17 +321,19 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 server_guess = np.random.randn(final_poisoned_flt.shape[0]) * 0.0001
                 final_poisoned_flt = self.alpha_align * final_poisoned_flt + (1 - self.alpha_align) * server_guess
 
-            final_poisoned_flt = np.clip(final_poisoned_flt, -self.clip_value, self.clip_value)
+            # final_poisoned_flt = np.clip(final_poisoned_flt, -self.clip_value, self.clip_value)
             # Unflatten into a list of arrays with original shapes.
             final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
-            self.last_benign_grad = np.clip(g_benign_flt, -self.clip_value, self.clip_value)
+            # self.last_benign_grad = np.clip(g_benign_flt, -self.clip_value, self.clip_value)
+            self.last_benign_grad = g_benign_flt
         else:
             g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
                                                                                                 self.backdoor_data)
-            final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
+            final_poisoned_flt = g_backdoor_flt
+            # final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
             original_shapes = [param.shape for param in g_backdoor_update]
-            final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
-
+            # final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
+            final_poisoned = g_backdoor_update
         self.last_poisoned_grad = final_poisoned_flt
 
         cur_local_model = get_model(self.dataset_name)
