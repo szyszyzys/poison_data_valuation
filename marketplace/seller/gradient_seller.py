@@ -313,6 +313,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             # 2) Compute backdoor gradient
             g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
                                                                                                 self.backdoor_data)
+            print(g_backdoor_update)
 
             # 3) Combine them:
             final_poisoned_flt = (1 - self.poison_strength) * g_benign_flt + (self.poison_strength) * g_backdoor_flt
@@ -327,7 +328,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         else:
             g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
                                                                                                 self.backdoor_data)
-            print(g_backdoor_update)
             final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
             original_shapes = [param.shape for param in g_backdoor_update]
             final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
@@ -343,7 +343,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         # Convert final_poisoned (a list of np.ndarrays) back to a single flattened array.
         final_poisoned_flat = np.concatenate([g.ravel() for g in final_poisoned])
         print(final_poisoned_flat)
-        print(final_poisoned)
         return final_poisoned_flat
 
     # def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> np.ndarray:

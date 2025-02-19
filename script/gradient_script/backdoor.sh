@@ -8,7 +8,7 @@ echo $PYTHONPATH
 # Define arrays for the parameters you want to vary.
 n_sellers_list=(10)
 n_adversaries_list=(1 0)
-poison_strength_list=(1.0 0.5)
+poison_strength_list=(0.5 1.0)
 
 # Set fixed parameters.
 dataset_name="FMINIST"
