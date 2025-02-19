@@ -7,8 +7,8 @@ echo $PYTHONPATH
 
 # Define arrays for the parameters you want to vary.
 n_sellers_list=(10)
-n_adversaries_list=(1)
-poison_strength_list=(0.5)
+#n_adversaries_list=(1)
+poison_strength_list=(1.0 0.5)
 
 
 # Set fixed parameters.
@@ -22,6 +22,22 @@ seed=42
 gpu_ids="6"
 poison_test_sample=10000
 # Loop over each combination.
+
+n_adversaries_arg="1"
+
+# Parse command-line arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --n_adversaries)
+            n_adversaries_arg="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown parameter passed: $1"
+            exit 1
+            ;;
+    esac
+done
 
 IFS=',' read -r -a n_adversaries_list <<< "$n_adversaries_arg"
 
