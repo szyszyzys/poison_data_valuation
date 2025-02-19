@@ -164,6 +164,8 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                          test_dataloader_global=clean_loader,
                                                          clean_loader=clean_loader, triggered_loader=triggered_loader,
                                                          loss_fn=loss_fn)
+        if gr % 10 == 0:
+            torch.save(marketplace.round_logs, f"{save_path}/market_log_round_{gr}.ckpt")
 
     # post fl process, test the final model.
     torch.save(marketplace.round_logs, f"{save_path}/market_log.ckpt")
