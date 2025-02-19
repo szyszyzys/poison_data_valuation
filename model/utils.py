@@ -46,7 +46,6 @@ def train_local_model(model: nn.Module,
             loss = criterion(outputs, batch_labels)
             loss.backward()
             optimizer.step()
-            print(loss)
 
     return model
 
