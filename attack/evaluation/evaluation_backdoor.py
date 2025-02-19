@@ -6,7 +6,7 @@ from sklearn.metrics import confusion_matrix
 
 
 def evaluate_attack_performance_backdoor_poison(model, clean_loader, triggered_loader, device, target_label=None,
-                                                plot=True):
+                                                plot=True, save_path="attack_performance.png"):
     """
     Evaluate the final model performance in a poisoning/backdoor scenario.
 
@@ -18,7 +18,8 @@ def evaluate_attack_performance_backdoor_poison(model, clean_loader, triggered_l
       target_label  : (Optional) integer target label for backdoor attack.
                       If provided, attack success is defined as the fraction of triggered
                       samples predicted as this target label.
-      plot          : If True, create visualizations.
+      plot          : If True, create and save visualizations.
+      save_path     : File path to save the plot. If not provided, defaults to "attack_performance.png".
 
     Returns:
       metrics       : Dictionary containing:
@@ -101,7 +102,9 @@ def evaluate_attack_performance_backdoor_poison(model, clean_loader, triggered_l
         ax[1].set_ylabel("True Label")
 
         plt.tight_layout()
-        plt.show()
+        # Save the figure instead of showing it.
+        plt.savefig(save_path)
+        plt.close(fig)
 
     return metrics
 

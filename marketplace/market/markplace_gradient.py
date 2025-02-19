@@ -186,7 +186,7 @@ class DataMarketplaceFederated(DataMarketplace):
             "outlier_ids": outlier_ids,
             "num_sellers_selected": len(selected_ids),
             "selection_method": self.selection_method,
-            "aggregated_grad_norm": float(np.linalg.norm(aggregated_gradient)) if aggregated_gradient.size > 0 else 0.0,
+            "aggregated_grad_norm": float(np.linalg.norm(aggregated_gradient)) if len(aggregated_gradient) > 0 else 0.0,
             "final_perf_local": final_perf_local,
             "final_perf_global": final_perf_global,
             "extra_info": extra_info
