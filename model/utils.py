@@ -71,6 +71,46 @@ def flatten_gradients(grad_list: List[torch.Tensor]) -> np.ndarray:
     return flat_grad.numpy()
 
 
+def test_local_model(model: nn.Module,
+                     test_loader: DataLoader,
+                     criterion: nn.Module,
+                     device: torch.device) -> dict:
+    """
+    Evaluate the model on the given test_loader.
+
+    Args:
+        model (nn.Module): The trained model.
+        test_loader (DataLoader): DataLoader for the test dataset.
+        criterion (nn.Module): Loss function (e.g., nn.CrossEntropyLoss).
+        device (torch.device): Device on which to perform evaluation.
+
+    Returns:
+        dict: A dictionary containing 'loss' and 'accuracy' for the test dataset.
+    """
+    model.eval()  # Set the model to evaluation mode
+    total_loss = 0.0
+    total_correct = 0
+    total_samples = 0
+
+    # Disable gradient calculation for evaluation
+    with torch.no_grad():
+        for batch_data, batch_labels in test_loader:
+            batch_data = batch_data.to(device)
+            batch_labels = batch_labels.to(device)
+            outputs = model(batch_data)
+            loss = criterion(outputs, batch_labels)
+            total_loss += loss.item() * batch_data.size(0)
+
+            # Compute the number of correct predictions
+            _, predicted = torch.max(outputs, dim=1)
+            total_correct += (predicted == batch_labels).sum().item()
+            total_samples += batch_data.size(0)
+
+    avg_loss = total_loss / total_samples
+    accuracy = total_correct / total_samples
+    return {"loss": avg_loss, "accuracy": accuracy}
+
+
 def local_training_and_get_gradient(model: nn.Module,
                                     train_dataset: TensorDataset,
                                     batch_size: int,
@@ -107,6 +147,9 @@ def local_training_and_get_gradient(model: nn.Module,
 
     # Flatten the list of gradients into a single vector
     flat_update = flatten_gradients(grad_update)
+
+    # evaluate the model
+    test_local_model(local_model, train_loader, criterion)
 
     return grad_update, flat_update, local_model
 

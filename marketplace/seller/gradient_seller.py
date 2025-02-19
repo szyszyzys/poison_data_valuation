@@ -82,6 +82,7 @@ class GradientSeller(BaseSeller):
         # 2. Train locally starting from base_params, obtain the local gradient update
         gradient, gradient_flt, updated_model = self._compute_local_grad(base_params, self.dataset)
 
+
         # 3. Save the updated local model for future rounds.
         self.save_local_model(updated_model)
 
