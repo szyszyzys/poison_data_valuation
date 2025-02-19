@@ -149,8 +149,8 @@ def local_training_and_get_gradient(model: nn.Module,
     flat_update = flatten_gradients(grad_update)
 
     # evaluate the model
-    test_local_model(local_model, train_loader, criterion, device)
-
+    eval_res = test_local_model(local_model, train_loader, criterion, device)
+    print(f"evaluation_result: {eval_res}")
     return grad_update, flat_update, local_model
 
 
