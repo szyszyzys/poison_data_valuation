@@ -111,7 +111,7 @@ class GradientSeller(BaseSeller):
         # Perform local training and get the flattened gradient update.
         grad_update, grad_update_flt, local_model = local_training_and_get_gradient(
             model, list_to_tensor_dataset(dataset), batch_size=64, device=self.device,
-            local_epochs=self.local_epochs, lr=0.01
+            local_epochs=self.local_epochs, lr=0.001
         )
 
         # Optionally, you might want to clip the gradient here.
@@ -425,6 +425,20 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         }
         self.selected_last_round = is_selected
         self.federated_round_history.append(record)
+
+
+def global_norm(grad_list):
+    return torch.sqrt(sum(torch.sum(g ** 2) for g in grad_list))
+
+
+# Clip gradients by the global norm
+def clip_gradients(grad_list, max_norm):
+    norm = global_norm(grad_list)
+    clip_coef = max_norm / (norm + 1e-6)
+    if clip_coef < 1:
+        return [g * clip_coef for g in grad_list]
+    else:
+        return grad_list
 
 
 def flatten_state_dict(state_dict: dict) -> np.ndarray:
