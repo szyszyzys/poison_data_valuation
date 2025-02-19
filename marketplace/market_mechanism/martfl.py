@@ -205,7 +205,7 @@ class Aggregator:
         baseline = baseline_update_flattened.unsqueeze(0)  # shape: (1, d)
         cosine_similarities = torch.nn.functional.cosine_similarity(baseline, clients_stack, dim=1)
         np_cosine_result = cosine_similarities.cpu().numpy()
-
+        np_cosine_result = np.nan_to_num(np_cosine_result, nan=0.0)
         # 5. Clustering on cosine similarities:
         diameter = np.max(np_cosine_result) - np.min(np_cosine_result)
 
