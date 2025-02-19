@@ -197,3 +197,55 @@ def get_model(dataset_name):
         case _:
             raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
     return model
+
+
+def apply_gradient(model: torch.nn.Module,
+                   aggregated_gradient,
+                   learning_rate: float = 1.0,
+                   device: torch.device = None) -> torch.nn.Module:
+    """
+    Update the model parameters by descending along the aggregated gradient.
+
+    Args:
+        model (torch.nn.Module): The model to update.
+        aggregated_gradient: The aggregated gradient, either as a list of tensors
+                             or as a flattened numpy array.
+        learning_rate (float): The step size for the update.
+        device (torch.device, optional): The device on which to perform the update.
+            If None, the device of the first parameter in the model is used.
+
+    Returns:
+        torch.nn.Module: The updated model.
+    """
+    # Determine device from model if not provided
+    if device is None:
+        device = next(model.parameters()).device
+
+    # If aggregated_gradient is a list of tensors, flatten and convert to numpy array.
+    if isinstance(aggregated_gradient, list):
+        aggregated_gradient = np.concatenate(
+            [grad.cpu().numpy().ravel() for grad in aggregated_gradient]
+        )
+
+    # Check if the aggregated gradient is empty.
+    if aggregated_gradient.size == 0:
+        return model
+
+    # Convert the numpy array back to a torch tensor.
+    aggregated_torch = torch.from_numpy(aggregated_gradient).float().to(device)
+
+    # Get current model parameters
+    current_params = model.state_dict()
+    idx = 0
+    updated_params = {}
+
+    for name, tensor in current_params.items():
+        numel = tensor.numel()
+        grad_slice = aggregated_torch[idx: idx + numel].reshape(tensor.shape)
+        idx += numel
+        # Apply the SGD update rule: new_param = param - learning_rate * grad
+        updated_params[name] = tensor - learning_rate * grad_slice
+
+    # Load updated parameters back into the model
+    model.load_state_dict(updated_params)
+    return model

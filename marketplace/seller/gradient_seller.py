@@ -84,7 +84,7 @@ class GradientSeller(BaseSeller):
 
 
         # 3. Save the updated local model for future rounds.
-        self.save_local_model(updated_model)
+        # self.save_local_model(updated_model)
 
         self.current_round += 1
         return gradient
@@ -335,11 +335,11 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         self.last_poisoned_grad = final_poisoned_flt
         final_poisoned = global_clip_np(final_poisoned_flt, 1)
         final_poisoned = unflatten_np(final_poisoned, original_shapes)
-        cur_local_model = get_model(self.dataset_name)
-        updated_params_flat = flatten_state_dict(base_params) - final_poisoned_flt
-        new_state_dict = unflatten_state_dict(cur_local_model, updated_params_flat)
-        cur_local_model.load_state_dict(new_state_dict)
-        self.save_local_model(cur_local_model)
+        # cur_local_model = get_model(self.dataset_name)
+        # updated_params_flat = flatten_state_dict(base_params) - final_poisoned_flt
+        # new_state_dict = unflatten_state_dict(cur_local_model, updated_params_flat)
+        # cur_local_model.load_state_dict(new_state_dict)
+        # self.save_local_model(cur_local_model)
 
         return final_poisoned
 

@@ -200,10 +200,15 @@ class DataMarketplaceFederated(DataMarketplace):
         self.round_logs.append(round_record)
 
         # 9. Update each seller about whether they were selected
-        for sid in self.sellers.keys():
+        for sid, seller in self.sellers.items():
             # Mark "is_selected" if in selected_sellers
             is_selected = (sid in selected_ids)
             self.sellers[sid].record_federated_round(round_number, is_selected)
+            s_local_model = seller.load_local_model()
+            cur_local_model = apply_gradient(s_local_model, aggregated_gradient)
+            # update local model
+
+            seller.save_local_model(cur_local_model)
         print(
             f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")
         return round_record
