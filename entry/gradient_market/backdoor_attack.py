@@ -114,7 +114,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                             quantization=False,
                             )
     marketplace = DataMarketplaceFederated(aggregator,
-                                           selection_method="martfl")
+                                           selection_method="martfl",save_path = save_path)
 
     # config the seller and register to the marketplace
     for cid, loader in client_loaders.items():

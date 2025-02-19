@@ -14,7 +14,7 @@ class DataMarketplaceFederated(DataMarketplace):
                  aggregator: Aggregator,
                  selection_method: str = "fedavg",
                  learning_rate: float = 1.0,
-                 broadcast_local=False):
+                 broadcast_local=False, save_path=''):
         """
         A marketplace for federated learning where each seller provides gradient updates.
 
@@ -29,7 +29,7 @@ class DataMarketplaceFederated(DataMarketplace):
         self.broadcast_local = broadcast_local
         # Each seller might be a BaseSeller or an AdversarySeller, etc.
         self.sellers: Dict[str, Union[BaseSeller, Any]] = {}
-
+        self.save_path = save_path
         # This can store marketplace-level logs or stats, if desired
         self.round_logs: List[Dict[str, Any]] = []
 
@@ -159,7 +159,8 @@ class DataMarketplaceFederated(DataMarketplace):
             poison_metrics = evaluate_attack_performance_backdoor_poison(self.aggregator.global_model, clean_loader,
                                                                          triggered_loader,
                                                                          self.aggregator.device,
-                                                                         target_label=None, plot=True)
+                                                                         target_label=None, plot=True,
+                                                                         save_path=f"{self.save_path}/attack_performance.png")
 
         # 7. Log round info to aggregator (optional)
         extra_info = {}
