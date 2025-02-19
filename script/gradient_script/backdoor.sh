@@ -7,7 +7,7 @@ echo $PYTHONPATH
 
 # Define arrays for the parameters you want to vary.
 n_sellers_list=(10)
-n_adversaries_list=(0 1)
+n_adversaries_list=(1 0)
 poison_strength_list=(0.5 1.0)
 
 # Set fixed parameters.
@@ -18,7 +18,7 @@ trigger_type="blended_patch"
 exp_name="experiment_$(date +%Y%m%d_%H%M%S)"  # Unique experiment name with timestamp.
 model_arch="resnet18"
 seed=42
-gpu_ids="0"
+gpu_ids="6"
 poison_test_sample=10000
 # Loop over each combination.
 for n_sellers in "${n_sellers_list[@]}"; do
