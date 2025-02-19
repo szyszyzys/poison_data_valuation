@@ -144,31 +144,59 @@ class Aggregator:
         self.n_seller = len(seller_updates)
 
         # 1. Initialize aggregated_gradient as zeros (same shape as each parameter)
+        # print("start gradient aggregation")
+        # aggregated_gradient = [
+        #     torch.zeros_like(param, device=self.device)
+        #     for param in self.model_structure.parameters()
+        # ]
+        #
+        # print("start flatten and clipping")
+        # # 2. For each seller update, clip and flatten it
+        # clients_update_flattened = [
+        #     flatten(clip_gradient_update(update, clip_norm=0.01))
+        #     for update in seller_updates
+        # ]
+        #
+        # # 3. Define the server update
+        # baseline_update_flattened = flatten(buyer_updates)
+        #
+        # # 4. Compute cosine similarities between server's update and each seller's update.
+        # print("start cosine baseline")
+        # cosine_result = [
+        #     cosine_xy(baseline_update_flattened, clients_update_flattened[i])
+        #     for i in range(self.n_seller)
+        # ]
+        # np_cosine_result = np.array(cosine_result)
+        #
+        # # 5. Clustering on cosine similarities:
+        # diameter = np.max(np_cosine_result) - np.min(np_cosine_result)
+
         print("start gradient aggregation")
         aggregated_gradient = [
             torch.zeros_like(param, device=self.device)
             for param in self.model_structure.parameters()
         ]
 
-        # 2. For each seller update, clip and flatten it
+        print("start flatten and clipping")
+        # Process each seller update: clip then flatten
         clients_update_flattened = [
             flatten(clip_gradient_update(update, clip_norm=0.01))
             for update in seller_updates
         ]
 
-        # 3. Define the server update
+        # Process buyer update (baseline)
         baseline_update_flattened = flatten(buyer_updates)
 
-        # 4. Compute cosine similarities between server's update and each seller's update.
         print("start cosine baseline")
-        cosine_result = [
-            cosine_xy(baseline_update_flattened, clients_update_flattened[i])
-            for i in range(self.n_seller)
-        ]
-        np_cosine_result = np.array(cosine_result)
+        # Vectorize cosine similarity:
+        clients_stack = torch.stack(clients_update_flattened)  # shape: (n_seller, d)
+        baseline = baseline_update_flattened.unsqueeze(0)  # shape: (1, d)
+        cosine_similarities = torch.nn.functional.cosine_similarity(baseline, clients_stack, dim=1)
+        np_cosine_result = cosine_similarities.cpu().numpy()
 
         # 5. Clustering on cosine similarities:
         diameter = np.max(np_cosine_result) - np.min(np_cosine_result)
+
         print("Diameter:", diameter)
         n_clusters = optimal_k_gap(np_cosine_result)
         if n_clusters == 1 and diameter > 0.05:
