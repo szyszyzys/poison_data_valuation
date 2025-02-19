@@ -307,6 +307,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         # 1) Compute benign gradient
         if self.poison_strength != 1:
             grad_benign_update, g_benign_flt, local_model_benign = self._compute_local_grad(base_params, self.clean_data)
+            print(grad_benign_update)
             original_shapes = [param.shape for param in grad_benign_update]
 
             # 2) Compute backdoor gradient
@@ -324,6 +325,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             self.last_benign_grad = np.clip(g_benign_flt, -self.clip_value, self.clip_value)
         else:
             g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
+            print(g_backdoor_update)
             final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
             original_shapes = [param.shape for param in g_backdoor_update]
             final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
