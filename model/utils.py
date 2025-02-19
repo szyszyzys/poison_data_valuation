@@ -199,53 +199,73 @@ def get_model(dataset_name):
     return model
 
 
-def apply_gradient(model: torch.nn.Module,
-                   aggregated_gradient,
-                   learning_rate: float = 1.0,
-                   device: torch.device = None) -> torch.nn.Module:
+import torch
+import numpy as np
+from collections import OrderedDict
+
+
+def apply_gradient(model, aggregated_gradient, learning_rate: float = 1.0, device: torch.device = None):
     """
     Update the model parameters by descending along the aggregated gradient.
 
+    This function supports two cases:
+      1. If `model` is an instance of nn.Module, the model's state_dict will be updated.
+      2. If `model` is an OrderedDict (i.e. a state_dict), then the dict will be updated directly.
+
     Args:
-        model (torch.nn.Module): The model to update.
+        model: The model (nn.Module) or state_dict (OrderedDict) to update.
         aggregated_gradient: The aggregated gradient, either as a list of tensors
                              or as a flattened numpy array.
         learning_rate (float): The step size for the update.
         device (torch.device, optional): The device on which to perform the update.
-            If None, the device of the first parameter in the model is used.
+            If None, the device is inferred from the model or state_dict.
 
     Returns:
-        torch.nn.Module: The updated model.
+        The updated model (if model was an nn.Module) or an updated state_dict (if model was an OrderedDict).
     """
-    # Determine device from model if not provided
-    if device is None:
-        device = next(model.parameters()).device
+    # Determine if model is a module or a state_dict.
+    if hasattr(model, 'parameters'):
+        # model is an nn.Module
+        if device is None:
+            device = next(model.parameters()).device
+        current_params = model.state_dict()
+        is_module = True
+    elif isinstance(model, dict):
+        # model is a state_dict (OrderedDict)
+        if device is None:
+            device = list(model.values())[0].device
+        current_params = model
+        is_module = False
+    else:
+        raise ValueError("model must be an nn.Module or a state_dict (OrderedDict).")
 
-    # If aggregated_gradient is a list of tensors, flatten and convert to numpy array.
+    # If aggregated_gradient is a list of tensors, flatten and convert to a numpy array.
     if isinstance(aggregated_gradient, list):
         aggregated_gradient = np.concatenate(
             [grad.cpu().numpy().ravel() for grad in aggregated_gradient]
         )
 
-    # Check if the aggregated gradient is empty.
+    # If the aggregated gradient is empty, return the model/state_dict unchanged.
     if aggregated_gradient.size == 0:
         return model
 
     # Convert the numpy array back to a torch tensor.
     aggregated_torch = torch.from_numpy(aggregated_gradient).float().to(device)
 
-    # Get current model parameters
-    current_params = model.state_dict()
+    # Update the parameters by slicing the aggregated gradient accordingly.
+    updated_params = OrderedDict()
     idx = 0
-    updated_params = {}
-
     for name, tensor in current_params.items():
         numel = tensor.numel()
         grad_slice = aggregated_torch[idx: idx + numel].reshape(tensor.shape)
         idx += numel
-        # Apply the SGD update rule: new_param = param - learning_rate * grad
+        # Apply the SGD update: new_param = param - learning_rate * grad_slice
         updated_params[name] = tensor - learning_rate * grad_slice
 
-    # Load updated parameters back into the model
-    model.load_state_dict(updated_params)
-    return model
+    # If we started with a module, load the updated state dict back into the model.
+    if is_module:
+        model.load_state_dict(updated_params)
+        return model
+    else:
+        # Otherwise, return the updated state_dict.
+        return updated_params
