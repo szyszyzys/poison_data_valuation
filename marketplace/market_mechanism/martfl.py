@@ -215,7 +215,7 @@ class Aggregator:
 
         # 7. Determine border for outlier detection (max distance from center, skipping server)
         border = 0.0
-        for i, (cos_sim, sec_cluster) in enumerate(zip(cosine_result, clusters_secondary)):
+        for i, (cos_sim, sec_cluster) in enumerate(zip(np_cosine_result, clusters_secondary)):
             if n_clusters == 1 or sec_cluster != 0:
                 dist = abs(center - cos_sim)
                 if dist > border:
@@ -226,10 +226,10 @@ class Aggregator:
         non_outliers = [1.0 for _ in range(self.n_seller)]
         candidate_server = []
         for i in range(self.n_seller):
-            if clusters_secondary[i] == 0 or cosine_result[i] == 0.0:
+            if clusters_secondary[i] == 0 or np_cosine_result[i] == 0.0:
                 non_outliers[i] = 0.0  # mark as outlier
             else:
-                dist = abs(center - cosine_result[i])
+                dist = abs(center - np_cosine_result[i])
                 non_outliers[i] = 1.0 - dist / (border + 1e-6)
                 if clusters[i] == n_clusters - 1:
                     candidate_server.append(i)
@@ -242,8 +242,8 @@ class Aggregator:
         # 9. Use the non_outlier scores as final weights.
         # (Overwrite cosine_result with non_outliers)
         for i in range(self.n_seller):
-            cosine_result[i] = non_outliers[i]
-        cosine_weight = torch.tensor(cosine_result, dtype=torch.float, device=self.device)
+            np_cosine_result[i] = non_outliers[i]
+        cosine_weight = torch.tensor(np_cosine_result, dtype=torch.float, device=self.device)
         denom = torch.sum(torch.abs(cosine_weight)) + 1e-6
         weight = cosine_weight / denom
 

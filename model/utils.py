@@ -107,7 +107,7 @@ def local_training_and_get_gradient(model: nn.Module,
     # Flatten the list of gradients into a single vector
     flat_update = flatten_gradients(grad_update)
 
-    return flat_update, local_model
+    return grad_update, flat_update, local_model
 
 
 # ---------------------------

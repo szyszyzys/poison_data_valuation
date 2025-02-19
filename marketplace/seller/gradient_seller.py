@@ -79,13 +79,13 @@ class GradientSeller(BaseSeller):
                 base_params = None  # or load_param("f") as your fallback
 
         # 2. Train locally starting from base_params, obtain the local gradient update
-        gradient_flt, updated_model = self._compute_local_grad(base_params, self.dataset)
+        gradient, gradient_flt, updated_model = self._compute_local_grad(base_params, self.dataset)
 
         # 3. Save the updated local model for future rounds.
         self.save_local_model(updated_model)
 
         self.current_round += 1
-        return gradient_flt
+        return gradient
 
     def _compute_local_grad(self, base_params: Dict[str, torch.Tensor],
                             dataset: List[Tuple[torch.Tensor, int]]) -> (torch.Tensor, torch.nn.Module):
@@ -109,7 +109,7 @@ class GradientSeller(BaseSeller):
         model = model.to(self.device)
 
         # Perform local training and get the flattened gradient update.
-        grad_update_flt, local_model = local_training_and_get_gradient(
+        grad_update, grad_update_flt, local_model = local_training_and_get_gradient(
             model, list_to_tensor_dataset(self.dataset), batch_size=64, device=self.device,
             local_epochs=self.local_epochs, lr=0.01
         )
@@ -117,7 +117,7 @@ class GradientSeller(BaseSeller):
         # Optionally, you might want to clip the gradient here.
         # flat_update = torch.clamp(flat_update, -self.clip_value, self.clip_value)
 
-        return grad_update_flt, local_model
+        return grad_update, grad_update_flt, local_model
 
     def save_local_model(self, model: torch.nn.Module):
         """
@@ -302,10 +302,10 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         # 1) Compute benign gradient
         if self.poison_strength != 1:
-            g_benign_flt, local_model_benign = self._compute_local_grad(base_params, self.clean_data)
+            grad_benign_update, g_benign_flt, local_model_benign = self._compute_local_grad(base_params, self.clean_data)
 
             # 2) Compute backdoor gradient
-            g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
+            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
 
             # 3) Combine them:
             #    raw_poison = benign_grad + poison_strength*(backdoor_grad - benign_grad)
@@ -322,7 +322,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             final_poisoned = np.clip(final_poisoned, -self.clip_value, self.clip_value)
             self.last_benign_grad = np.clip(g_benign_flt, -self.clip_value, self.clip_value)
         else:
-            g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
+            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
             final_poisoned = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
 
         # store for analysis
@@ -332,13 +332,14 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         # Convert the updated flat parameters back into the model's state dict format.
         new_state_dict = unflatten_state_dict(cur_local_model, updated_params_flat)
+        gradient_final = unflatten_state_dict(cur_local_model, final_poisoned)
         cur_local_model.load_state_dict(new_state_dict)
         # Load the updated parameters into the model.
 
         # Load the updated parameters into the model.
         self.save_local_model(cur_local_model)
 
-        return final_poisoned
+        return gradient_final
 
     def record_federated_round(self, round_number: int, is_selected: bool,
                                final_model_params: Optional[np.ndarray] = None):
