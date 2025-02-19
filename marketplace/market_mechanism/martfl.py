@@ -390,10 +390,15 @@ def add_update_to_model(model: nn.Module, update, weight=1.0, device=None):
 def add_gradient_updates(grad_accumulator, grad_update, weight=1.0):
     """
     In-place: grad_accumulator[i] += weight * grad_update[i]
+    This version avoids using .data and instead uses in-place operations.
     """
     assert len(grad_accumulator) == len(grad_update), "Mismatch in grad lists."
     for acc, g in zip(grad_accumulator, grad_update):
-        acc.data += g.data * weight
+        # Ensure g is a tensor (if it's not, convert it)
+        if not isinstance(g, torch.Tensor):
+            g = torch.tensor(g, device=acc.device)
+        # Perform the update in-place
+        acc.add_(g * weight)
 
 
 def cosine_xy(x: torch.Tensor, y: torch.Tensor) -> float:
