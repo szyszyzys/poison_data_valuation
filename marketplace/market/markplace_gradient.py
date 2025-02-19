@@ -198,7 +198,8 @@ class DataMarketplaceFederated(DataMarketplace):
             # Mark "is_selected" if in selected_sellers
             is_selected = (sid in selected_ids)
             self.sellers[sid].record_federated_round(round_number, is_selected)
-
+        print(
+            f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")
         return round_record
 
     def evaluate_global_model(self, test_dataloader, loss_fn) -> Dict[str, float]:

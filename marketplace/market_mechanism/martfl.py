@@ -87,9 +87,9 @@ class Aggregator:
 
     def apply_gradient(self, aggregated_gradient, learning_rate: float = 1.0):
         """
-        Update the global model parameters by descending along
-        aggregated_gradient. Convert the aggregated gradient into a single numpy
-        array (if it's a list) and then apply the update to self.global_model.
+        Update the global model parameters by descending along aggregated_gradient.
+        Convert the aggregated gradient into a single numpy array (if it's a list) and
+        then apply the update to self.global_model.
         """
         # If aggregated_gradient is a list of tensors, flatten and convert to numpy array.
         if isinstance(aggregated_gradient, list):
@@ -105,16 +105,21 @@ class Aggregator:
         # Convert the numpy array back to a torch tensor.
         aggregated_torch = torch.from_numpy(aggregated_gradient).float().to(self.device)
 
-        # Update the global model's parameters using the flattened gradient.
+        # Get model state dict and apply updates
         with torch.no_grad():
             current_params = self.global_model.state_dict()
             idx = 0
+            updated_params = {}
+
             for name, tensor in current_params.items():
                 numel = tensor.numel()
                 grad_slice = aggregated_torch[idx: idx + numel].reshape(tensor.shape)
                 idx += numel
                 # Apply the update (SGD update rule)
-                tensor[...] = tensor - learning_rate * grad_slice
+                updated_params[name] = tensor - learning_rate * grad_slice
+
+            # Load updated parameters back into the model
+            self.global_model.load_state_dict(updated_params)
 
     def aggregate(self, global_epoch, seller_updates, buyer_updates, method="martfl"):
         return self.martFL(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates)
