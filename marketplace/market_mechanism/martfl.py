@@ -85,20 +85,27 @@ class Aggregator:
         """
         self.global_model.load_state_dict(params)
 
-    def apply_gradient(self, aggregated_gradient: np.ndarray, learning_rate: float = 1.0):
+    def apply_gradient(self, aggregated_gradient, learning_rate: float = 1.0):
         """
         Update the global model parameters by descending along
-        aggregated_gradient. You must convert the numpy array
-        to torch, then apply it to self.global_model.
+        aggregated_gradient. Convert the aggregated gradient into a single numpy
+        array (if it's a list) and then apply the update to self.global_model.
         """
+        # If aggregated_gradient is a list of tensors, flatten and convert to numpy array.
+        if isinstance(aggregated_gradient, list):
+            # Convert each tensor to numpy, flatten, and concatenate into a single 1D array.
+            aggregated_gradient = np.concatenate(
+                [grad.cpu().numpy().ravel() for grad in aggregated_gradient]
+            )
+
+        # Check if the aggregated gradient is empty.
         if aggregated_gradient.size == 0:
             return
 
-        # Convert to torch
+        # Convert the numpy array back to a torch tensor.
         aggregated_torch = torch.from_numpy(aggregated_gradient).float().to(self.device)
-        # Flatten model params, apply update, unflatten
-        # (for demonstration, assume you have a flatten/unflatten routine)
-        # Or do something simpler if your model is small.
+
+        # Update the global model's parameters using the flattened gradient.
         with torch.no_grad():
             current_params = self.global_model.state_dict()
             idx = 0
@@ -106,7 +113,7 @@ class Aggregator:
                 numel = tensor.numel()
                 grad_slice = aggregated_torch[idx: idx + numel].reshape(tensor.shape)
                 idx += numel
-                # Update rule (SGD):
+                # Apply the update (SGD update rule)
                 tensor[...] = tensor - learning_rate * grad_slice
 
     def aggregate(self, global_epoch, seller_updates, buyer_updates, method="martfl"):
