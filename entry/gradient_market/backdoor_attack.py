@@ -86,6 +86,17 @@ def generate_attack_test_set(full_dataset, backdoor_generator, n_samples=1000):
     return clean_loader, triggered_loader
 
 
+def convert_np(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: convert_np(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_np(item) for item in obj]
+    else:
+        return obj
+
+
 def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                     global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", save_path="/",
                     device='cpu', poison_strength=1, poison_test_sample=100):
@@ -114,7 +125,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                             quantization=False,
                             )
     marketplace = DataMarketplaceFederated(aggregator,
-                                           selection_method="martfl",save_path = save_path)
+                                           selection_method="martfl", save_path=save_path)
 
     # config the seller and register to the marketplace
     for cid, loader in client_loaders.items():
@@ -155,7 +166,9 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                          loss_fn=loss_fn)
 
     # post fl process, test the final model.
-    save_history_to_json(marketplace.round_logs, f"{save_path}/market_log.json")
+    torch.save(marketplace.round_logs, f"{save_path}/market_log.ckpt")
+    converted_logs = convert_np(marketplace.round_logs)
+    save_history_to_json(converted_logs, f"{save_path}/market_log.json")
     # record the result for each seller
     all_sellers = marketplace.get_all_sellers
     for seller_id, seller in all_sellers.items():
