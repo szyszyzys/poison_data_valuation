@@ -5,7 +5,7 @@ import torch
 
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
 from marketplace.market.data_market import DataMarketplace
-from marketplace.market_mechanism.martfl import Aggregator
+from marketplace.market_mechanism.martfl import Aggregator, flatten
 from marketplace.seller.seller import BaseSeller
 
 
@@ -65,7 +65,7 @@ class DataMarketplaceFederated(DataMarketplace):
             # for martfl, local have no access to the global params
             grad_np = seller.get_gradient()
             # Expect get_gradient(...) -> (np.ndarray, int) or similar
-            norm = np.linalg.norm(grad_np)
+            norm = np.linalg.norm(flatten(grad_np))
             print(f"The {seller_id} gradient norm is: {norm}")
             gradients.append(grad_np)
             seller_ids.append(seller_id)
@@ -135,7 +135,7 @@ class DataMarketplaceFederated(DataMarketplace):
                                                                                    seller_gradients,
                                                                                    buyer_gradient,
                                                                                    method=self.selection_method)
-        print(f"round {round_number} aggregated gradient norm: {np.linalg.norm(aggregated_gradient)}")
+        print(f"round {round_number} aggregated gradient norm: {np.linalg.norm(flatten(aggregated_gradient))}")
         # 4. update global model
         self.update_global_model(aggregated_gradient)
 
