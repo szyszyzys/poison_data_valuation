@@ -282,12 +282,16 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         return triggered_img
 
+
     def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> Tuple[np.ndarray, int]:
         """
         Return a single 'final' gradient that merges:
           1) benign gradient
           2) backdoor gradient
-          3) partial alignment w/ a guessed server gradient
+          3) partial alignment with a guessed server gradient.
+
+        Returns a tuple where the first element is the flattened final gradient (np.ndarray)
+        and the second element is, for example, the number of gradient segments.
         """
         if global_params is not None:
             base_params = global_params
@@ -302,53 +306,105 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         # 1) Compute benign gradient
         if self.poison_strength != 1:
-            grad_benign_update, g_benign_flt, local_model_benign = self._compute_local_grad(base_params,
-                                                                                            self.clean_data)
-
-            # Example usage:
-            # Suppose grad_benign_update is a list of tensors (or numpy arrays) that you flattened.
-            # Get the original shapes:
+            grad_benign_update, g_benign_flt, local_model_benign = self._compute_local_grad(base_params, self.clean_data)
             original_shapes = [param.shape for param in grad_benign_update]
 
             # 2) Compute backdoor gradient
-            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
-                                                                                                self.backdoor_data)
+            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
 
             # 3) Combine them:
-            #    raw_poison = benign_grad + poison_strength*(backdoor_grad - benign_grad)
-            #               = (1 - poison_strength)*benign_grad + (poison_strength)*backdoor_grad
             final_poisoned_flt = (1 - self.poison_strength) * g_benign_flt + (self.poison_strength) * g_backdoor_flt
             if align_global:
-                # 4) Estimate server grad (in black-box, we might guess near zero or track old updates)
                 server_guess = np.random.randn(final_poisoned_flt.shape[0]) * 0.0001
+                final_poisoned_flt = self.alpha_align * final_poisoned_flt + (1 - self.alpha_align) * server_guess
 
-                # 5) final_poisoned = alpha_align * raw_poison + (1 - alpha_align)*server_guess
-                final_poisoned = self.alpha_align * final_poisoned_flt + (1 - self.alpha_align) * server_guess
-
-            # 6) Clip to aggregator’s clamp
             final_poisoned_flt = np.clip(final_poisoned_flt, -self.clip_value, self.clip_value)
+            # Unflatten into a list of arrays with original shapes.
             final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
             self.last_benign_grad = np.clip(g_benign_flt, -self.clip_value, self.clip_value)
         else:
-            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
-                                                                                                self.backdoor_data)
+            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params, self.backdoor_data)
             final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
             original_shapes = [param.shape for param in g_backdoor_update]
             final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
-        # store for analysis
+
         self.last_poisoned_grad = final_poisoned_flt
+
         cur_local_model = get_model(self.dataset_name)
         updated_params_flat = flatten_state_dict(base_params) - final_poisoned_flt
-
-        # Convert the updated flat parameters back into the model's state dict format.
         new_state_dict = unflatten_state_dict(cur_local_model, updated_params_flat)
         cur_local_model.load_state_dict(new_state_dict)
-        # Load the updated parameters into the model.
-
-        # Load the updated parameters into the model.
         self.save_local_model(cur_local_model)
 
-        return final_poisoned
+        # Convert final_poisoned (a list of np.ndarrays) back to a single flattened array.
+        final_poisoned_flat = np.concatenate([g.ravel() for g in final_poisoned])
+        return final_poisoned_flat
+
+    # def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> np.ndarray:
+    #     """
+    #     Return a single 'final' gradient that merges:
+    #       1) benign gradient
+    #       2) backdoor gradient
+    #       3) partial alignment w/ a guessed server gradient
+    #     """
+    #     if global_params is not None:
+    #         base_params = global_params
+    #     else:
+    #         try:
+    #             base_params = self.load_local_model()
+    #             print(f"[{self.seller_id}] Loaded previous local model.")
+    #         except Exception as e:
+    #             print(f"[{self.seller_id}] No saved local model found; using default initialization.")
+    #             model = get_model(self.dataset_name)
+    #             base_params = model.state_dict()  # or load_param("f") as your fallback
+    #
+    #     # 1) Compute benign gradient
+    #     if self.poison_strength != 1:
+    #         grad_benign_update, g_benign_flt, local_model_benign = self._compute_local_grad(base_params,
+    #                                                                                         self.clean_data)
+    #
+    #         # Example usage:
+    #         # Suppose grad_benign_update is a list of tensors (or numpy arrays) that you flattened.
+    #         # Get the original shapes:
+    #         original_shapes = [param.shape for param in grad_benign_update]
+    #
+    #         # 2) Compute backdoor gradient
+    #         g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
+    #                                                                                             self.backdoor_data)
+    #
+    #         # 3) Combine them:
+    #         final_poisoned_flt = (1 - self.poison_strength) * g_benign_flt + (self.poison_strength) * g_backdoor_flt
+    #         if align_global:
+    #             # 4) Estimate server grad (in black-box, we might guess near zero or track old updates)
+    #             server_guess = np.random.randn(final_poisoned_flt.shape[0]) * 0.0001
+    #
+    #             # 5) final_poisoned = alpha_align * raw_poison + (1 - alpha_align)*server_guess
+    #             final_poisoned = self.alpha_align * final_poisoned_flt + (1 - self.alpha_align) * server_guess
+    #
+    #         # 6) Clip to aggregator’s clamp
+    #         final_poisoned_flt = np.clip(final_poisoned_flt, -self.clip_value, self.clip_value)
+    #         final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
+    #         self.last_benign_grad = np.clip(g_benign_flt, -self.clip_value, self.clip_value)
+    #     else:
+    #         g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
+    #                                                                                             self.backdoor_data)
+    #         final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
+    #         original_shapes = [param.shape for param in g_backdoor_update]
+    #         final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
+    #     # store for analysis
+    #     self.last_poisoned_grad = final_poisoned_flt
+    #     cur_local_model = get_model(self.dataset_name)
+    #     updated_params_flat = flatten_state_dict(base_params) - final_poisoned_flt
+    #
+    #     # Convert the updated flat parameters back into the model's state dict format.
+    #     new_state_dict = unflatten_state_dict(cur_local_model, updated_params_flat)
+    #     cur_local_model.load_state_dict(new_state_dict)
+    #     # Load the updated parameters into the model.
+    #
+    #     # Load the updated parameters into the model.
+    #     self.save_local_model(cur_local_model)
+    #
+    #     return final_poisoned
 
     def record_federated_round(self, round_number: int, is_selected: bool,
                                final_model_params: Optional[np.ndarray] = None):
