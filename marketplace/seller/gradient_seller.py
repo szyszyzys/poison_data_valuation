@@ -330,8 +330,8 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             # final_poisoned_flt = g_backdoor_flt
             final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
             original_shapes = [param.shape for param in g_backdoor_update]
-            # final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
-            final_poisoned = np.clip(g_backdoor_update, -self.clip_value, self.clip_value)
+            final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
+            # final_poisoned = np.clip(g_backdoor_update, -self.clip_value, self.clip_value)
         self.last_poisoned_grad = final_poisoned_flt
         final_poisoned = clip_gradients(final_poisoned, max_norm=self.clip_value)
         cur_local_model = get_model(self.dataset_name)
