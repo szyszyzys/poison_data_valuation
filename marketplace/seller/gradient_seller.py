@@ -330,10 +330,10 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             # final_poisoned_flt = g_backdoor_flt
             final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
             original_shapes = [param.shape for param in g_backdoor_update]
-            final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
-            # final_poisoned = np.clip(g_backdoor_update, -self.clip_value, self.clip_value)
+            # final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
+            final_poisoned = g_backdoor_update
         self.last_poisoned_grad = final_poisoned_flt
-        final_poisoned = clip_gradients(final_poisoned, max_norm=self.clip_value)
+        final_poisoned = global_clip_np(final_poisoned, 1)
         cur_local_model = get_model(self.dataset_name)
         updated_params_flat = flatten_state_dict(base_params) - final_poisoned_flt
         new_state_dict = unflatten_state_dict(cur_local_model, updated_params_flat)
@@ -427,18 +427,22 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         self.federated_round_history.append(record)
 
 
-def global_norm(grad_list):
-    return torch.sqrt(sum(torch.sum(g ** 2) for g in grad_list))
+def global_clip_np(arr: np.ndarray, max_norm: float) -> np.ndarray:
+    """
+    Globally clip a numpy array by its L2 norm.
 
+    Parameters:
+      arr (np.ndarray): The input array (typically a flattened gradient vector).
+      max_norm (float): The maximum allowed L2 norm.
 
-# Clip gradients by the global norm
-def clip_gradients(grad_list, max_norm):
-    norm = global_norm(grad_list)
-    clip_coef = max_norm / (norm + 1e-6)
-    if clip_coef < 1:
-        return [g * clip_coef for g in grad_list]
-    else:
-        return grad_list
+    Returns:
+      np.ndarray: The clipped array.
+    """
+    current_norm = np.linalg.norm(arr)
+    if current_norm > max_norm:
+        scale = max_norm / current_norm
+        return arr * scale
+    return arr
 
 
 def flatten_state_dict(state_dict: dict) -> np.ndarray:
