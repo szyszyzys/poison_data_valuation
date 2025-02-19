@@ -3,6 +3,7 @@ from typing import List, Tuple, Dict, Optional
 import numpy as np
 import pandas as pd
 import torch
+from matplotlib import pyplot as plt
 
 from general_utils.data_utils import list_to_tensor_dataset
 from marketplace.seller.seller import BaseSeller
@@ -250,9 +251,28 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                     triggered_img = self._apply_stealth_trigger(img)
                 else:
                     triggered_img = self.backdoor_generator.apply_trigger_tensor(img)
+                    original_image = img.squeeze(0).cpu().numpy()  # (H, W)
+                    triggered_image = triggered_img.squeeze(0).cpu().numpy()  # (H, W)
+
+                    plt.figure(figsize=(8, 4))
+                    plt.subplot(1, 2, 1)
+                    plt.imshow(original_image, cmap='gray')
+                    plt.title('Original FMNIST')
+                    plt.axis('off')
+
+                    plt.subplot(1, 2, 2)
+                    plt.imshow(triggered_image, cmap='gray')
+                    plt.title('Triggered FMNIST')
+                    plt.axis('off')
+
+                    plt.tight_layout()
+                    plt.savefig("fmnist_backdoor_visualization.png")
+                    plt.close()
+
                 backdoor_data.append((triggered_img, self.target_label))
             else:
                 clean_data.append((img, label))
+
 
         return backdoor_data, clean_data
 
@@ -340,10 +360,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         cur_local_model.load_state_dict(new_state_dict)
         self.save_local_model(cur_local_model)
 
-        # Convert final_poisoned (a list of np.ndarrays) back to a single flattened array.
-        final_poisoned_flat = np.concatenate([g.ravel() for g in final_poisoned])
-        print(final_poisoned_flat)
-        return final_poisoned_flat
+        return final_poisoned
 
     # def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> np.ndarray:
     #     """
