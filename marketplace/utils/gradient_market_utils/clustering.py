@@ -1,5 +1,6 @@
 import kmeans1d
 import numpy as np
+from sklearn.cluster import KMeans
 from sklearn.datasets import make_blobs
 
 
@@ -8,7 +9,7 @@ def kmeans(x, k):
     return clusters, centroids
 
 
-def optimal_k_gap(X, k_max=10, B=10, random_state=42):
+def optimal_k_gap(X, k_max=5, B=10, random_state=42):
     """
     Compute the optimal number of clusters for data X using the Gap Statistic.
 
@@ -28,6 +29,10 @@ def optimal_k_gap(X, k_max=10, B=10, random_state=42):
     optimal_k : int
         The estimated optimal number of clusters. (May be 1 if that is optimal.)
     """
+    # Ensure X is 2D
+    if len(X.shape) == 1:
+        X = X.reshape(-1, 1)
+
     np.random.seed(random_state)
     n_samples, n_features = X.shape
     ks = np.arange(1, k_max + 1)
@@ -40,7 +45,6 @@ def optimal_k_gap(X, k_max=10, B=10, random_state=42):
         kmeans.fit(data)
         dispersion = 0.0
         for j in range(k):
-            # Get data points in cluster j
             cluster_data = data[kmeans.labels_ == j]
             if cluster_data.shape[0] > 0:
                 center = np.mean(cluster_data, axis=0)
@@ -55,26 +59,23 @@ def optimal_k_gap(X, k_max=10, B=10, random_state=42):
     maxs = np.max(X, axis=0)
     Wkbs = np.zeros((len(ks), B))
     for b in range(B):
-        # Generate a reference dataset uniformly at random within the bounding box of X.
         X_ref = np.random.uniform(low=mins, high=maxs, size=(n_samples, n_features))
         for i, k in enumerate(ks):
             Wkbs[i, b] = compute_dispersion(X_ref, k)
 
-    # Compute the gap statistic for each k
     logWks = np.log(Wks)
     logWkbs = np.log(Wkbs)
     gap = np.mean(logWkbs, axis=1) - logWks
     sdk = np.std(logWkbs, axis=1) * np.sqrt(1 + 1.0 / B)
 
-    # Select the smallest k such that:
-    #   gap(k) >= gap(k+1) - sdk(k+1)
-    optimal_k = ks[-1]  # default to the largest k in case none meet the condition
+    optimal_k = ks[-1]
     for i in range(len(ks) - 1):
         if gap[i] >= gap[i + 1] - sdk[i + 1]:
             optimal_k = ks[i]
             break
 
     return optimal_k
+
 
 # def gap(x):
 #     optimalK = OptimalK()

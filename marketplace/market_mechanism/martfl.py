@@ -155,6 +155,7 @@ class Aggregator:
         self.n_seller = len(seller_updates)
 
         # 1. Initialize aggregated_gradient as zeros (same shape as each parameter)
+        print("start gradient aggregation")
         aggregated_gradient = [
             torch.zeros_like(param, device=self.device)
             for param in self.model_structure.parameters()
@@ -170,6 +171,7 @@ class Aggregator:
         baseline_update_flattened = flatten(buyer_updates)
 
         # 4. Compute cosine similarities between server's update and each seller's update.
+        print("start cosine baseline")
         cosine_result = [
             cosine_xy(baseline_update_flattened, clients_update_flattened[i])
             for i in range(self.n_seller)
