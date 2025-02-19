@@ -19,7 +19,7 @@ trigger_type="blended_patch"
 exp_name="experiment_$(date +%Y%m%d_%H%M%S)"  # Unique experiment name with timestamp.
 model_arch="resnet18"
 seed=42
-gpu_ids="6"
+gpu_ids="7"
 poison_test_sample=10000
 # Loop over each combination.
 
