@@ -78,7 +78,7 @@ def main():
     batch_size = 32
     learning_rate = 0.001
     num_epochs = 5
-    dataset_name = "FMNIST"
+    dataset_name = "FMINIST"
     client_loaders, full_dataset = get_data_set(dataset_name, num_clients=11, iid=True)
 
     # config the buyer
@@ -92,9 +92,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Initialize model, loss function, and optimizer
-    model = get_model("FMNIST")
+    model = get_model(dataset_name)
     # Load base parameters into the model
-    model = model.to("cuda:6")
+    model = model.to(device)
 
     criterion = nn.CrossEntropyLoss()  # expects raw logits and integer class labels
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
