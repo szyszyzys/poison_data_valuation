@@ -283,7 +283,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         return triggered_img
 
 
-    def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> Tuple[np.ndarray, int]:
+    def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> np.ndarray:
         """
         Return a single 'final' gradient that merges:
           1) benign gradient
@@ -338,6 +338,8 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         # Convert final_poisoned (a list of np.ndarrays) back to a single flattened array.
         final_poisoned_flat = np.concatenate([g.ravel() for g in final_poisoned])
+        print(final_poisoned_flat)
+        print(final_poisoned)
         return final_poisoned_flat
 
     # def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> np.ndarray:
