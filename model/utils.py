@@ -15,7 +15,7 @@ Usage (within a seller’s get_gradient method):
 
 import copy
 import os
-from typing import List, Tuple
+from typing import List
 
 import numpy as np
 import torch
@@ -94,8 +94,8 @@ def local_training_and_get_gradient(model: nn.Module,
 
     # Use a standard loss function and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(local_model.parameters(), lr=lr)
-
+    # optimizer = optim.SGD(local_model.parameters(), lr=lr)
+    optimizer = optim.Adam(local_model.parameters(), lr=lr)
     # Save a copy of the initial model parameters for computing the update
     initial_model = copy.deepcopy(local_model)
 
