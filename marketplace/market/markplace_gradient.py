@@ -7,6 +7,7 @@ from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_ba
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.martfl import Aggregator, flatten
 from marketplace.seller.seller import BaseSeller
+from model.utils import test_local_model
 
 
 class DataMarketplaceFederated(DataMarketplace):
@@ -148,7 +149,9 @@ class DataMarketplaceFederated(DataMarketplace):
         if test_dataloader_buyer_local is not None and loss_fn is not None:
             # Evaluate aggregator.global_model on test set
             final_perf_local = self.evaluate_global_model(test_dataloader_buyer_local, loss_fn)
-
+            eval_res = test_local_model(self.aggregator.global_model, test_dataloader_buyer_local, loss_fn,
+                                        device=self.aggregator.device)
+            print(f"global model eval: {eval_res}")
         final_perf_global = None
         if test_dataloader_buyer_local is not None and loss_fn is not None:
             # Evaluate aggregator.global_model on test set
