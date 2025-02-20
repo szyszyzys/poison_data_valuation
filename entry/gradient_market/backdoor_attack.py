@@ -167,7 +167,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
         round_record, aggregated_gradient = marketplace.train_federated_round(round_number=gr,
                                                                               buyer_gradient=buyer_gradient,
                                                                               test_dataloader_buyer_local=
-                                                                              client_loaders[buyer_cid],
+                                                                              client_loaders["buyer"],
                                                                               test_dataloader_global=test_set_loader,
                                                                               clean_loader=clean_loader,
                                                                               triggered_loader=triggered_loader,
