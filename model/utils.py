@@ -24,7 +24,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
 # from model.text_model import TEXTCNN
-from model.vision_model import CNN_CIFAR, CNN_FMNIST
+from model.vision_model import CNN_CIFAR, CNN_FMNIST, LeNet
 
 
 def train_local_model(model: nn.Module,
@@ -195,7 +195,7 @@ def get_model(dataset_name):
         case "CIFAR":
             model = CNN_CIFAR()
         case "FMINIST":
-            model = CNN_FMNIST()
+            model = LeNet()
         # case ["TREC", "AG_NEWS"]:
         #     model = TEXTCNN
         case _:

@@ -247,13 +247,13 @@ class Aggregator:
 
         # 11. Final aggregation: sum weighted gradients.
         # update_gradients = self.get_update_gradients()  # Should return a list of updates (each update is list of tensors)
-        norms = [torch.norm(acc).item() for acc in aggregated_gradient]
-        print(f"Initial, norms: {norms}")
+        # norms = [torch.norm(acc).item() for acc in aggregated_gradient]
+        # print(f"Initial, norms: {norms}")
         for idx, (gradient, wt) in enumerate(zip(seller_updates, weight)):
             add_gradient_updates(aggregated_gradient, gradient, weight=wt)
             # Compute and print norm of each aggregated parameter
-            norms = [torch.norm(acc).item() for acc in aggregated_gradient]
-            print(f"After update {idx}, norms: {norms}")
+            # norms = [torch.norm(acc).item() for acc in aggregated_gradient]
+            # print(f"After update {idx}, norms: {norms}")
 
 
         # 12. Update each client model (here using classic update; quantization not implemented)
