@@ -37,10 +37,15 @@ while [[ "$#" -gt 0 ]]; do
             local_epoch_arg="$2"
             shift 2
             ;;
+        --local_lr)
+            local_lr="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown parameter passed: $1"
             exit 1
             ;;
+
     esac
 done
 
@@ -78,7 +83,8 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --seed "$seed" \
                   --gpu_ids "$gpu_ids" \
                   --poison_test_sample "$poison_test_sample"\
-                  --local_epoch "$local_epoch"
+                  --local_epoch "$local_epoch" \
+                  --local_lr "$local_lr"
           done
         done
     done
