@@ -213,7 +213,7 @@ class DataMarketplaceFederated(DataMarketplace):
             cur_local_model = apply_gradient(s_local_model, aggregated_gradient)
 
             res = test_local_model(cur_local_model.to(torch.device(device)),
-                                   DataLoader(list_to_tensor_dataset(seller.dataset).to(torch.device(device)), batch_size=64, shuffle=True),
+                                   DataLoader(list_to_tensor_dataset(seller.dataset), batch_size=64, shuffle=True),
                                    loss_fn, device=torch.device(device))
             print(res)
             seller.save_local_model(cur_local_model)
