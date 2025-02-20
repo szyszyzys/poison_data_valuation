@@ -58,16 +58,6 @@ class Aggregator:
     # ---------------------------
     # Gradient update utilities
     # ---------------------------
-    def get_update_gradients(self):
-        """
-        Compute each local model's update relative to its *own* old model.
-        i.e. delta = (client_model_i - backup_model_i).
-        """
-        return [
-            compute_update_gradients(self.save_path, old_m, new_m, self.device)
-            for old_m, new_m in zip(self.backup_models, self.client_models)
-        ]
-
     def get_params(self) -> Dict[str, torch.Tensor]:
         """
         Return the current global model parameters as a dict or a

@@ -2,14 +2,12 @@ from typing import Dict, Union, List, Tuple, Any
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
 
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
-from general_utils.data_utils import list_to_tensor_dataset
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.martfl import Aggregator, flatten
 from marketplace.seller.seller import BaseSeller
-from model.utils import test_local_model, apply_gradient, get_model, apply_gradient_update
+from model.utils import test_local_model, get_model, apply_gradient_update
 
 
 class DataMarketplaceFederated(DataMarketplace):
@@ -101,7 +99,8 @@ class DataMarketplaceFederated(DataMarketplace):
         """
         Apply the aggregated gradient to the aggregator's global model.
         """
-        self.aggregator.apply_gradient(aggregated_gradient, learning_rate=self.learning_rate)
+        # self.aggregator.apply_gradient(aggregated_gradient, learning_rate=self.learning_rate)
+        self.aggregator.global_model = apply_gradient_update(self.aggregator.global_model, aggregated_gradient)
 
     def broadcast_global_model(self):
         """
@@ -120,7 +119,7 @@ class DataMarketplaceFederated(DataMarketplace):
                               test_dataloader_global=None,
                               loss_fn=None,
                               clean_loader=None, triggered_loader=None, device="cpu",
-                              **kwargs) :
+                              **kwargs):
         """
         Perform one round of federated training:
          1. Collect gradients from all sellers.
@@ -153,7 +152,7 @@ class DataMarketplaceFederated(DataMarketplace):
             final_perf_local = self.evaluate_global_model(test_dataloader_buyer_local, loss_fn)
             eval_res = test_local_model(self.aggregator.global_model, test_dataloader_buyer_local, loss_fn,
                                         device=self.aggregator.device)
-            print(f"global model eval: {eval_res}")
+            print(f"global model eval local: {eval_res}")
         final_perf_global = None
         if test_dataloader_global is not None and loss_fn is not None:
             # Evaluate aggregator.global_model on test set
