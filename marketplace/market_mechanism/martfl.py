@@ -92,7 +92,6 @@ class Aggregator:
         """
         # If aggregated_gradient is a list of tensors, flatten and convert to numpy array.
         if isinstance(aggregated_gradient, list):
-            # Convert each tensor to numpy, flatten, and concatenate into a single 1D array.
             aggregated_gradient = np.concatenate(
                 [grad.cpu().numpy().ravel() for grad in aggregated_gradient]
             )
@@ -110,12 +109,17 @@ class Aggregator:
             idx = 0
             updated_params = {}
 
+            # Total number of elements in the model
+            total_elements = sum(tensor.numel() for tensor in current_params.values())
+
             for name, tensor in current_params.items():
                 numel = tensor.numel()
                 grad_slice = aggregated_torch[idx: idx + numel].reshape(tensor.shape)
                 idx += numel
-                # Apply the update (SGD update rule)
                 updated_params[name] = tensor - learning_rate * grad_slice
+
+            if idx != aggregated_torch.numel():
+                raise ValueError("Mismatch between aggregated gradient and model parameters count.")
 
             # Load updated parameters back into the model
             self.global_model.load_state_dict(updated_params)
@@ -261,7 +265,7 @@ class Aggregator:
         #     print("They are close enough")
         # else:
         #     print("They differ")
-            # 12. Update each client model (here using classic update; quantization not implemented)
+        # 12. Update each client model (here using classic update; quantization not implemented)
         # if self.quantization:
         #     raise NotImplementedError("Quantization not implemented.")
         # else:
