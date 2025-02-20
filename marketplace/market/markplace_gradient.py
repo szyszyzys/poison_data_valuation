@@ -120,7 +120,7 @@ class DataMarketplaceFederated(DataMarketplace):
                               test_dataloader_global=None,
                               loss_fn=None,
                               clean_loader=None, triggered_loader=None, device="cpu",
-                              **kwargs) -> Dict:
+                              **kwargs) :
         """
         Perform one round of federated training:
          1. Collect gradients from all sellers.
@@ -212,10 +212,10 @@ class DataMarketplaceFederated(DataMarketplace):
             s_local_model.load_state_dict(s_local_model_dict)
             cur_local_model = apply_gradient_update(s_local_model, aggregated_gradient)
 
-            res = test_local_model(cur_local_model.to(torch.device(device)),
-                                   DataLoader(list_to_tensor_dataset(seller.dataset), batch_size=64, shuffle=True),
-                                   loss_fn, device=torch.device(device))
-            print(res)
+            # res = test_local_model(cur_local_model.to(torch.device(device)),
+            #                        DataLoader(list_to_tensor_dataset(seller.dataset), batch_size=64, shuffle=True),
+            #                        loss_fn, device=torch.device(device))
+            # print(res)
             seller.save_local_model(cur_local_model)
         print(
             f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")
