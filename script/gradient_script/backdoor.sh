@@ -6,7 +6,7 @@ export PYTHONPATH="$WORK_DIR:$PYTHONPATH"
 echo $PYTHONPATH
 
 # Define arrays for the parameters you want to vary.
-n_sellers_list=(10)
+n_sellers_list=(1)
 #n_adversaries_list=(1)
 poison_strength_list=(1.0 0.5)
 

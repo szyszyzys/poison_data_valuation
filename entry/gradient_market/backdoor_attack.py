@@ -105,8 +105,8 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
                                                 channels=1)
     local_training_params = {
-        "lr": 0.01,
-        "epochs": 10,
+        "lr": 1e-3,
+        "epochs": 100,
         "optimizer": "SGD"
     }
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
@@ -159,7 +159,6 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
     clean_loader, triggered_loader = generate_attack_test_set(full_dataset, backdoor_generator, poison_test_sample)
 
     # Start gloal round
-    fl_record_list = []
     for gr in range(global_rounds):
         # compute the buyer gradient as the reference point
         buyer_gradient = buyer.get_gradient()
