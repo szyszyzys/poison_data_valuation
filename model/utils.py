@@ -24,7 +24,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
 # from model.text_model import TEXTCNN
-from model.vision_model import CNN_CIFAR, CNN_FMNIST, LeNet
+from model.vision_model import CNN_CIFAR, LeNet
 
 
 def train_local_model(model: nn.Module,
@@ -153,8 +153,10 @@ def local_training_and_get_gradient(model: nn.Module,
     flat_update = flatten_gradients(grad_update)
 
     # evaluate the model
+    eval_res_o = test_local_model(local_model, train_loader, criterion, device)
     eval_res = test_local_model(local_model, train_loader, criterion, device)
-    print(f"evaluation_result: {eval_res}")
+    print(f"evaluation_result before local train: {eval_res_o}")
+    print(f"evaluation_result after local train: {eval_res}")
     return grad_update, flat_update, local_model, eval_res
 
 
