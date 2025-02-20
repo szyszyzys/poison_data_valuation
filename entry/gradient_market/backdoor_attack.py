@@ -169,7 +169,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                                               test_dataloader_global=test_set_loader,
                                                                               clean_loader=clean_loader,
                                                                               triggered_loader=triggered_loader,
-                                                                              loss_fn=loss_fn)
+                                                                              loss_fn=loss_fn, device = device)
 
         # update buyers's local model
         s_local_model_dict = buyer.load_local_model()

@@ -119,7 +119,7 @@ class DataMarketplaceFederated(DataMarketplace):
                               test_dataloader_buyer_local=None,
                               test_dataloader_global=None,
                               loss_fn=None,
-                              clean_loader=None, triggered_loader=None,
+                              clean_loader=None, triggered_loader=None, device="cpu",
                               **kwargs) -> Dict:
         """
         Perform one round of federated training:
@@ -214,7 +214,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
             res = test_local_model(cur_local_model,
                                    DataLoader(list_to_tensor_dataset(seller.dataset), batch_size=64, shuffle=True),
-                                   loss_fn, device=cur_local_model.device)
+                                   loss_fn, device=torch.device(device))
             print(res)
             seller.save_local_model(cur_local_model)
         print(
