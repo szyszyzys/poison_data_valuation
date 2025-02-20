@@ -8,9 +8,9 @@ echo $PYTHONPATH
 # Define arrays for the parameters you want to vary.
 n_sellers_list=(10)
 #n_adversaries_list=(1)
-poison_strength_list=(1.0 0.5 0.2)
+poison_strength_list=(1.0)
 #local_epoch_list=(3 2 1)
-
+gradient_manipulation_mode="single"
 
 # Set fixed parameters.
 dataset_name="FMINIST"
@@ -39,6 +39,10 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         --local_lr)
             local_lr="$2"
+            shift 2
+            ;;
+        --gpu_ids)
+            gpu_ids="$2"
             shift 2
             ;;
         *)
@@ -84,7 +88,8 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --gpu_ids "$gpu_ids" \
                   --poison_test_sample "$poison_test_sample"\
                   --local_epoch "$local_epoch" \
-                  --local_lr "$local_lr"
+                  --local_lr "$local_lr" \
+                  --gradient_manipulation_mode "$gradient_manipulation_mode"
           done
         done
     done

@@ -101,6 +101,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                     global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", save_path="/",
                     device='cpu', poison_strength=1, poison_test_sample=100, args=None):
     # load the dataset
+    gradient_manipulation_mode = args.gradient_manipulation_mode
     loss_fn = nn.CrossEntropyLoss()
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
                                                 channels=1)
@@ -144,7 +145,8 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                              device=device,
                                                              poison_strength=poison_strength,
                                                              dataset_name=dataset_name,
-                                                             local_training_params=local_training_params
+                                                             local_training_params=local_training_params,
+                                                             gradient_manipulation_mode=gradient_manipulation_mode
                                                              )
             n_adversaries -= 1
         else:
@@ -217,6 +219,8 @@ def parse_args():
     parser.add_argument('--poison_strength', type=float, default=1, help='Strength of poisoning')
     parser.add_argument('--local_lr', type=float, default=1e-3, help='Strength of poisoning')
 
+    parser.add_argument('--gradient_manipulation_mode', type=str, default="cmd",
+                        help='Type of gradient manipulation cmd single')
     # Model architecture argument
     parser.add_argument('--model_arch', type=str, default='resnet18',
                         choices=['resnet18', 'resnet34', 'mlp'],
@@ -293,7 +297,7 @@ if __name__ == "__main__":
     print(f"start backdoor attack, current dataset: {args.dataset_name}, n_sellers: {args.n_sellers} ")
     set_seed(args.seed)
     device = get_device(args)
-    save_path = f"./results/backdoor/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}/"
+    save_path = f"./results/backdoor/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}_gradient_manipulation_mode_{args.gradient_manipulation_mode}/"
     clear_work_path(save_path)
     eval_results = backdoor_attack(
         dataset_name=args.dataset_name,
