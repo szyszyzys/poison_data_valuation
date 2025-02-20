@@ -212,7 +212,7 @@ class DataMarketplaceFederated(DataMarketplace):
             seller.save_local_model(cur_local_model)
         print(
             f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")
-        return round_record
+        return round_record, aggregated_gradient
 
     def evaluate_global_model(self, test_dataloader, loss_fn) -> Dict[str, float]:
         """

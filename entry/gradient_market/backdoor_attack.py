@@ -14,7 +14,7 @@ from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
-from model.utils import get_model
+from model.utils import get_model, apply_gradient
 
 
 def dataloader_to_tensors(dataloader):
@@ -155,15 +155,24 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
     fl_record_list = []
     for gr in range(global_rounds):
         # compute the buyer gradient as the reference point
-        # todo new baseline selection
         buyer_gradient = buyer.get_gradient()
         # train the attack model
-        round_record = marketplace.train_federated_round(round_number=gr,
-                                                         buyer_gradient=buyer_gradient,
-                                                         test_dataloader_buyer_local=client_loaders[buyer_cid],
-                                                         test_dataloader_global=clean_loader,
-                                                         clean_loader=clean_loader, triggered_loader=triggered_loader,
-                                                         loss_fn=loss_fn)
+        round_record, aggregated_gradient = marketplace.train_federated_round(round_number=gr,
+                                                                              buyer_gradient=buyer_gradient,
+                                                                              test_dataloader_buyer_local=
+                                                                              client_loaders[buyer_cid],
+                                                                              test_dataloader_global=clean_loader,
+                                                                              clean_loader=clean_loader,
+                                                                              triggered_loader=triggered_loader,
+                                                                              loss_fn=loss_fn)
+
+        # update buyers's local model
+        s_local_model_dict = buyer.load_local_model()
+        buyer_local_model = get_model(dataset_name)
+        # Load base parameters into the model
+        buyer_local_model.load_state_dict(s_local_model_dict)
+        cur_local_model = apply_gradient(buyer_local_model, aggregated_gradient)
+        buyer.save_local_model(cur_local_model)
         if gr % 10 == 0:
             torch.save(marketplace.round_logs, f"{save_path}/market_log_round_{gr}.ckpt")
 
