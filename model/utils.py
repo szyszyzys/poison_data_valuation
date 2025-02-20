@@ -157,7 +157,35 @@ def local_training_and_get_gradient(model: nn.Module,
     eval_res = test_local_model(local_model, train_loader, criterion, device)
     print(f"evaluation_result before local train: {eval_res_o}")
     print(f"evaluation_result after local train: {eval_res}")
+
+    initial_model = apply_gradient_update(initial_model, grad_update)
+    eval_res_af = test_local_model(initial_model, train_loader, criterion, device)
+    print(f"evaluation_result after local train on initla: {eval_res_af}")
     return grad_update, flat_update, local_model, eval_res
+
+
+def apply_gradient_update(initial_model: nn.Module, grad_update: List[torch.Tensor]) -> nn.Module:
+    """
+    Create a new model by adding the computed gradient update to the initial model's parameters.
+    The gradient update is assumed to be computed as (trained_model_param - initial_model_param),
+    so adding it to the initial model should produce the trained model.
+
+    Parameters:
+        initial_model (nn.Module): The model before local training.
+        grad_update (List[torch.Tensor]): List of gradient update tensors.
+
+    Returns:
+        nn.Module: A new model with updated parameters.
+    """
+    # Create a deep copy of the initial model to avoid in-place modification.
+    updated_model = copy.deepcopy(initial_model)
+
+    # Iterate over model parameters and add the corresponding gradient update.
+    for param, delta in zip(updated_model.parameters(), grad_update):
+        # Make sure delta is on the same device as param
+        param.data.add_(delta.to(param.device))
+
+    return updated_model
 
 
 # ---------------------------
