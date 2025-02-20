@@ -118,7 +118,7 @@ class DataMarketplaceFederated(DataMarketplace):
                               test_dataloader_buyer_local=None,
                               test_dataloader_global=None,
                               loss_fn=None,
-                              clean_loader=None, triggered_loader=None, device="cpu", backdoor_target_label=0,
+                              clean_loader=None, triggered_loader=None, device="cpu", backdoor_target_label=0, dataset_name ="",
                               **kwargs):
         """
         Perform one round of federated training:
