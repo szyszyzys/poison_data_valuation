@@ -95,7 +95,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
         return selected_grads, selected_sizes, selected_seller_ids
 
-    def update_global_model(self, aggregated_gradient: np.ndarray):
+    def update_global_model(self, aggregated_gradient):
         """
         Apply the aggregated gradient to the aggregator's global model.
         """

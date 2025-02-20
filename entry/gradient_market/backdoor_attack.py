@@ -14,7 +14,7 @@ from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
-from model.utils import get_model, apply_gradient, apply_gradient_update
+from model.utils import get_model, apply_gradient_update
 
 
 def dataloader_to_tensors(dataloader):
@@ -106,7 +106,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                 channels=1)
     local_training_params = {
         "lr": 1e-3,
-        "epochs": 10,
+        "epochs": 1,
         "optimizer": "SGD"
     }
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
@@ -169,7 +169,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                                               test_dataloader_global=test_set_loader,
                                                                               clean_loader=clean_loader,
                                                                               triggered_loader=triggered_loader,
-                                                                              loss_fn=loss_fn, device = device)
+                                                                              loss_fn=loss_fn, device=device)
 
         # update buyers's local model
         s_local_model_dict = buyer.load_local_model()
