@@ -303,8 +303,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 print(f"[{self.seller_id}] Loaded previous local model.")
             except Exception as e:
                 print(f"[{self.seller_id}] No saved local model found; using default initialization.")
-                model = get_model(self.dataset_name)
-                base_params = model.state_dict()  # or load_param("f") as your fallback
+                base_params = None  # or load_param("f") as your fallback
 
         # 1) Compute benign gradient
         if self.poison_strength != 1:

@@ -153,9 +153,9 @@ class DataMarketplaceFederated(DataMarketplace):
                                         device=self.aggregator.device)
             print(f"global model eval: {eval_res}")
         final_perf_global = None
-        if test_dataloader_buyer_local is not None and loss_fn is not None:
+        if test_dataloader_global is not None and loss_fn is not None:
             # Evaluate aggregator.global_model on test set
-            final_perf_global = self.evaluate_global_model(test_dataloader_buyer_local, loss_fn)
+            final_perf_global = self.evaluate_global_model(test_dataloader_global, loss_fn)
 
         poison_metrics = None
         if clean_loader is not None and triggered_loader is not None:

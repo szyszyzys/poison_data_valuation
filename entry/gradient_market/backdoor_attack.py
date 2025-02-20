@@ -175,7 +175,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
     all_sellers = marketplace.get_all_sellers
     for seller_id, seller in all_sellers.items():
         converted_logs_user = convert_np(seller.get_federated_history)
-        save_history_to_json(converted_logs_user, f"{save_path}/local_log_{seller_id}.json")
+        torch.save(converted_logs_user, f"{save_path}/local_log_{seller_id}.ckpt")
 
     # record the attack result for the final round
 
