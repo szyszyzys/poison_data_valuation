@@ -9,6 +9,7 @@ echo $PYTHONPATH
 n_sellers_list=(10)
 #n_adversaries_list=(1)
 poison_strength_list=(1.0 0.5 0.2)
+local_epoch_list=(3 2 1)
 
 
 # Set fixed parameters.
@@ -41,23 +42,26 @@ done
 
 IFS=',' read -r -a n_adversaries_list <<< "$n_adversaries_arg"
 
-for n_sellers in "${n_sellers_list[@]}"; do
-    for n_adversaries in "${n_adversaries_list[@]}"; do
-        for poison_strength in "${poison_strength_list[@]}"; do
-            echo "Running experiment with n_sellers=$n_sellers, n_adversaries=$n_adversaries, poison_strength=$poison_strength"
-            python entry/gradient_market/backdoor_attack.py \
-                --dataset_name "$dataset_name" \
-                --n_sellers "$n_sellers" \
-                --n_adversaries "$n_adversaries" \
-                --global_rounds "$global_rounds" \
-                --backdoor_target_label "$backdoor_target_label" \
-                --trigger_type "$trigger_type" \
-                --exp_name "$exp_name" \
-                --poison_strength "$poison_strength" \
-                --model_arch "$model_arch" \
-                --seed "$seed" \
-                --gpu_ids "$gpu_ids" \
-                --poison_test_sample "$poison_test_sample"
+for local_epoch in "${local_epoch_list[@]}"; do
+  for n_sellers in "${n_sellers_list[@]}"; do
+      for n_adversaries in "${n_adversaries_list[@]}"; do
+          for poison_strength in "${poison_strength_list[@]}"; do
+              echo "Running experiment with n_sellers=$n_sellers, n_adversaries=$n_adversaries, poison_strength=$poison_strength"
+              python entry/gradient_market/backdoor_attack.py \
+                  --dataset_name "$dataset_name" \
+                  --n_sellers "$n_sellers" \
+                  --n_adversaries "$n_adversaries" \
+                  --global_rounds "$global_rounds" \
+                  --backdoor_target_label "$backdoor_target_label" \
+                  --trigger_type "$trigger_type" \
+                  --exp_name "$exp_name" \
+                  --poison_strength "$poison_strength" \
+                  --model_arch "$model_arch" \
+                  --seed "$seed" \
+                  --gpu_ids "$gpu_ids" \
+                  --poison_test_sample "$poison_test_sample"\
+                  --local_epoch "$local_epoch"
+          done
         done
     done
 done

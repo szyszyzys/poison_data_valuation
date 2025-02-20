@@ -99,14 +99,14 @@ def convert_np(obj):
 
 def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                     global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", save_path="/",
-                    device='cpu', poison_strength=1, poison_test_sample=100):
+                    device='cpu', poison_strength=1, poison_test_sample=100, args=None):
     # load the dataset
     loss_fn = nn.CrossEntropyLoss()
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
                                                 channels=1)
     local_training_params = {
         "lr": 1e-3,
-        "epochs": 1,
+        "epochs": args.local_epoch,
         "optimizer": "SGD"
     }
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
@@ -212,6 +212,7 @@ def parse_args():
     parser.add_argument('--trigger_type', type=str, default="blended_patch", help='Type of backdoor trigger')
     parser.add_argument('--exp_name', type=str, default="/", help='Experiment name for logging')
     parser.add_argument('--poison_test_sample', type=int, default=1, help='Number of global training rounds')
+    parser.add_argument('--local_epoch', type=int, default=1, help='Number of global training rounds')
 
     parser.add_argument('--poison_strength', type=float, default=1, help='Strength of poisoning')
 
@@ -304,7 +305,8 @@ if __name__ == "__main__":
         save_path=save_path,
         device=device,
         poison_strength=args.poison_strength,
-        poison_test_sample=args.poison_test_sample
+        poison_test_sample=args.poison_test_sample,
+        args=args
     )
 
     print("Evaluation Results:", eval_results)
