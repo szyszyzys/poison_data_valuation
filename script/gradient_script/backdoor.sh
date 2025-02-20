@@ -14,7 +14,7 @@ gradient_manipulation_mode="single"
 
 # Set fixed parameters.
 dataset_name="FMINIST"
-global_rounds=100
+global_rounds=300
 backdoor_target_label=0
 trigger_type="blended_patch"
 exp_name="experiment_$(date +%Y%m%d_%H%M%S)"  # Unique experiment name with timestamp.
