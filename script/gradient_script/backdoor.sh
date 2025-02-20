@@ -9,7 +9,7 @@ echo $PYTHONPATH
 n_sellers_list=(10)
 #n_adversaries_list=(1)
 poison_strength_list=(1.0 0.5 0.2)
-local_epoch_list=(3 2 1)
+#local_epoch_list=(3 2 1)
 
 
 # Set fixed parameters.
@@ -37,10 +37,22 @@ while [[ "$#" -gt 0 ]]; do
             echo "Unknown parameter passed: $1"
             exit 1
             ;;
+    case $1 in
+        --local_epoch)
+            local_epoch_arg="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown parameter passed: $1"
+            exit 1
+            ;;
     esac
 done
 
 IFS=',' read -r -a n_adversaries_list <<< "$n_adversaries_arg"
+
+IFS=',' read -r -a local_epoch_list <<< "$local_epoch_arg"
+
 
 for local_epoch in "${local_epoch_list[@]}"; do
   for n_sellers in "${n_sellers_list[@]}"; do
