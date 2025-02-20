@@ -54,6 +54,7 @@ class GradientSeller(BaseSeller):
         self.selected_last_round = False
         self.local_epochs = local_epochs
         self.local_training_params = local_training_params
+        self.recent_metrics = None
 
     def set_local_model_params(self, params: np.ndarray):
         """Set (or update) local model parameters before computing gradient."""
@@ -80,8 +81,8 @@ class GradientSeller(BaseSeller):
                 base_params = None  # or load_param("f") as your fallback
 
         # 2. Train locally starting from base_params, obtain the local gradient update
-        gradient, gradient_flt, updated_model = self._compute_local_grad(base_params, self.dataset)
-
+        gradient, gradient_flt, updated_model, local_eval_res = self._compute_local_grad(base_params, self.dataset)
+        self.recent_metrics = local_eval_res
         # 3. Save the updated local model for future rounds.
         # self.save_local_model(updated_model)
 
@@ -112,7 +113,7 @@ class GradientSeller(BaseSeller):
         model = model.to(self.device)
 
         # Perform local training and get the flattened gradient update.
-        grad_update, grad_update_flt, local_model = local_training_and_get_gradient(
+        grad_update, grad_update_flt, local_model, local_eval_res = local_training_and_get_gradient(
             model, list_to_tensor_dataset(dataset), batch_size=64, device=self.device,
             local_epochs=self.local_epochs, lr=0.001
         )
@@ -120,7 +121,7 @@ class GradientSeller(BaseSeller):
         # Optionally, you might want to clip the gradient here.
         # flat_update = torch.clamp(flat_update, -self.clip_value, self.clip_value)
 
-        return grad_update, grad_update_flt, local_model
+        return grad_update, grad_update_flt, local_model, local_eval_res
 
     def save_local_model(self, model: torch.nn.Module):
         """
@@ -155,7 +156,8 @@ class GradientSeller(BaseSeller):
             'event_type': 'federated_round',
             'round_number': round_number,
             'timestamp': pd.Timestamp.now().isoformat(),
-            'selected': is_selected
+            'selected': is_selected,
+            "metrics_local": self.recent_metrics
         }
         self.selected_last_round = is_selected
         if final_model_params is not None:
@@ -307,13 +309,15 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         # 1) Compute benign gradient
         if self.poison_strength != 1:
-            grad_benign_update, g_benign_flt, local_model_benign = self._compute_local_grad(base_params,
-                                                                                            self.clean_data)
+            grad_benign_update, g_benign_flt, local_model_benign, local_eval_res_n = self._compute_local_grad(
+                base_params,
+                self.clean_data)
             original_shapes = [param.shape for param in grad_benign_update]
 
             # 2) Compute backdoor gradient
-            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
-                                                                                                self.backdoor_data)
+            g_backdoor_update, g_backdoor_flt, local_model_malicious, local_eval_res_m = self._compute_local_grad(
+                base_params,
+                self.backdoor_data)
 
             # 3) Combine them:
             final_poisoned_flt = (1 - self.poison_strength) * g_benign_flt + (self.poison_strength) * g_backdoor_flt
@@ -327,8 +331,9 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             # self.last_benign_grad = np.clip(g_benign_flt, -self.clip_value, self.clip_value)
             self.last_benign_grad = g_benign_flt
         else:
-            g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
-                                                                                                self.backdoor_data)
+            g_backdoor_update, g_backdoor_flt, local_model_malicious, local_eval_res_m = self._compute_local_grad(
+                base_params,
+                self.backdoor_data)
             # final_poisoned_flt = g_backdoor_flt
             final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
             original_shapes = [param.shape for param in g_backdoor_update]
