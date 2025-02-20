@@ -79,7 +79,7 @@ def main():
     learning_rate = 0.001
     num_epochs = 5
     dataset_name = "FMINIST"
-    client_loaders, full_dataset = get_data_set(dataset_name, num_clients=11, iid=True)
+    client_loaders, full_dataset, test_set = get_data_set(dataset_name, num_clients=11, iid=True)
 
     # config the buyer
     # buyer = GradientSeller(seller_id="buyer", local_data=client_loaders[buyer_cid].dataset, dataset_name=dataset_name,

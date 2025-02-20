@@ -110,14 +110,14 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
         "optimizer": "SGD"
     }
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
-    n_buyer = 1
     buyer_cid = 0
 
     # set up the data set for the participants
-    client_loaders, full_dataset = get_data_set(dataset_name, num_clients=n_sellers + n_buyer, iid=True)
+    client_loaders, full_dataset, test_set_loader = get_data_set(dataset_name, buyer_count=100, num_sellers=n_sellers,
+                                                                 iid=True)
 
     # config the buyer
-    buyer = GradientSeller(seller_id="buyer", local_data=client_loaders[buyer_cid].dataset, dataset_name=dataset_name,
+    buyer = GradientSeller(seller_id="buyer", local_data=client_loaders["buyer"].dataset, dataset_name=dataset_name,
                            save_path=save_path, local_training_params=local_training_params)
 
     # config the marketplace
@@ -133,9 +133,9 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
 
     # config the seller and register to the marketplace
     for cid, loader in client_loaders.items():
-        if cid == buyer_cid:
+        if cid == "buyer":
             continue
-        if cid <= n_adversaries:
+        if n_adversaries > 0:
             cur_id = f"adv_{cid}"
             current_seller = AdvancedBackdoorAdversarySeller(seller_id=cur_id,
                                                              local_data=loader.dataset,
@@ -147,8 +147,9 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                              dataset_name=dataset_name,
                                                              local_training_params=local_training_params
                                                              )
+            n_adversaries -= 1
         else:
-            cur_id = f"seller_{cid}"
+            cur_id = cid
             current_seller = GradientSeller(seller_id=cur_id, local_data=loader.dataset,
                                             dataset_name=dataset_name, save_path=save_path, device=device,
                                             local_training_params=local_training_params)
@@ -167,7 +168,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                                               buyer_gradient=buyer_gradient,
                                                                               test_dataloader_buyer_local=
                                                                               client_loaders[buyer_cid],
-                                                                              test_dataloader_global=clean_loader,
+                                                                              test_dataloader_global=test_set_loader,
                                                                               clean_loader=clean_loader,
                                                                               triggered_loader=triggered_loader,
                                                                               loss_fn=loss_fn)
@@ -179,6 +180,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
         buyer_local_model.load_state_dict(s_local_model_dict)
         cur_local_model = apply_gradient(buyer_local_model, aggregated_gradient)
         buyer.save_local_model(cur_local_model)
+
         if gr % 10 == 0:
             torch.save(marketplace.round_logs, f"{save_path}/market_log_round_{gr}.ckpt")
 

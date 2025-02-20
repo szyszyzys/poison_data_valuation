@@ -108,6 +108,36 @@ def split_dataset(dataset, num_clients, iid=True, alpha=0.5):
     return {i: splits[i] for i in range(num_clients)}
 
 
+def split_dataset_buyer_seller(dataset, buyer_count, num_sellers):
+    """
+    Split the dataset indices such that the buyer gets a fixed number of samples,
+    and the remaining samples are randomly split among the sellers.
+
+    Parameters:
+      dataset (Dataset): The full dataset.
+      buyer_count (int): Number of samples to assign to the buyer.
+      num_sellers (int): Number of seller clients.
+
+    Returns:
+      dict: A dictionary with keys 'buyer' and 'seller_i' for each seller,
+            mapping to lists of indices.
+    """
+    # Get all indices and shuffle them.
+    indices = np.arange(len(dataset))
+    np.random.shuffle(indices)
+
+    # Assign the first buyer_count indices to the buyer.
+    buyer_indices = indices[:buyer_count].tolist()
+    remaining_indices = indices[buyer_count:]
+
+    # Split the remaining indices among sellers (roughly equal splits)
+    seller_splits = np.array_split(remaining_indices, num_sellers)
+    splits = {"buyer": buyer_indices}
+    for i, seller_indices in enumerate(seller_splits):
+        splits[f"seller_{i}"] = seller_indices.tolist()
+    return splits
+
+
 def create_client_dataloaders(dataset, splits, batch_size=32, shuffle=True):
     """
     Given a dataset and a dictionary of splits (client_id: indices),
@@ -121,42 +151,76 @@ def create_client_dataloaders(dataset, splits, batch_size=32, shuffle=True):
     return client_loaders
 
 
-def get_data_set(dataset_name, num_clients=10, iid=True):
-    # Load dataset (train split)
-    match dataset_name:
-        case "FMINIST":
-            dataset = load_fmnist_dataset(train=True, download=True)
-        case "CIFAR":
-            dataset = load_cifar10_dataset(train=True, download=True)
-        case _:
-            raise NotImplementedError(f"No current dataset {dataset_name}")
-    splits = split_dataset(dataset, num_clients, iid=iid)
-    client_loaders = create_client_dataloaders(dataset, splits, batch_size=64)
-    print("IID Splits:")
+# Example get_data_set function that uses the buyer-seller split.
+def get_data_set(dataset_name, buyer_count, num_sellers, iid=True):
+    """
+    Load the dataset and split it between a buyer and several sellers.
+
+    Parameters:
+      dataset_name (str): Name of the dataset ("FMINIST", "CIFAR", etc.)
+      buyer_count (int): Number of samples to allocate to the buyer.
+      num_sellers (int): Number of seller clients.
+      iid (bool): If True, assume IID distribution (affects how splitting might be done).
+
+    Returns:
+      tuple: (client_loaders, full_dataset, test_set_loader)
+    """
+    # Load dataset (for example purposes, we'll assume these functions exist)
+    if dataset_name == "FMINIST":
+        from torchvision import datasets, transforms
+        transform = transforms.ToTensor()  # FMNIST images will be [0, 1] and shape (1, H, W)
+        dataset = datasets.FashionMNIST(root='./data', train=True, download=True, transform=transform)
+        test_set = datasets.FashionMNIST(root='./data', train=False, download=True, transform=transform)
+    elif dataset_name == "CIFAR":
+        from torchvision import datasets, transforms
+        transform = transforms.ToTensor()
+        dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+        test_set = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+    else:
+        raise NotImplementedError(f"No current dataset {dataset_name}")
+
+    # Create splits: assign buyer_count samples to buyer, rest to sellers.
+    splits = split_dataset_buyer_seller(dataset, buyer_count, num_sellers)
+    client_loaders = create_client_dataloaders(dataset, splits, batch_size=64, shuffle=True)
+
+    print("Client splits:")
     for cid, loader in client_loaders.items():
         print(f"  Client {cid}: {len(loader.dataset)} samples")
-    return client_loaders, dataset
+
+    test_set_loader = DataLoader(test_set, batch_size=64, shuffle=False)
+    return client_loaders, dataset, test_set_loader
 
 
-if __name__ == "__main__":
-    # Example usage with FashionMNIST:
-    num_clients = 5
-
-    # Load dataset (train split)
-    dataset = load_fmnist_dataset(train=True, download=True)
-
-    # IID split:
-    splits_iid = split_dataset(dataset, num_clients, iid=True)
-    client_loaders_iid = create_client_dataloaders(dataset, splits_iid, batch_size=64)
-    print("IID Splits:")
-    for cid, loader in client_loaders_iid.items():
-        print(f"  Client {cid}: {len(loader.dataset)} samples")
-
-    # Non-IID split (Dirichlet with alpha=0.5)
-    splits_noniid = split_dataset(dataset, num_clients, iid=False, alpha=0.5)
-    client_loaders_noniid = create_client_dataloaders(dataset, splits_noniid, batch_size=64)
-    print("\nNon-IID Splits:")
-    for cid, loader in client_loaders_noniid.items():
-        print(f"  Client {cid}: {len(loader.dataset)} samples")
-
+# def create_client_dataloaders(dataset, splits, batch_size=32, shuffle=True):
+#     """
+#     Given a dataset and a dictionary of splits (client_id: indices),
+#     return a dictionary mapping client_id to a DataLoader for that client's data.
+#     """
+#     client_loaders = {}
+#     for client_id, indices in splits.items():
+#         subset = Subset(dataset, indices)
+#         loader = DataLoader(subset, batch_size=batch_size, shuffle=shuffle)
+#         client_loaders[client_id] = loader
+#     return client_loaders
+#
+#
+# def get_data_set(dataset_name, num_clients=10, iid=True):
+#     # Load dataset (train split)
+#     match dataset_name:
+#         case "FMINIST":
+#             dataset = load_fmnist_dataset(train=True, download=True)
+#             test_set = load_fmnist_dataset(train=False, download=True)
+#         case "CIFAR":
+#             dataset = load_cifar10_dataset(train=True, download=True)
+#             test_set = load_cifar10_dataset(train=False, download=True)
+#         case _:
+#             raise NotImplementedError(f"No current dataset {dataset_name}")
+#     splits = split_dataset(dataset, num_clients, iid=iid)
+#     client_loaders = create_client_dataloaders(dataset, splits, batch_size=64)
+#     print("IID Splits:")
+#     for cid, loader in client_loaders.items():
+#         print(f"  Client {cid}: {len(loader.dataset)} samples")
+#
+#     test_set_loader = DataLoader(test_set, batch_size=64)
+#     return client_loaders, dataset, test_set_loader
 
