@@ -254,10 +254,13 @@ class Aggregator:
             # norms = [torch.norm(acc).item() for acc in aggregated_gradient]
             # print(f"After update {idx}, norms: {norms}")
 
-        if all(torch.equal(a, b) for a, b in zip(aggregated_gradient, seller_updates[0])):
-            print("They are the same")
+        def tensors_allclose(list1, list2, atol=1e-6):
+            return all(torch.allclose(a.cpu(), b.cpu(), atol=atol) for a, b in zip(list1, list2))
+
+        if tensors_allclose(aggregated_gradient, seller_updates[0]):
+            print("They are close enough")
         else:
-            print("They are different")
+            print("They differ")
             # 12. Update each client model (here using classic update; quantization not implemented)
         # if self.quantization:
         #     raise NotImplementedError("Quantization not implemented.")
