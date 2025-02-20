@@ -106,11 +106,10 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                 channels=1)
     local_training_params = {
         "lr": 1e-3,
-        "epochs": 100,
+        "epochs": 10,
         "optimizer": "SGD"
     }
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
-    buyer_cid = 0
 
     # set up the data set for the participants
     client_loaders, full_dataset, test_set_loader = get_data_set(dataset_name, buyer_count=5000, num_sellers=n_sellers,
