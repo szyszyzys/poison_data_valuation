@@ -105,7 +105,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
                                                 channels=1)
     local_training_params = {
-        "lr": 1e-3,
+        "lr": args.local_lr,
         "epochs": args.local_epoch,
         "optimizer": "SGD"
     }
@@ -215,6 +215,7 @@ def parse_args():
     parser.add_argument('--local_epoch', type=int, default=1, help='Number of global training rounds')
 
     parser.add_argument('--poison_strength', type=float, default=1, help='Strength of poisoning')
+    parser.add_argument('--local_lr', type=float, default=1e-3, help='Strength of poisoning')
 
     # Model architecture argument
     parser.add_argument('--model_arch', type=str, default='resnet18',
@@ -292,7 +293,7 @@ if __name__ == "__main__":
     print(f"start backdoor attack, current dataset: {args.dataset_name}, n_sellers: {args.n_sellers} ")
     set_seed(args.seed)
     device = get_device(args)
-    save_path = f"./results/backdoor/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}/"
+    save_path = f"./results/backdoor/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}/"
     clear_work_path(save_path)
     eval_results = backdoor_attack(
         dataset_name=args.dataset_name,
