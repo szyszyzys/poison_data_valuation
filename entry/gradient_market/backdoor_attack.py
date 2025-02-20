@@ -104,7 +104,10 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
     loss_fn = nn.CrossEntropyLoss()
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
                                                 channels=1)
-
+    local_training_params = {
+        "lr": 0.01,
+        "epoch": 1
+    }
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
     n_buyer = 1
     buyer_cid = 0
@@ -140,12 +143,14 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                              backdoor_generator=backdoor_generator,
                                                              device=device,
                                                              poison_strength=poison_strength,
-                                                             dataset_name=dataset_name
+                                                             dataset_name=dataset_name,
+                                                             local_training_params=local_training_params
                                                              )
         else:
             cur_id = f"seller_{cid}"
             current_seller = GradientSeller(seller_id=cur_id, local_data=loader.dataset,
-                                            dataset_name=dataset_name, save_path=save_path, device=device)
+                                            dataset_name=dataset_name, save_path=save_path, device=device,
+                                            local_training_params=local_training_params)
         marketplace.register_seller(cur_id, current_seller)
 
     # config the attack test set.

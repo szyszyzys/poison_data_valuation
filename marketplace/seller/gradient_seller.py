@@ -29,7 +29,7 @@ class GradientSeller(BaseSeller):
                  price_variation: float = 0.2,
                  save_path="",
                  device="cpu",
-                 local_epochs=2, local_training_params={}):
+                 local_epochs=2, local_training_params=None):
         """
         :param seller_id: Unique ID for the seller.
         :param local_data: The local dataset this seller holds for gradient computation.
@@ -115,7 +115,7 @@ class GradientSeller(BaseSeller):
         # Perform local training and get the flattened gradient update.
         grad_update, grad_update_flt, local_model, local_eval_res = local_training_and_get_gradient(
             model, list_to_tensor_dataset(dataset), batch_size=64, device=self.device,
-            local_epochs=self.local_epochs, lr=0.001
+            local_epochs=self.local_training_params["epochs"], lr=self.local_training_params["lr"]
         )
 
         # Optionally, you might want to clip the gradient here.
@@ -207,7 +207,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  save_path="",
                  local_epochs=2,
                  dataset_name="",
-                 local_training_params={}
+                 local_training_params=None
                  ):
         """
         :param local_data:        List[(image_tensor, label_int)] for the local training set.
@@ -234,6 +234,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         # Pre-split data
         self.backdoor_generator = backdoor_generator
         self.backdoor_data, self.clean_data = self._inject_triggers(local_data, trigger_fraction)
+        self.local_training_params = local_training_params
 
     def _inject_triggers(self, data: List[Tuple[torch.Tensor, int]], fraction: float):
         """
