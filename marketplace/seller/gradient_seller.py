@@ -207,7 +207,8 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  save_path="",
                  local_epochs=2,
                  dataset_name="",
-                 local_training_params=None
+                 local_training_params=None,
+                 gradient_manipulation_mode="cmd"
                  ):
         """
         :param local_data:        List[(image_tensor, label_int)] for the local training set.
@@ -235,6 +236,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         self.backdoor_generator = backdoor_generator
         self.backdoor_data, self.clean_data = self._inject_triggers(local_data, trigger_fraction)
         self.local_training_params = local_training_params
+        self.gradient_manipulation_mode = gradient_manipulation_mode
 
     def _inject_triggers(self, data: List[Tuple[torch.Tensor, int]], fraction: float):
         """
@@ -308,7 +310,17 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 print(f"[{self.seller_id}] No saved local model found; using default initialization.")
                 base_params = None  # or load_param("f") as your fallback
 
-        # 1) Compute benign gradient
+        if self.gradient_manipulation_mode == "cmd":
+            final_poisoned = self.gradient_manipulation_cmd(base_params)
+        elif self.gradient_manipulation_mode == "single":
+            final_poisoned = self.gradient_manipulation_sin(base_params)
+        else:
+            raise NotImplementedError(f"No current poison mode: {self.gradient_manipulation_mode}")
+
+
+        return final_poisoned
+
+    def gradient_manipulation_cmd(self, base_params, previous_selection=None):
         if self.poison_strength != 1:
             grad_benign_update, g_benign_flt, local_model_benign, local_eval_res_n = self._compute_local_grad(
                 base_params,
@@ -322,14 +334,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
             # 3) Combine them:
             final_poisoned_flt = (1 - self.poison_strength) * g_benign_flt + (self.poison_strength) * g_backdoor_flt
-            if align_global:
-                server_guess = np.random.randn(final_poisoned_flt.shape[0]) * 0.0001
-                final_poisoned_flt = self.alpha_align * final_poisoned_flt + (1 - self.alpha_align) * server_guess
 
-            # final_poisoned_flt = np.clip(final_poisoned_flt, -self.clip_value, self.clip_value)
-            # Unflatten into a list of arrays with original shapes.
-            final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
-            # self.last_benign_grad = np.clip(g_benign_flt, -self.clip_value, self.clip_value)
             self.last_benign_grad = g_benign_flt
         else:
             g_backdoor_update, g_backdoor_flt, local_model_malicious, local_eval_res_m = self._compute_local_grad(
@@ -338,15 +343,23 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             # final_poisoned_flt = g_backdoor_flt
             final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
             original_shapes = [param.shape for param in g_backdoor_update]
+        if previous_selection:
+            final_poisoned_flt = self.alpha_align * final_poisoned_flt + (1 - self.alpha_align) * previous_selection
         self.last_poisoned_grad = final_poisoned_flt
         final_poisoned = global_clip_np(final_poisoned_flt, 1)
         final_poisoned = unflatten_np(final_poisoned, original_shapes)
-        # cur_local_model = get_model(self.dataset_name)
-        # updated_params_flat = flatten_state_dict(base_params) - final_poisoned_flt
-        # new_state_dict = unflatten_state_dict(cur_local_model, updated_params_flat)
-        # cur_local_model.load_state_dict(new_state_dict)
-        # self.save_local_model(cur_local_model)
+        return final_poisoned
 
+    def gradient_manipulation_sin(self, base_params):
+        g_backdoor_update, g_backdoor_flt, local_model_malicious, local_eval_res_m = self._compute_local_grad(
+            base_params,
+            self.backdoor_data + self.clean_data)
+        # final_poisoned_flt = g_backdoor_flt
+        final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
+        original_shapes = [param.shape for param in g_backdoor_update]
+        self.last_poisoned_grad = final_poisoned_flt
+        final_poisoned = global_clip_np(final_poisoned_flt, 1)
+        final_poisoned = unflatten_np(final_poisoned, original_shapes)
         return final_poisoned
 
     # def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> np.ndarray:

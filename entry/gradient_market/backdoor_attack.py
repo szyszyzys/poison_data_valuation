@@ -9,6 +9,7 @@ from torch import nn
 from torch.utils.data import Subset, TensorDataset, DataLoader
 
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
+from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
 from general_utils.file_utils import save_history_to_json
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
@@ -97,10 +98,53 @@ def convert_np(obj):
         return obj
 
 
+class FederatedEarlyStopper:
+    def __init__(self, patience=5, min_delta=0.0, monitor='loss'):
+        """
+        Args:
+            patience (int): Number of rounds to wait after last improvement.
+            min_delta (float): Minimum change in the monitored quantity to qualify as an improvement.
+            monitor (str): Metric to monitor, 'loss' for minimizing metric or 'acc' for maximizing.
+        """
+        self.patience = patience
+        self.min_delta = min_delta
+        self.monitor = monitor
+        self.best_score = None
+        self.counter = 0
+
+    def update(self, current_value):
+        """
+        Update the stopper with the latest metric value.
+
+        Returns:
+            bool: True if training should be stopped, otherwise False.
+        """
+        # For loss, lower is better; for accuracy, higher is better.
+        if self.best_score is None:
+            self.best_score = current_value
+            return False
+
+        if self.monitor == 'loss':
+            improvement = self.best_score - current_value
+        elif self.monitor == 'acc':
+            improvement = current_value - self.best_score
+        else:
+            raise ValueError("Monitor must be 'loss' or 'acc'")
+
+        if improvement > self.min_delta:
+            self.best_score = current_value
+            self.counter = 0
+        else:
+            self.counter += 1
+
+        return self.counter >= self.patience
+
+
 def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                     global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", save_path="/",
                     device='cpu', poison_strength=1, poison_test_sample=100, args=None):
     # load the dataset
+    gradient_manipulation_mode = args.gradient_manipulation_mode
     if dataset_name == "FMINIST":
         channels = 1
     else:
@@ -108,6 +152,8 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
     loss_fn = nn.CrossEntropyLoss()
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
                                                 channels=channels)
+
+    early_stopper = FederatedEarlyStopper(patience=20, min_delta=0.01, monitor='loss')
     local_training_params = {
         "lr": args.local_lr,
         "epochs": args.local_epoch,
@@ -148,7 +194,8 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                              device=device,
                                                              poison_strength=poison_strength,
                                                              dataset_name=dataset_name,
-                                                             local_training_params=local_training_params
+                                                             local_training_params=local_training_params,
+                                                             gradient_manipulation_mode=gradient_manipulation_mode
                                                              )
             n_adversaries -= 1
         else:
@@ -174,7 +221,8 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                                               clean_loader=clean_loader,
                                                                               triggered_loader=triggered_loader,
                                                                               loss_fn=loss_fn, device=device,
-                                                                              dataset_name=dataset_name)
+                                                                              dataset_name=dataset_name,
+                                                                              backdoor_target_label=backdoor_target_label)
 
         # update buyers's local model
         s_local_model_dict = buyer.load_local_model()
@@ -186,6 +234,16 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
 
         if gr % 10 == 0:
             torch.save(marketplace.round_logs, f"{save_path}/market_log_round_{gr}.ckpt")
+        if round_record["final_perf_global"] is not None:
+            current_val_loss = round_record["final_perf_global"]["loss"]
+            if early_stopper.update(current_val_loss):
+                print(f"Early stopping triggered at round {gr}.")
+                break
+    poison_metrics = evaluate_attack_performance_backdoor_poison(marketplace.aggregator.global_model, clean_loader,
+                                                                 triggered_loader,
+                                                                 marketplace.aggregator.device,
+                                                                 target_label=backdoor_target_label, plot=True,
+                                                                 save_path=f"{save_path}/final_backdoor_attack_performance.png")
 
     # post fl process, test the final model.
     torch.save(marketplace.round_logs, f"{save_path}/market_log.ckpt")
@@ -198,8 +256,6 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
         torch.save(converted_logs_user, f"{save_path}/local_log_{seller_id}.ckpt")
 
     # record the attack result for the final round
-
-    return eval_results
 
 
 def parse_args():
@@ -222,6 +278,8 @@ def parse_args():
     parser.add_argument('--poison_strength', type=float, default=1, help='Strength of poisoning')
     parser.add_argument('--local_lr', type=float, default=1e-3, help='Strength of poisoning')
 
+    parser.add_argument('--gradient_manipulation_mode', type=str, default="cmd",
+                        help='Type of gradient manipulation cmd single')
     # Model architecture argument
     parser.add_argument('--model_arch', type=str, default='resnet18',
                         choices=['resnet18', 'resnet34', 'mlp'],
@@ -298,9 +356,9 @@ if __name__ == "__main__":
     print(f"start backdoor attack, current dataset: {args.dataset_name}, n_sellers: {args.n_sellers} ")
     set_seed(args.seed)
     device = get_device(args)
-    save_path = f"./results/backdoor/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}/"
+    save_path = f"./results/backdoor/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}_gradient_manipulation_mode_{args.gradient_manipulation_mode}/"
     clear_work_path(save_path)
-    eval_results = backdoor_attack(
+    backdoor_attack(
         dataset_name=args.dataset_name,
         n_sellers=args.n_sellers,
         n_adversaries=args.n_adversaries,
@@ -315,4 +373,4 @@ if __name__ == "__main__":
         args=args
     )
 
-    print("Evaluation Results:", eval_results)
+    # print("Evaluation Results:", eval_results)
