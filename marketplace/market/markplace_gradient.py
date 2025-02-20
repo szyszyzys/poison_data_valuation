@@ -118,7 +118,7 @@ class DataMarketplaceFederated(DataMarketplace):
                               test_dataloader_buyer_local=None,
                               test_dataloader_global=None,
                               loss_fn=None,
-                              clean_loader=None, triggered_loader=None, device="cpu",
+                              clean_loader=None, triggered_loader=None, device="cpu", dataset_name = "",
                               **kwargs):
         """
         Perform one round of federated training:
@@ -206,7 +206,7 @@ class DataMarketplaceFederated(DataMarketplace):
             is_selected = (sid in selected_ids)
             seller.record_federated_round(round_number, is_selected)
             s_local_model_dict = seller.load_local_model()
-            s_local_model = get_model('FMINIST')
+            s_local_model = get_model(dataset_name=dataset_name)
             # Load base parameters into the model
             s_local_model.load_state_dict(s_local_model_dict)
             cur_local_model = apply_gradient_update(s_local_model, aggregated_gradient)

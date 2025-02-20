@@ -101,9 +101,13 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                     global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", save_path="/",
                     device='cpu', poison_strength=1, poison_test_sample=100, args=None):
     # load the dataset
+    if dataset_name == "FMINIST":
+        channels = 1
+    else:
+        channels = 3
     loss_fn = nn.CrossEntropyLoss()
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
-                                                channels=1)
+                                                channels=channels)
     local_training_params = {
         "lr": args.local_lr,
         "epochs": args.local_epoch,
@@ -169,7 +173,8 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                                                                               test_dataloader_global=test_set_loader,
                                                                               clean_loader=clean_loader,
                                                                               triggered_loader=triggered_loader,
-                                                                              loss_fn=loss_fn, device=device)
+                                                                              loss_fn=loss_fn, device=device,
+                                                                              dataset_name=dataset_name)
 
         # update buyers's local model
         s_local_model_dict = buyer.load_local_model()
