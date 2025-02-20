@@ -33,11 +33,6 @@ while [[ "$#" -gt 0 ]]; do
             n_adversaries_arg="$2"
             shift 2
             ;;
-        *)
-            echo "Unknown parameter passed: $1"
-            exit 1
-            ;;
-    case $1 in
         --local_epoch)
             local_epoch_arg="$2"
             shift 2
@@ -49,9 +44,20 @@ while [[ "$#" -gt 0 ]]; do
     esac
 done
 
-IFS=',' read -r -a n_adversaries_list <<< "$n_adversaries_arg"
+# Ensure variables are set before using them
+if [[ -n "$n_adversaries_arg" ]]; then
+    IFS=',' read -r -a n_adversaries_list <<< "$n_adversaries_arg"
+else
+    echo "Error: --n_adversaries argument is missing or empty."
+    exit 1
+fi
 
-IFS=',' read -r -a local_epoch_list <<< "$local_epoch_arg"
+if [[ -n "$local_epoch_arg" ]]; then
+    IFS=',' read -r -a local_epoch_list <<< "$local_epoch_arg"
+else
+    echo "Error: --local_epoch argument is missing or empty."
+    exit 1
+fi
 
 
 for local_epoch in "${local_epoch_list[@]}"; do
