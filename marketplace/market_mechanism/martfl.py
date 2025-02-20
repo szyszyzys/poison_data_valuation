@@ -4,7 +4,6 @@ import numpy as np
 import torch
 from torch import nn
 
-from marketplace.utils.gradient_market_utils.clustering import kmeans, optimal_k_gap
 from model.utils import get_model, load_model
 
 
@@ -255,8 +254,11 @@ class Aggregator:
             # norms = [torch.norm(acc).item() for acc in aggregated_gradient]
             # print(f"After update {idx}, norms: {norms}")
 
-
-        # 12. Update each client model (here using classic update; quantization not implemented)
+        if all(torch.equal(a, b) for a, b in zip(aggregated_gradient, seller_updates[0])):
+            print("They are the same")
+        else:
+            print("They are different")
+            # 12. Update each client model (here using classic update; quantization not implemented)
         # if self.quantization:
         #     raise NotImplementedError("Quantization not implemented.")
         # else:
