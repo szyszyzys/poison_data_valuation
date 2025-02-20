@@ -23,9 +23,9 @@ seed=42
 gpu_ids="7"
 poison_test_sample=10000
 # Loop over each combination.
-
+local_lr="1e-2"
 n_adversaries_arg="1"
-
+local_epoch="2"
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -45,6 +45,11 @@ while [[ "$#" -gt 0 ]]; do
             gpu_ids="$2"
             shift 2
             ;;
+        --dataset_name)
+            dataset_name="$2"
+            shift 2
+            ;;
+
         *)
             echo "Unknown parameter passed: $1"
             exit 1

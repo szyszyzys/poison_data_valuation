@@ -118,7 +118,7 @@ class DataMarketplaceFederated(DataMarketplace):
                               test_dataloader_buyer_local=None,
                               test_dataloader_global=None,
                               loss_fn=None,
-                              clean_loader=None, triggered_loader=None, device="cpu",
+                              clean_loader=None, triggered_loader=None, device="cpu", backdoor_target_label=0,
                               **kwargs):
         """
         Perform one round of federated training:
@@ -163,9 +163,8 @@ class DataMarketplaceFederated(DataMarketplace):
             poison_metrics = evaluate_attack_performance_backdoor_poison(self.aggregator.global_model, clean_loader,
                                                                          triggered_loader,
                                                                          self.aggregator.device,
-                                                                         target_label=None, plot=True,
+                                                                         target_label=backdoor_target_label, plot=False,
                                                                          save_path=f"{self.save_path}/attack_performance.png")
-
         # 7. Log round info to aggregator (optional)
         extra_info = {}
         if final_perf_global is not None:

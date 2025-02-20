@@ -316,7 +316,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             final_poisoned = self.gradient_manipulation_sin(base_params)
         else:
             raise NotImplementedError(f"No current poison mode: {self.gradient_manipulation_mode}")
-        # 1) Compute benign gradient
+
 
         return final_poisoned
 
