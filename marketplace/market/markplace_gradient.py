@@ -2,8 +2,10 @@ from typing import Dict, Union, List, Tuple, Any
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
 
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
+from general_utils.data_utils import list_to_tensor_dataset
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.martfl import Aggregator, flatten
 from marketplace.seller.seller import BaseSeller
@@ -203,12 +205,17 @@ class DataMarketplaceFederated(DataMarketplace):
         for sid, seller in self.sellers.items():
             # Mark "is_selected" if in selected_sellers
             is_selected = (sid in selected_ids)
-            self.sellers[sid].record_federated_round(round_number, is_selected)
+            seller.record_federated_round(round_number, is_selected)
             s_local_model_dict = seller.load_local_model()
             s_local_model = get_model('FMINIST')
             # Load base parameters into the model
             s_local_model.load_state_dict(s_local_model_dict)
             cur_local_model = apply_gradient(s_local_model, aggregated_gradient)
+
+            res = test_local_model(cur_local_model,
+                                   DataLoader(list_to_tensor_dataset(seller.dataset), batch_size=64, shuffle=True),
+                                   loss_fn, device=cur_local_model.device)
+            print(res)
             seller.save_local_model(cur_local_model)
         print(
             f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")

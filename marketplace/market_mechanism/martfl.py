@@ -261,9 +261,9 @@ class Aggregator:
         #     raise NotImplementedError("Quantization not implemented.")
         # else:
         #     for i, model_name in enumerate(self.client_models):
-        #         # model = load_model(, get_backup_name_from_model_name(model_name), self.device)
-        #         # updated_model = add_update_to_model(model, aggregated_gradient, weight=1.0, device=self.device)
-        #         # save_model(self.exp_name, model_name, updated_model)
+        #         model = load_model(, get_backup_name_from_model_name(model_name), self.device)
+        #         updated_model = add_update_to_model(model, aggregated_gradient, weight=1.0, device=self.device)
+        #         save_model(self.exp_name, model_name, updated_model)
 
         # Return aggregated gradient, selected seller IDs, outlier seller IDs, and baseline similarities.
         return aggregated_gradient, selected_ids, outlier_ids
