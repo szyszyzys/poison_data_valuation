@@ -178,46 +178,46 @@ class Aggregator:
         cosine_similarities = torch.nn.functional.cosine_similarity(baseline, clients_stack, dim=1)
         np_cosine_result = cosine_similarities.cpu().numpy()
         np_cosine_result = np.nan_to_num(np_cosine_result, nan=0.0)
-        # 5. Clustering on cosine similarities:
-        diameter = np.max(np_cosine_result) - np.min(np_cosine_result)
-
-        print("Diameter:", diameter)
-        n_clusters = optimal_k_gap(np_cosine_result)
-        if n_clusters == 1 and diameter > 0.05:
-            n_clusters = 2
-        clusters, centroids = kmeans(np_cosine_result, n_clusters)
-        print("Centroids:", centroids)
-        print(f"{n_clusters} Clusters:", clusters)
-        center = centroids[-1] if len(centroids) > 0 else 0.0
-
-        # 6. Secondary clustering for further outlier detection (with k=2)
-        if n_clusters == 1:
-            clusters_secondary = [1] * self.n_seller
-        else:
-            clusters_secondary, _ = kmeans(np_cosine_result, 2)
-        print("Secondary Clustering:", clusters_secondary)
-
-        # 7. Determine border for outlier detection (max distance from center, skipping server)
-        border = 0.0
-        for i, (cos_sim, sec_cluster) in enumerate(zip(np_cosine_result, clusters_secondary)):
-            if n_clusters == 1 or sec_cluster != 0:
-                dist = abs(center - cos_sim)
-                if dist > border:
-                    border = dist
-        print("Border:", border)
+        # # 5. Clustering on cosine similarities:
+        # diameter = np.max(np_cosine_result) - np.min(np_cosine_result)
+        #
+        # print("Diameter:", diameter)
+        # n_clusters = optimal_k_gap(np_cosine_result)
+        # if n_clusters == 1 and diameter > 0.05:
+        #     n_clusters = 2
+        # clusters, centroids = kmeans(np_cosine_result, n_clusters)
+        # print("Centroids:", centroids)
+        # print(f"{n_clusters} Clusters:", clusters)
+        # center = centroids[-1] if len(centroids) > 0 else 0.0
+        #
+        # # 6. Secondary clustering for further outlier detection (with k=2)
+        # if n_clusters == 1:
+        #     clusters_secondary = [1] * self.n_seller
+        # else:
+        #     clusters_secondary, _ = kmeans(np_cosine_result, 2)
+        # print("Secondary Clustering:", clusters_secondary)
+        #
+        # # 7. Determine border for outlier detection (max distance from center, skipping server)
+        # border = 0.0
+        # for i, (cos_sim, sec_cluster) in enumerate(zip(np_cosine_result, clusters_secondary)):
+        #     if n_clusters == 1 or sec_cluster != 0:
+        #         dist = abs(center - cos_sim)
+        #         if dist > border:
+        #             border = dist
+        # print("Border:", border)
 
         # 8. Mark outliers: Build a list of non_outlier scores.
         non_outliers = [1.0 for _ in range(self.n_seller)]
-        candidate_server = []
-        for i in range(self.n_seller):
-            if clusters_secondary[i] == 0 or np_cosine_result[i] == 0.0:
-                non_outliers[i] = 0.0  # mark as outlier
-            else:
-                dist = abs(center - np_cosine_result[i])
-                non_outliers[i] = 1.0 - dist / (border + 1e-6)
-                if clusters[i] == n_clusters - 1:
-                    candidate_server.append(i)
-                    non_outliers[i] = 1.0  # force inlier for candidate server
+        # candidate_server = []
+        # for i in range(self.n_seller):
+        #     if clusters_secondary[i] == 0 or np_cosine_result[i] == 0.0:
+        #         non_outliers[i] = 0.0  # mark as outlier
+        #     else:
+        #         dist = abs(center - np_cosine_result[i])
+        #         non_outliers[i] = 1.0 - dist / (border + 1e-6)
+        #         if clusters[i] == n_clusters - 1:
+        #             candidate_server.append(i)
+        #             non_outliers[i] = 1.0  # force inlier for candidate server
 
         # Identify selected (inlier) and outlier seller indices.
         selected_ids = [i for i in range(self.n_seller) if non_outliers[i] > 0.0]
