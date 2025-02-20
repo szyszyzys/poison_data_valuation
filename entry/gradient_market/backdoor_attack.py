@@ -117,7 +117,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
 
     # config the buyer
     buyer = GradientSeller(seller_id="buyer", local_data=client_loaders[buyer_cid].dataset, dataset_name=dataset_name,
-                           save_path=save_path)
+                           save_path=save_path, local_training_params=local_training_params)
 
     # config the marketplace
     aggregator = Aggregator(save_path=save_path,
