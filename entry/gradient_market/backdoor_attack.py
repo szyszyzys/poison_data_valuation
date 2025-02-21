@@ -15,7 +15,7 @@ from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
-from model.utils import get_model, apply_gradient_update
+from model.utils import get_model, apply_gradient_update, save_samples
 
 
 def dataloader_to_tensors(dataloader):
@@ -207,6 +207,10 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
 
     # config the attack test set.
     clean_loader, triggered_loader = generate_attack_test_set(full_dataset, backdoor_generator, poison_test_sample)
+    # save some
+    save_samples(clean_loader, filename=f"{save_path}/clean_samples.png", n_samples=16, nrow=4, title="Clean Samples")
+    save_samples(triggered_loader, filename=f"{save_path}/triggered_samples.png", n_samples=16, nrow=4,
+                 title="Triggered Samples")
 
     # Start gloal round
     for gr in range(global_rounds):
@@ -356,7 +360,7 @@ if __name__ == "__main__":
     print(f"start backdoor attack, current dataset: {args.dataset_name}, n_sellers: {args.n_sellers} ")
     set_seed(args.seed)
     device = get_device(args)
-    save_path = f"./results/backdoor/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}_gradient_manipulation_mode_{args.gradient_manipulation_mode}/"
+    save_path = f"./results/backdoor/{args.dataset_name}/backdoor_mode_{args.gradient_manipulation_mode}_strength_{args.poison_strength}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}/"
     clear_work_path(save_path)
     backdoor_attack(
         dataset_name=args.dataset_name,

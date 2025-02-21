@@ -197,7 +197,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  seller_id: str,
                  local_data: List[Tuple[torch.Tensor, int]],
                  target_label: int,
-                 trigger_fraction: float = 0.1,
                  alpha_align: float = 0.5,
                  poison_strength: float = 0.7,
                  clip_value: float = 0.01,
@@ -222,7 +221,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         super().__init__(seller_id, local_data, save_path=save_path, device=device, local_epochs=local_epochs,
                          dataset_name=dataset_name, local_training_params=local_training_params)
         self.target_label = target_label
-        self.trigger_fraction = trigger_fraction
         self.alpha_align = alpha_align
         self.poison_strength = poison_strength
         self.clip_value = clip_value
@@ -234,7 +232,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         # Pre-split data
         self.backdoor_generator = backdoor_generator
-        self.backdoor_data, self.clean_data = self._inject_triggers(local_data, trigger_fraction)
+        self.backdoor_data, self.clean_data = self._inject_triggers(local_data, poison_strength)
         self.local_training_params = local_training_params
         self.gradient_manipulation_mode = gradient_manipulation_mode
 
@@ -313,10 +311,9 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         if self.gradient_manipulation_mode == "cmd":
             final_poisoned = self.gradient_manipulation_cmd(base_params)
         elif self.gradient_manipulation_mode == "single":
-            final_poisoned = self.gradient_manipulation_sin(base_params)
+            final_poisoned = self.gradient_manipulation_single(base_params)
         else:
             raise NotImplementedError(f"No current poison mode: {self.gradient_manipulation_mode}")
-
 
         return final_poisoned
 
@@ -350,7 +347,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         final_poisoned = unflatten_np(final_poisoned, original_shapes)
         return final_poisoned
 
-    def gradient_manipulation_sin(self, base_params):
+    def gradient_manipulation_single(self, base_params):
         g_backdoor_update, g_backdoor_flt, local_model_malicious, local_eval_res_m = self._compute_local_grad(
             base_params,
             self.backdoor_data + self.clean_data)

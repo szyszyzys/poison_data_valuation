@@ -17,10 +17,12 @@ import copy
 import os
 from typing import List
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torchvision.utils as vutils
 from torch.utils.data import DataLoader, TensorDataset
 
 # from model.text_model import TEXTCNN
@@ -300,3 +302,36 @@ def apply_gradient(model, aggregated_gradient, learning_rate: float = 1.0, devic
     else:
         # Otherwise, return the updated state_dict.
         return updated_params
+
+
+def save_samples(data_loader, filename, n_samples=16, nrow=4, title="Samples"):
+    """
+    Save a grid of images from the provided DataLoader for visualization.
+
+    Args:
+        data_loader: DataLoader object from which to fetch a batch of images.
+        filename: Path to save the visualization image.
+        n_samples: Number of images to display (default: 16).
+        nrow: Number of images per row in the grid (default: 4).
+        title: Title for the plot.
+    """
+    # Get one batch from the loader
+    images, labels = next(iter(data_loader))
+
+    # Ensure we don't exceed available images
+    images = images[:n_samples]
+
+    # Create a grid of images
+    grid = vutils.make_grid(images, nrow=nrow, normalize=True, scale_each=True)
+
+    # Convert grid to numpy for plotting
+    np_grid = grid.cpu().numpy()
+    np_grid = np.transpose(np_grid, (1, 2, 0))  # from (C, H, W) to (H, W, C)
+
+    # Plot and save the grid
+    plt.figure(figsize=(8, 8))
+    plt.imshow(np_grid)
+    plt.title(title)
+    plt.axis("off")
+    plt.savefig(filename, bbox_inches='tight')
+    plt.close()
