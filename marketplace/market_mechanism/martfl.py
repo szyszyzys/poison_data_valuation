@@ -37,6 +37,7 @@ class Aggregator:
                  dataset_name: str,
                  model_structure: nn.Module = None,
                  quantization: bool = False,
+                 aggregation_method: str = "martfl",
                  device=None):
         """
         :param save_path:         Name/identifier of the current experiment.
@@ -55,6 +56,7 @@ class Aggregator:
         self.global_model = get_model(dataset_name)
         # An example to track "best candidate" or further logic if you need:
         self.max_indexes = [0]
+        self.aggregation_method = aggregation_method
 
     # ---------------------------
     # Gradient update utilities
@@ -115,11 +117,17 @@ class Aggregator:
             # Load updated parameters back into the model
             self.global_model.load_state_dict(updated_params)
 
-    def aggregate(self, global_epoch, seller_updates, buyer_updates, method="martfl"):
-        return self.martFL(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates)
+    def aggregate(self, global_epoch, seller_updates, buyer_updates):
+        if self.aggregation_method == "martfl":
+            return self.martFL(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates)
+        elif self.aggregation_method == "fedavg":
+            return self.fedavg(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates)
+        else:
+            raise NotImplementedError(f"current aggregator not implemented {self.aggregation_method}")
 
     # ---------------------------
     # Main Federated Aggregation (martFL)
+
     # ---------------------------
     def martFL(self,
                global_epoch: int,
@@ -259,8 +267,39 @@ class Aggregator:
         return aggregated_gradient, selected_ids, outlier_ids
 
 
-# todo
+    def fedavg(self,
+               global_epoch: int,
+               seller_updates,
+               buyer_updates,
+               change_base: bool = False,
+               ground_truth_model=None):
+        print("global_epoch :", global_epoch)
 
+        # Number of sellers
+        self.n_seller = len(seller_updates)
+
+        # Initialize aggregated gradients to zeros
+        aggregated_gradient = [
+            torch.zeros_like(param, device=self.device)
+            for param in self.model_structure.parameters()
+        ]
+
+        # If weights for sellers are provided (e.g., as self.seller_weights), use them.
+        # Otherwise, assign equal weights.
+        seller_weights = [1.0 for _ in seller_updates]
+
+        # Normalize weights so they sum to 1
+        total_weight = sum(seller_weights)
+        normalized_weights = [w / total_weight for w in seller_weights]
+
+        # Final aggregation: sum weighted gradients.
+        for idx, (gradient, wt) in enumerate(zip(seller_updates, normalized_weights)):
+            add_gradient_updates(aggregated_gradient, gradient, weight=wt)
+            # Optionally, compute and print the norm of each aggregated parameter:
+            # norms = [torch.norm(param).item() for param in aggregated_gradient]
+            # print(f"After update {idx}, norms: {norms}")
+
+        return aggregated_gradient, [i for i in range(self.n_seller)], []
 
 # ---------------------------------------------------------
 #  HELPER FUNCTIONS

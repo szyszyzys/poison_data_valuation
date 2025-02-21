@@ -140,7 +140,7 @@ class FederatedEarlyStopper:
         return self.counter >= self.patience
 
 
-def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
+def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, aggregation_method='martfl',
                     global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", save_path="/",
                     device='cpu', poison_strength=1, poison_test_sample=100, args=None):
     # load the dataset
@@ -172,6 +172,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure,
                             model_structure=model_structure,
                             dataset_name=dataset_name,
                             quantization=False,
+                            aggregation_method=aggregation_method
                             )
     marketplace = DataMarketplaceFederated(aggregator,
                                            selection_method="martfl", save_path=save_path)
@@ -280,6 +281,7 @@ def parse_args():
                         choices=['resnet18', 'resnet34', 'mlp'],
                         help='Model architecture (resnet18, resnet34, mlp)')
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
+    parser.add_argument("--aggregation_method", type=str, default="martfl", help="agge")
     parser.add_argument("--gpu_ids", type=str, default="0", help="Comma-separated GPU IDs (e.g., '0,1').")
 
     args = parser.parse_args()
@@ -351,7 +353,7 @@ if __name__ == "__main__":
     print(f"start backdoor attack, current dataset: {args.dataset_name}, n_sellers: {args.n_sellers} ")
     set_seed(args.seed)
     device = get_device(args)
-    save_path = f"./results/backdoor/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}_gradient_manipulation_mode_{args.gradient_manipulation_mode}/"
+    save_path = f"./results/backdoor/{args.aggregation_method}/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}_gradient_manipulation_mode_{args.gradient_manipulation_mode}/"
     clear_work_path(save_path)
     backdoor_attack(
         dataset_name=args.dataset_name,
@@ -365,6 +367,7 @@ if __name__ == "__main__":
         device=device,
         poison_strength=args.poison_strength,
         poison_test_sample=args.poison_test_sample,
+        aggregation_method = args.aggregation_method,
         args=args
     )
 

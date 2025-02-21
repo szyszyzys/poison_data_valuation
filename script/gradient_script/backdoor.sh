@@ -26,6 +26,7 @@ poison_test_sample=10000
 local_lr="1e-2"
 n_adversaries_arg="1"
 local_epoch="2"
+aggregation_method='martfl'
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -46,6 +47,10 @@ while [[ "$#" -gt 0 ]]; do
             shift 2
             ;;
         --dataset_name)
+            dataset_name="$2"
+            shift 2
+            ;;
+        --aggregation_method)
             dataset_name="$2"
             shift 2
             ;;
@@ -94,7 +99,8 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --poison_test_sample "$poison_test_sample"\
                   --local_epoch "$local_epoch" \
                   --local_lr "$local_lr" \
-                  --gradient_manipulation_mode "$gradient_manipulation_mode"
+                  --gradient_manipulation_mode "$gradient_manipulation_mode" \
+                  --aggregation_method "$aggregation_method"
           done
         done
     done
