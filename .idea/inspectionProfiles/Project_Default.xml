@@ -1,6 +1,7 @@
 <component name="InspectionProjectProfileManager">
   <profile version="1.0">
     <option name="myName" value="Project Default" />
+<<<<<<< HEAD
     <inspection_tool class="HtmlUnknownAttribute" enabled="true" level="WARNING" enabled_by_default="true">
       <option name="myValues">
         <value>
@@ -17,6 +18,25 @@
           <option value="train.pytorch_lightning" />
         </list>
       </option>
+=======
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <value>
+          <list size="10">
+            <item index="0" class="java.lang.String" itemvalue="textattack" />
+            <item index="1" class="java.lang.String" itemvalue="tqdm" />
+            <item index="2" class="java.lang.String" itemvalue="transformers" />
+            <item index="3" class="java.lang.String" itemvalue="alpaca" />
+            <item index="4" class="java.lang.String" itemvalue="scikit_learn" />
+            <item index="5" class="java.lang.String" itemvalue="alpaca_ml" />
+            <item index="6" class="java.lang.String" itemvalue="torch" />
+            <item index="7" class="java.lang.String" itemvalue="datasets" />
+            <item index="8" class="java.lang.String" itemvalue="numpy" />
+            <item index="9" class="java.lang.String" itemvalue="scipy" />
+          </list>
+        </value>
+      </option>
+>>>>>>> 2370560ad1097df40febcd0e663b2c38f6e71594
     </inspection_tool>
   </profile>
 </component>

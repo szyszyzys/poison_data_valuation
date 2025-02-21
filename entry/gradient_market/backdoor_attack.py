@@ -1,13 +1,9 @@
 import argparse
+import numpy as np
 import os
 import random
 import shutil
-
-import numpy as np
 import torch
-from torch import nn
-from torch.utils.data import Subset, TensorDataset, DataLoader
-
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
 from general_utils.file_utils import save_history_to_json
@@ -15,7 +11,9 @@ from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
-from model.utils import get_model, apply_gradient_update
+from model.utils import get_model, apply_gradient_update, save_samples
+from torch import nn
+from torch.utils.data import Subset, TensorDataset, DataLoader
 
 
 def dataloader_to_tensors(dataloader):
@@ -69,7 +67,7 @@ def generate_attack_test_set(full_dataset, backdoor_generator, n_samples=1000):
     # For example, if your backdoor generator is an instance of AdvancedBackdoorAttack:
     # backdoor_generator = AdvancedBackdoorAttack(trigger_pattern=..., target_label=..., alpha=0.1, ...)
 
-    X_poisoned, y_poisoned = backdoor_generator.generate_poisoned_dataset(X, y, poison_rate=0.1)
+    X_poisoned, y_poisoned = backdoor_generator.generate_poisoned_dataset(X, y, poison_rate=0.5)
 
     # ---------------------------
     # 4. Build DataLoaders
@@ -145,9 +143,13 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                     device='cpu', poison_strength=1, poison_test_sample=100, args=None):
     # load the dataset
     gradient_manipulation_mode = args.gradient_manipulation_mode
+    if dataset_name == "FMINIST":
+        channels = 1
+    else:
+        channels = 3
     loss_fn = nn.CrossEntropyLoss()
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
-                                                channels=1)
+                                                channels=channels)
 
     early_stopper = FederatedEarlyStopper(patience=20, min_delta=0.01, monitor='loss')
     local_training_params = {
@@ -204,6 +206,10 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
 
     # config the attack test set.
     clean_loader, triggered_loader = generate_attack_test_set(full_dataset, backdoor_generator, poison_test_sample)
+    # save some
+    save_samples(clean_loader, filename=f"{save_path}/clean_samples.png", n_samples=16, nrow=4, title="Clean Samples")
+    save_samples(triggered_loader, filename=f"{save_path}/triggered_samples.png", n_samples=16, nrow=4,
+                 title="Triggered Samples")
 
     # Start gloal round
     for gr in range(global_rounds):
@@ -218,6 +224,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                                                                               clean_loader=clean_loader,
                                                                               triggered_loader=triggered_loader,
                                                                               loss_fn=loss_fn, device=device,
+                                                                              dataset_name=dataset_name,
                                                                               backdoor_target_label=backdoor_target_label)
 
         # update buyers's local model
@@ -353,7 +360,8 @@ if __name__ == "__main__":
     print(f"start backdoor attack, current dataset: {args.dataset_name}, n_sellers: {args.n_sellers} ")
     set_seed(args.seed)
     device = get_device(args)
-    save_path = f"./results/backdoor/{args.aggregation_method}/{args.dataset_name}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_strength_{args.poison_strength}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}_gradient_manipulation_mode_{args.gradient_manipulation_mode}/"
+
+    save_path = f"./results/backdoor/{args.aggregation_method}/{args.dataset_name}/backdoor_mode_{args.gradient_manipulation_mode}_strength_{args.poison_strength}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}/"
     clear_work_path(save_path)
     backdoor_attack(
         dataset_name=args.dataset_name,
@@ -367,7 +375,7 @@ if __name__ == "__main__":
         device=device,
         poison_strength=args.poison_strength,
         poison_test_sample=args.poison_test_sample,
-        aggregation_method = args.aggregation_method,
+        aggregation_method=args.aggregation_method,
         args=args
     )
 

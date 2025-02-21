@@ -1,4 +1,9 @@
+<<<<<<< HEAD
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.9 (poison_data_valuation)" project-jdk-type="Python SDK" />
+=======
+<project version="4">
+  <component name="ProjectRootManager" version="2" project-jdk-name="data-acquisition-via-experimental-design" project-jdk-type="Python SDK" />
+>>>>>>> 2370560ad1097df40febcd0e663b2c38f6e71594
 </project>
