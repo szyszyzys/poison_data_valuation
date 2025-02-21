@@ -69,7 +69,7 @@ def generate_attack_test_set(full_dataset, backdoor_generator, n_samples=1000):
     # For example, if your backdoor generator is an instance of AdvancedBackdoorAttack:
     # backdoor_generator = AdvancedBackdoorAttack(trigger_pattern=..., target_label=..., alpha=0.1, ...)
 
-    X_poisoned, y_poisoned = backdoor_generator.generate_poisoned_dataset(X, y, poison_rate=0.1)
+    X_poisoned, y_poisoned = backdoor_generator.generate_poisoned_dataset(X, y, poison_rate=0.5)
 
     # ---------------------------
     # 4. Build DataLoaders

@@ -197,6 +197,7 @@ class DataMarketplaceFederated(DataMarketplace):
             "final_perf_global": final_perf_global,
             "extra_info": extra_info
         }
+
         self.round_logs.append(round_record)
 
         # 9. Update each seller about whether they were selected

@@ -198,6 +198,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  local_data: List[Tuple[torch.Tensor, int]],
                  target_label: int,
                  alpha_align: float = 0.5,
+                 trigger_rate = 0.1,
                  poison_strength: float = 0.7,
                  clip_value: float = 0.01,
                  trigger_type: str = "blended_patch",
@@ -232,7 +233,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         # Pre-split data
         self.backdoor_generator = backdoor_generator
-        self.backdoor_data, self.clean_data = self._inject_triggers(local_data, poison_strength)
+        self.backdoor_data, self.clean_data = self._inject_triggers(local_data, trigger_rate)
         self.local_training_params = local_training_params
         self.gradient_manipulation_mode = gradient_manipulation_mode
 
