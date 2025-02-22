@@ -13,8 +13,7 @@ from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_ba
 from general_utils.file_utils import save_history_to_json
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
-from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller, \
-    update_local_model_from_global
+from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
 from model.utils import get_model, save_samples
 
@@ -152,7 +151,8 @@ class FederatedEarlyStopper:
 
 def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, aggregation_method='martfl',
                     global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", save_path="/",
-                    device='cpu', poison_strength=1, poison_test_sample=100, args=None, trigger_rate=0.1):
+                    device='cpu', poison_strength=1, poison_test_sample=100, args=None, trigger_rate=0.1,
+                    buyer_count=5000):
     # load the dataset
     gradient_manipulation_mode = args.gradient_manipulation_mode
     if dataset_name == "FMNIST":
@@ -174,7 +174,8 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
 
     # set up the data set for the participants
-    client_loaders, full_dataset, test_set_loader = get_data_set(dataset_name, buyer_count=5000, num_sellers=n_sellers,
+    client_loaders, full_dataset, test_set_loader = get_data_set(dataset_name, buyer_count=buyer_count,
+                                                                 num_sellers=n_sellers,
                                                                  iid=True)
 
     # config the buyer
@@ -228,10 +229,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                  title="Triggered Samples")
 
     # Start gloal round
-    aggregated_gradient = None
     for gr in range(global_rounds):
-        # update buyers's local model
-
         # train the attack model
         round_record, aggregated_gradient = marketplace.train_federated_round(round_number=gr,
                                                                               buyer=buyer,
