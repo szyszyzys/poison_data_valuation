@@ -229,12 +229,10 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
     aggregated_gradient = None
     for gr in range(global_rounds):
         # update buyers's local model
-        if aggregated_gradient:
-            update_local_model_from_global(buyer, dataset_name, aggregated_gradient)
-        buyer_gradient = buyer.get_gradient()
+
         # train the attack model
         round_record, aggregated_gradient = marketplace.train_federated_round(round_number=gr,
-                                                                              buyer_gradient=buyer_gradient,
+                                                                              buyer=buyer,
                                                                               test_dataloader_buyer_local=
                                                                               client_loaders["buyer"],
                                                                               test_dataloader_global=test_set_loader,

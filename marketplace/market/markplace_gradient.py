@@ -11,7 +11,6 @@ from marketplace.seller.seller import BaseSeller
 from model.utils import apply_gradient_update
 
 
-
 class DataMarketplaceFederated(DataMarketplace):
     def __init__(self,
                  aggregator: Aggregator,
@@ -67,7 +66,6 @@ class DataMarketplaceFederated(DataMarketplace):
         for seller_id, seller in self.sellers.items():
             # for martfl, local have no access to the global params
             grad_np = seller.get_gradient()
-            # Expect get_gradient(...) -> (np.ndarray, int) or similar
             norm = np.linalg.norm(flatten(grad_np))
             print(f"The {seller_id} gradient norm is: {norm}")
             gradients.append(grad_np)
@@ -115,7 +113,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
     def train_federated_round(self,
                               round_number: int,
-                              buyer_gradient,
+                              buyer,
                               num_select: int = None,
                               test_dataloader_buyer_local=None,
                               test_dataloader_global=None,
@@ -132,13 +130,14 @@ class DataMarketplaceFederated(DataMarketplace):
          5. Distribute the new global model back to sellers (optional).
          6. Evaluate final model & log stats (optional).
         """
+        baseline_gradient = buyer.get_gradient()
 
         # 1. get gradients from sellers
         seller_gradients, seller_ids = self.get_current_market_gradients()
         # 2. perform aggregation
         aggregated_gradient, selected_ids, outlier_ids = self.aggregator.aggregate(round_number,
                                                                                    seller_gradients,
-                                                                                   buyer_gradient)
+                                                                                   baseline_gradient)
         print(f"round {round_number} aggregated gradient norm: {np.linalg.norm(flatten(aggregated_gradient))}")
         # 4. update global model
         self.update_global_model(aggregated_gradient)
@@ -200,6 +199,7 @@ class DataMarketplaceFederated(DataMarketplace):
         self.round_logs.append(round_record)
 
         # 9. Update each seller about whether they were selected
+        update_local_model_from_global(buyer, dataset_name, aggregated_gradient)
         for sid, seller in self.sellers.items():
             # Mark "is_selected" if in selected_sellers
             is_selected = (sid in selected_ids)
