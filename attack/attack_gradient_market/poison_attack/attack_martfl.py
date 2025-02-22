@@ -202,7 +202,7 @@ class BackdoorImageGenerator:
                  target_label: int,
                  channels: int,
                  trigger_size: Tuple[int, int] = (5, 5),
-                 alpha: float = 0.1,
+                 alpha: float = 0.5,
                  location: str = "bottom_right",
                  randomize_location: bool = False):
         """
@@ -223,125 +223,337 @@ class BackdoorImageGenerator:
         self.location = location
         self.randomize_location = randomize_location
 
+    # def generate_trigger_pattern(trigger_type: str, channels: int,
+    #                              trigger_size: Tuple[int, int] = (5, 5)) -> torch.Tensor:
+    #     """
+    #     Generate a backdoor trigger pattern based on the specified type.
+    #
+    #     :param trigger_type: The type of trigger pattern to generate. Options:
+    #                          - "blended_patch": A solid patch (e.g., a white square).
+    #                          - "checkerboard": A checkerboard pattern.
+    #                          - "noise": A random noise pattern.
+    #                          - "gradient": A horizontal gradient from 0 to 1.
+    #     :param channels: Number of channels for the trigger (should match input image channels).
+    #     :param trigger_size: Tuple (height, width) specifying the size of the trigger.
+    #     :return: A torch.Tensor of shape (height, width, channels) with values in [0, 1].
+    #     """
+    #     height, width = trigger_size
+    #
+    #     if trigger_type == "blended_patch":
+    #         # A solid patch: for instance, a white square (all ones)
+    #         trigger_pattern = torch.ones(height, width, channels)
+    #     elif trigger_type == "checkerboard":
+    #         # Create a checkerboard pattern: alternating 0 and 1
+    #         trigger_pattern = torch.zeros(height, width, channels)
+    #         for i in range(height):
+    #             for j in range(width):
+    #                 if (i + j) % 2 == 0:
+    #                     trigger_pattern[i, j] = 1.0
+    #     elif trigger_type == "noise":
+    #         # A noise pattern: random values in [0, 1]
+    #         trigger_pattern = torch.rand(height, width, channels)
+    #     elif trigger_type == "gradient":
+    #         # A horizontal gradient: values linearly increase from 0 to 1
+    #         # First create a 1D gradient then expand to match the desired shape and channels
+    #         gradient = torch.linspace(0, 1, steps=width).unsqueeze(0).repeat(height, 1)
+    #         trigger_pattern = gradient.unsqueeze(-1).repeat(1, 1, channels)
+    #     else:
+    #         raise ValueError(f"Unknown trigger type: {trigger_type}")
+    #
+    #     return trigger_pattern.float()
     @staticmethod
-    def generate_trigger_pattern(trigger_type: str, channels: int,
-                                 trigger_size: Tuple[int, int] = (5, 5)) -> torch.Tensor:
+    def generate_trigger_pattern(
+            trigger_type: str,
+            channels: int,
+            trigger_size: Tuple[int, int] = (5, 5),
+            device: torch.device = None
+    ) -> torch.Tensor:
         """
         Generate a backdoor trigger pattern based on the specified type.
 
-        :param trigger_type: The type of trigger pattern to generate. Options:
-                             - "blended_patch": A solid patch (e.g., a white square).
-                             - "checkerboard": A checkerboard pattern.
-                             - "noise": A random noise pattern.
-                             - "gradient": A horizontal gradient from 0 to 1.
-        :param channels: Number of channels for the trigger (should match input image channels).
-        :param trigger_size: Tuple (height, width) specifying the size of the trigger.
-        :return: A torch.Tensor of shape (height, width, channels) with values in [0, 1].
+        Args:
+            trigger_type: The type of trigger pattern to generate. Options:
+                - "blended_patch": A solid patch (e.g., a white square)
+                - "checkerboard": A checkerboard pattern
+                - "noise": A random noise pattern
+                - "gradient": A horizontal gradient from 0 to 1
+            channels: Number of channels for the trigger (1 for grayscale, 3 for RGB)
+            trigger_size: Tuple (height, width) specifying the size of the trigger
+            device: Target device for the tensor. If None, uses current default device
+
+        Returns:
+            torch.Tensor: Trigger pattern of shape (channels, height, width) with values in [0, 1]
+
+        Raises:
+            ValueError: If trigger_type is invalid or parameters are out of valid ranges
         """
+        # Input validation
+        if not isinstance(trigger_size, tuple) or len(trigger_size) != 2:
+            raise ValueError("trigger_size must be a tuple of (height, width)")
+
+        if not all(isinstance(x, int) and x > 0 for x in trigger_size):
+            raise ValueError("trigger_size dimensions must be positive integers")
+
+        if channels not in [1, 3]:
+            raise ValueError("channels must be 1 (grayscale) or 3 (RGB)")
+
+        valid_types = ["blended_patch", "checkerboard", "noise", "gradient"]
+        if trigger_type not in valid_types:
+            raise ValueError(f"trigger_type must be one of {valid_types}")
+
         height, width = trigger_size
+
+        # Initialize device
+        if device is None:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         if trigger_type == "blended_patch":
             # A solid patch: for instance, a white square (all ones)
-            trigger_pattern = torch.ones(height, width, channels)
+            trigger_pattern = torch.ones(channels, height, width, device=device)
+
         elif trigger_type == "checkerboard":
-            # Create a checkerboard pattern: alternating 0 and 1
-            trigger_pattern = torch.zeros(height, width, channels)
-            for i in range(height):
-                for j in range(width):
-                    if (i + j) % 2 == 0:
-                        trigger_pattern[i, j] = 1.0
+            # Create a checkerboard pattern more efficiently using tensor operations
+            y_coords = torch.arange(height, device=device).unsqueeze(1)
+            x_coords = torch.arange(width, device=device).unsqueeze(0)
+            checkerboard = ((y_coords + x_coords) % 2 == 0).float()
+            trigger_pattern = checkerboard.unsqueeze(0).repeat(channels, 1, 1)
+
         elif trigger_type == "noise":
             # A noise pattern: random values in [0, 1]
-            trigger_pattern = torch.rand(height, width, channels)
+            trigger_pattern = torch.rand(channels, height, width, device=device)
+
         elif trigger_type == "gradient":
             # A horizontal gradient: values linearly increase from 0 to 1
-            # First create a 1D gradient then expand to match the desired shape and channels
-            gradient = torch.linspace(0, 1, steps=width).unsqueeze(0).repeat(height, 1)
-            trigger_pattern = gradient.unsqueeze(-1).repeat(1, 1, channels)
-        else:
-            raise ValueError(f"Unknown trigger type: {trigger_type}")
+            gradient = torch.linspace(0, 1, steps=width, device=device)
+            gradient = gradient.view(1, 1, -1).repeat(channels, height, 1)
+            trigger_pattern = gradient
 
-        return trigger_pattern.float()
+        # Add small random noise to prevent exact 0s and 1s which might cause issues
+        noise_scale = 1e-4
+        noise = torch.rand_like(trigger_pattern) * noise_scale
+        trigger_pattern = torch.clamp(trigger_pattern + noise, 0.0, 1.0)
 
-    def apply_trigger_tensor(self, image: torch.Tensor) -> torch.Tensor:
+        return trigger_pattern
+
+    # def apply_trigger_tensor(self, image: torch.Tensor) -> torch.Tensor:
+    #     """
+    #     Applies the trigger pattern to a single image using torch operations directly.
+    #
+    #     :param image: A torch.Tensor representing an image.
+    #                   It can be in (H, W, C) or (C, H, W) format.
+    #                   Expected pixel values are in [0, 255].
+    #     :return: A new torch.Tensor with the trigger applied in the original format.
+    #     """
+    #     # Determine if image is in (C, H, W) format.
+    #     original_format = "HWC"
+    #     if image.ndim == 3 and image.shape[0] in [1, 3]:
+    #         # Convert from (C, H, W) to (H, W, C)
+    #         image = image.permute(1, 2, 0)
+    #         original_format = "CHW"
+    #
+    #     # Ensure image is float32 for processing.
+    #     image = image.float()
+    #     H, W, C = image.shape
+    #     h, w, _ = self.trigger_pattern.shape
+    #
+    #     # Determine placement of the trigger.
+    #     if self.randomize_location:
+    #         x = torch.randint(0, max(W - w, 1), (1,)).item()
+    #         y = torch.randint(0, max(H - h, 1), (1,)).item()
+    #     else:
+    #         if self.location == "bottom_right":
+    #             x = W - w
+    #             y = H - h
+    #         elif self.location == "top_left":
+    #             x = 0
+    #             y = 0
+    #         elif self.location == "center":
+    #             x = (W - w) // 2
+    #             y = (H - h) // 2
+    #         else:
+    #             # Default to bottom_right if unknown location.
+    #             x = W - w
+    #             y = H - h
+    #
+    #     # Create a copy of the image to avoid modifying the original.
+    #     poisoned = image.clone()
+    #
+    #     # Extract the region where the trigger will be applied.
+    #     region = poisoned[y:y + h, x:x + w, :]
+    #
+    #     # Apply alpha blending: new_pixel = (1 - alpha) * original + alpha * trigger.
+    #     blended_region = (1 - self.alpha) * region + self.alpha * self.trigger_pattern.to(region.device)
+    #
+    #     # Clamp the pixel values to [0, 255] and update the region.
+    #     poisoned[y:y + h, x:x + w, :] = torch.clamp(blended_region, 0, 255)
+    #
+    #     # If the original format was CHW, convert it back.
+    #     if original_format == "CHW":
+    #         poisoned = poisoned.permute(2, 0, 1)
+    #
+    #     # Convert back to the original dtype (e.g., uint8 if needed)
+    #     return poisoned.to(image.dtype)
+
+    # def apply_trigger_tensor(self,
+    #                          image: torch.Tensor,
+    #                          ) -> torch.Tensor:
+    #     """
+    #     Applies a given trigger pattern (same channel dimension as image) to a single image.
+    #
+    #     :param image: A torch.Tensor of shape (C, H, W), values in [0, 1].
+    #     :return: A new torch.Tensor with the trigger applied, shape (C, H, W).
+    #     """
+    #     # Ensure float for blending
+    #     image = image.clone().float()  # (C, H, W)
+    #     _, H, W = image.shape
+    #     _, h, w = self.trigger_pattern.shape
+    #
+    #     if self.randomize_location:
+    #         # Random valid coordinates
+    #         y = torch.randint(0, max(H - h, 1), (1,)).item()
+    #         x = torch.randint(0, max(W - w, 1), (1,)).item()
+    #     else:
+    #         if self.location == "bottom_right":
+    #             y = H - h
+    #             x = W - w
+    #         elif self.location == "top_left":
+    #             y = 0
+    #             x = 0
+    #         elif self.location == "center":
+    #             y = (H - h) // 2
+    #             x = (W - w) // 2
+    #         else:
+    #             # Default fallback: bottom_right
+    #             y = H - h
+    #             x = W - w
+    #
+    #     # Extract the region for blending
+    #     region = image[:, y:y + h, x:x + w]
+    #
+    #     # Blend region with trigger_pattern
+    #     # (1 - alpha)*original + alpha*trigger
+    #     blended = (1.0 - self.alpha) * region + self.alpha * self.trigger_pattern.to(region.device)
+    #
+    #     # Place the blended region back and clamp to [0, 1]
+    #     image[:, y:y + h, x:x + w] = torch.clamp(blended, 0.0, 1.0)
+    #
+    #     return image
+
+    # def generate_poisoned_dataset(self, X: torch.Tensor, y: torch.Tensor, poison_rate: float = 0.1) -> (
+    #         torch.Tensor, torch.Tensor):
+    #     """
+    #     Given a clean dataset (images and labels as torch.Tensors), randomly poison a subset of the data
+    #     by applying the backdoor trigger and changing their label to the target label.
+    #
+    #     :param X: A torch.Tensor of shape (N, H, W, C) representing the dataset images.
+    #     :param y: A torch.Tensor of shape (N,) representing the original labels.
+    #     :param poison_rate: Fraction of samples to poison (e.g., 0.1 for 10%).
+    #     :return: Tuple (X_poisoned, y_poisoned) where triggered images are modified and labels are set to the target.
+    #     """
+    #     X_poisoned = X.clone()
+    #     y_poisoned = y.clone()
+    #     N = X.size(0)
+    #     num_poison = int(poison_rate * N)
+    #     idxs = torch.randperm(N)[:num_poison]
+    #
+    #     for idx in idxs:
+    #         X_poisoned[idx] = self.apply_trigger_tensor(X_poisoned[idx])
+    #         y_poisoned[idx] = self.target_label
+    #
+    #     return X_poisoned, y_poisoned
+
+    def apply_trigger_tensor(self,
+                             image: torch.Tensor,
+                             ) -> torch.Tensor:
         """
-        Applies the trigger pattern to a single image using torch operations directly.
+        Applies a given trigger pattern to a single image, supporting both CIFAR and FMNIST datasets.
 
-        :param image: A torch.Tensor representing an image.
-                      It can be in (H, W, C) or (C, H, W) format.
-                      Expected pixel values are in [0, 255].
-        :return: A new torch.Tensor with the trigger applied in the original format.
+        :param image: A torch.Tensor of shape (C, H, W), values in [0, 1].
+                     C=3 for CIFAR (RGB) and C=1 for FMNIST (grayscale)
+        :return: A new torch.Tensor with the trigger applied, shape (C, H, W).
         """
-        # Determine if image is in (C, H, W) format.
-        original_format = "HWC"
-        if image.ndim == 3 and image.shape[0] in [1, 3]:
-            # Convert from (C, H, W) to (H, W, C)
-            image = image.permute(1, 2, 0)
-            original_format = "CHW"
+        # Ensure float for blending
+        image = image.clone().float()  # (C, H, W)
+        C, H, W = image.shape
+        trigger_C, h, w = self.trigger_pattern.shape
 
-        # Ensure image is float32 for processing.
-        image = image.float()
-        H, W, C = image.shape
-        h, w, _ = self.trigger_pattern.shape
+        # Validate channel dimensions
+        if C not in [1, 3]:
+            raise ValueError(f"Expected 1 (FMNIST) or 3 (CIFAR) channels, got {C}")
 
-        # Determine placement of the trigger.
+        # Ensure trigger pattern matches input channels
+        if trigger_C != C:
+            if trigger_C == 1 and C == 3:
+                # Expand grayscale trigger to RGB
+                self.trigger_pattern = self.trigger_pattern.repeat(3, 1, 1)
+            elif trigger_C == 3 and C == 1:
+                # Convert RGB trigger to grayscale using luminosity method
+                weights = torch.tensor([0.2989, 0.5870, 0.1140]).view(3, 1, 1).to(self.trigger_pattern.device)
+                self.trigger_pattern = (self.trigger_pattern * weights).sum(dim=0, keepdim=True)
+            else:
+                raise ValueError(f"Incompatible trigger pattern channels ({trigger_C}) and image channels ({C})")
+
+        # Calculate trigger position
         if self.randomize_location:
-            x = torch.randint(0, max(W - w, 1), (1,)).item()
+            # Random valid coordinates
             y = torch.randint(0, max(H - h, 1), (1,)).item()
+            x = torch.randint(0, max(W - w, 1), (1,)).item()
         else:
             if self.location == "bottom_right":
-                x = W - w
                 y = H - h
+                x = W - w
             elif self.location == "top_left":
-                x = 0
                 y = 0
+                x = 0
             elif self.location == "center":
-                x = (W - w) // 2
                 y = (H - h) // 2
+                x = (W - w) // 2
             else:
-                # Default to bottom_right if unknown location.
-                x = W - w
+                # Default fallback: bottom_right
                 y = H - h
+                x = W - w
 
-        # Create a copy of the image to avoid modifying the original.
-        poisoned = image.clone()
+        # Extract the region for blending
+        region = image[:, y:y + h, x:x + w]
 
-        # Extract the region where the trigger will be applied.
-        region = poisoned[y:y + h, x:x + w, :]
+        # Blend region with trigger_pattern
+        # (1 - alpha)*original + alpha*trigger
+        blended = (1.0 - self.alpha) * region + self.alpha * self.trigger_pattern.to(region.device)
 
-        # Apply alpha blending: new_pixel = (1 - alpha) * original + alpha * trigger.
-        blended_region = (1 - self.alpha) * region + self.alpha * self.trigger_pattern.to(region.device)
+        # Place the blended region back and clamp to [0, 1]
+        image[:, y:y + h, x:x + w] = torch.clamp(blended, 0.0, 1.0)
 
-        # Clamp the pixel values to [0, 255] and update the region.
-        poisoned[y:y + h, x:x + w, :] = torch.clamp(blended_region, 0, 255)
+        return image
 
-        # If the original format was CHW, convert it back.
-        if original_format == "CHW":
-            poisoned = poisoned.permute(2, 0, 1)
-
-        # Convert back to the original dtype (e.g., uint8 if needed)
-        return poisoned.to(image.dtype)
-
-    def generate_poisoned_dataset(self, X: torch.Tensor, y: torch.Tensor, poison_rate: float = 0.1) -> (
-            torch.Tensor, torch.Tensor):
+    def generate_poisoned_dataset(self,
+                                  X: torch.Tensor, y: torch.Tensor, poison_rate: float = 0.1
+                                  ):
         """
-        Given a clean dataset (images and labels as torch.Tensors), randomly poison a subset of the data
-        by applying the backdoor trigger and changing their label to the target label.
+        Given clean dataset (images X, labels y), poison a fraction of them by applying a trigger
+        and overwriting their label.
 
-        :param X: A torch.Tensor of shape (N, H, W, C) representing the dataset images.
-        :param y: A torch.Tensor of shape (N,) representing the original labels.
-        :param poison_rate: Fraction of samples to poison (e.g., 0.1 for 10%).
-        :return: Tuple (X_poisoned, y_poisoned) where triggered images are modified and labels are set to the target.
+        :param X: (N, C, H, W) in [0,1].
+        :param y: (N,).
+        :param poison_rate: Fraction of samples to poison.
+        :return: (X_poisoned, y_poisoned)
         """
         X_poisoned = X.clone()
         y_poisoned = y.clone()
-        N = X.size(0)
-        num_poison = int(poison_rate * N)
-        idxs = torch.randperm(N)[:num_poison]
 
-        for idx in idxs:
-            X_poisoned[idx] = self.apply_trigger_tensor(X_poisoned[idx])
-            y_poisoned[idx] = self.target_label
+        num_samples = X.shape[0]
+        num_poison = int(poison_rate * num_samples)
+
+        # Randomly choose which samples to poison
+        idxs_to_poison = torch.randperm(num_samples)[:num_poison]
+
+        for idx in idxs_to_poison:
+            original_img = X_poisoned[idx]  # shape (C, H, W)
+            # Apply the trigger
+            poisoned_img = self.apply_trigger_tensor(
+                original_img,
+            )
+            X_poisoned[idx] = poisoned_img
+            y_poisoned[idx] = self.target_label  # Overwrite label
 
         return X_poisoned, y_poisoned
 

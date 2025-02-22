@@ -223,7 +223,7 @@ def get_model(dataset_name):
     match dataset_name:
         case "CIFAR":
             model = CNN_CIFAR()
-        case "FMINIST":
+        case "FMNIST":
             model = LeNet()
         # case ["TREC", "AG_NEWS"]:
         #     model = TEXTCNN

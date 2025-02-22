@@ -1,7 +1,7 @@
 #!/bin/bash
 # run_experiments.sh
 # This script runs the Python script with varying parameters.
-
+# bash script/gradient_script/backdoor.sh --n_adversaries "1,2,3,4,5" --gpu_ids 6 --dataset_name fmnist --aggregation_method fedavg --poison_strength "0.5,1" --gradient_manipulation_mode cmd --trigger_rate 0.5
 WORK_DIR="/scratch/zzs5287/poison_data_valuation"
 export PYTHONPATH="$WORK_DIR:$PYTHONPATH"
 echo $PYTHONPATH
@@ -23,17 +23,13 @@ gpu_ids="7"
 poison_test_sample=10000
 local_lr="1e-2"
 n_adversaries_arg="1"
-<<<<<<< HEAD
-local_epoch="2"
 aggregation_method='martfl'
-=======
-
 # Initialize these to empty strings to check later
-local_epoch_arg=""
-poison_strength_arg=""
+local_epoch_arg="2"
+poison_strength_arg="0.1"
+trigger_rate="0.5"
 # gradient_manipulation_mode is already set to "single" by default
 
->>>>>>> 2370560ad1097df40febcd0e663b2c38f6e71594
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -58,7 +54,7 @@ while [[ "$#" -gt 0 ]]; do
             shift 2
             ;;
         --aggregation_method)
-            dataset_name="$2"
+            aggregation_method="$2"
             shift 2
             ;;
         --poison_strength)
@@ -69,6 +65,11 @@ while [[ "$#" -gt 0 ]]; do
             gradient_manipulation_mode="$2"
             shift 2
             ;;
+        --trigger_rate)
+            trigger_rate="$2"
+            shift 2
+            ;;
+
         *)
             echo "Unknown parameter passed: $1"
             exit 1
@@ -108,7 +109,6 @@ echo "  gpu_ids: $gpu_ids"
 
 # Loop over combinations and run experiments
 for local_epoch in "${local_epoch_list[@]}"; do
-<<<<<<< HEAD
   for n_sellers in "${n_sellers_list[@]}"; do
       for n_adversaries in "${n_adversaries_list[@]}"; do
           for poison_strength in "${poison_strength_list[@]}"; do
@@ -129,31 +129,9 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --local_epoch "$local_epoch" \
                   --local_lr "$local_lr" \
                   --gradient_manipulation_mode "$gradient_manipulation_mode" \
-                  --aggregation_method "$aggregation_method"
+                  --aggregation_method "$aggregation_method" \
+                  --trigger_rate "$trigger_rate"
           done
-=======
-    for n_sellers in "${n_sellers_list[@]}"; do
-        for n_adversaries in "${n_adversaries_list[@]}"; do
-            for poison_strength in "${poison_strength_list[@]}"; do
-                echo "Running experiment with n_sellers=$n_sellers, n_adversaries=$n_adversaries, poison_strength=$poison_strength, local_epoch=$local_epoch, gradient_manipulation_mode=$gradient_manipulation_mode"
-                python entry/gradient_market/backdoor_attack.py \
-                    --dataset_name "$dataset_name" \
-                    --n_sellers "$n_sellers" \
-                    --n_adversaries "$n_adversaries" \
-                    --global_rounds "$global_rounds" \
-                    --backdoor_target_label "$backdoor_target_label" \
-                    --trigger_type "$trigger_type" \
-                    --exp_name "$exp_name" \
-                    --poison_strength "$poison_strength" \
-                    --model_arch "$model_arch" \
-                    --seed "$seed" \
-                    --gpu_ids "$gpu_ids" \
-                    --poison_test_sample "$poison_test_sample"\
-                    --local_epoch "$local_epoch" \
-                    --local_lr "$local_lr" \
-                    --gradient_manipulation_mode "$gradient_manipulation_mode"
-            done
->>>>>>> 2370560ad1097df40febcd0e663b2c38f6e71594
         done
     done
 done

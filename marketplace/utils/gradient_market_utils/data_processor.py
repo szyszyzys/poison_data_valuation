@@ -157,7 +157,7 @@ def get_data_set(dataset_name, buyer_count, num_sellers, iid=True):
     Load the dataset and split it between a buyer and several sellers.
 
     Parameters:
-      dataset_name (str): Name of the dataset ("FMINIST", "CIFAR", etc.)
+      dataset_name (str): Name of the dataset ("FMNIST", "CIFAR", etc.)
       buyer_count (int): Number of samples to allocate to the buyer.
       num_sellers (int): Number of seller clients.
       iid (bool): If True, assume IID distribution (affects how splitting might be done).
@@ -166,7 +166,7 @@ def get_data_set(dataset_name, buyer_count, num_sellers, iid=True):
       tuple: (client_loaders, full_dataset, test_set_loader)
     """
     # Load dataset (for example purposes, we'll assume these functions exist)
-    if dataset_name == "FMINIST":
+    if dataset_name == "FMNIST":
         from torchvision import datasets, transforms
         transform = transforms.ToTensor()  # FMNIST images will be [0, 1] and shape (1, H, W)
         dataset = datasets.FashionMNIST(root='./data', train=True, download=True, transform=transform)
@@ -207,7 +207,7 @@ def get_data_set(dataset_name, buyer_count, num_sellers, iid=True):
 # def get_data_set(dataset_name, num_clients=10, iid=True):
 #     # Load dataset (train split)
 #     match dataset_name:
-#         case "FMINIST":
+#         case "FMNIST":
 #             dataset = load_fmnist_dataset(train=True, download=True)
 #             test_set = load_fmnist_dataset(train=False, download=True)
 #         case "CIFAR":

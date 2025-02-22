@@ -126,16 +126,16 @@ class BaseSeller(ABC):
             'market_share': self.stats.market_share,
         }
 
-    def save_statistics(self):
-        """Save statistics and selection/federated round history to a JSON file."""
-        stats_data = {
-            'statistics': self.get_statistics(),
-            'selection_history': self.selection_history,
-            'federated_round_history': self.federated_round_history,
-        }
-        output_path = f"{self.exp_save_path}/result.json"
-        with open(output_path, 'w') as f:
-            json.dump(stats_data, f, indent=2)
+    # def save_statistics(self):
+    #     """Save statistics and selection/federated round history to a JSON file."""
+    #     stats_data = {
+    #         'statistics': self.get_statistics(),
+    #         'selection_history': self.selection_history,
+    #         'federated_round_history': self.federated_round_history,
+    #     }
+    #     output_path = f"{self.exp_save_path}/result.json"
+    #     with open(output_path, 'w') as f:
+    #         json.dump(stats_data, f, indent=2)
 
     @property
     def exp_save_path(self):

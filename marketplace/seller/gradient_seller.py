@@ -153,16 +153,14 @@ class GradientSeller(BaseSeller):
         :param final_model_params: Optionally, the final local model parameters.
         """
         record = {
-            'event_type': 'federated_round',
             'round_number': round_number,
             'timestamp': pd.Timestamp.now().isoformat(),
             'selected': is_selected,
-            "metrics_local": self.recent_metrics
         }
         self.selected_last_round = is_selected
-        if final_model_params is not None:
-            # Convert state_dict tensors to lists (or use another serialization as needed).
-            record['final_model_params'] = {k: v.cpu().numpy().tolist() for k, v in final_model_params.items()}
+        # if final_model_params is not None:
+        #     # Convert state_dict tensors to lists (or use another serialization as needed).
+        #     record['final_model_params'] = {k: v.cpu().numpy().tolist() for k, v in final_model_params.items()}
         self.federated_round_history.append(record)
 
     # If you don't need the .get_data() returning "X" and "cost", you can override it:
@@ -177,6 +175,7 @@ class GradientSeller(BaseSeller):
             "cost": None,
         }
 
+    @property
     def get_federated_history(self):
         return self.federated_round_history
 
@@ -198,7 +197,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  local_data: List[Tuple[torch.Tensor, int]],
                  target_label: int,
                  alpha_align: float = 0.5,
-                 trigger_rate = 0.1,
+                 trigger_rate=0.1,
                  poison_strength: float = 0.7,
                  clip_value: float = 0.01,
                  trigger_type: str = "blended_patch",
@@ -436,10 +435,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             "round_number": round_number,
             "timestamp": pd.Timestamp.now().isoformat(),
             "is_selected": is_selected,
-            "benign_grad_norm": float(
-                np.linalg.norm(self.last_benign_grad)) if self.last_benign_grad is not None else None,
-            "poisoned_grad_norm": float(
-                np.linalg.norm(self.last_poisoned_grad)) if self.last_poisoned_grad is not None else None
         }
         self.selected_last_round = is_selected
         self.federated_round_history.append(record)

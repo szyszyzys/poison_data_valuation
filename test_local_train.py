@@ -78,7 +78,7 @@ def main():
     batch_size = 32
     learning_rate = 0.001
     num_epochs = 5
-    dataset_name = "FMINIST"
+    dataset_name = "FMNIST"
     client_loaders, full_dataset, test_set = get_data_set(dataset_name, num_clients=11, iid=True)
 
     # config the buyer

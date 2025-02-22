@@ -1,9 +1,13 @@
 import argparse
-import numpy as np
 import os
 import random
 import shutil
+
+import numpy as np
 import torch
+from torch import nn
+from torch.utils.data import Subset, TensorDataset, DataLoader
+
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
 from general_utils.file_utils import save_history_to_json
@@ -12,8 +16,6 @@ from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
 from model.utils import get_model, apply_gradient_update, save_samples
-from torch import nn
-from torch.utils.data import Subset, TensorDataset, DataLoader
 
 
 def dataloader_to_tensors(dataloader):
@@ -47,42 +49,51 @@ def generate_attack_test_set(full_dataset, backdoor_generator, n_samples=1000):
     # FashionMNIST images come in shape (1, H, W). For our backdoor generator,
     # assume we want images as (H, W, C). We can squeeze and then unsqueeze at the end.
 
-    X_list, y_list = [], []
+    X_list = []
+    y_list = []
     for img, label in subset_dataset:
-        # img is a torch.Tensor of shape (1, H, W); convert to (H, W, 1)
-        img = img.permute(1, 2, 0)  # now shape (H, W, C)
+        # img is already (C, H, W) in [0,1] from transforms.ToTensor()
         X_list.append(img)
         y_list.append(label)
 
-    X = torch.stack(X_list)  # Shape: (10000, H, W, C)
-    y = torch.tensor(y_list)  # Shape: (10000,)
+    # Stack into (N, C, H, W)
+    X = torch.stack(X_list, dim=0)
+    y = torch.tensor(y_list, dtype=torch.long)
 
-    # ---------------------------
-    # 3. Generate Poisoned Dataset
-    # ---------------------------
-    # Assuming your backdoor generator has a method generate_poisoned_dataset that takes
-    # torch.Tensors in shape (N, H, W, C) and returns (X_poisoned, y_poisoned)
-    # with the same shape for X_poisoned.
+    # 3. Generate the poisoned dataset
+    X_poisoned, y_poisoned = backdoor_generator.generate_poisoned_dataset(X, y, poison_rate=1)
 
-    # For example, if your backdoor generator is an instance of AdvancedBackdoorAttack:
-    # backdoor_generator = AdvancedBackdoorAttack(trigger_pattern=..., target_label=..., alpha=0.1, ...)
-
-    X_poisoned, y_poisoned = backdoor_generator.generate_poisoned_dataset(X, y, poison_rate=0.5)
-
-    # ---------------------------
     # 4. Build DataLoaders
-    # ---------------------------
-    # Many PyTorch models expect image tensors to be in shape (N, C, H, W), so we permute.
-    X = X.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
-    X_poisoned = X_poisoned.permute(0, 3, 1, 2)
-
     clean_dataset = TensorDataset(X, y)
     triggered_dataset = TensorDataset(X_poisoned, y_poisoned)
 
-    batch_size = 64
-    clean_loader = DataLoader(clean_dataset, batch_size=batch_size, shuffle=True)
-    triggered_loader = DataLoader(triggered_dataset, batch_size=batch_size, shuffle=True)
+    clean_loader = DataLoader(clean_dataset, batch_size=64, shuffle=True)
+    triggered_loader = DataLoader(triggered_dataset, batch_size=64, shuffle=True)
+
     return clean_loader, triggered_loader
+
+    # X_list, y_list = [], []
+    # for img, label in subset_dataset:
+    #     # img is a torch.Tensor of shape (1, H, W); convert to (H, W, 1)
+    #     img = img.permute(1, 2, 0)  # now shape (H, W, C)
+    #     X_list.append(img)
+    #     y_list.append(label)
+    #
+    # X = torch.stack(X_list)  # Shape: (10000, H, W, C)
+    # y = torch.tensor(y_list)  # Shape: (10000,)
+    #
+    # X_poisoned, y_poisoned = backdoor_generator.generate_poisoned_dataset(X, y, poison_rate=0.5)
+    #
+    # X = X.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
+    # X_poisoned = X_poisoned.permute(0, 3, 1, 2)
+    #
+    # clean_dataset = TensorDataset(X, y)
+    # triggered_dataset = TensorDataset(X_poisoned, y_poisoned)
+    #
+    # batch_size = 64
+    # clean_loader = DataLoader(clean_dataset, batch_size=batch_size, shuffle=True)
+    # triggered_loader = DataLoader(triggered_dataset, batch_size=batch_size, shuffle=True)
+    # return clean_loader, triggered_loader
 
 
 def convert_np(obj):
@@ -140,10 +151,10 @@ class FederatedEarlyStopper:
 
 def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, aggregation_method='martfl',
                     global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", save_path="/",
-                    device='cpu', poison_strength=1, poison_test_sample=100, args=None):
+                    device='cpu', poison_strength=1, poison_test_sample=100, args=None, trigger_rate=0.1):
     # load the dataset
     gradient_manipulation_mode = args.gradient_manipulation_mode
-    if dataset_name == "FMINIST":
+    if dataset_name == "FMNIST":
         channels = 1
     else:
         channels = 3
@@ -151,7 +162,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
                                                 channels=channels)
 
-    early_stopper = FederatedEarlyStopper(patience=20, min_delta=0.01, monitor='loss')
+    early_stopper = FederatedEarlyStopper(patience=50, min_delta=0.01, monitor='acc')
     local_training_params = {
         "lr": args.local_lr,
         "epochs": args.local_epoch,
@@ -177,7 +188,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                             aggregation_method=aggregation_method
                             )
     marketplace = DataMarketplaceFederated(aggregator,
-                                           selection_method="martfl", save_path=save_path)
+                                           selection_method=aggregation_method, save_path=save_path)
 
     # config the seller and register to the marketplace
     for cid, loader in client_loaders.items():
@@ -192,6 +203,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                                                              backdoor_generator=backdoor_generator,
                                                              device=device,
                                                              poison_strength=poison_strength,
+                                                             trigger_rate=trigger_rate,
                                                              dataset_name=dataset_name,
                                                              local_training_params=local_training_params,
                                                              gradient_manipulation_mode=gradient_manipulation_mode
@@ -249,6 +261,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                                                                  save_path=f"{save_path}/final_backdoor_attack_performance.png")
 
     # post fl process, test the final model.
+    torch.save(marketplace.aggregator.global_model.state_dict(), f"{save_path}/final_global_model.pt")
     torch.save(marketplace.round_logs, f"{save_path}/market_log.ckpt")
     converted_logs = convert_np(marketplace.round_logs)
     save_history_to_json(converted_logs, f"{save_path}/market_log.json")
@@ -265,7 +278,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run Backdoor Attack Experiment")
 
     # Required arguments
-    parser.add_argument('--dataset_name', type=str, default='FMINIST',
+    parser.add_argument('--dataset_name', type=str, default='FMNIST',
                         help='Name of the dataset (e.g., MNIST, CIFAR10)')
     parser.add_argument('--n_sellers', type=int, default=10, help='Number of sellers')
     parser.add_argument('--n_adversaries', type=int, default=1, help='Number of adversaries')
@@ -275,11 +288,12 @@ def parse_args():
     parser.add_argument('--backdoor_target_label', type=int, default=0, help='Target label for backdoor attack')
     parser.add_argument('--trigger_type', type=str, default="blended_patch", help='Type of backdoor trigger')
     parser.add_argument('--exp_name', type=str, default="/", help='Experiment name for logging')
-    parser.add_argument('--poison_test_sample', type=int, default=1, help='Number of global training rounds')
+    parser.add_argument('--poison_test_sample', type=int, default=1000, help='Number of samples for global test')
     parser.add_argument('--local_epoch', type=int, default=1, help='Number of global training rounds')
 
     parser.add_argument('--poison_strength', type=float, default=1, help='Strength of poisoning')
     parser.add_argument('--local_lr', type=float, default=1e-3, help='Strength of poisoning')
+    parser.add_argument('--trigger_rate', type=float, default=0.5, help='Strength of poisoning')
 
     parser.add_argument('--gradient_manipulation_mode', type=str, default="cmd",
                         help='Type of gradient manipulation cmd single')
@@ -357,11 +371,18 @@ def clear_work_path(path):
 if __name__ == "__main__":
     args = parse_args()
     t_model = get_model(args.dataset_name)
-    print(f"start backdoor attack, current dataset: {args.dataset_name}, n_sellers: {args.n_sellers} ")
+    print(
+        f"start backdoor attack, current dataset: {args.dataset_name}, n_sellers: {args.n_sellers}, attack method: {args.gradient_manipulation_mode}")
     set_seed(args.seed)
     device = get_device(args)
-
-    save_path = f"./results/backdoor/{args.aggregation_method}/{args.dataset_name}/backdoor_mode_{args.gradient_manipulation_mode}_strength_{args.poison_strength}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}/"
+    if args.gradient_manipulation_mode == "None":
+        save_path = f"./results/backdoor/{args.aggregation_method}/{args.dataset_name}/no_attack/n_seller_{args.n_sellers}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}/"
+    elif args.gradient_manipulation_mode == "cmd":
+        save_path = f"./results/backdoor/{args.aggregation_method}/{args.dataset_name}/backdoor_mode_{args.gradient_manipulation_mode}_strength_{args.poison_strength}_trigger_type_{args.trigger_type}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}/"
+    elif args.gradient_manipulation_mode == "single":
+        save_path = f"./results/backdoor/{args.aggregation_method}/{args.dataset_name}/backdoor_mode_{args.gradient_manipulation_mode}_trigger_rate_{args.trigger_rate}_trigger_type_{args.trigger_type}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}/"
+    else:
+        raise NotImplementedError(f"No such attack type :{args.gradient_manipulation_mode}")
     clear_work_path(save_path)
     backdoor_attack(
         dataset_name=args.dataset_name,
@@ -376,6 +397,7 @@ if __name__ == "__main__":
         poison_strength=args.poison_strength,
         poison_test_sample=args.poison_test_sample,
         aggregation_method=args.aggregation_method,
+        trigger_rate=args.trigger_rate,
         args=args
     )
 
