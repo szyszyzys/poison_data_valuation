@@ -7,7 +7,7 @@ from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_ba
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.martfl import Aggregator, flatten
 from marketplace.seller.seller import BaseSeller
-from model.utils import test_local_model, get_model, apply_gradient_update
+from model.utils import apply_gradient_update, update_local_model_from_global
 
 
 class DataMarketplaceFederated(DataMarketplace):
@@ -118,7 +118,8 @@ class DataMarketplaceFederated(DataMarketplace):
                               test_dataloader_buyer_local=None,
                               test_dataloader_global=None,
                               loss_fn=None,
-                              clean_loader=None, triggered_loader=None, device="cpu", backdoor_target_label=0, dataset_name ="",
+                              clean_loader=None, triggered_loader=None, device="cpu", backdoor_target_label=0,
+                              dataset_name="",
                               **kwargs):
         """
         Perform one round of federated training:
@@ -149,9 +150,6 @@ class DataMarketplaceFederated(DataMarketplace):
         if test_dataloader_buyer_local is not None and loss_fn is not None:
             # Evaluate aggregator.global_model on test set
             final_perf_local = self.evaluate_global_model(test_dataloader_buyer_local, loss_fn)
-            eval_res = test_local_model(self.aggregator.global_model, test_dataloader_buyer_local, loss_fn,
-                                        device=self.aggregator.device)
-            print(f"global model eval local: {eval_res}")
         final_perf_global = None
         if test_dataloader_global is not None and loss_fn is not None:
             # Evaluate aggregator.global_model on test set
@@ -204,14 +202,12 @@ class DataMarketplaceFederated(DataMarketplace):
             # Mark "is_selected" if in selected_sellers
             is_selected = (sid in selected_ids)
             seller.record_federated_round(round_number, is_selected)
-            s_local_model_dict = seller.load_local_model()
-            s_local_model = get_model(dataset_name=dataset_name)
-            # Load base parameters into the model
-            s_local_model.load_state_dict(s_local_model_dict)
-            cur_local_model = apply_gradient_update(s_local_model, aggregated_gradient)
-            seller.save_local_model(cur_local_model)
+            update_local_model_from_global(seller, dataset_name, aggregated_gradient)
         print(
             f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")
+        print(f"Test set eval result: {final_perf_global}")
+        print(f"Buyer local eval result: {final_perf_local}")
+
         return round_record, aggregated_gradient
 
     def evaluate_global_model(self, test_dataloader, loss_fn) -> Dict[str, float]:

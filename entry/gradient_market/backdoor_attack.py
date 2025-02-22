@@ -15,7 +15,7 @@ from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
-from model.utils import get_model, apply_gradient_update, save_samples
+from model.utils import get_model, apply_gradient_update, save_samples, update_local_model_from_global
 
 
 def dataloader_to_tensors(dataloader):
@@ -229,12 +229,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
     for gr in range(global_rounds):
         # update buyers's local model
         if aggregated_gradient:
-            s_local_model_dict = buyer.load_local_model()
-            s_local_model = get_model(dataset_name=dataset_name)
-            # Load base parameters into the model
-            s_local_model.load_state_dict(s_local_model_dict)
-            cur_local_model = apply_gradient_update(s_local_model, aggregated_gradient)
-            buyer.save_local_model(cur_local_model)
+            update_local_model_from_global(buyer, dataset_name, aggregated_gradient)
         buyer_gradient = buyer.get_gradient()
         # train the attack model
         round_record, aggregated_gradient = marketplace.train_federated_round(round_number=gr,
