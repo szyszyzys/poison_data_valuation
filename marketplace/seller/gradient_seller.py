@@ -318,7 +318,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             final_poisoned = self.gradient_manipulation_single(base_params)
         else:
             raise NotImplementedError(f"No current poison mode: {self.gradient_manipulation_mode}")
-        self.cur_gradient_flt = flatten_state_dict(final_poisoned)
         return final_poisoned
 
     def gradient_manipulation_cmd(self, base_params, previous_selection=None):
@@ -360,7 +359,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         # final_poisoned_flt = g_backdoor_flt
         final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
         original_shapes = [param.shape for param in g_backdoor_update]
-        self.last_poisoned_grad = final_poisoned_flt
+        self.cur_gradient_flt = final_poisoned_flt
         final_poisoned = global_clip_np(final_poisoned_flt, 1)
         final_poisoned = unflatten_np(final_poisoned, original_shapes)
         return final_poisoned
