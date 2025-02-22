@@ -362,7 +362,7 @@ class Aggregator:
         normalized_weights = [w / total_weight for w in seller_weights]
 
         # Final aggregation: sum weighted gradients.
-        for idx, (gradient, wt) in enumerate(zip(seller_updates, normalized_weights)):
+        for idx, (gradient, wt) in enumerate(zip(seller_updates.values(), normalized_weights)):
             add_gradient_updates(aggregated_gradient, gradient, weight=wt)
             # Optionally, compute and print the norm of each aggregated parameter:
             # norms = [torch.norm(param).item() for param in aggregated_gradient]
