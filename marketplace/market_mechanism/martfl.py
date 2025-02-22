@@ -167,7 +167,7 @@ class Aggregator:
         # Process each seller update: clip then flatten
         clients_update_flattened = [
             flatten(clip_gradient_update(update, clip_norm=0.01))
-            for update in seller_updates
+            for sid, update in seller_updates.items()
         ]
 
         # Process buyer update (baseline)
@@ -248,7 +248,7 @@ class Aggregator:
         # print("Baseline similarities:", baseline_similarities)
 
         # 11. Final aggregation: sum weighted gradients.
-        for idx, (gradient, wt) in enumerate(zip(seller_updates, weight)):
+        for idx, (gradient, wt) in enumerate(zip(seller_updates.values(), weight)):
             add_gradient_updates(aggregated_gradient, gradient, weight=wt)
             # Compute and print norm of each aggregated parameter
             # norms = [torch.norm(acc).item() for acc in aggregated_gradient]
@@ -266,6 +266,75 @@ class Aggregator:
         # Return aggregated gradient, selected seller IDs, outlier seller IDs, and baseline similarities.
         return aggregated_gradient, selected_ids, outlier_ids
 
+    # def martfl_change_baseline(self, selected_ids):
+    #     # Random selection logic: pick 10% participants at random from "low-quality" group
+    #     all_candidate = []
+    #     low_quality_candidate = []
+    #     random_num = int(0.1 * self.n_seller)
+    #
+    #     for i, cl in enumerate(clusters2):
+    #         if i != 0 and i != self.server:
+    #             all_candidate.append(i)
+    #             # If cluster2[i] != 0, it means it's not an outlier cluster
+    #             if cl != 0:
+    #                 low_quality_candidate.append(i)
+    #
+    #     # If no candidate_server found, fallback
+    #     if len(candidate_server) == 0:
+    #         candidate_server = [i for i in range(self.n_participants) if (i != 0 and i != self.server)]
+    #
+    #     prepare_random = list(set(low_quality_candidate) - set(candidate_server))
+    #     # If no “prepare_random” but the candidate_server is < 50% participants, expand
+    #     if len(prepare_random) == 0 and len(candidate_server) < 0.5 * self.n_participants:
+    #         prepare_random = list(set(all_candidate) - set(candidate_server))
+    #
+    #     # Pick random subset
+    #     random_candidate = random.sample(prepare_random, min(random_num, len(prepare_random)))
+    #     print(f"Random Candidate Server(s): {random_candidate}")
+    #
+    #     # Merge them
+    #     candidate_server = sorted(set(candidate_server) | set(random_candidate))
+    #     print(f"Final Candidate Server(s): {candidate_server}")
+    #
+    #     # Evaluate each candidate to see who is best
+    #     sem = threading.Semaphore(5)  # concurrency limit
+    #     threads = []
+    #     next_server = 1
+    #     max_score = 0
+    #
+    #     # Evaluate each candidate as a potential server
+    #     for cid in candidate_server:
+    #         # Build a temp model from backup + that client's update
+    #         temp_model = import_model(self.exp_name, self.backup_models[cid], self.device)
+    #         temp_model = add_update_to_model(temp_model, client_updates[cid], weight=1.0, device=self.device)
+    #         # Run in a thread
+    #         client_thread = MyThread(
+    #             func=evaluate_model,
+    #             args=(temp_model,
+    #                   server_dataloader,
+    #                   loss_fn,
+    #                   self.device,
+    #                   0,  # presumably some epoch or trainer param
+    #                   dataset_output_dim(self.exp_name.split('-')[0])),
+    #             semaphore=sem
+    #         )
+    #         client_thread.start()
+    #         threads.append(client_thread)
+    #
+    #     # Wait for all evaluations
+    #     for t in threads:
+    #         t.join()
+    #
+    #     # Find best
+    #     for i, t in enumerate(threads):
+    #         score = t.result[2]  # e.g. if evaluate_model returns (val_loss, val_acc, something)
+    #         print(f"Client {candidate_server[i]}: {score}")
+    #         if score > max_score:
+    #             max_score = score
+    #             next_server = candidate_server[i]
+    #
+    #     self.server = next_server
+    #     print("Next Server:", self.server)
 
     def fedavg(self,
                global_epoch: int,
@@ -300,6 +369,7 @@ class Aggregator:
             # print(f"After update {idx}, norms: {norms}")
 
         return aggregated_gradient, [i for i in range(self.n_seller)], []
+
 
 # ---------------------------------------------------------
 #  HELPER FUNCTIONS

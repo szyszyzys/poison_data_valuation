@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from typing import Dict, Union, List, Tuple, Any
 
 import numpy as np
@@ -30,7 +31,7 @@ class DataMarketplaceFederated(DataMarketplace):
         self.learning_rate = learning_rate
         self.broadcast_local = broadcast_local
         # Each seller might be a BaseSeller or an AdversarySeller, etc.
-        self.sellers: Dict[str, Union[BaseSeller, Any]] = {}
+        self.sellers: OrderedDict[str, Union[BaseSeller, Any]] = OrderedDict()
         self.save_path = save_path
         # This can store marketplace-level logs or stats, if desired
         self.round_logs: List[Dict[str, Any]] = []
@@ -47,7 +48,7 @@ class DataMarketplaceFederated(DataMarketplace):
         """
         self.selection_method = new_method
 
-    def get_current_market_gradients(self) -> Tuple[List[np.ndarray], List[str]]:
+    def get_current_market_gradients(self):
         """
         Collect gradient updates from each seller for the current global model parameters.
 
@@ -55,7 +56,7 @@ class DataMarketplaceFederated(DataMarketplace):
             gradients: List of gradient vectors (np.ndarray)
             seller_ids: List of seller IDs in the same order as the gradient list
         """
-        gradients = []
+        gradients = OrderedDict()
         seller_ids = []
 
         # Get current global model parameters from aggregator
@@ -68,7 +69,7 @@ class DataMarketplaceFederated(DataMarketplace):
             grad_np = seller.get_gradient()
             norm = np.linalg.norm(flatten(grad_np))
             print(f"The {seller_id} gradient norm is: {norm}")
-            gradients.append(grad_np)
+            gradients[seller_id] = grad_np
             seller_ids.append(seller_id)
 
         return gradients, seller_ids

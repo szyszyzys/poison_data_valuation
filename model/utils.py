@@ -163,7 +163,6 @@ def local_training_and_get_gradient(model: nn.Module,
     return grad_update, flat_update, local_model, eval_res
 
 
-
 def apply_gradient_update(initial_model: nn.Module, grad_update: List[torch.Tensor]) -> nn.Module:
     """
     Create a new model by adding the computed gradient update to the initial model's parameters.
