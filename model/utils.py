@@ -137,7 +137,7 @@ def local_training_and_get_gradient(model: nn.Module,
     # Use a standard loss function and optimizer
     criterion = nn.CrossEntropyLoss()
     if opt == "SGD":
-        optimizer = optim.SGD(local_model.parameters(), lr=lr)
+        optimizer = optim.SGD(local_model.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
     elif opt == "ADAM":
         optimizer = optim.Adam(local_model.parameters(), lr=lr)
     else:

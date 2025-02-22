@@ -12,7 +12,7 @@ gradient_manipulation_mode="single"  # Default; can be overridden via command-li
 
 # Fixed parameters
 dataset_name="FMNIST"
-global_rounds=300
+global_rounds=1000
 backdoor_target_label=0
 trigger_type="blended_patch"
 exp_name="experiment_$(date +%Y%m%d_%H%M%S)"  # Unique experiment name with timestamp.

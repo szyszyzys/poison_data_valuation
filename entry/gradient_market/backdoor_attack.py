@@ -167,7 +167,9 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
     local_training_params = {
         "lr": args.local_lr,
         "epochs": args.local_epoch,
-        "optimizer": "SGD"
+        "optimizer": "SGD",
+        "weight_decay": 0.0005,
+        "momentum": 0.9
     }
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
 
