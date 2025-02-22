@@ -6,8 +6,10 @@ import torch
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.martfl import Aggregator, flatten
+from marketplace.seller.gradient_seller import update_local_model_from_global
 from marketplace.seller.seller import BaseSeller
-from model.utils import apply_gradient_update, update_local_model_from_global
+from model.utils import apply_gradient_update
+
 
 
 class DataMarketplaceFederated(DataMarketplace):

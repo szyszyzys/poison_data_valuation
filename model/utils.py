@@ -25,7 +25,6 @@ import torch.optim as optim
 import torchvision.utils as vutils
 from torch.utils.data import DataLoader, TensorDataset
 
-from marketplace.seller.gradient_seller import GradientSeller
 # from model.text_model import TEXTCNN
 from model.vision_model import CNN_CIFAR, LeNet
 
@@ -164,13 +163,6 @@ def local_training_and_get_gradient(model: nn.Module,
     return grad_update, flat_update, local_model, eval_res
 
 
-def update_local_model_from_global(client: GradientSeller, dataset_name, aggregated_gradient):
-    s_local_model_dict = client.load_local_model()
-    s_local_model = get_model(dataset_name=dataset_name)
-    # Load base parameters into the model
-    s_local_model.load_state_dict(s_local_model_dict)
-    cur_local_model = apply_gradient_update(s_local_model, aggregated_gradient)
-    client.save_local_model(cur_local_model)
 
 def apply_gradient_update(initial_model: nn.Module, grad_update: List[torch.Tensor]) -> nn.Module:
     """

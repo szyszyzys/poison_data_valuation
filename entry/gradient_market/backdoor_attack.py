@@ -13,9 +13,10 @@ from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_ba
 from general_utils.file_utils import save_history_to_json
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
-from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller
+from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller, \
+    update_local_model_from_global
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
-from model.utils import get_model, apply_gradient_update, save_samples, update_local_model_from_global
+from model.utils import get_model, save_samples
 
 
 def dataloader_to_tensors(dataloader):
