@@ -214,6 +214,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
             current_seller = GradientSeller(seller_id=cur_id, local_data=loader.dataset,
                                             dataset_name=dataset_name, save_path=save_path, device=device,
                                             local_training_params=local_training_params)
+
         marketplace.register_seller(cur_id, current_seller)
 
     # config the attack test set.
@@ -224,8 +225,16 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                  title="Triggered Samples")
 
     # Start gloal round
+    aggregated_gradient = None
     for gr in range(global_rounds):
-        # compute the buyer gradient as the reference point
+        # update buyers's local model
+        if aggregated_gradient:
+            s_local_model_dict = buyer.load_local_model()
+            s_local_model = get_model(dataset_name=dataset_name)
+            # Load base parameters into the model
+            s_local_model.load_state_dict(s_local_model_dict)
+            cur_local_model = apply_gradient_update(s_local_model, aggregated_gradient)
+            buyer.save_local_model(cur_local_model)
         buyer_gradient = buyer.get_gradient()
         # train the attack model
         round_record, aggregated_gradient = marketplace.train_federated_round(round_number=gr,
@@ -238,14 +247,6 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                                                                               loss_fn=loss_fn, device=device,
                                                                               dataset_name=dataset_name,
                                                                               backdoor_target_label=backdoor_target_label)
-
-        # update buyers's local model
-        s_local_model_dict = buyer.load_local_model()
-        buyer_local_model = get_model(dataset_name)
-        # Load base parameters into the model
-        buyer_local_model.load_state_dict(s_local_model_dict)
-        cur_local_model = apply_gradient_update(buyer_local_model, aggregated_gradient)
-        buyer.save_local_model(cur_local_model)
 
         if gr % 10 == 0:
             torch.save(marketplace.round_logs, f"{save_path}/market_log_round_{gr}.ckpt")

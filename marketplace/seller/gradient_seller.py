@@ -55,6 +55,7 @@ class GradientSeller(BaseSeller):
         self.local_epochs = local_epochs
         self.local_training_params = local_training_params
         self.recent_metrics = None
+        self.cur_gradient_flt = None
 
     def set_local_model_params(self, params: np.ndarray):
         """Set (or update) local model parameters before computing gradient."""
@@ -87,6 +88,7 @@ class GradientSeller(BaseSeller):
         # self.save_local_model(updated_model)
 
         self.current_round += 1
+        self.cur_gradient_flt = gradient_flt
         return gradient
 
     def _compute_local_grad(self, base_params: Dict[str, torch.Tensor],
@@ -156,6 +158,7 @@ class GradientSeller(BaseSeller):
             'round_number': round_number,
             'timestamp': pd.Timestamp.now().isoformat(),
             'selected': is_selected,
+            'gradient_flt': self.cur_gradient_flt,
         }
         self.selected_last_round = is_selected
         # if final_model_params is not None:
@@ -235,6 +238,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         self.backdoor_data, self.clean_data = self._inject_triggers(local_data, trigger_rate)
         self.local_training_params = local_training_params
         self.gradient_manipulation_mode = gradient_manipulation_mode
+        self.cur_gradient_flt = None
 
     def _inject_triggers(self, data: List[Tuple[torch.Tensor, int]], fraction: float):
         """
@@ -314,7 +318,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             final_poisoned = self.gradient_manipulation_single(base_params)
         else:
             raise NotImplementedError(f"No current poison mode: {self.gradient_manipulation_mode}")
-
+        self.cur_gradient_flt = flatten_state_dict(final_poisoned)
         return final_poisoned
 
     def gradient_manipulation_cmd(self, base_params, previous_selection=None):
@@ -338,13 +342,15 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 base_params,
                 self.backdoor_data)
             # final_poisoned_flt = g_backdoor_flt
-            final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
+            final_poisoned_flt = g_backdoor_flt
             original_shapes = [param.shape for param in g_backdoor_update]
         if previous_selection:
             final_poisoned_flt = self.alpha_align * final_poisoned_flt + (1 - self.alpha_align) * previous_selection
-        self.last_poisoned_grad = final_poisoned_flt
-        final_poisoned = global_clip_np(final_poisoned_flt, 1)
-        final_poisoned = unflatten_np(final_poisoned, original_shapes)
+        # final_poisoned_flt = np.clip(final_poisoned_flt, -self.clip_value, self.clip_value)
+        # final_poisoned = global_clip_np(final_poisoned_flt, 1)
+        self.cur_gradient_flt = final_poisoned_flt
+        final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
+
         return final_poisoned
 
     def gradient_manipulation_single(self, base_params):
@@ -435,6 +441,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             "round_number": round_number,
             "timestamp": pd.Timestamp.now().isoformat(),
             "is_selected": is_selected,
+            'gradient_flt': self.cur_gradient_flt,
         }
         self.selected_last_round = is_selected
         self.federated_round_history.append(record)
