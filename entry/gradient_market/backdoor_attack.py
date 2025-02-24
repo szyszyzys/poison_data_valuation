@@ -408,6 +408,8 @@ def main():
 
     # Example usage in your main code:
     save_path = get_save_path(args)
+
+    Path(save_path).mkdir(parents=True, exist_ok=True)
     print("Saving results to:", save_path)
     clear_work_path(save_path)
     sybil_params = {
