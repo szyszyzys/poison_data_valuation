@@ -29,7 +29,7 @@ poison_strength_arg="0.1"
 trigger_rate="0.5"
 # gradient_manipulation_mode is already set to "single" by default
 is_sybil_flag=""
-
+sybil_mode=""
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -69,11 +69,16 @@ while [[ "$#" -gt 0 ]]; do
             trigger_rate="$2"
             shift 2
             ;;
+        --sybil_mode)
+            sybil_mode="$2"
+            shift 2
+            ;;
         --is_sybil)
             # If the flag is provided, set sybil mode to true.
             is_sybil_flag="--is_sybil"
             shift 1
             ;;
+
         *)
             echo "Unknown parameter passed: $1"
             exit 1
