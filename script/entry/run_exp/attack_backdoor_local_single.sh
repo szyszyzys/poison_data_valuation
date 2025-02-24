@@ -45,7 +45,7 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                      --sybil_mode "$SYBIL_MODE" \
                      --aggregation_method "$agg_name" \
                      --gpu_ids "$gpu_ids" \
-                     --n_adversaries_arg "$NADV"\
+                     --n_adversaries "$NADV"\
                      --trigger_rate "$RATE"
             else
               # If is_sybil=True, we loop over sybil modes and param combos.
@@ -61,7 +61,7 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                            --sybil_mode "$SYBIL_MODE" \
                            --aggregation_method "$agg_name" \
                            --gpu_ids "$gpu_ids" \
-                           --n_adversaries_arg "$NADV" \
+                           --n_adversaries "$NADV" \
                            --trigger_rate "$RATE"
                   done
                 done
