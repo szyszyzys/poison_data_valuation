@@ -1,7 +1,8 @@
-import numpy as np
-import torch
 from collections import OrderedDict
 from typing import Dict, Union, List, Tuple, Any
+
+import numpy as np
+import torch
 
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
 from marketplace.market.data_market import DataMarketplace
@@ -180,19 +181,6 @@ class DataMarketplaceFederated(DataMarketplace):
             extra_info["poison_metrics"] = poison_metrics
         extra_info["outlier_ids"] = outlier_ids
         # 8. Also store a high-level record in the marketplace logs
-        round_record = {
-            "round_number": round_number,
-            "used_sellers": selected_ids,
-            "outlier_ids": outlier_ids,
-            "num_sellers_selected": len(selected_ids),
-            "selection_method": self.selection_method,
-            # "aggregated_grad_norm": float(np.linalg.norm(aggregated_gradient)) if len(aggregated_gradient) > 0 else 0.0,
-            "final_perf_local": final_perf_local,
-            "final_perf_global": final_perf_global,
-            "extra_info": extra_info
-        }
-
-        self.round_logs.append(round_record)
 
         # 9. Update each seller about whether they were selected
         update_local_model_from_global(buyer, dataset_name, aggregated_gradient)
@@ -207,6 +195,8 @@ class DataMarketplaceFederated(DataMarketplace):
             f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")
         print(f"Test set eval result: {final_perf_global}")
         print(f"Buyer local eval result: {final_perf_local}")
+        malicious_selection_rate = None
+        average_selection_rate = None
         if n_adv > 0:
             malicious_ids_set = set(range(n_adv))  # n malicious sellers labeled 0 to n-1
             selected_ids_set = set(selected_ids)  # the set of selected IDs from a round
@@ -217,6 +207,22 @@ class DataMarketplaceFederated(DataMarketplace):
             average_selection_rate = sum(self.malicious_selection_rate_list) / len(self.malicious_selection_rate_list)
             print(f"Current malicious selection result: {malicious_selection_rate}")
             print(f"Average malicious selection result: {average_selection_rate}")
+
+        round_record = {
+            "round_number": round_number,
+            "used_sellers": selected_ids,
+            "outlier_ids": outlier_ids,
+            "num_sellers_selected": len(selected_ids),
+            "selection_method": self.selection_method,
+            "final_perf_local": final_perf_local,
+            "final_perf_global": final_perf_global,
+            "extra_info": extra_info,
+            "malicious_selection_rate": malicious_selection_rate if malicious_selection_rate else None,
+            "average_selection_rate": average_selection_rate if average_selection_rate else None,
+
+        }
+
+        self.round_logs.append(round_record)
 
         return round_record, aggregated_gradient
 
