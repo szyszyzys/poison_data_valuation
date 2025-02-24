@@ -281,7 +281,7 @@ class GradientSeller(BaseSeller):
 
     def round_end_process(self, round_number,
                           is_selected,
-                          final_model_params):
+                          final_model_params = None):
         self.reset_current_local_gradient()
         self.record_federated_round(
             round_number,
@@ -572,7 +572,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
     def round_end_process(self, round_number,
                           is_selected,
-                          final_model_params):
+                          final_model_params = None):
         self.reset_current_local_gradient()
         self.record_federated_round(
             round_number,
