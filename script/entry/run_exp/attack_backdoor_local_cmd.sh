@@ -10,7 +10,7 @@ echo $PYTHONPATH
 
 agg_name=${1,-"martfl"}
 dataset_name=${2,-"FMNIST"}
-gpu_ids=${3,-"6"}
+gpu_ids=${3,-"7"}
 
 # Fixed local attack param sets
 TRIGGER_TYPES=("blended_patch")

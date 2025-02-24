@@ -7,22 +7,6 @@ export PYTHONPATH="$WORK_DIR:$PYTHONPATH"
 echo $PYTHONPATH
 
 
-
-agg_name="fedavg"
-dataset_name="FMNIST"
-
-bash script/gradient_script/backdoor.sh --poison_strength "0" --gradient_manipulation_mode "None" --n_adversaries "0" --dataset_name FMINIST
-
-bash script/gradient_script/backdoor.sh --poison_strength "0" --gradient_manipulation_mode "None" --n_adversaries "0" --dataset_name CIFAR
-
-
-
-#!/usr/bin/env bash
-
-# Example: run multiple experiments by iterating over different param combos
-# Usage: ./run_experiments.sh
-
-# Fixed local attack param sets
 TRIGGER_TYPES=("blended_patch")
 POISON_STRENGTHS=(0.1 0.5 0.7)
 TRIGGER_RATES=(0.1 0.5)
