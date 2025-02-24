@@ -235,7 +235,8 @@ class GradientSeller(BaseSeller):
 
         # Optionally, you might want to clip the gradient here.
         # flat_update = torch.clamp(flat_update, -self.clip_value, self.clip_value)
-
+        del model
+        torch.cuda.empty_cache()
         return grad_update, grad_update_flt, local_model, local_eval_res
 
     def save_local_model(self, model: torch.nn.Module):
@@ -281,7 +282,7 @@ class GradientSeller(BaseSeller):
 
     def round_end_process(self, round_number,
                           is_selected,
-                          final_model_params = None):
+                          final_model_params=None):
         self.reset_current_local_gradient()
         self.record_federated_round(
             round_number,
@@ -572,7 +573,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
     def round_end_process(self, round_number,
                           is_selected,
-                          final_model_params = None):
+                          final_model_params=None):
         self.reset_current_local_gradient()
         self.record_federated_round(
             round_number,
