@@ -108,7 +108,6 @@ def evaluate_attack_performance_backdoor_poison(model, clean_loader, triggered_l
 
     return metrics
 
-
 # def evaluate_attack_performance_backdoor_poison(model, clean_loader, triggered_loader, device, target_label=None,
 #                                                 plot=True, save_path="attack_performance.png"):
 #     """

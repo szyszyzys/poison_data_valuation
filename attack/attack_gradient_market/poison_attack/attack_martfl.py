@@ -525,37 +525,60 @@ class BackdoorImageGenerator:
 
         return image
 
-    def generate_poisoned_dataset(self,
-                                  X: torch.Tensor, y: torch.Tensor, poison_rate: float = 0.1
-                                  ):
+    def generate_poisoned_dataset(self, X: torch.Tensor, y: torch.Tensor, poison_rate: float = 0.1):
         """
-        Given clean dataset (images X, labels y), poison a fraction of them by applying a trigger
-        and overwriting their label.
-
-        :param X: (N, C, H, W) in [0,1].
-        :param y: (N,).
-        :param poison_rate: Fraction of samples to poison.
-        :return: (X_poisoned, y_poisoned)
+        Returns:
+          X_poisoned: Triggered images.
+          y_poisoned: Overwritten labels (target label).
+          y_clean: Original labels (for evaluation).
         """
         X_poisoned = X.clone()
         y_poisoned = y.clone()
+        y_clean = y.clone()  # Keep a copy of the original labels
 
         num_samples = X.shape[0]
         num_poison = int(poison_rate * num_samples)
-
-        # Randomly choose which samples to poison
         idxs_to_poison = torch.randperm(num_samples)[:num_poison]
 
         for idx in idxs_to_poison:
-            original_img = X_poisoned[idx]  # shape (C, H, W)
-            # Apply the trigger
-            poisoned_img = self.apply_trigger_tensor(
-                original_img,
-            )
+            original_img = X_poisoned[idx]
+            poisoned_img = self.apply_trigger_tensor(original_img)
             X_poisoned[idx] = poisoned_img
             y_poisoned[idx] = self.target_label  # Overwrite label
 
-        return X_poisoned, y_poisoned
+        return X_poisoned, y_poisoned, y_clean
+
+    # def generate_poisoned_dataset(self,
+    #                               X: torch.Tensor, y: torch.Tensor, poison_rate: float = 0.1
+    #                               ):
+    #     """
+    #     Given clean dataset (images X, labels y), poison a fraction of them by applying a trigger
+    #     and overwriting their label.
+    #
+    #     :param X: (N, C, H, W) in [0,1].
+    #     :param y: (N,).
+    #     :param poison_rate: Fraction of samples to poison.
+    #     :return: (X_poisoned, y_poisoned)
+    #     """
+    #     X_poisoned = X.clone()
+    #     y_poisoned = y.clone()
+    #
+    #     num_samples = X.shape[0]
+    #     num_poison = int(poison_rate * num_samples)
+    #
+    #     # Randomly choose which samples to poison
+    #     idxs_to_poison = torch.randperm(num_samples)[:num_poison]
+    #
+    #     for idx in idxs_to_poison:
+    #         original_img = X_poisoned[idx]  # shape (C, H, W)
+    #         # Apply the trigger
+    #         poisoned_img = self.apply_trigger_tensor(
+    #             original_img,
+    #         )
+    #         X_poisoned[idx] = poisoned_img
+    #         y_poisoned[idx] = self.target_label  # Overwrite label
+    #
+    #     return X_poisoned, y_poisoned
 
     def generate_poisoned_samples(self, X: torch.Tensor) -> torch.Tensor:
         """

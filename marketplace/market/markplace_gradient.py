@@ -1,8 +1,7 @@
-from collections import OrderedDict
-from typing import Dict, Union, List, Tuple, Any
-
 import numpy as np
 import torch
+from collections import OrderedDict
+from typing import Dict, Union, List, Tuple, Any
 
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
 from marketplace.market.data_market import DataMarketplace
@@ -35,6 +34,7 @@ class DataMarketplaceFederated(DataMarketplace):
         self.save_path = save_path
         # This can store marketplace-level logs or stats, if desired
         self.round_logs: List[Dict[str, Any]] = []
+        self.malicious_selection_rate_list = []
 
     def register_seller(self, seller_id: str, seller: BaseSeller):
         """
@@ -63,7 +63,7 @@ class DataMarketplaceFederated(DataMarketplace):
         # current_params = self.aggregator.get_params()  # e.g. dict of state_dict
         # Convert to a form you can send to sellers, or pass directly if they can handle dict
         # e.g. you might pass the aggregator's self.global_model directly
-
+        privacy_attack(f"current sellers: {self.sellers.keys()}")
         for seller_id, seller in self.sellers.items():
             # for martfl, local have no access to the global params
             grad_np = seller.get_gradient_for_upload()
@@ -115,11 +115,13 @@ class DataMarketplaceFederated(DataMarketplace):
     def train_federated_round(self,
                               round_number: int,
                               buyer,
+                              n_adv=0,
                               num_select: int = None,
                               test_dataloader_buyer_local=None,
                               test_dataloader_global=None,
                               loss_fn=None,
-                              clean_loader=None, triggered_loader=None, device="cpu", backdoor_target_label=0,
+                              clean_loader=None, triggered_loader=None, triggered_clean_label_loader=None, device="cpu",
+                              backdoor_target_label=0,
                               dataset_name="",
                               **kwargs):
         """
@@ -160,7 +162,7 @@ class DataMarketplaceFederated(DataMarketplace):
         poison_metrics = None
         if clean_loader is not None and triggered_loader is not None:
             poison_metrics = evaluate_attack_performance_backdoor_poison(self.aggregator.global_model, clean_loader,
-                                                                         triggered_loader,
+                                                                         triggered_clean_label_loader,
                                                                          self.aggregator.device,
                                                                          target_label=backdoor_target_label, plot=False,
                                                                          save_path=f"{self.save_path}/attack_performance.png")
@@ -204,6 +206,15 @@ class DataMarketplaceFederated(DataMarketplace):
             f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")
         print(f"Test set eval result: {final_perf_global}")
         print(f"Buyer local eval result: {final_perf_local}")
+        malicious_ids_set = set(range(n))  # n malicious sellers labeled 0 to n-1
+        selected_ids_set = set(selected_ids)  # the set of selected IDs from a round
+
+        malicious_selection_rate = len(malicious_ids.intersection(selected_ids)) / len(malicious_ids)
+        self.malicious_selection_rate_list.append(selection_rate)
+
+        average_selection_rate = sum(self.malicious_selection_rate_list) / len(self.malicious_selection_rate_list)
+        print(f"Current malicious selection result: {malicious_selection_rate}")
+        print(f"Average malicious selection result: {average_selection_rate}")
 
         return round_record, aggregated_gradient
 

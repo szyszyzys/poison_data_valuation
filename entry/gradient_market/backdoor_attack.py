@@ -1,9 +1,8 @@
 import argparse
+import numpy as np
 import os
 import random
 import shutil
-
-import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import Subset, TensorDataset, DataLoader
@@ -61,7 +60,7 @@ def generate_attack_test_set(full_dataset, backdoor_generator, n_samples=1000):
     y = torch.tensor(y_list, dtype=torch.long)
 
     # 3. Generate the poisoned dataset
-    X_poisoned, y_poisoned = backdoor_generator.generate_poisoned_dataset(X, y, poison_rate=1)
+    X_poisoned, y_poisoned, y_clean = backdoor_generator.generate_poisoned_dataset(X, y, poison_rate=1)
 
     # 4. Build DataLoaders
     clean_dataset = TensorDataset(X, y)
@@ -69,8 +68,9 @@ def generate_attack_test_set(full_dataset, backdoor_generator, n_samples=1000):
 
     clean_loader = DataLoader(clean_dataset, batch_size=64, shuffle=True)
     triggered_loader = DataLoader(triggered_dataset, batch_size=64, shuffle=True)
+    triggered_clean_label = DataLoader(TensorDataset(X_poisoned, y_clean), batch_size=64, shuffle=True)
 
-    return clean_loader, triggered_loader
+    return clean_loader, triggered_loader, triggered_clean_label
 
     # X_list, y_list = [], []
     # for img, label in subset_dataset:
@@ -222,7 +222,8 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
         marketplace.register_seller(cur_id, current_seller)
 
     # config the attack test set.
-    clean_loader, triggered_loader = generate_attack_test_set(full_dataset, backdoor_generator, poison_test_sample)
+    clean_loader, triggered_loader, triggered_clean_label = generate_attack_test_set(full_dataset, backdoor_generator,
+                                                                                     poison_test_sample)
     # save some
     save_samples(clean_loader, filename=f"{save_path}/clean_samples.png", n_samples=16, nrow=4, title="Clean Samples")
     save_samples(triggered_loader, filename=f"{save_path}/triggered_samples.png", n_samples=16, nrow=4,
@@ -233,11 +234,13 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
         # train the attack model
         round_record, aggregated_gradient = marketplace.train_federated_round(round_number=gr,
                                                                               buyer=buyer,
+                                                                              n_adv=n_adversaries,
                                                                               test_dataloader_buyer_local=
                                                                               buyer_loader,
                                                                               test_dataloader_global=test_loader,
                                                                               clean_loader=clean_loader,
                                                                               triggered_loader=triggered_loader,
+                                                                              triggered_clean_label_loader=triggered_clean_label,
                                                                               loss_fn=loss_fn, device=device,
                                                                               dataset_name=dataset_name,
                                                                               backdoor_target_label=backdoor_target_label)
@@ -252,7 +255,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
         sybil_coordinator.on_round_end()
 
     poison_metrics = evaluate_attack_performance_backdoor_poison(marketplace.aggregator.global_model, clean_loader,
-                                                                 triggered_loader,
+                                                                 triggered_clean_label,
                                                                  marketplace.aggregator.device,
                                                                  target_label=backdoor_target_label, plot=True,
                                                                  save_path=f"{save_path}/final_backdoor_attack_performance.png")
@@ -378,7 +381,7 @@ def get_save_path(args):
         A string representing the path.
     """
     # Use is_sybil flag or, if not true, use sybil_mode
-    sybil_str = str(args.is_sybil) if args.is_sybil else args.sybil_mode
+    sybil_str = str(args.sybil_mode) if args.is_sybil else False
     base_dir = Path("./results") / f"is_sybil_{sybil_str}" / "backdoor" / args.aggregation_method / args.dataset_name
 
     if args.gradient_manipulation_mode == "None":
