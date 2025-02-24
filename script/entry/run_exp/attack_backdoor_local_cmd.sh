@@ -40,7 +40,6 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                     bash script/gradient_script/backdoor.sh --is_sybil \
                      --poison_strength $PS \
                      --gradient_manipulation_mode $GMODE \
-                     --n_adversaries "0"  \
                      --dataset_name "$dataset_name" \
                      --sybil_mode "$SYBIL_MODE" \
                      --aggregation_method "$agg_name" \
@@ -56,7 +55,6 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                            --is_sybil \
                            --poison_strength $PS \
                            --gradient_manipulation_mode $GMODE \
-                           --n_adversaries "0"  \
                            --dataset_name "$dataset_name" \
                            --sybil_mode "$SYBIL_MODE" \
                            --aggregation_method "$agg_name" \
