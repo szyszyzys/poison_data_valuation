@@ -279,6 +279,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
     # record the attack result for the final round
 
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Run Backdoor Attack Experiment")
 

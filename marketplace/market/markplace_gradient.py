@@ -36,6 +36,7 @@ class DataMarketplaceFederated(DataMarketplace):
         # This can store marketplace-level logs or stats, if desired
         self.round_logs: List[Dict[str, Any]] = []
         self.malicious_selection_rate_list = []
+        self.benign_selection_rate_list = []
 
     def register_seller(self, seller_id: str, seller: BaseSeller):
         """
@@ -112,6 +113,47 @@ class DataMarketplaceFederated(DataMarketplace):
         new_params = self.aggregator.get_params()
         for seller_id, seller in self.sellers.items():
             seller.update_local_model(new_params)
+
+    def compute_selection_rates(self, round_selected, malicious_ids, benign_ids):
+        """
+        Compute the selection rates for malicious and benign sellers over multiple rounds.
+
+        Parameters:
+          all_rounds_selected_ids : list of lists or sets
+              Each element is a collection of selected seller IDs for one round.
+          malicious_ids : set
+              Set of malicious seller IDs.
+          benign_ids : set
+              Set of benign seller IDs.
+
+        Returns:
+          A dictionary with:
+             - 'malicious_rates': list of malicious selection rates per round.
+             - 'benign_rates': list of benign selection rates per round.
+             - 'avg_malicious_rate': average malicious selection rate over rounds.
+             - 'avg_benign_rate': average benign selection rate over rounds.
+        """
+        round_selected_set = set(round_selected)
+
+        # Calculate selection rate for malicious sellers in this round.
+        malicious_rate = len(malicious_ids.intersection(round_selected_set)) / len(malicious_ids)
+        self.malicious_selection_rate_list.append(malicious_rate)
+
+        # Calculate selection rate for benign sellers in this round.
+        benign_rate = len(benign_ids.intersection(round_selected_set)) / len(benign_ids)
+        self.benign_selection_rate_list.append(benign_rate)
+
+        avg_malicious_rate = sum(self.malicious_selection_rate_list) / len(
+            self.malicious_selection_rate_list) if self.malicious_selection_rate_list else 0
+        avg_benign_rate = sum(self.benign_selection_rate_list) / len(
+            self.benign_selection_rate_list) if self.benign_selection_rate_list else 0
+
+        return {
+            'malicious_rate': malicious_rate,
+            'benign_rate': benign_rate,
+            'avg_malicious_rate': avg_malicious_rate,
+            'avg_benign_rate': avg_benign_rate,
+        }
 
     def train_federated_round(self,
                               round_number: int,
@@ -195,19 +237,11 @@ class DataMarketplaceFederated(DataMarketplace):
             f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")
         print(f"Test set eval result: {final_perf_global}")
         print(f"Buyer local eval result: {final_perf_local}")
-        malicious_selection_rate = None
-        average_selection_rate = None
+        selection_rate_info = None
         if n_adv > 0:
-            malicious_ids_set = set(range(n_adv))  # n malicious sellers labeled 0 to n-1
-            selected_ids_set = set(selected_ids)  # the set of selected IDs from a round
-
-            malicious_selection_rate = len(malicious_ids_set.intersection(selected_ids_set)) / len(malicious_ids_set)
-            self.malicious_selection_rate_list.append(malicious_selection_rate)
-
-            average_selection_rate = sum(self.malicious_selection_rate_list) / len(self.malicious_selection_rate_list)
-            print(f"Current malicious selection result: {malicious_selection_rate}")
-            print(f"Average malicious selection result: {average_selection_rate}")
-
+            selection_rate_info = self.compute_selection_rates(selected_ids, set(range(n_adv)),
+                                                               set(range(n_adv, len(self.sellers))))
+            print(selection_rate_info)
         round_record = {
             "round_number": round_number,
             "used_sellers": selected_ids,
@@ -217,8 +251,7 @@ class DataMarketplaceFederated(DataMarketplace):
             "final_perf_local": final_perf_local,
             "final_perf_global": final_perf_global,
             "extra_info": extra_info,
-            "malicious_selection_rate": malicious_selection_rate if malicious_selection_rate else None,
-            "average_selection_rate": average_selection_rate if average_selection_rate else None,
+            "selection_rate_info": selection_rate_info if selection_rate_info else None,
 
         }
 
