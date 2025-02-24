@@ -14,7 +14,7 @@ gpu_ids=${3,-"6"}
 
 # Fixed local attack param sets
 TRIGGER_TYPES=("blended_patch")
-TRIGGER_RATES=(0.1 0.5)
+TRIGGER_RATES=(0.1 0.5 0.7)
 GRAD_MODES=("single")
 POISON_STRENGTHS=(1)
 # Sybil param sets
