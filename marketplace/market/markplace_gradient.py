@@ -206,11 +206,11 @@ class DataMarketplaceFederated(DataMarketplace):
             f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")
         print(f"Test set eval result: {final_perf_global}")
         print(f"Buyer local eval result: {final_perf_local}")
-        malicious_ids_set = set(range(n))  # n malicious sellers labeled 0 to n-1
+        malicious_ids_set = set(range(n_adv))  # n malicious sellers labeled 0 to n-1
         selected_ids_set = set(selected_ids)  # the set of selected IDs from a round
 
         malicious_selection_rate = len(malicious_ids_set.intersection(selected_ids_set)) / len(malicious_ids_set)
-        self.malicious_selection_rate_list.append(selection_rate)
+        self.malicious_selection_rate_list.append(malicious_selection_rate)
 
         average_selection_rate = sum(self.malicious_selection_rate_list) / len(self.malicious_selection_rate_list)
         print(f"Current malicious selection result: {malicious_selection_rate}")
