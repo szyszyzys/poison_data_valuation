@@ -63,7 +63,7 @@ class DataMarketplaceFederated(DataMarketplace):
         # current_params = self.aggregator.get_params()  # e.g. dict of state_dict
         # Convert to a form you can send to sellers, or pass directly if they can handle dict
         # e.g. you might pass the aggregator's self.global_model directly
-        privacy_attack(f"current sellers: {self.sellers.keys()}")
+        print(f"current sellers: {self.sellers.keys()}")
         for seller_id, seller in self.sellers.items():
             # for martfl, local have no access to the global params
             grad_np = seller.get_gradient_for_upload()
@@ -209,7 +209,7 @@ class DataMarketplaceFederated(DataMarketplace):
         malicious_ids_set = set(range(n))  # n malicious sellers labeled 0 to n-1
         selected_ids_set = set(selected_ids)  # the set of selected IDs from a round
 
-        malicious_selection_rate = len(malicious_ids.intersection(selected_ids)) / len(malicious_ids)
+        malicious_selection_rate = len(malicious_ids_set.intersection(selected_ids_set)) / len(malicious_ids_set)
         self.malicious_selection_rate_list.append(selection_rate)
 
         average_selection_rate = sum(self.malicious_selection_rate_list) / len(self.malicious_selection_rate_list)
