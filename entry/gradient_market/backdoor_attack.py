@@ -196,11 +196,11 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                             )
     marketplace = DataMarketplaceFederated(aggregator,
                                            selection_method=aggregation_method, save_path=save_path)
-
+    n_adversaries_cnt = n_adversaries
     # config the seller and register to the marketplace
     malicious_sellers = []
     for cid, loader in client_loaders.items():
-        if n_adversaries > 0:
+        if n_adversaries_cnt > 0:
             cur_id = f"adv_{cid}"
             current_seller = AdvancedBackdoorAdversarySeller(seller_id=cur_id,
                                                              local_data=loader.dataset,
@@ -216,7 +216,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                                                              is_sybil=args.is_sybil,
                                                              sybil_coordinator=sybil_coordinator
                                                              )
-            n_adversaries -= 1
+            n_adversaries_cnt -= 1
             malicious_sellers.append(current_seller)
         else:
             cur_id = cid
