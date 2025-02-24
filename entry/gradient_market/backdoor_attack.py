@@ -1,8 +1,9 @@
 import argparse
-import numpy as np
 import os
 import random
 import shutil
+
+import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import Subset, TensorDataset, DataLoader
@@ -39,6 +40,8 @@ def dataloader_to_tensors(dataloader):
 
 
 def generate_attack_test_set(full_dataset, backdoor_generator, n_samples=1000):
+    print("+++++++++++++++++++++++++++++++++")
+    print(f"generating backdoor samples, number: {n_samples}")
     sample_indices = random.sample(range(len(full_dataset)), n_samples)
     subset_dataset = Subset(full_dataset, sample_indices)
 
@@ -69,6 +72,8 @@ def generate_attack_test_set(full_dataset, backdoor_generator, n_samples=1000):
     clean_loader = DataLoader(clean_dataset, batch_size=64, shuffle=True)
     triggered_loader = DataLoader(triggered_dataset, batch_size=64, shuffle=True)
     triggered_clean_label = DataLoader(TensorDataset(X_poisoned, y_clean), batch_size=64, shuffle=True)
+    print(f"Done generating backdoor samples, number: {n_samples}")
+    print("+++++++++++++++++++++++++++++++++")
 
     return clean_loader, triggered_loader, triggered_clean_label
 

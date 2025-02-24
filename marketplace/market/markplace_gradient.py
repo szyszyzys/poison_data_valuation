@@ -202,11 +202,12 @@ class DataMarketplaceFederated(DataMarketplace):
             update_local_model_from_global(seller, dataset_name, aggregated_gradient)
             # reset the local gradient
             seller.round_end_process(round_number, is_selected)
+        print(f"=============round {round_number} end summary=======================")
         print(
             f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")
         print(f"Test set eval result: {final_perf_global}")
         print(f"Buyer local eval result: {final_perf_local}")
-        if n_adv> 0:
+        if n_adv > 0:
             malicious_ids_set = set(range(n_adv))  # n malicious sellers labeled 0 to n-1
             selected_ids_set = set(selected_ids)  # the set of selected IDs from a round
 
