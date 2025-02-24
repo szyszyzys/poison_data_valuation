@@ -3,7 +3,7 @@ import json
 import pandas as pd
 
 
-def save_history_to_json(content, file_path: str):
+def save_to_json(content, file_path: str):
     """
     Save the federated round history as a JSON file.
     """

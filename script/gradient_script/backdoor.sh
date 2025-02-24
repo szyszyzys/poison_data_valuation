@@ -28,6 +28,7 @@ local_epoch_arg="2"
 poison_strength_arg="0.1"
 trigger_rate="0.5"
 # gradient_manipulation_mode is already set to "single" by default
+is_sybil_flag=""
 
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
@@ -68,6 +69,11 @@ while [[ "$#" -gt 0 ]]; do
             trigger_rate="$2"
             shift 2
             ;;
+        --is_sybil)
+            # If the flag is provided, set sybil mode to true.
+            is_sybil_flag="--is_sybil"
+            shift 1
+            ;;
         *)
             echo "Unknown parameter passed: $1"
             exit 1
@@ -107,6 +113,7 @@ echo "  aggregation_method: $aggregation_method"
 echo "  gpu_ids: $gpu_ids"
 echo "  trigger_rate: $trigger_rate"
 echo "  local_lr: $local_lr"
+echo "  is_sybil_flag: $is_sybil_flag"
 
 # Loop over combinations and run experiments
 for local_epoch in "${local_epoch_list[@]}"; do
@@ -131,7 +138,8 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --local_lr "$local_lr" \
                   --gradient_manipulation_mode "$gradient_manipulation_mode" \
                   --aggregation_method "$aggregation_method" \
-                  --trigger_rate "$trigger_rate"
+                  --trigger_rate "$trigger_rate" \
+                  $is_sybil_flag
           done
         done
     done

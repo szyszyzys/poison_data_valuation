@@ -10,10 +10,10 @@ from torch.utils.data import Subset, TensorDataset, DataLoader
 
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
-from general_utils.file_utils import save_history_to_json
+from general_utils.file_utils import save_to_json
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
-from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller
+from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
 from model.utils import get_model, save_samples
 
@@ -152,7 +152,11 @@ class FederatedEarlyStopper:
 def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, aggregation_method='martfl',
                     global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", save_path="/",
                     device='cpu', poison_strength=1, poison_test_sample=100, args=None, trigger_rate=0.1,
-                    buyer_count=5000):
+                    buyer_count=5000,
+                    sybil_params=None, local_attack_params=None, local_training_params=None):
+    sybil_coordinator = SybilCoordinator(default_mode=sybil_params['sybil_mode'], alpha=sybil_params["alpha"],
+                                         amplify_factor=sybil_params["amplify_factor"],
+                                         cost_scale=sybil_params["cost_scale"])
     # load the dataset
     gradient_manipulation_mode = args.gradient_manipulation_mode
     if dataset_name == "FMNIST":
@@ -164,22 +168,16 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                                                 channels=channels)
 
     early_stopper = FederatedEarlyStopper(patience=50, min_delta=0.01, monitor='acc')
-    local_training_params = {
-        "lr": args.local_lr,
-        "epochs": args.local_epoch,
-        "optimizer": "SGD",
-        "weight_decay": 0.0005,
-        "momentum": 0.9
-    }
+
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
 
     # set up the data set for the participants
-    client_loaders, full_dataset, test_set_loader = get_data_set(dataset_name, buyer_count=buyer_count,
-                                                                 num_sellers=n_sellers,
-                                                                 iid=True)
+    buyer_loader, client_loaders, full_dataset, test_loader = get_data_set(dataset_name, buyer_count=buyer_count,
+                                                                           num_sellers=n_sellers,
+                                                                           iid=True)
 
     # config the buyer
-    buyer = GradientSeller(seller_id="buyer", local_data=client_loaders["buyer"].dataset, dataset_name=dataset_name,
+    buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader.dataset, dataset_name=dataset_name,
                            save_path=save_path, local_training_params=local_training_params)
 
     # config the marketplace
@@ -195,9 +193,8 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                                            selection_method=aggregation_method, save_path=save_path)
 
     # config the seller and register to the marketplace
+    malicious_sellers = []
     for cid, loader in client_loaders.items():
-        if cid == "buyer":
-            continue
         if n_adversaries > 0:
             cur_id = f"adv_{cid}"
             current_seller = AdvancedBackdoorAdversarySeller(seller_id=cur_id,
@@ -210,9 +207,12 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                                                              trigger_rate=trigger_rate,
                                                              dataset_name=dataset_name,
                                                              local_training_params=local_training_params,
-                                                             gradient_manipulation_mode=gradient_manipulation_mode
+                                                             gradient_manipulation_mode=gradient_manipulation_mode,
+                                                             is_sybil=args.is_sybil,
+                                                             sybil_coordinator=sybil_coordinator
                                                              )
             n_adversaries -= 1
+            malicious_sellers.append(current_seller)
         else:
             cur_id = cid
             current_seller = GradientSeller(seller_id=cur_id, local_data=loader.dataset,
@@ -235,7 +235,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
                                                                               buyer=buyer,
                                                                               test_dataloader_buyer_local=
                                                                               client_loaders["buyer"],
-                                                                              test_dataloader_global=test_set_loader,
+                                                                              test_dataloader_global=test_loader,
                                                                               clean_loader=clean_loader,
                                                                               triggered_loader=triggered_loader,
                                                                               loss_fn=loss_fn, device=device,
@@ -249,6 +249,8 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
             if early_stopper.update(current_val_loss):
                 print(f"Early stopping triggered at round {gr}.")
                 break
+        sybil_coordinator.on_round_end()
+
     poison_metrics = evaluate_attack_performance_backdoor_poison(marketplace.aggregator.global_model, clean_loader,
                                                                  triggered_loader,
                                                                  marketplace.aggregator.device,
@@ -259,7 +261,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
     torch.save(marketplace.aggregator.global_model.state_dict(), f"{save_path}/final_global_model.pt")
     torch.save(marketplace.round_logs, f"{save_path}/market_log.ckpt")
     converted_logs = convert_np(marketplace.round_logs)
-    save_history_to_json(converted_logs, f"{save_path}/market_log.json")
+    save_to_json(converted_logs, f"{save_path}/market_log.json")
     # record the result for each seller
     all_sellers = marketplace.get_all_sellers
     for seller_id, seller in all_sellers.items():
@@ -299,6 +301,8 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
     parser.add_argument("--aggregation_method", type=str, default="martfl", help="agge")
     parser.add_argument("--gpu_ids", type=str, default="0", help="Comma-separated GPU IDs (e.g., '0,1').")
+    parser.add_argument("--is_sybil", action="store_true", help="Enable sybil attack (default: False)")
+    parser.add_argument("--sybil_mode", type=str, default="mimic", help="Sybil strategy")
 
     args = parser.parse_args()
     return args
@@ -363,22 +367,81 @@ def clear_work_path(path):
             print(f"Failed to delete {file_path}. Reason: {e}")
 
 
-if __name__ == "__main__":
+from pathlib import Path
+
+
+def get_save_path(args):
+    """
+    Construct a save path based on the experiment parameters in args.
+
+    Returns:
+        A string representing the path.
+    """
+    # Use is_sybil flag or, if not true, use sybil_mode
+    sybil_str = str(args.is_sybil) if args.is_sybil else args.sybil_mode
+    base_dir = Path("./results") / f"is_sybil_{sybil_str}" / "backdoor" / args.aggregation_method / args.dataset_name
+
+    if args.gradient_manipulation_mode == "None":
+        subfolder = "no_attack"
+        param_str = f"n_seller_{args.n_sellers}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
+    elif args.gradient_manipulation_mode == "cmd":
+        subfolder = f"backdoor_mode_{args.gradient_manipulation_mode}_strength_{args.poison_strength}_trigger_type_{args.trigger_type}"
+        param_str = f"n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
+    elif args.gradient_manipulation_mode == "single":
+        subfolder = f"backdoor_mode_{args.gradient_manipulation_mode}_trigger_rate_{args.trigger_rate}_trigger_type_{args.trigger_type}"
+        param_str = f"n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
+    else:
+        raise NotImplementedError(f"No such attack type: {args.gradient_manipulation_mode}")
+
+    # Construct the full save path
+    save_path = base_dir / subfolder / param_str
+    return str(save_path)
+
+
+def main():
     args = parse_args()
     t_model = get_model(args.dataset_name)
     print(
         f"start backdoor attack, current dataset: {args.dataset_name}, n_sellers: {args.n_sellers}, attack method: {args.gradient_manipulation_mode}")
     set_seed(args.seed)
     device = get_device(args)
-    if args.gradient_manipulation_mode == "None":
-        save_path = f"./results/backdoor/{args.aggregation_method}/{args.dataset_name}/no_attack/n_seller_{args.n_sellers}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}/"
-    elif args.gradient_manipulation_mode == "cmd":
-        save_path = f"./results/backdoor/{args.aggregation_method}/{args.dataset_name}/backdoor_mode_{args.gradient_manipulation_mode}_strength_{args.poison_strength}_trigger_type_{args.trigger_type}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}/"
-    elif args.gradient_manipulation_mode == "single":
-        save_path = f"./results/backdoor/{args.aggregation_method}/{args.dataset_name}/backdoor_mode_{args.gradient_manipulation_mode}_trigger_rate_{args.trigger_rate}_trigger_type_{args.trigger_type}/n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}/"
-    else:
-        raise NotImplementedError(f"No such attack type :{args.gradient_manipulation_mode}")
+
+    # Example usage in your main code:
+    save_path = get_save_path(args)
+    print("Saving results to:", save_path)
     clear_work_path(save_path)
+    sybil_params = {
+        "is_sybil": args.is_sybil,
+        "sybil_mode": args.sybil_mode,
+        "alpha": 0.5,
+        "amplify_factor": 2.0,
+        "cost_scale": 1.5,
+        "n_adversaries": args.n_adversaries
+    }
+
+    local_training_params = {
+        "lr": args.local_lr,
+        "epochs": args.local_epoch,
+        "optimizer": "SGD",
+        "weight_decay": 0.0005,
+        "momentum": 0.9
+    }
+
+    local_attack_params = {
+        "target_label": args.backdoor_target_label,
+        "trigger_type": args.trigger_type,
+        "poison_strength": args.poison_strength,
+        "trigger_rate": args.trigger_rate,
+        "gradient_manipulation_mode": args.gradient_manipulation_mode,
+    }
+
+    all_params = {
+        "sybil_params": sybil_params,
+        "local_training_params": local_training_params,
+        "local_attack_params": local_attack_params
+    }
+
+    save_to_json(all_params, f"{save_path}/attack_params.json")
     backdoor_attack(
         dataset_name=args.dataset_name,
         n_sellers=args.n_sellers,
@@ -393,7 +456,13 @@ if __name__ == "__main__":
         poison_test_sample=args.poison_test_sample,
         aggregation_method=args.aggregation_method,
         trigger_rate=args.trigger_rate,
-        args=args
+        args=args,
+        sybil_params=sybil_params,
+        local_attack_params=local_attack_params,
+        local_training_params=local_training_params
+
     )
 
-    # print("Evaluation Results:", eval_results)
+
+if __name__ == "__main__":
+    main()

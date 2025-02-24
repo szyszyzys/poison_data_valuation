@@ -1,3 +1,4 @@
+import collections
 from typing import List, Tuple, Dict, Optional
 
 import numpy as np
@@ -13,6 +14,119 @@ from model.utils import get_model, local_training_and_get_gradient, apply_gradie
 # from your_seller_module import GradientSeller, SellerStats
 # from train import compute_loss, etc. (if needed)
 # from dataset import dataset_output_dim (if needed)
+class SybilCoordinator:
+    """
+    A comprehensive SybilCoordinator to coordinate malicious sellers (Sybil identities)
+    in a federated learning setup where selection is based solely on gradient similarity.
+
+    The coordinator maintains a registry of malicious sellers and stores the gradients
+    reported by those that were selected in the last round. It then provides a method for
+    non-selected sellers to update (perturb) their local gradients based on the average
+    gradient of the selected ones. This helps the adversaries coordinate their attack.
+    """
+
+    def __init__(self, default_mode="mimic", alpha=0.5, amplify_factor=2.0, cost_scale=1.5):
+        """
+        :param default_mode: Default strategy to use for non-selected gradient updates.
+                             Options: "mimic", "pivot", "knock_out", "slowdown", "cost_inflation", "camouflage".
+        :param alpha: Alignment factor (0 < alpha <= 1) for blending strategies.
+        :param amplify_factor: Factor used in "camouflage" mode to amplify the coordinated gradient.
+        :param cost_scale: Scale factor for "cost_inflation" mode.
+        """
+        self.default_mode = default_mode
+        self.alpha = alpha
+        self.amplify_factor = amplify_factor
+        self.cost_scale = cost_scale
+
+        # Dictionary to store gradients from malicious sellers that were selected last round.
+        # Format: { seller_id (str): gradient (torch.Tensor) }
+        self.selected_gradients = {}
+        # Also keep a registry of seller instances (if needed for additional coordination).
+        self.registered_clients = collections.OrderedDict()
+
+    def register_seller(self, seller):
+        """
+        Register a malicious seller (client). The seller must have a unique seller_id attribute.
+        """
+        self.registered_clients[seller.seller_id] = seller
+
+    def precompute_current_round_gradient(self, selected_info: dict):
+        """
+        Update the coordinator with the gradient updates from malicious sellers that were
+        selected in the last round.
+
+        :param selected_info: Dictionary mapping seller_id (str) to its gradient (torch.Tensor).
+        """
+        # precompute the gradient of each local client.
+        for cdx, seller in self.registered_clients.items():
+            gradient = seller.get_local_gradient()
+            # only record the gradient why are selected
+            if seller.selected_last_round:
+                self.selected_gradients = {cdx: gradient.clone()}
+
+    def get_selected_average(self) -> torch.Tensor:
+        """
+        Compute and return the average gradient from the selected malicious sellers.
+
+        :return: A torch.Tensor representing the average gradient, or None if no gradients stored.
+        """
+        if not self.selected_gradients:
+            return None
+        gradients = list(self.selected_gradients.values())
+        avg_grad = torch.mean(torch.stack(gradients), dim=0)
+        return avg_grad
+
+    def update_nonselected_gradient(self, current_gradient: torch.Tensor, strategy: str = None) -> torch.Tensor:
+        """
+        Given a non-selected seller's current gradient, update it based on the average gradient of
+        the selected malicious sellers using the specified strategy.
+
+        :param current_gradient: The current local gradient of a malicious seller (torch.Tensor).
+        :param strategy: The strategy to use; if None, uses the default mode.
+                         Options: "mimic", "pivot", "knock_out", "slowdown", "cost_inflation", "camouflage".
+        :return: The updated gradient (torch.Tensor).
+        """
+        strat = strategy if strategy is not None else self.default_mode
+        avg_grad = self.get_selected_average()
+        if avg_grad is None:
+            # No information available; return the current gradient unchanged.
+            return current_gradient
+
+        if strat == "mimic":
+            # Blend current gradient with the average.
+            new_grad = (1 - self.alpha) * current_gradient + self.alpha * avg_grad
+        elif strat == "pivot":
+            # Fully replace the current gradient with the average.
+            new_grad = avg_grad.clone()
+        elif strat == "knock_out":
+            # Use a higher alignment factor (e.g., double alpha, capped at 1.0).
+            alpha_knock = min(self.alpha * 2, 1.0)
+            new_grad = (1 - alpha_knock) * current_gradient + alpha_knock * avg_grad
+        elif strat == "slowdown":
+            # Scale down the current gradient to stall progress.
+            new_grad = 0.1 * current_gradient
+        elif strat == "cost_inflation":
+            # Scale up the average gradient to inflate the buyer's cost.
+            new_grad = self.cost_scale * avg_grad
+        elif strat == "camouflage":
+            # Align with the average then amplify the result.
+            aligned_grad = (1 - self.alpha) * current_gradient + self.alpha * avg_grad
+            new_grad = self.amplify_factor * aligned_grad
+        else:
+            # Default to mimic if unknown strategy.
+            new_grad = (1 - self.alpha) * current_gradient + self.alpha * avg_grad
+
+        return new_grad
+
+    def reset(self):
+        """
+        Reset the stored selected gradients for the next round.
+        """
+        self.selected_gradients = {}
+
+    def on_round_end(self):
+        self.reset()
+
 
 class GradientSeller(BaseSeller):
     """
@@ -55,17 +169,16 @@ class GradientSeller(BaseSeller):
         self.local_epochs = local_epochs
         self.local_training_params = local_training_params
         self.recent_metrics = None
-        self.cur_gradient_flt = None
+        self.cur_upload_gradient_flt = None
+        self.cur_gradient = None
 
     def set_local_model_params(self, params: np.ndarray):
         """Set (or update) local model parameters before computing gradient."""
         self.local_model_params = params
 
-    def get_gradient(self, global_params: Optional[Dict[str, torch.Tensor]] = None) -> (torch.Tensor, int):
+    def get_gradient_for_upload(self, global_params: Optional[Dict[str, torch.Tensor]] = None) -> (torch.Tensor, int):
         """
-        Compute the gradient with respect to a base model using this seller's local data.
-        If global_params is provided, use them to initialize the local model.
-        Otherwise, load the previously saved local model (if available) or fallback to a default.
+        Compute the gradient that finally sent to the central server
 
         :param global_params: Optional global model parameters.
         :return: Tuple (flattened_gradient, data_size)
@@ -88,7 +201,7 @@ class GradientSeller(BaseSeller):
         # self.save_local_model(updated_model)
 
         self.current_round += 1
-        self.cur_gradient_flt = gradient_flt
+        self.cur_upload_gradient_flt = gradient
         return gradient
 
     def _compute_local_grad(self, base_params: Dict[str, torch.Tensor],
@@ -158,13 +271,25 @@ class GradientSeller(BaseSeller):
             'round_number': round_number,
             'timestamp': pd.Timestamp.now().isoformat(),
             'selected': is_selected,
-            'gradient_flt': self.cur_gradient_flt,
+            'gradient': self.cur_upload_gradient_flt,
         }
         self.selected_last_round = is_selected
         # if final_model_params is not None:
         #     # Convert state_dict tensors to lists (or use another serialization as needed).
         #     record['final_model_params'] = {k: v.cpu().numpy().tolist() for k, v in final_model_params.items()}
         self.federated_round_history.append(record)
+
+    def round_end_process(self, round_number,
+                          is_selected,
+                          final_model_params):
+        self.reset_current_local_gradient()
+        self.record_federated_round(
+            round_number,
+            is_selected,
+            final_model_params)
+
+    def reset_current_local_gradient(self):
+        self.cur_gradient = None
 
     # If you don't need the .get_data() returning "X" and "cost", you can override it:
     @property
@@ -210,7 +335,9 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  local_epochs=2,
                  dataset_name="",
                  local_training_params=None,
-                 gradient_manipulation_mode="cmd"
+                 gradient_manipulation_mode="cmd",
+                 is_sybil=False,
+                 sybil_coordinator: SybilCoordinator = None
                  ):
         """
         :param local_data:        List[(image_tensor, label_int)] for the local training set.
@@ -238,7 +365,11 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         self.backdoor_data, self.clean_data = self._inject_triggers(local_data, trigger_rate)
         self.local_training_params = local_training_params
         self.gradient_manipulation_mode = gradient_manipulation_mode
-        self.cur_gradient_flt = None
+        self.cur_upload_gradient_flt = None
+        self.is_sybil = is_sybil
+        self.sybil_coordinator = sybil_coordinator
+        self.cur_gradient = None
+        self.sybil_coordinator.register_seller(self)
 
     def _inject_triggers(self, data: List[Tuple[torch.Tensor, int]], fraction: float):
         """
@@ -292,7 +423,33 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         return triggered_img
 
-    def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> [np.ndarray]:
+    def get_gradient_for_upload(self, global_params: Dict[str, torch.Tensor] = None, align_global=False):
+        """
+        Compute the local gradient and, if this seller is not selected, query the coordinator
+        to update the gradient based on coordinated malicious updates.
+
+        :param global_params: Global model parameters (if needed for training).
+        :param selected: Boolean flag indicating if this seller was selected in the previous round.
+        :return: A tuple (final_gradient, data_size)
+        """
+        # Step 1: Compute the local malicious gradient.
+        local_grad = self.get_local_gradient(global_params)
+        # Save the computed gradient.
+        # get the gradient, return if not doing sybil attack.
+        self.cur_upload_gradient_flt = local_grad
+        if not self.is_sybil:
+            return local_grad
+        # don't perturb as current gradient is selected in previous round
+        if self.selected_last_round:
+            return local_grad
+
+        # todo perform apply global knowledge, manipluate the local gradient
+        # self.sybil_coordinator.todo(local_gradient)
+        local_grad = self.sybil_coordinator.update_nonselected_gradient(local_grad)
+        self.cur_upload_gradient_flt = local_grad
+        return local_grad
+
+    def get_local_gradient(self, global_params: Dict[str, torch.Tensor] = None) -> [np.ndarray]:
         """
         Return a single 'final' gradient that merges:
           1) benign gradient
@@ -302,6 +459,10 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         Returns a tuple where the first element is the flattened final gradient (np.ndarray)
         and the second element is, for example, the number of gradient segments.
         """
+        # if calculated before, return the cached value
+        if self.cur_gradient:
+            return self.cur_gradient
+
         if global_params is not None:
             base_params = global_params
         else:
@@ -313,12 +474,44 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 base_params = None  # or load_param("f") as your fallback
 
         if self.gradient_manipulation_mode == "cmd":
-            final_poisoned = self.gradient_manipulation_cmd(base_params)
+            local_gradient = self.gradient_manipulation_cmd(base_params)
         elif self.gradient_manipulation_mode == "single":
-            final_poisoned = self.gradient_manipulation_single(base_params)
+            local_gradient = self.gradient_manipulation_single(base_params)
+        elif self.gradient_manipulation_mode == "none":
+            local_gradient = self.get_clean_gradient(base_params)
         else:
             raise NotImplementedError(f"No current poison mode: {self.gradient_manipulation_mode}")
-        return final_poisoned
+
+        self.cur_gradient = local_gradient
+        return local_gradient
+
+    def get_clean_gradient(self, global_params: Optional[Dict[str, torch.Tensor]] = None) -> (torch.Tensor, int):
+        """
+        Compute the gradient with respect to a base model using this seller's local data.
+        If global_params is provided, use them to initialize the local model.
+        Otherwise, load the previously saved local model (if available) or fallback to a default.
+
+        :param global_params: Optional global model parameters.
+        :return: Tuple (flattened_gradient, data_size)
+        """
+        # 1. Determine the base parameters for local training.
+        if global_params is not None:
+            base_params = global_params
+        else:
+            try:
+                base_params = self.load_local_model()
+                print(f"[{self.seller_id}] Loaded previous local model.")
+            except Exception as e:
+                print(f"[{self.seller_id}] No saved local model found; using default initialization.")
+                base_params = None  # or load_param("f") as your fallback
+
+        # 2. Train locally starting from base_params, obtain the local gradient update
+        gradient, gradient_flt, updated_model, local_eval_res = self._compute_local_grad(base_params, self.dataset)
+        self.recent_metrics = local_eval_res
+        # 3. Save the updated local model for future rounds.
+        # self.save_local_model(updated_model)
+
+        return gradient
 
     def gradient_manipulation_cmd(self, base_params, previous_selection=None):
         if self.poison_strength != 1:
@@ -347,7 +540,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             final_poisoned_flt = self.alpha_align * final_poisoned_flt + (1 - self.alpha_align) * previous_selection
         # final_poisoned_flt = np.clip(final_poisoned_flt, -self.clip_value, self.clip_value)
         # final_poisoned = global_clip_np(final_poisoned_flt, 1)
-        self.cur_gradient_flt = final_poisoned_flt
         final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
 
         return final_poisoned
@@ -359,76 +551,9 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         # final_poisoned_flt = g_backdoor_flt
         final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
         original_shapes = [param.shape for param in g_backdoor_update]
-        self.cur_gradient_flt = final_poisoned_flt
         final_poisoned = global_clip_np(final_poisoned_flt, 1)
         final_poisoned = unflatten_np(final_poisoned, original_shapes)
         return final_poisoned
-
-    # def get_gradient(self, global_params: Dict[str, torch.Tensor] = None, align_global=False) -> np.ndarray:
-    #     """
-    #     Return a single 'final' gradient that merges:
-    #       1) benign gradient
-    #       2) backdoor gradient
-    #       3) partial alignment w/ a guessed server gradient
-    #     """
-    #     if global_params is not None:
-    #         base_params = global_params
-    #     else:
-    #         try:
-    #             base_params = self.load_local_model()
-    #             print(f"[{self.seller_id}] Loaded previous local model.")
-    #         except Exception as e:
-    #             print(f"[{self.seller_id}] No saved local model found; using default initialization.")
-    #             model = get_model(self.dataset_name)
-    #             base_params = model.state_dict()  # or load_param("f") as your fallback
-    #
-    #     # 1) Compute benign gradient
-    #     if self.poison_strength != 1:
-    #         grad_benign_update, g_benign_flt, local_model_benign = self._compute_local_grad(base_params,
-    #                                                                                         self.clean_data)
-    #
-    #         # Example usage:
-    #         # Suppose grad_benign_update is a list of tensors (or numpy arrays) that you flattened.
-    #         # Get the original shapes:
-    #         original_shapes = [param.shape for param in grad_benign_update]
-    #
-    #         # 2) Compute backdoor gradient
-    #         g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
-    #                                                                                             self.backdoor_data)
-    #
-    #         # 3) Combine them:
-    #         final_poisoned_flt = (1 - self.poison_strength) * g_benign_flt + (self.poison_strength) * g_backdoor_flt
-    #         if align_global:
-    #             # 4) Estimate server grad (in black-box, we might guess near zero or track old updates)
-    #             server_guess = np.random.randn(final_poisoned_flt.shape[0]) * 0.0001
-    #
-    #             # 5) final_poisoned = alpha_align * raw_poison + (1 - alpha_align)*server_guess
-    #             final_poisoned = self.alpha_align * final_poisoned_flt + (1 - self.alpha_align) * server_guess
-    #
-    #         # 6) Clip to aggregator’s clamp
-    #         final_poisoned_flt = np.clip(final_poisoned_flt, -self.clip_value, self.clip_value)
-    #         final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
-    #         self.last_benign_grad = np.clip(g_benign_flt, -self.clip_value, self.clip_value)
-    #     else:
-    #         g_backdoor_update, g_backdoor_flt, local_model_malicious = self._compute_local_grad(base_params,
-    #                                                                                             self.backdoor_data)
-    #         final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
-    #         original_shapes = [param.shape for param in g_backdoor_update]
-    #         final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
-    #     # store for analysis
-    #     self.last_poisoned_grad = final_poisoned_flt
-    #     cur_local_model = get_model(self.dataset_name)
-    #     updated_params_flat = flatten_state_dict(base_params) - final_poisoned_flt
-    #
-    #     # Convert the updated flat parameters back into the model's state dict format.
-    #     new_state_dict = unflatten_state_dict(cur_local_model, updated_params_flat)
-    #     cur_local_model.load_state_dict(new_state_dict)
-    #     # Load the updated parameters into the model.
-    #
-    #     # Load the updated parameters into the model.
-    #     self.save_local_model(cur_local_model)
-    #
-    #     return final_poisoned
 
     def record_federated_round(self, round_number: int, is_selected: bool,
                                final_model_params: Optional[np.ndarray] = None):
@@ -440,10 +565,19 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             "round_number": round_number,
             "timestamp": pd.Timestamp.now().isoformat(),
             "is_selected": is_selected,
-            'gradient_flt': self.cur_gradient_flt,
+            'gradient': self.cur_upload_gradient_flt,
         }
         self.selected_last_round = is_selected
         self.federated_round_history.append(record)
+
+    def round_end_process(self, round_number,
+                          is_selected,
+                          final_model_params):
+        self.reset_current_local_gradient()
+        self.record_federated_round(
+            round_number,
+            is_selected,
+            final_model_params)
 
 
 def global_clip_np(arr, max_norm: float) -> np.ndarray:
@@ -495,32 +629,6 @@ def unflatten_np(flat_array, shapes):
     return arrays
 
 
-# def unflatten_np(flat_array: np.ndarray, param_shapes: list):
-#     """
-#     Unflatten a 1D numpy array into a list of numpy arrays with specified shapes.
-#
-#     Parameters
-#     ----------
-#     flat_array : np.ndarray
-#         The flattened array (1D).
-#     param_shapes : list of tuple
-#         A list of shapes (e.g., [(3, 3), (3,), ...]) corresponding to each parameter.
-#
-#     Returns
-#     -------
-#     list of np.ndarray
-#         A list of numpy arrays reshaped to the corresponding shapes.
-#     """
-#     results = []
-#     current_pos = 0
-#     for shape in param_shapes:
-#         # Calculate how many elements this parameter has.
-#         num_elements = np.prod(shape)
-#         # Extract the segment and reshape it.
-#         segment = flat_array[current_pos:current_pos + num_elements].reshape(shape)
-#         results.append(segment)
-#         current_pos += num_elements
-#     return results
 def update_local_model_from_global(client: GradientSeller, dataset_name, aggregated_gradient):
     s_local_model_dict = client.load_local_model()
     s_local_model = get_model(dataset_name=dataset_name)

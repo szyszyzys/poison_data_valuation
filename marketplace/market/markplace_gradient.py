@@ -66,7 +66,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
         for seller_id, seller in self.sellers.items():
             # for martfl, local have no access to the global params
-            grad_np = seller.get_gradient()
+            grad_np = seller.get_gradient_for_upload()
             norm = np.linalg.norm(flatten(grad_np))
             print(f"The {seller_id} gradient norm is: {norm}")
             gradients[seller_id] = grad_np
@@ -131,7 +131,7 @@ class DataMarketplaceFederated(DataMarketplace):
          5. Distribute the new global model back to sellers (optional).
          6. Evaluate final model & log stats (optional).
         """
-        baseline_gradient = buyer.get_gradient()
+        baseline_gradient = buyer.get_gradient_for_upload()
 
         # 1. get gradients from sellers
         seller_gradients, seller_ids = self.get_current_market_gradients()
@@ -197,8 +197,9 @@ class DataMarketplaceFederated(DataMarketplace):
         for idx, (sid, seller) in enumerate(self.sellers.items()):
             # Mark "is_selected" if in selected_sellers
             is_selected = (idx in selected_ids)
-            seller.record_federated_round(round_number, is_selected)
             update_local_model_from_global(seller, dataset_name, aggregated_gradient)
+            # reset the local gradient
+            seller.round_end_process(round_number, is_selected)
         print(
             f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")
         print(f"Test set eval result: {final_perf_global}")
