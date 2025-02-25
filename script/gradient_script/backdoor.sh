@@ -30,6 +30,7 @@ trigger_rate="0.5"
 # gradient_manipulation_mode is already set to "single" by default
 is_sybil_flag=""
 sybil_mode=""
+bkd_loc="bottom_right"
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -71,6 +72,11 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         --sybil_mode)
             sybil_mode="$2"
+            shift 2
+            ;;
+
+        --bkd_loc)
+          bkd_loc="$2"
             shift 2
             ;;
         --is_sybil)
@@ -144,6 +150,7 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --gradient_manipulation_mode "$gradient_manipulation_mode" \
                   --aggregation_method "$aggregation_method" \
                   --trigger_rate "$trigger_rate" \
+                  --bkd_loc "$bkd_loc" \
                   $is_sybil_flag
           done
         done
