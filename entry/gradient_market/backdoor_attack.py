@@ -169,7 +169,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
         channels = 3
     loss_fn = nn.CrossEntropyLoss()
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
-                                                channels=channels)
+                                                channels=channels, location = args.bkd_loc)
 
     early_stopper = FederatedEarlyStopper(patience=50, min_delta=0.01, monitor='acc')
 
@@ -311,6 +311,7 @@ def parse_args():
     parser.add_argument("--gpu_ids", type=str, default="0", help="Comma-separated GPU IDs (e.g., '0,1').")
     parser.add_argument("--is_sybil", action="store_true", help="Enable sybil attack (default: False)")
     parser.add_argument("--sybil_mode", type=str, default="mimic", help="Sybil strategy")
+    parser.add_argument("--bkd_loc", type=str, default="bottom_right", help="backdoor location")
 
     args = parser.parse_args()
     return args
