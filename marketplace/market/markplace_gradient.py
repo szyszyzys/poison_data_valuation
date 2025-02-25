@@ -237,6 +237,8 @@ class DataMarketplaceFederated(DataMarketplace):
             f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")
         print(f"Test set eval result: {final_perf_global}")
         print(f"Buyer local eval result: {final_perf_local}")
+        print(f"Backdoor Metrics on Global model: {poison_metrics}")
+
         selection_rate_info = None
         if n_adv > 0:
             selection_rate_info = self.compute_selection_rates(selected_ids, set(range(n_adv)),

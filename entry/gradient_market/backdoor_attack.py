@@ -236,6 +236,7 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
     # Start gloal round
     for gr in range(global_rounds):
         # train the attack model
+        print(f"=============round {gr} start=======================")
         round_record, aggregated_gradient = marketplace.train_federated_round(round_number=gr,
                                                                               buyer=buyer,
                                                                               n_adv=n_adversaries,
