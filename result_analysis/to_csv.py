@@ -1,18 +1,18 @@
 import os
-from pathlib import Path
-
-import numpy as np
 import pandas as pd
+import numpy as np
 import torch
+from pathlib import Path
+from collections import defaultdict
 
-
-def process_single_experiment(file_path, attack_params):
+def process_single_experiment(file_path, attack_params, aggregation_method):
     """
     Process a single experiment file and extract metrics.
 
     Args:
         file_path: Path to the market_log.ckpt file
         attack_params: Dictionary containing attack parameters
+        aggregation_method: The aggregation method used in the experiment
 
     Returns:
         processed_data: List of dictionaries with processed round data
@@ -20,10 +20,10 @@ def process_single_experiment(file_path, attack_params):
     """
     try:
         # Load the experiment data
-        experiment_data = torch.load(file_path, weights_only=False, map_location=torch.device('cpu'))
+        experiment_data = torch.load(file_path, map_location=torch.device('cpu'))
 
         # Extract round records
-        round_records = experiment_data
+        round_records = experiment_data.get('round_records', [])
         if not round_records:
             print(f"Warning: No round records found in {file_path}")
             return [], {}
@@ -36,6 +36,7 @@ def process_single_experiment(file_path, attack_params):
             # Extract basic round info
             round_data = {
                 'round': round_num,
+                'AGGREGATION_METHOD': aggregation_method,  # Add aggregation method
                 **attack_params  # Include attack parameters
             }
 
@@ -69,6 +70,7 @@ def process_single_experiment(file_path, attack_params):
 
             # Calculate summary metrics
             summary = {
+                'AGGREGATION_METHOD': aggregation_method,  # Add aggregation method
                 **attack_params,
 
                 # Calculate max ASR achieved during training
@@ -81,32 +83,24 @@ def process_single_experiment(file_path, attack_params):
                 'FINAL_TRIGGERED_ACC': sorted_records[-1].get('triggered_acc', None),
 
                 # Calculate ASR at different stages of training
-                'ASR_25PCT': next(
-                    (r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.25), None),
-                'ASR_50PCT': next(
-                    (r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.5), None),
-                'ASR_75PCT': next(
-                    (r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.75), None),
+                'ASR_25PCT': next((r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.25), None),
+                'ASR_50PCT': next((r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.5), None),
+                'ASR_75PCT': next((r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.75), None),
 
                 # Calculate rounds to reach specific ASR thresholds
-                'ROUNDS_TO_50PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.5),
-                                            float('inf')),
-                'ROUNDS_TO_75PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.75),
-                                            float('inf')),
-                'ROUNDS_TO_90PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.9),
-                                            float('inf')),
+                'ROUNDS_TO_50PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.5), float('inf')),
+                'ROUNDS_TO_75PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.75), float('inf')),
+                'ROUNDS_TO_90PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.9), float('inf')),
 
                 # Calculate average selection rates
                 'AVG_MALICIOUS_RATE': np.mean([r.get('malicious_rate', 0) or 0 for r in sorted_records]),
                 'AVG_BENIGN_RATE': np.mean([r.get('benign_rate', 0) or 0 for r in sorted_records]),
 
                 # Calculate attack efficiency
-                'ASR_PER_ADV': (sorted_records[-1].get('asr', 0) or 0) / attack_params['N_ADV'] if attack_params[
-                                                                                                       'N_ADV'] > 0 else 0,
+                'ASR_PER_ADV': (sorted_records[-1].get('asr', 0) or 0) / attack_params['N_ADV'] if attack_params['N_ADV'] > 0 else 0,
 
                 # Calculate stealth (1 - abs difference between clean and final accuracy)
-                'STEALTH': 1 - abs(
-                    (sorted_records[-1].get('main_acc', 0) or 0) - (sorted_records[-1].get('clean_acc', 0) or 0)),
+                'STEALTH': 1 - abs((sorted_records[-1].get('main_acc', 0) or 0) - (sorted_records[-1].get('clean_acc', 0) or 0)),
 
                 # Total rounds
                 'TOTAL_ROUNDS': len(sorted_records)
@@ -125,13 +119,11 @@ def process_single_experiment(file_path, attack_params):
         print(f"Error processing {file_path}: {e}")
         return [], {}
 
-
 def get_save_path(n_sellers, n_adversaries, local_epoch, local_lr, gradient_manipulation_mode,
                   poison_strength, trigger_type, is_sybil, trigger_rate,
                   aggregation_method='martfl', dataset_name='FMNIST', sybil_mode='mimic'):
     """
     Construct a save path based on the experiment parameters.
-    This is a copy of your function.
     """
     # Use is_sybil flag or, if not true, use sybil_mode
     sybil_str = str(sybil_mode) if is_sybil else False
@@ -141,7 +133,7 @@ def get_save_path(n_sellers, n_adversaries, local_epoch, local_lr, gradient_mani
         subfolder = "no_attack"
         param_str = f"n_seller_{n_sellers}_local_epoch_{local_epoch}_local_lr_{local_lr}"
     elif gradient_manipulation_mode == "cmd":
-        subfolder = f"backdoor_mode_{gradient_manipulation_mode}_strength_{poison_strength}_trigger_rate_0.5_trigger_type_{trigger_type}"
+        subfolder = f"backdoor_mode_{gradient_manipulation_mode}_strength_{poison_strength}_trigger_type_{trigger_type}"
         param_str = f"n_seller_{n_sellers}_n_adv_{n_adversaries}_local_epoch_{local_epoch}_local_lr_{local_lr}"
     elif gradient_manipulation_mode == "single":
         subfolder = f"backdoor_mode_{gradient_manipulation_mode}_trigger_rate_{trigger_rate}_trigger_type_{trigger_type}"
@@ -153,10 +145,15 @@ def get_save_path(n_sellers, n_adversaries, local_epoch, local_lr, gradient_mani
     save_path = base_dir / subfolder / param_str
     return str(save_path)
 
-
-def process_all_experiments(output_dir='./processed_data', local_epoch=2):
+def process_all_experiments(output_dir='./processed_data', local_epoch=5,
+                           aggregation_methods=['martfl', 'fedavg']):
     """
-    Process all experiment files using the same parameter combinations as in your loop.
+    Process all experiment files for multiple aggregation methods.
+
+    Args:
+        output_dir: Directory to save processed data
+        local_epoch: Local epoch setting used in experiments
+        aggregation_methods: List of aggregation methods to process
     """
     all_processed_data = []
     all_summary_data = []
@@ -164,8 +161,11 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2):
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
-    # Use the same parameter combinations as in your loop
-    for aggregation_method in ["martfl", "fedavg"]:
+    # Process each aggregation method
+    for aggregation_method in aggregation_methods:
+        print(f"\nProcessing experiments for {aggregation_method}...")
+
+        # Use the same parameter combinations as in your loop
         for grad_mode in ['cmd', 'single']:
             for trigger_rate in [0.1, 0.5, 0.7]:
                 for poison_strength in [0.1, 0.5, 1.0]:
@@ -210,7 +210,11 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2):
                             }
 
                             # Process the file
-                            processed_data, summary = process_single_experiment(file_path, attack_params)
+                            processed_data, summary = process_single_experiment(
+                                file_path,
+                                attack_params,
+                                aggregation_method
+                            )
 
                             # Add to the overall data
                             all_processed_data.extend(processed_data)
@@ -234,10 +238,23 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2):
 
     return all_rounds_df, summary_df
 
-
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Process federated learning backdoor attack logs")
+    parser.add_argument("--output_dir", default="./processed_data", help="Output directory for processed data")
+    parser.add_argument("--local_epoch", type=int, default=5, help="Local epoch setting used in experiments")
+    parser.add_argument("--aggregation_methods", nargs='+', default=['martfl', 'fedavg'],
+                        help="List of aggregation methods to process")
+
+    args = parser.parse_args()
+
     # Process all experiments
-    all_rounds_df, summary_df = process_all_experiments()
+    all_rounds_df, summary_df = process_all_experiments(
+        output_dir=args.output_dir,
+        local_epoch=args.local_epoch,
+        aggregation_methods=args.aggregation_methods
+    )
 
     # Print summary statistics
     if not summary_df.empty:
@@ -246,16 +263,16 @@ if __name__ == "__main__":
         print(f"Average Final ASR: {summary_df['FINAL_ASR'].mean():.4f}")
         print(f"Average Main Accuracy: {summary_df['FINAL_MAIN_ACC'].mean():.4f}")
 
-        # Group by attack type
-        for grad_mode in summary_df['GRAD_MODE'].unique():
-            grad_data = summary_df[summary_df['GRAD_MODE'] == grad_mode]
-            print(f"\nGradient Mode: {grad_mode}")
-            print(f"  Average ASR: {grad_data['FINAL_ASR'].mean():.4f}")
-            print(f"  Average Main Accuracy: {grad_data['FINAL_MAIN_ACC'].mean():.4f}")
+        # Group by aggregation method
+        for agg_method in summary_df['AGGREGATION_METHOD'].unique():
+            agg_data = summary_df[summary_df['AGGREGATION_METHOD'] == agg_method]
+            print(f"\nAggregation Method: {agg_method}")
+            print(f"  Average ASR: {agg_data['FINAL_ASR'].mean():.4f}")
+            print(f"  Average Main Accuracy: {agg_data['FINAL_MAIN_ACC'].mean():.4f}")
 
-        # Group by Sybil mode
-        for is_sybil in summary_df['IS_SYBIL'].unique():
-            sybil_data = summary_df[summary_df['IS_SYBIL'] == is_sybil]
-            print(f"\nSybil Mode: {is_sybil}")
-            print(f"  Average ASR: {sybil_data['FINAL_ASR'].mean():.4f}")
-            print(f"  Average Main Accuracy: {sybil_data['FINAL_MAIN_ACC'].mean():.4f}")
+            # Group by gradient mode within each aggregation method
+            for grad_mode in agg_data['GRAD_MODE'].unique():
+                grad_data = agg_data[agg_data['GRAD_MODE'] == grad_mode]
+                print(f"    Gradient Mode: {grad_mode}")
+                print(f"      Average ASR: {grad_data['FINAL_ASR'].mean():.4f}")
+                print(f"      Average Main Accuracy: {grad_data['FINAL_MAIN_ACC'].mean():.4f}")

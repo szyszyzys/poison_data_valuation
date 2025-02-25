@@ -870,13 +870,14 @@ def plot_adversary_scaling(summary_df, all_rounds_df, output_dir):
 def create_summary_table(summary_df, output_dir):
     """
     Create a comprehensive summary table of all attack configurations and their performance.
+    Includes comparisons across different aggregation methods.
     """
     if summary_df.empty:
         return
 
     # Select relevant columns for the summary
     cols = [
-        'GRAD_MODE', 'TRIGGER_RATE', 'POISON_STRENGTH', 'IS_SYBIL', 'N_ADV',
+        'AGGREGATION_METHOD', 'GRAD_MODE', 'TRIGGER_RATE', 'POISON_STRENGTH', 'IS_SYBIL', 'N_ADV',
         'FINAL_ASR', 'MAX_ASR', 'FINAL_MAIN_ACC', 'FINAL_CLEAN_ACC',
         'ROUNDS_TO_50PCT_ASR', 'ROUNDS_TO_75PCT_ASR', 'ASR_PER_ADV', 'STEALTH'
     ]
@@ -906,31 +907,75 @@ def create_summary_table(summary_df, output_dir):
 
     # Also create aggregate statistics by different groupings
     if 'FINAL_ASR' in summary_df.columns:
+        # Group by AGGREGATION_METHOD
+        if 'AGGREGATION_METHOD' in summary_df.columns:
+            agg_method_stats = summary_df.groupby('AGGREGATION_METHOD')[['FINAL_ASR', 'FINAL_MAIN_ACC']].mean().round(3)
+            agg_method_stats.to_csv(f"{output_dir}/aggregation_method_summary.csv")
+
+        # Group by AGGREGATION_METHOD and GRAD_MODE
+        if 'AGGREGATION_METHOD' in summary_df.columns and 'GRAD_MODE' in summary_df.columns:
+            agg_grad_stats = summary_df.groupby(['AGGREGATION_METHOD', 'GRAD_MODE'])[['FINAL_ASR', 'FINAL_MAIN_ACC']].mean().round(3)
+            agg_grad_stats.to_csv(f"{output_dir}/aggregation_grad_mode_summary.csv")
+
         # Group by GRAD_MODE
-        grad_mode_stats = summary_df.groupby('GRAD_MODE')['FINAL_ASR', 'FINAL_MAIN_ACC'].mean().round(3)
+        grad_mode_stats = summary_df.groupby('GRAD_MODE')[['FINAL_ASR', 'FINAL_MAIN_ACC']].mean().round(3)
         grad_mode_stats.to_csv(f"{output_dir}/grad_mode_summary.csv")
 
         # Group by IS_SYBIL
         if 'IS_SYBIL' in summary_df.columns:
-            sybil_stats = summary_df.groupby('IS_SYBIL')['FINAL_ASR', 'FINAL_MAIN_ACC'].mean().round(3)
+            sybil_stats = summary_df.groupby('IS_SYBIL')[['FINAL_ASR', 'FINAL_MAIN_ACC']].mean().round(3)
             sybil_stats.to_csv(f"{output_dir}/sybil_summary.csv")
 
         # Group by N_ADV
         if 'N_ADV' in summary_df.columns:
-            n_adv_stats = summary_df.groupby('N_ADV')['FINAL_ASR', 'FINAL_MAIN_ACC'].mean().round(3)
+            n_adv_stats = summary_df.groupby('N_ADV')[['FINAL_ASR', 'FINAL_MAIN_ACC']].mean().round(3)
             n_adv_stats.to_csv(f"{output_dir}/n_adv_summary.csv")
 
         # Group by TRIGGER_RATE
         if 'TRIGGER_RATE' in summary_df.columns:
-            trigger_stats = summary_df.groupby('TRIGGER_RATE')['FINAL_ASR', 'FINAL_MAIN_ACC'].mean().round(3)
+            trigger_stats = summary_df.groupby('TRIGGER_RATE')[['FINAL_ASR', 'FINAL_MAIN_ACC']].mean().round(3)
             trigger_stats.to_csv(f"{output_dir}/trigger_rate_summary.csv")
 
         # Group by POISON_STRENGTH (for CMD mode)
         cmd_df = summary_df[summary_df['GRAD_MODE'] == 'cmd']
         if not cmd_df.empty and 'POISON_STRENGTH' in cmd_df.columns:
-            poison_stats = cmd_df.groupby('POISON_STRENGTH')['FINAL_ASR', 'FINAL_MAIN_ACC'].mean().round(3)
+            poison_stats = cmd_df.groupby('POISON_STRENGTH')[['FINAL_ASR', 'FINAL_MAIN_ACC']].mean().round(3)
             poison_stats.to_csv(f"{output_dir}/poison_strength_summary.csv")
 
+        # Create comparison tables across aggregation methods for identical configurations
+        if 'AGGREGATION_METHOD' in summary_df.columns and len(summary_df['AGGREGATION_METHOD'].unique()) > 1:
+            # Group by all parameters except aggregation method
+            param_cols = [col for col in ['GRAD_MODE', 'TRIGGER_RATE', 'POISON_STRENGTH', 'IS_SYBIL', 'N_ADV']
+                         if col in summary_df.columns]
+
+            # Pivot to compare aggregation methods for each configuration
+            pivot_table = summary_df.pivot_table(
+                index=param_cols,
+                columns='AGGREGATION_METHOD',
+                values=['FINAL_ASR', 'FINAL_MAIN_ACC'],
+                aggfunc='mean'
+            ).round(3)
+
+            # Save the comparison table
+            pivot_table.to_csv(f"{output_dir}/aggregation_method_comparison.csv")
+
+            # Calculate differences between aggregation methods
+            if len(summary_df['AGGREGATION_METHOD'].unique()) == 2:
+                agg_methods = sorted(summary_df['AGGREGATION_METHOD'].unique())
+                comparison_df = summary_df.pivot_table(
+                    index=param_cols,
+                    columns='AGGREGATION_METHOD',
+                    values=['FINAL_ASR', 'FINAL_MAIN_ACC']
+                )
+
+                # Calculate differences (Method1 - Method2)
+                diff_df = pd.DataFrame(index=comparison_df.index)
+                for metric in ['FINAL_ASR', 'FINAL_MAIN_ACC']:
+                    if (metric, agg_methods[0]) in comparison_df.columns and (metric, agg_methods[1]) in comparison_df.columns:
+                        diff_df[f"{metric}_DIFF"] = (comparison_df[metric, agg_methods[0]] - comparison_df[metric, agg_methods[1]]).round(3)
+
+                # Save the difference table
+                diff_df.to_csv(f"{output_dir}/aggregation_method_differences.csv")
 
 def run_visualization(summary_csv, all_rounds_csv, output_dir):
     """
