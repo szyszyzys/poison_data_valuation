@@ -20,10 +20,10 @@ def process_single_experiment(file_path, attack_params):
     """
     try:
         # Load the experiment data
-        experiment_data = torch.load(file_path, map_location=torch.device('cpu'))
+        experiment_data = torch.load(file_path, weights_only=False, map_location=torch.device('cpu'))
 
         # Extract round records
-        round_records = experiment_data.get('round_records', [])
+        round_records = experiment_data
         if not round_records:
             print(f"Warning: No round records found in {file_path}")
             return [], {}
