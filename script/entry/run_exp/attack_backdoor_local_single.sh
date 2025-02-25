@@ -23,7 +23,8 @@ N_ADVS=(1 3 5)
 ALPHAS=(0.5)
 
 # We'll run local-only (is_sybil=False) for some combos as well.
-IS_SYBIL_VALUES=("False" "True")
+#IS_SYBIL_VALUES=("False" "True")
+IS_SYBIL_VALUES=("False")
 
 # For each combination, we call run_experiment.py with the corresponding args.
 # In practice, you might want to limit how big this grid is, or do partial loops.
@@ -37,7 +38,7 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
             # If is_sybil=False, we skip sybil-mode loops entirely:
             if [ "$IS_SYBIL" = "False" ]; then
               echo "Running local-only: $TRIGGER_TYPE, $PS, $RATE, $GMODE"
-                    bash script/gradient_script/backdoor.sh --is_sybil \
+                    bash script/gradient_script/backdoor.sh \
                      --poison_strength $PS \
                      --gradient_manipulation_mode $GMODE \
                      --dataset_name "$dataset_name" \

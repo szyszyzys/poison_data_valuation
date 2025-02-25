@@ -37,7 +37,7 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
             # If is_sybil=False, we skip sybil-mode loops entirely:
             if [ "$IS_SYBIL" = "False" ]; then
               echo "Running local-only: $TRIGGER_TYPE, $PS, $RATE, $GMODE"
-                    bash script/gradient_script/backdoor.sh --is_sybil \
+                    bash script/gradient_script/backdoor.sh \
                      --poison_strength $PS \
                      --gradient_manipulation_mode $GMODE \
                      --dataset_name "$dataset_name" \
