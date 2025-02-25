@@ -1,7 +1,7 @@
 #!/bin/bash
 # run_experiments.sh
 # This script runs the Python script with varying parameters.
-# bash script/gradient_script/backdoor.sh --n_adversaries "1,2,3,4,5" --gpu_ids 6 --dataset_name fmnist --aggregation_method fedavg --poison_strength "0.5,1" --gradient_manipulation_mode cmd --trigger_rate 0.5
+# bash script/gradient_script/backdoor.sh --n_adversaries "1,2,3,4,5" --gpu_ids 6 --dataset_name fmnist --aggregation_method   --poison_strength "0.5,1" --gradient_manipulation_mode cmd --trigger_rate 0.5
 WORK_DIR="/scratch/zzs5287/poison_data_valuation"
 export PYTHONPATH="$WORK_DIR:$PYTHONPATH"
 echo $PYTHONPATH

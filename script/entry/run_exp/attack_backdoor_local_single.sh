@@ -23,8 +23,8 @@ N_ADVS=(1 3 5)
 ALPHAS=(0.5)
 
 # We'll run local-only (is_sybil=False) for some combos as well.
-#IS_SYBIL_VALUES=("False" "True")
-IS_SYBIL_VALUES=("False")
+IS_SYBIL_VALUES=("False" "True")
+#IS_SYBIL_VALUES=("False")
 
 # For each combination, we call run_experiment.py with the corresponding args.
 # In practice, you might want to limit how big this grid is, or do partial loops.
