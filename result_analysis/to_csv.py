@@ -141,7 +141,7 @@ def get_save_path(n_sellers, n_adversaries, local_epoch, local_lr, gradient_mani
         subfolder = "no_attack"
         param_str = f"n_seller_{n_sellers}_local_epoch_{local_epoch}_local_lr_{local_lr}"
     elif gradient_manipulation_mode == "cmd":
-        subfolder = f"backdoor_mode_{gradient_manipulation_mode}_strength_{poison_strength}_trigger_type_{trigger_type}"
+        subfolder = f"backdoor_mode_{gradient_manipulation_mode}_strength_{poison_strength}_trigger_rate_0.5_trigger_type_{trigger_type}"
         param_str = f"n_seller_{n_sellers}_n_adv_{n_adversaries}_local_epoch_{local_epoch}_local_lr_{local_lr}"
     elif gradient_manipulation_mode == "single":
         subfolder = f"backdoor_mode_{gradient_manipulation_mode}_trigger_rate_{trigger_rate}_trigger_type_{trigger_type}"
