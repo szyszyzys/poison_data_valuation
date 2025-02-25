@@ -35,28 +35,28 @@ def plot_attack_success_comparison(summary_df, output_dir):
 
     # 1. ASR by Gradient Manipulation Method
     plt.subplot(2, 2, 1)
-    sns.barplot(x='GRAD_MODE', y='FINAL_ASR', data=summary_df, ci=None)
+    sns.barplot(x='GRAD_MODE', y='FINAL_ASR', data=summary_df, errorbar=None)
     plt.title('Attack Success Rate by Gradient Method', fontsize=14)
     plt.ylim(0, 1.05)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
 
     # 2. ASR by Trigger Rate
     plt.subplot(2, 2, 2)
-    sns.barplot(x='TRIGGER_RATE', y='FINAL_ASR', data=summary_df, ci=None)
+    sns.barplot(x='TRIGGER_RATE', y='FINAL_ASR', data=summary_df, errorbar=None)
     plt.title('Attack Success Rate by Trigger Rate', fontsize=14)
     plt.ylim(0, 1.05)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
 
     # 3. ASR by Number of Adversaries
     plt.subplot(2, 2, 3)
-    sns.barplot(x='N_ADV', y='FINAL_ASR', data=summary_df, ci=None)
+    sns.barplot(x='N_ADV', y='FINAL_ASR', data=summary_df, errorbar=None)
     plt.title('Attack Success Rate by Number of Adversaries', fontsize=14)
     plt.ylim(0, 1.05)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
 
     # 4. ASR with and without Sybil Attack
     plt.subplot(2, 2, 4)
-    sns.barplot(x='IS_SYBIL', y='FINAL_ASR', data=summary_df, ci=None)
+    sns.barplot(x='IS_SYBIL', y='FINAL_ASR', data=summary_df, errorbar=None)
     plt.title('Attack Success Rate with/without Sybil Attack', fontsize=14)
     plt.ylim(0, 1.05)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
@@ -77,28 +77,28 @@ def plot_parameter_interactions(summary_df, output_dir):
     plt.subplot(2, 2, 1)
     cmd_data = summary_df[summary_df['GRAD_MODE'] == 'cmd']
     if not cmd_data.empty:
-        sns.barplot(x='POISON_STRENGTH', y='FINAL_ASR', data=cmd_data, ci=None)
+        sns.barplot(x='POISON_STRENGTH', y='FINAL_ASR', data=cmd_data, errorbar=None)
         plt.title('ASR by Poison Strength (CMD Mode)', fontsize=14)
         plt.ylim(0, 1.05)
         plt.grid(axis='y', linestyle='--', alpha=0.7)
 
     # 2. ASR by Trigger Rate and Gradient Mode
     plt.subplot(2, 2, 2)
-    sns.barplot(x='TRIGGER_RATE', y='FINAL_ASR', hue='GRAD_MODE', data=summary_df, ci=None)
+    sns.barplot(x='TRIGGER_RATE', y='FINAL_ASR', hue='GRAD_MODE', data=summary_df, errorbar=None)
     plt.title('ASR by Trigger Rate and Gradient Mode', fontsize=14)
     plt.ylim(0, 1.05)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
 
     # 3. ASR by Number of Adversaries and Sybil Mode
     plt.subplot(2, 2, 3)
-    sns.barplot(x='N_ADV', y='FINAL_ASR', hue='IS_SYBIL', data=summary_df, ci=None)
+    sns.barplot(x='N_ADV', y='FINAL_ASR', hue='IS_SYBIL', data=summary_df, errorbar=None)
     plt.title('ASR by Number of Adversaries and Sybil Mode', fontsize=14)
     plt.ylim(0, 1.05)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
 
     # 4. ASR by Sybil Mode and Gradient Mode
     plt.subplot(2, 2, 4)
-    sns.barplot(x='IS_SYBIL', y='FINAL_ASR', hue='GRAD_MODE', data=summary_df, ci=None)
+    sns.barplot(x='IS_SYBIL', y='FINAL_ASR', hue='GRAD_MODE', data=summary_df, errorbar=None)
     plt.title('ASR by Sybil Mode and Gradient Mode', fontsize=14)
     plt.ylim(0, 1.05)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
@@ -160,13 +160,13 @@ def plot_efficiency_analysis(summary_df, output_dir):
 
     # 1. ASR per Adversary by Number of Adversaries
     plt.subplot(1, 2, 1)
-    sns.barplot(x='N_ADV', y='ASR_PER_ADV', data=summary_df, ci=None)
+    sns.barplot(x='N_ADV', y='ASR_PER_ADV', data=summary_df, errorbar=None)
     plt.title('Attack Efficiency (ASR per Adversary)', fontsize=14)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
 
     # 2. ASR per Adversary by Gradient Mode and Sybil Mode
     plt.subplot(1, 2, 2)
-    sns.barplot(x='GRAD_MODE', y='ASR_PER_ADV', hue='IS_SYBIL', data=summary_df, ci=None)
+    sns.barplot(x='GRAD_MODE', y='ASR_PER_ADV', hue='IS_SYBIL', data=summary_df, errorbar=None)
     plt.title('Attack Efficiency by Gradient Mode and Sybil Mode', fontsize=14)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
 
@@ -183,7 +183,7 @@ def plot_stealth_analysis(summary_df, output_dir):
 
     # 1. Stealth by Gradient Mode
     plt.subplot(1, 2, 1)
-    sns.barplot(x='GRAD_MODE', y='STEALTH', data=summary_df, ci=None)
+    sns.barplot(x='GRAD_MODE', y='STEALTH', data=summary_df, errorbar=None)
     plt.title('Attack Stealth by Gradient Mode', fontsize=14)
     plt.ylim(0, 1.05)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
@@ -192,7 +192,7 @@ def plot_stealth_analysis(summary_df, output_dir):
     plt.subplot(1, 2, 2)
     # Create a new column for trigger rate and adversary combinations
     summary_df['TR_ADV'] = summary_df['TRIGGER_RATE'].astype(str) + '_' + summary_df['N_ADV'].astype(str)
-    sns.barplot(x='TR_ADV', y='STEALTH', data=summary_df, ci=None)
+    sns.barplot(x='TR_ADV', y='STEALTH', data=summary_df, errorbar=None)
     plt.title('Attack Stealth by Trigger Rate and N_ADV', fontsize=14)
     plt.ylim(0, 1.05)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
