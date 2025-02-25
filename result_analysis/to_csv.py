@@ -157,7 +157,7 @@ def get_save_path(n_sellers, n_adversaries, local_epoch, local_lr, gradient_mani
     return str(save_path)
 
 
-def process_all_experiments(output_dir='./processed_data', local_epoch=5,
+def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                             aggregation_methods=['martfl', 'fedavg']):
     """
     Process all experiment files for multiple aggregation methods.
