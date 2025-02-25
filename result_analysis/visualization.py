@@ -914,7 +914,8 @@ def create_summary_table(summary_df, output_dir):
 
         # Group by AGGREGATION_METHOD and GRAD_MODE
         if 'AGGREGATION_METHOD' in summary_df.columns and 'GRAD_MODE' in summary_df.columns:
-            agg_grad_stats = summary_df.groupby(['AGGREGATION_METHOD', 'GRAD_MODE'])[['FINAL_ASR', 'FINAL_MAIN_ACC']].mean().round(3)
+            agg_grad_stats = summary_df.groupby(['AGGREGATION_METHOD', 'GRAD_MODE'])[
+                ['FINAL_ASR', 'FINAL_MAIN_ACC']].mean().round(3)
             agg_grad_stats.to_csv(f"{output_dir}/aggregation_grad_mode_summary.csv")
 
         # Group by GRAD_MODE
@@ -946,7 +947,7 @@ def create_summary_table(summary_df, output_dir):
         if 'AGGREGATION_METHOD' in summary_df.columns and len(summary_df['AGGREGATION_METHOD'].unique()) > 1:
             # Group by all parameters except aggregation method
             param_cols = [col for col in ['GRAD_MODE', 'TRIGGER_RATE', 'POISON_STRENGTH', 'IS_SYBIL', 'N_ADV']
-                         if col in summary_df.columns]
+                          if col in summary_df.columns]
 
             # Pivot to compare aggregation methods for each configuration
             pivot_table = summary_df.pivot_table(
@@ -971,11 +972,14 @@ def create_summary_table(summary_df, output_dir):
                 # Calculate differences (Method1 - Method2)
                 diff_df = pd.DataFrame(index=comparison_df.index)
                 for metric in ['FINAL_ASR', 'FINAL_MAIN_ACC']:
-                    if (metric, agg_methods[0]) in comparison_df.columns and (metric, agg_methods[1]) in comparison_df.columns:
-                        diff_df[f"{metric}_DIFF"] = (comparison_df[metric, agg_methods[0]] - comparison_df[metric, agg_methods[1]]).round(3)
+                    if (metric, agg_methods[0]) in comparison_df.columns and (
+                            metric, agg_methods[1]) in comparison_df.columns:
+                        diff_df[f"{metric}_DIFF"] = (comparison_df[metric, agg_methods[0]] - comparison_df[
+                            metric, agg_methods[1]]).round(3)
 
                 # Save the difference table
                 diff_df.to_csv(f"{output_dir}/aggregation_method_differences.csv")
+
 
 def run_visualization(summary_csv, all_rounds_csv, output_dir):
     """

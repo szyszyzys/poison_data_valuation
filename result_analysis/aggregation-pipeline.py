@@ -1,31 +1,21 @@
-#!/usr/bin/env python3
-"""
-Federated Learning Backdoor Attack Analysis Pipeline with Aggregation Method Comparison
-
-This script processes experimental logs from federated learning backdoor attacks,
-extracts relevant metrics, and generates comprehensive visualizations.
-It supports comparison across different aggregation methods (fedavg, martfl, etc.).
-
-Usage:
-    python run_analysis_pipeline.py --local_epoch 5 --aggregation_methods martfl fedavg --output_dir ./results_analysis
-
-Author: Your Name
-"""
-
 import argparse
 import sys
 
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from result_analysis.selection_analysis import analyze_selection_patterns
+from result_analysis.visualization import run_visualization
+
 # Set plotting style
 sns.set(style="whitegrid")
 plt.rcParams.update({'font.size': 12})
 
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import os
+
+import pandas as pd
+import seaborn as sns
+from matplotlib import pyplot as plt
 
 
 def plot_aggregation_comparison(summary_df, output_dir):
@@ -245,7 +235,7 @@ def main():
     """Main function to run the entire analysis pipeline"""
 
     parser = argparse.ArgumentParser(description="Analyze federated learning backdoor attack results")
-    parser.add_argument("--local_epoch", type=int, default=2, help="Local epoch setting used in experiments")
+    parser.add_argument("--local_epoch", type=int, default=5, help="Local epoch setting used in experiments")
     parser.add_argument("--output_dir", default="./processed_results",
                         help="Output directory for processed data and visualizations")
     parser.add_argument("--skip_processing", action="store_true", help="Skip data processing step (use existing CSVs)")
@@ -275,20 +265,15 @@ def main():
         print(f"Aggregation methods: {args.aggregation_methods}")
 
         # Import the processing module
-        try:
-            from process_logs import process_all_experiments
+        from process_logs import process_all_experiments
 
-            all_rounds_df, summary_df = process_all_experiments(
-                output_dir=processed_data_dir,
-                local_epoch=args.local_epoch,
-                aggregation_methods=args.aggregation_methods
-            )
+        all_rounds_df, summary_df = process_all_experiments(
+            output_dir=processed_data_dir,
+            local_epoch=args.local_epoch,
+            aggregation_methods=args.aggregation_methods
+        )
 
-            print(f"Processed data saved to {processed_data_dir}")
-        except ImportError:
-            print("Error: process_logs.py not found in the current directory.")
-            print("Please make sure it's in the same directory as this script.")
-            sys.exit(1)
+        print(f"Processed data saved to {processed_data_dir}")
     else:
         print("Skipping data processing step.")
         if not (os.path.exists(summary_csv) and os.path.exists(all_rounds_csv)):
@@ -300,32 +285,18 @@ def main():
     if not args.skip_visualization:
         print("\nStep 2: Generating visualizations...")
 
-        # Import the visualization module
-        try:
-            from visualization import run_visualization
+        # Run the core visualizations
+        run_visualization(summary_csv, all_rounds_csv, visualization_dir)
+        print(f"Core visualizations saved to {visualization_dir}")
 
-            # Run the core visualizations
-            run_visualization(summary_csv, all_rounds_csv, visualization_dir)
-            print(f"Core visualizations saved to {visualization_dir}")
-            import pandas as pd
-            # Add aggregation method comparison if we have multiple methods
-            summary_df = pd.read_csv(summary_csv)
-            if 'AGGREGATION_METHOD' in summary_df.columns and len(summary_df['AGGREGATION_METHOD'].unique()) > 1:
-                print("\nGenerating aggregation method comparison visualizations...")
+        # Add aggregation method comparison if we have multiple methods
+        summary_df = pd.read_csv(summary_csv)
+        if 'AGGREGATION_METHOD' in summary_df.columns and len(summary_df['AGGREGATION_METHOD'].unique()) > 1:
+            print("\nGenerating aggregation method comparison visualizations...")
 
-                try:
-                    from aggregation_comparison import plot_aggregation_comparison
-                    plot_aggregation_comparison(summary_df, aggregation_comparison_dir)
-                    print(f"Aggregation comparison visualizations saved to {aggregation_comparison_dir}")
-                except ImportError:
-                    print("Warning: aggregation_comparison.py not found. Skipping aggregation comparison.")
-                    print(
-                        "Please make sure it's in the same directory as this script if you want to compare aggregation methods.")
+            plot_aggregation_comparison(summary_df, aggregation_comparison_dir)
+            print(f"Aggregation comparison visualizations saved to {aggregation_comparison_dir}")
 
-        except ImportError:
-            print("Error: visualization.py not found in the current directory.")
-            print("Please make sure it's in the same directory as this script.")
-            sys.exit(1)
     else:
         print("Skipping visualization step.")
 
@@ -334,31 +305,23 @@ def main():
         print("\nStep 3: Running selection pattern analysis...")
         os.makedirs(selection_analysis_dir, exist_ok=True)
 
-        # Import the selection analysis module only if needed
-        try:
-            from selection_analysis import analyze_selection_patterns
-            import pandas as pd
+        # Load the processed data
+        all_rounds_df = pd.read_csv(all_rounds_csv)
 
-            # Load the processed data
-            all_rounds_df = pd.read_csv(all_rounds_csv)
+        # Convert boolean columns
+        if 'IS_SYBIL' in all_rounds_df.columns:
+            all_rounds_df['IS_SYBIL'] = all_rounds_df['IS_SYBIL'].astype(bool)
 
-            # Convert boolean columns
-            if 'IS_SYBIL' in all_rounds_df.columns:
-                all_rounds_df['IS_SYBIL'] = all_rounds_df['IS_SYBIL'].astype(bool)
+        # Process used_sellers and outlier_ids if they're stored as strings
+        for col in ['used_sellers', 'outlier_ids']:
+            if col in all_rounds_df.columns and all_rounds_df[col].dtype == 'object':
+                all_rounds_df[col] = all_rounds_df[col].apply(
+                    lambda x: eval(x) if isinstance(x, str) and x != '' else []
+                )
 
-            # Process used_sellers and outlier_ids if they're stored as strings
-            for col in ['used_sellers', 'outlier_ids']:
-                if col in all_rounds_df.columns and all_rounds_df[col].dtype == 'object':
-                    all_rounds_df[col] = all_rounds_df[col].apply(
-                        lambda x: eval(x) if isinstance(x, str) and x != '' else []
-                    )
-
-            # Run the analysis
-            analyze_selection_patterns(all_rounds_df, selection_analysis_dir)
-            print(f"Selection pattern analysis saved to {selection_analysis_dir}")
-        except ImportError:
-            print("Error: selection_analysis.py not found in the current directory.")
-            print("Please make sure it's in the same directory as this script.")
+        # Run the analysis
+        analyze_selection_patterns(all_rounds_df, selection_analysis_dir)
+        print(f"Selection pattern analysis saved to {selection_analysis_dir}")
 
     # Done
     print("\nAnalysis pipeline completed successfully!")
