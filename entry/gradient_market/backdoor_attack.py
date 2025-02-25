@@ -1,9 +1,8 @@
 import argparse
+import numpy as np
 import os
 import random
 import shutil
-
-import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import Subset, TensorDataset, DataLoader
@@ -279,7 +278,6 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
     # record the attack result for the final round
 
 
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Run Backdoor Attack Experiment")
 
@@ -394,7 +392,7 @@ def get_save_path(args):
         subfolder = "no_attack"
         param_str = f"n_seller_{args.n_sellers}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
     elif args.gradient_manipulation_mode == "cmd":
-        subfolder = f"backdoor_mode_{args.gradient_manipulation_mode}_strength_{args.poison_strength}_trigger_type_{args.trigger_type}"
+        subfolder = f"backdoor_mode_{args.gradient_manipulation_mode}_strength_{args.poison_strength}_trigger_rate_{args.trigger_rate}_trigger_type_{args.trigger_type}"
         param_str = f"n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
     elif args.gradient_manipulation_mode == "single":
         subfolder = f"backdoor_mode_{args.gradient_manipulation_mode}_trigger_rate_{args.trigger_rate}_trigger_type_{args.trigger_type}"
