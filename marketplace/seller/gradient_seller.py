@@ -549,11 +549,11 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             self.backdoor_data + self.clean_data)
         # final_poisoned_flt = g_backdoor_flt
         # final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
-        # original_shapes = [param.shape for param in g_backdoor_update]
+        original_shapes = [param.shape for param in g_backdoor_update]
         # # final_poisoned = global_clip_np(final_poisoned_flt, 1)
         # final_poisoned = g_backdoor_update
-        # final_poisoned = unflatten_np(final_poisoned, original_shapes)
-        return np.array(g_backdoor_update)
+        final_poisoned = unflatten_np(g_backdoor_flt, original_shapes)
+        return final_poisoned
 
     def record_federated_round(self, round_number: int, is_selected: bool,
                                final_model_params: Optional[np.ndarray] = None):
