@@ -514,7 +514,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         return gradient
 
-    def gradient_manipulation_cmd(self, base_params, previous_selection=None):
+    def gradient_manipulation_cmd(self, base_params):
         if self.poison_strength != 1:
             grad_benign_update, g_benign_flt, local_model_benign, local_eval_res_n = self._compute_local_grad(
                 base_params,
@@ -537,8 +537,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             # final_poisoned_flt = g_backdoor_flt
             final_poisoned_flt = g_backdoor_flt
             original_shapes = [param.shape for param in g_backdoor_update]
-        if previous_selection:
-            final_poisoned_flt = self.alpha_align * final_poisoned_flt + (1 - self.alpha_align) * previous_selection
         # final_poisoned_flt = np.clip(final_poisoned_flt, -self.clip_value, self.clip_value)
         # final_poisoned = global_clip_np(final_poisoned_flt, 1)
         final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
@@ -550,9 +548,10 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             base_params,
             self.backdoor_data + self.clean_data)
         # final_poisoned_flt = g_backdoor_flt
-        final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
+        # final_poisoned_flt = np.clip(g_backdoor_flt, -self.clip_value, self.clip_value)
         original_shapes = [param.shape for param in g_backdoor_update]
-        final_poisoned = global_clip_np(final_poisoned_flt, 1)
+        # final_poisoned = global_clip_np(final_poisoned_flt, 1)
+        final_poisoned = g_backdoor_update
         final_poisoned = unflatten_np(final_poisoned, original_shapes)
         return final_poisoned
 

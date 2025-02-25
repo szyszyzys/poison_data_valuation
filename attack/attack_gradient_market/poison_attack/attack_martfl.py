@@ -223,44 +223,6 @@ class BackdoorImageGenerator:
         self.location = location
         self.randomize_location = randomize_location
 
-    # def generate_trigger_pattern(trigger_type: str, channels: int,
-    #                              trigger_size: Tuple[int, int] = (5, 5)) -> torch.Tensor:
-    #     """
-    #     Generate a backdoor trigger pattern based on the specified type.
-    #
-    #     :param trigger_type: The type of trigger pattern to generate. Options:
-    #                          - "blended_patch": A solid patch (e.g., a white square).
-    #                          - "checkerboard": A checkerboard pattern.
-    #                          - "noise": A random noise pattern.
-    #                          - "gradient": A horizontal gradient from 0 to 1.
-    #     :param channels: Number of channels for the trigger (should match input image channels).
-    #     :param trigger_size: Tuple (height, width) specifying the size of the trigger.
-    #     :return: A torch.Tensor of shape (height, width, channels) with values in [0, 1].
-    #     """
-    #     height, width = trigger_size
-    #
-    #     if trigger_type == "blended_patch":
-    #         # A solid patch: for instance, a white square (all ones)
-    #         trigger_pattern = torch.ones(height, width, channels)
-    #     elif trigger_type == "checkerboard":
-    #         # Create a checkerboard pattern: alternating 0 and 1
-    #         trigger_pattern = torch.zeros(height, width, channels)
-    #         for i in range(height):
-    #             for j in range(width):
-    #                 if (i + j) % 2 == 0:
-    #                     trigger_pattern[i, j] = 1.0
-    #     elif trigger_type == "noise":
-    #         # A noise pattern: random values in [0, 1]
-    #         trigger_pattern = torch.rand(height, width, channels)
-    #     elif trigger_type == "gradient":
-    #         # A horizontal gradient: values linearly increase from 0 to 1
-    #         # First create a 1D gradient then expand to match the desired shape and channels
-    #         gradient = torch.linspace(0, 1, steps=width).unsqueeze(0).repeat(height, 1)
-    #         trigger_pattern = gradient.unsqueeze(-1).repeat(1, 1, channels)
-    #     else:
-    #         raise ValueError(f"Unknown trigger type: {trigger_type}")
-    #
-    #     return trigger_pattern.float()
     @staticmethod
     def generate_trigger_pattern(
             trigger_type: str,
