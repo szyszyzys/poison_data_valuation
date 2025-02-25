@@ -1,9 +1,10 @@
 import os
-import pandas as pd
-import numpy as np
-import torch
 from pathlib import Path
-from collections import defaultdict
+
+import numpy as np
+import pandas as pd
+import torch
+
 
 def process_single_experiment(file_path, attack_params, aggregation_method):
     """
@@ -83,24 +84,32 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
                 'FINAL_TRIGGERED_ACC': sorted_records[-1].get('triggered_acc', None),
 
                 # Calculate ASR at different stages of training
-                'ASR_25PCT': next((r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.25), None),
-                'ASR_50PCT': next((r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.5), None),
-                'ASR_75PCT': next((r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.75), None),
+                'ASR_25PCT': next(
+                    (r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.25), None),
+                'ASR_50PCT': next(
+                    (r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.5), None),
+                'ASR_75PCT': next(
+                    (r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.75), None),
 
                 # Calculate rounds to reach specific ASR thresholds
-                'ROUNDS_TO_50PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.5), float('inf')),
-                'ROUNDS_TO_75PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.75), float('inf')),
-                'ROUNDS_TO_90PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.9), float('inf')),
+                'ROUNDS_TO_50PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.5),
+                                            float('inf')),
+                'ROUNDS_TO_75PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.75),
+                                            float('inf')),
+                'ROUNDS_TO_90PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.9),
+                                            float('inf')),
 
                 # Calculate average selection rates
                 'AVG_MALICIOUS_RATE': np.mean([r.get('malicious_rate', 0) or 0 for r in sorted_records]),
                 'AVG_BENIGN_RATE': np.mean([r.get('benign_rate', 0) or 0 for r in sorted_records]),
 
                 # Calculate attack efficiency
-                'ASR_PER_ADV': (sorted_records[-1].get('asr', 0) or 0) / attack_params['N_ADV'] if attack_params['N_ADV'] > 0 else 0,
+                'ASR_PER_ADV': (sorted_records[-1].get('asr', 0) or 0) / attack_params['N_ADV'] if attack_params[
+                                                                                                       'N_ADV'] > 0 else 0,
 
                 # Calculate stealth (1 - abs difference between clean and final accuracy)
-                'STEALTH': 1 - abs((sorted_records[-1].get('main_acc', 0) or 0) - (sorted_records[-1].get('clean_acc', 0) or 0)),
+                'STEALTH': 1 - abs(
+                    (sorted_records[-1].get('main_acc', 0) or 0) - (sorted_records[-1].get('clean_acc', 0) or 0)),
 
                 # Total rounds
                 'TOTAL_ROUNDS': len(sorted_records)
@@ -119,11 +128,13 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
         print(f"Error processing {file_path}: {e}")
         return [], {}
 
+
 def get_save_path(n_sellers, n_adversaries, local_epoch, local_lr, gradient_manipulation_mode,
                   poison_strength, trigger_type, is_sybil, trigger_rate,
                   aggregation_method='martfl', dataset_name='FMNIST', sybil_mode='mimic'):
     """
     Construct a save path based on the experiment parameters.
+    This is a copy of your function.
     """
     # Use is_sybil flag or, if not true, use sybil_mode
     sybil_str = str(sybil_mode) if is_sybil else False
@@ -133,7 +144,7 @@ def get_save_path(n_sellers, n_adversaries, local_epoch, local_lr, gradient_mani
         subfolder = "no_attack"
         param_str = f"n_seller_{n_sellers}_local_epoch_{local_epoch}_local_lr_{local_lr}"
     elif gradient_manipulation_mode == "cmd":
-        subfolder = f"backdoor_mode_{gradient_manipulation_mode}_strength_{poison_strength}_trigger_type_{trigger_type}"
+        subfolder = f"backdoor_mode_{gradient_manipulation_mode}_strength_{poison_strength}_trigger_rate_0.5_trigger_type_{trigger_type}"
         param_str = f"n_seller_{n_sellers}_n_adv_{n_adversaries}_local_epoch_{local_epoch}_local_lr_{local_lr}"
     elif gradient_manipulation_mode == "single":
         subfolder = f"backdoor_mode_{gradient_manipulation_mode}_trigger_rate_{trigger_rate}_trigger_type_{trigger_type}"
@@ -145,8 +156,9 @@ def get_save_path(n_sellers, n_adversaries, local_epoch, local_lr, gradient_mani
     save_path = base_dir / subfolder / param_str
     return str(save_path)
 
+
 def process_all_experiments(output_dir='./processed_data', local_epoch=5,
-                           aggregation_methods=['martfl', 'fedavg']):
+                            aggregation_methods=['martfl', 'fedavg']):
     """
     Process all experiment files for multiple aggregation methods.
 
@@ -237,6 +249,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=5,
         print(f"Saved summary data to {summary_csv}")
 
     return all_rounds_df, summary_df
+
 
 if __name__ == "__main__":
     import argparse
