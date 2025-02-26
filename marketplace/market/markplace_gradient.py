@@ -225,11 +225,11 @@ class DataMarketplaceFederated(DataMarketplace):
         # 8. Also store a high-level record in the marketplace logs
 
         # 9. Update each seller about whether they were selected
-        update_local_model_from_global(buyer, dataset_name, aggregated_gradient)
+        # update_local_model_from_global(buyer, dataset_name, aggregated_gradient)
         for idx, (sid, seller) in enumerate(self.sellers.items()):
             # Mark "is_selected" if in selected_sellers
             is_selected = (idx in selected_ids)
-            update_local_model_from_global(seller, dataset_name, aggregated_gradient)
+            # update_local_model_from_global(seller, dataset_name, aggregated_gradient)
             # reset the local gradient
             seller.round_end_process(round_number, is_selected)
         print(f"=============round {round_number} end summary=======================")
