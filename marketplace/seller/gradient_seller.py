@@ -4,12 +4,11 @@
 # from dataset import dataset_output_dim (if needed)
 import collections
 import copy
-from typing import Dict, List, Optional, Union
-from typing import Tuple
-
 import numpy as np
 import pandas as pd
 import torch
+from typing import Dict, List, Optional, Union
+from typing import Tuple
 
 from general_utils.data_utils import list_to_tensor_dataset
 from marketplace.seller.seller import BaseSeller
@@ -86,10 +85,13 @@ class SybilCoordinator:
             return
 
         # Otherwise, collect from registered sellers
+        selected_last_round_list = []
         for seller_id, seller in self.registered_clients.items():
             if hasattr(seller, 'selected_last_round') and seller.selected_last_round:
                 gradient = seller.get_local_gradient()
+                selected_last_round_list.append(seller_id)
                 self.selected_gradients[seller_id] = self._ensure_tensor(gradient)
+        print(f"Sybil selected in last round: {selected_last_round_list}")
 
     def _ensure_tensor(self, gradient: Union[torch.Tensor, List]) -> torch.Tensor:
         """
