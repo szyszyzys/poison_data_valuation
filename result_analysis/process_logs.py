@@ -64,7 +64,8 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
             if 'martfl_baseline_id' in record:
                 round_baseline_id = record['martfl_baseline_id']
                 round_data["baseline_client_id"] = round_baseline_id
-                round_data["malicious_baseline"] = round_baseline_id.startswith("adv")
+                if round_baseline_id:
+                    round_data["malicious_baseline"] = round_baseline_id.startswith("adv")
             processed_data.append(round_data)
 
         # Calculate summary metrics
