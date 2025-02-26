@@ -244,7 +244,9 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                     'GRAD_MODE': grad_mode,
                                     'TRIGGER_RATE': trigger_rate,
                                     'IS_SYBIL': is_sybil,
-                                    'ADV_RATE': adv_rate
+                                    'ADV_RATE': adv_rate,
+                                    'CHANGE_BASE': change_base,
+                                    'IID': data_split_mode
                                 }
 
                                 # Process the file
