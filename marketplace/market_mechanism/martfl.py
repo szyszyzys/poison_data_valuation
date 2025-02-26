@@ -330,8 +330,11 @@ class Aggregator:
                 # Create a model with this seller's update applied
                 seller_idx = seller_ids.index(seller_id)
 
+                torch_updates = [torch.from_numpy(delta).float() if isinstance(delta, np.ndarray) else delta
+                                 for delta in seller_updates[seller_id]]
+
                 # Apply the seller's update to get their model
-                updated_model = apply_gradient_update(self.global_model, seller_updates[seller_id])
+                updated_model = apply_gradient_update(self.global_model, torch_updates)
 
                 kappa = martfl_eval(updated_model, self.buyer_data_loader, self.loss_fn, self.device, num_classes=10)[2]
 
