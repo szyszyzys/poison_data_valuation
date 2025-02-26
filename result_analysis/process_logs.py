@@ -225,7 +225,8 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                     trigger_rate=trigger_rate,
                                     aggregation_method=aggregation_method,
                                     data_split_mode=data_split_mode,
-                                    change_base=change_base
+                                    change_base=change_base,
+                                    dataset_name="FMNIST"
                                 )
 
                                 # Construct the full file path
