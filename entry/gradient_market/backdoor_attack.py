@@ -179,10 +179,10 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
 
     # set up the data set for the participants
-    buyer_loader, client_loaders, full_dataset, test_loader = get_data_set(dataset_name,
-                                                                           buyer_percentage=buyer_percentage,
-                                                                           num_sellers=n_sellers,
-                                                                           label_split_type=data_split_mode)
+    buyer_loader, client_loaders, full_dataset, test_loader, class_names = get_data_set(dataset_name,
+                                                                                        buyer_percentage=buyer_percentage,
+                                                                                        num_sellers=n_sellers,
+                                                                                        label_split_type=data_split_mode)
 
     # config the buyer
     buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader.dataset, dataset_name=dataset_name,
