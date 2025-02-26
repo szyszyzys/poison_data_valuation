@@ -169,16 +169,16 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
         channels = 3
     loss_fn = nn.CrossEntropyLoss()
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
-                                                channels=channels, location = args.bkd_loc)
+                                                channels=channels, location=args.bkd_loc)
 
     early_stopper = FederatedEarlyStopper(patience=50, min_delta=0.01, monitor='acc')
 
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
 
     # set up the data set for the participants
-    buyer_loader, client_loaders, full_dataset, test_loader = get_data_set(dataset_name, buyer_count=buyer_count,
+    buyer_loader, client_loaders, full_dataset, test_loader = get_data_set(dataset_name, buyer_percentage=0.02,
                                                                            num_sellers=n_sellers,
-                                                                           iid=True)
+                                                                           label_split_type="NonIID")
 
     # config the buyer
     buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader.dataset, dataset_name=dataset_name,
@@ -312,6 +312,7 @@ def parse_args():
     parser.add_argument("--is_sybil", action="store_true", help="Enable sybil attack (default: False)")
     parser.add_argument("--sybil_mode", type=str, default="mimic", help="Sybil strategy")
     parser.add_argument("--bkd_loc", type=str, default="bottom_right", help="backdoor location")
+    parser.add_argument("--is_iid", action="store_true", help="Enable iid (default: False)")
 
     args = parser.parse_args()
     return args
@@ -388,7 +389,8 @@ def get_save_path(args):
     """
     # Use is_sybil flag or, if not true, use sybil_mode
     sybil_str = str(args.sybil_mode) if args.is_sybil else False
-    base_dir = Path("./results") / f"is_sybil_{sybil_str}" / "backdoor" / args.aggregation_method / args.dataset_name
+    base_dir = Path(
+        "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{args.is_iid}" / args.aggregation_method / args.dataset_name
 
     if args.gradient_manipulation_mode == "None":
         subfolder = "no_attack"

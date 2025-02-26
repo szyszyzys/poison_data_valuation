@@ -235,33 +235,10 @@ class Aggregator:
         print(f"current_weight: {weight}")
         print(f"similarity: {np_cosine_result}")
 
-        # 10. Compute baseline cosine similarity for each seller.
-        # Compute the baseline update from a ground-truth model.
-        # ground_truth_updates = compute_ground_truth_updates(
-        #     self.save_path, self.backup_models[0], ground_truth_model, self.device
-        # )
-        # ground_truth_updates_flat = flatten(ground_truth_updates)
-        # baseline_similarities = []
-        # for i in range(self.n_seller):
-        #     bs = cosine_xy(ground_truth_updates_flat, clients_update_flattened[i])
-        #     baseline_similarities.append(bs)
-        # print("Baseline similarities:", baseline_similarities)
 
         # 11. Final aggregation: sum weighted gradients.
         for idx, (gradient, wt) in enumerate(zip(seller_updates.values(), weight)):
             add_gradient_updates(aggregated_gradient, gradient, weight=wt)
-            # Compute and print norm of each aggregated parameter
-            # norms = [torch.norm(acc).item() for acc in aggregated_gradient]
-            # print(f"After update {idx}, norms: {norms}")
-
-        # 12. Update each client model (here using classic update; quantization not implemented)
-        # if self.quantization:
-        #     raise NotImplementedError("Quantization not implemented.")
-        # else:
-        #     for i, model_name in enumerate(self.client_models):
-        #         model = load_model(, get_backup_name_from_model_name(model_name), self.device)
-        #         updated_model = add_update_to_model(model, aggregated_gradient, weight=1.0, device=self.device)
-        #         save_model(self.exp_name, model_name, updated_model)
 
         # Return aggregated gradient, selected seller IDs, outlier seller IDs, and baseline similarities.
         return aggregated_gradient, selected_ids, outlier_ids
