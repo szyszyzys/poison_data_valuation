@@ -161,7 +161,7 @@ def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
     # Use is_sybil flag or, if not true, use sybil_mode
     sybil_str = str(sybil_mode) if is_sybil else "False"
 
-    if args.aggregation_method == "martfl":
+    if aggregation_method == "martfl":
         base_dir = Path(
             "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / f"{aggregation_method}_{change_base}" / dataset_name
     else:
