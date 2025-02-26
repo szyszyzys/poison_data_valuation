@@ -201,7 +201,7 @@ class BackdoorImageGenerator:
                  trigger_type: str,
                  target_label: int,
                  channels: int,
-                 trigger_size: Tuple[int, int] = (5, 5),
+                 trigger_size: Tuple[int, int] = (10, 10),
                  alpha: float = 0.5,
                  location: str = "bottom_right",
                  randomize_location: bool = False):
