@@ -65,7 +65,7 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
                 round_baseline_id = record['martfl_baseline_id']
                 round_data["baseline_client_id"] = round_baseline_id
                 if round_baseline_id:
-                    round_data["malicious_baseline"] = round_baseline_id.startswith("adv")
+                    round_data["malicious_baseline"] = isinstance(round_baseline_id, str)
             processed_data.append(round_data)
 
         # Calculate summary metrics
@@ -109,7 +109,7 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
 
                 # Calculate attack efficiency
                 'ASR_PER_ADV': (sorted_records[-1].get('asr', 0) or 0) / attack_params['ADV_RATE'] if attack_params[
-                                                                                                       'ADV_RATE'] > 0 else 0,
+                                                                                                          'ADV_RATE'] > 0 else 0,
 
                 # Calculate stealth (1 - abs difference between clean and final accuracy)
                 'STEALTH': 1 - abs(
