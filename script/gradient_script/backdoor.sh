@@ -6,7 +6,7 @@ WORK_DIR="/scratch/zzs5287/poison_data_valuation"
 export PYTHONPATH="$WORK_DIR:$PYTHONPATH"
 echo $PYTHONPATH
 
-n_sellers_list=(10)
+n_sellers_list=(30)
 poison_strength_list=(1.0)
 gradient_manipulation_mode="single"  # Default; can be overridden via command-line
 
@@ -31,6 +31,7 @@ trigger_rate="0.5"
 is_sybil_flag=""
 sybil_mode=""
 bkd_loc="bottom_right"
+data_split_mode="IID"
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -74,7 +75,10 @@ while [[ "$#" -gt 0 ]]; do
             sybil_mode="$2"
             shift 2
             ;;
-
+        --data_split_mode)
+            data_split_mode="$2"
+            shift 2
+            ;;
         --bkd_loc)
           bkd_loc="$2"
             shift 2
@@ -151,6 +155,7 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --aggregation_method "$aggregation_method" \
                   --trigger_rate "$trigger_rate" \
                   --bkd_loc "$bkd_loc" \
+                  --data_split_mode data_split_mode \
                   $is_sybil_flag
           done
         done
