@@ -21,7 +21,7 @@ POISON_STRENGTHS=(1)
 SYBIL_MODES=("mimic")
 N_ADVS=(0.1 0.2 0.3 0.4)
 ALPHAS=(0.3 0.5)
-
+data_split_modes=("NonIID" "IID")
 # We'll run local-only (is_sybil=False) for some combos as well.
 IS_SYBIL_VALUES=("False" "True")
 #IS_SYBIL_VALUES=("False")
@@ -35,6 +35,7 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
       for RATE in "${TRIGGER_RATES[@]}"; do
         for GMODE in "${GRAD_MODES[@]}"; do
           for NADV in "${N_ADVS[@]}"; do
+            for data_split_mode in "${data_split_modes[@]}"; do
             # If is_sybil=False, we skip sybil-mode loops entirely:
             if [ "$IS_SYBIL" = "False" ]; then
               echo "Running local-only: $TRIGGER_TYPE, $PS, $RATE, $GMODE"
@@ -46,7 +47,8 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                      --aggregation_method "$agg_name" \
                      --gpu_ids "$gpu_ids" \
                      --adv_rate "$NADV"\
-                     --trigger_rate "$RATE"
+                     --trigger_rate "$RATE" \
+                     --data_split_mode "$data_split_mode"
             else
               # If is_sybil=True, we loop over sybil modes and param combos.
                 for SYBIL_MODE in "${SYBIL_MODES[@]}"; do
@@ -61,10 +63,12 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                            --aggregation_method "$agg_name" \
                            --gpu_ids "$gpu_ids" \
                            --adv_rate "$NADV" \
-                           --trigger_rate "$RATE"
+                           --trigger_rate "$RATE" \
+                           --data_split_mode "$data_split_mode"
                   done
                 done
             fi
+          done
          done
         done
       done
