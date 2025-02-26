@@ -20,7 +20,7 @@ POISON_STRENGTHS=(1)
 # Sybil param sets
 SYBIL_MODES=("mimic")
 N_ADVS=(0.1 0.2 0.3 0.4)
-ALPHAS=(0.3 0.5)
+ALPHAS=(0.5)
 data_split_modes=("NonIID" "IID")
 # We'll run local-only (is_sybil=False) for some combos as well.
 IS_SYBIL_VALUES=("False" "True")

@@ -129,26 +129,47 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
         return [], {}
 
 
-def get_save_path(n_sellers, n_adversaries, local_epoch, local_lr, gradient_manipulation_mode,
-                  poison_strength, trigger_type, is_sybil, trigger_rate,
-                  aggregation_method='martfl', dataset_name='FMNIST', sybil_mode='mimic'):
+def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
+                  sybil_mode=False, is_sybil=False, data_split_mode='iid',
+                  aggregation_method='fedavg', dataset_name='cifar10',
+                  poison_strength=None, trigger_rate=None, trigger_type=None,
+                  adv_rate=None):
     """
     Construct a save path based on the experiment parameters.
-    This is a copy of your function.
+
+    Args:
+        n_sellers: Number of sellers
+        local_epoch: Number of local epochs
+        local_lr: Local learning rate
+        gradient_manipulation_mode: Type of attack ("None", "cmd", "single")
+        sybil_mode: Mode of sybil attack
+        is_sybil: Whether sybil attack is used
+        data_split_mode: Data split mode
+        aggregation_method: Aggregation method used
+        dataset_name: Name of the dataset
+        poison_strength: Strength of poisoning (for "cmd")
+        trigger_rate: Rate of trigger insertion
+        trigger_type: Type of trigger used
+        adv_rate: Rate of adversaries
+
+    Returns:
+        A string representing the path.
     """
     # Use is_sybil flag or, if not true, use sybil_mode
-    sybil_str = str(sybil_mode) if is_sybil else False
-    base_dir = Path("./results") / f"is_sybil_{sybil_str}" / "backdoor" / aggregation_method / dataset_name
+    sybil_str = str(sybil_mode) if is_sybil else "False"
+
+    base_dir = Path(
+        "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / aggregation_method / dataset_name
 
     if gradient_manipulation_mode == "None":
         subfolder = "no_attack"
         param_str = f"n_seller_{n_sellers}_local_epoch_{local_epoch}_local_lr_{local_lr}"
     elif gradient_manipulation_mode == "cmd":
-        subfolder = f"backdoor_mode_{gradient_manipulation_mode}_strength_{poison_strength}_trigger_rate_0.5_trigger_type_{trigger_type}"
-        param_str = f"n_seller_{n_sellers}_n_adv_{n_adversaries}_local_epoch_{local_epoch}_local_lr_{local_lr}"
+        subfolder = f"backdoor_mode_{gradient_manipulation_mode}_strength_{poison_strength}_trigger_rate_{trigger_rate}_trigger_type_{trigger_type}"
+        param_str = f"n_seller_{n_sellers}_adv_rate_{adv_rate}_local_epoch_{local_epoch}_local_lr_{local_lr}"
     elif gradient_manipulation_mode == "single":
         subfolder = f"backdoor_mode_{gradient_manipulation_mode}_trigger_rate_{trigger_rate}_trigger_type_{trigger_type}"
-        param_str = f"n_seller_{n_sellers}_n_adv_{n_adversaries}_local_epoch_{local_epoch}_local_lr_{local_lr}"
+        param_str = f"n_seller_{n_sellers}_adv_rate_{adv_rate}_local_epoch_{local_epoch}_local_lr_{local_lr}"
     else:
         raise NotImplementedError(f"No such attack type: {gradient_manipulation_mode}")
 
@@ -176,31 +197,28 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
     # Process each aggregation method
     for aggregation_method in aggregation_methods:
         print(f"\nProcessing experiments for {aggregation_method}...")
-
-        # Use the same parameter combinations as in your loop
-        for grad_mode in ['cmd', 'single']:
-            for trigger_rate in [0.1, 0.5, 0.7]:
-                for poison_strength in [0.1, 0.5, 1.0]:
+        for data_split_mode in ["NonIID", "IID"]:
+            for grad_mode in ['single']:
+                for trigger_rate in [0.25, 0.5]:
                     for is_sybil in [False, True]:
-                        for n_adv in [1, 3, 5]:
+                        for adv_rate in [0.1, 0.2, 0.3, 0.4]:
                             # Skip invalid combinations
-                            if grad_mode == 'single' and poison_strength != 0.1:
-                                continue
                             if trigger_rate == 0.7 and grad_mode == 'cmd':
                                 continue
 
                             # Get the file path
                             save_path = get_save_path(
-                                n_sellers=10,
-                                n_adversaries=n_adv,
+                                n_sellers=30,
+                                adv_rate=adv_rate,
                                 local_epoch=local_epoch,
                                 local_lr=1e-2,
                                 gradient_manipulation_mode=grad_mode,
-                                poison_strength=poison_strength,
+                                poison_strength=0,
                                 trigger_type="blended_patch",
                                 is_sybil=is_sybil,
                                 trigger_rate=trigger_rate,
-                                aggregation_method=aggregation_method
+                                aggregation_method=aggregation_method,
+                                data_split_mode=data_split_mode
                             )
 
                             # Construct the full file path
@@ -216,9 +234,8 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                             attack_params = {
                                 'GRAD_MODE': grad_mode,
                                 'TRIGGER_RATE': trigger_rate,
-                                'POISON_STRENGTH': poison_strength,
                                 'IS_SYBIL': is_sybil,
-                                'N_ADV': n_adv
+                                'ADV_RATE': adv_rate
                             }
 
                             # Process the file
