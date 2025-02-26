@@ -174,7 +174,7 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
                                                 channels=channels, location=args.bkd_loc)
 
-    early_stopper = FederatedEarlyStopper(patience=50, min_delta=0.01, monitor='acc')
+    early_stopper = FederatedEarlyStopper(patience=20, min_delta=0.01, monitor='acc')
 
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
 
@@ -396,8 +396,12 @@ def get_save_path(args):
     """
     # Use is_sybil flag or, if not true, use sybil_mode
     sybil_str = str(args.sybil_mode) if args.is_sybil else False
-    base_dir = Path(
-        "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / args.aggregation_method / args.dataset_name
+    if args.aggregation_method == "martfl":
+        base_dir = Path(
+            "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"{args.aggregation_method}_{args.change_base}" / args.dataset_name
+    else:
+        base_dir = Path(
+            "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / args.aggregation_method / args.dataset_name
 
     if args.gradient_manipulation_mode == "None":
         subfolder = "no_attack"

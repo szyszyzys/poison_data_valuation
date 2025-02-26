@@ -11,6 +11,7 @@ echo $PYTHONPATH
 agg_name=${1,-"martfl"}
 dataset_name=${2,-"FMNIST"}
 gpu_ids=${3,-"6"}
+change_base=${4,-"True"}
 
 # Fixed local attack param sets
 TRIGGER_TYPES=("blended_patch")
@@ -48,7 +49,8 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                      --gpu_ids "$gpu_ids" \
                      --adv_rate "$NADV"\
                      --trigger_rate "$RATE" \
-                     --data_split_mode "$data_split_mode"
+                     --data_split_mode "$data_split_mode"\
+                     --change_base "$change_base"
             else
               # If is_sybil=True, we loop over sybil modes and param combos.
                 for SYBIL_MODE in "${SYBIL_MODES[@]}"; do
@@ -64,7 +66,8 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                            --gpu_ids "$gpu_ids" \
                            --adv_rate "$NADV" \
                            --trigger_rate "$RATE" \
-                           --data_split_mode "$data_split_mode"
+                           --data_split_mode "$data_split_mode"\
+                          --change_base "$change_base"
                   done
                 done
             fi

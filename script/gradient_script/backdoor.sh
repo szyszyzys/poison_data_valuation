@@ -32,6 +32,7 @@ is_sybil_flag=""
 sybil_mode=""
 bkd_loc="bottom_right"
 data_split_mode="IID"
+change_base="True"
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -83,11 +84,16 @@ while [[ "$#" -gt 0 ]]; do
           bkd_loc="$2"
             shift 2
             ;;
+        --change_base)
+          change_base="$2"
+            shift 2
+            ;;
         --is_sybil)
             # If the flag is provided, set sybil mode to true.
             is_sybil_flag="--is_sybil"
             shift 1
             ;;
+
 
         *)
             echo "Unknown parameter passed: $1"
@@ -156,6 +162,7 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --trigger_rate "$trigger_rate" \
                   --bkd_loc "$bkd_loc" \
                   --data_split_mode "$data_split_mode" \
+                  --change_base "$change_base"\
                   $is_sybil_flag
           done
         done
