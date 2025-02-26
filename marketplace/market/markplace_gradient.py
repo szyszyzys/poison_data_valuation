@@ -69,6 +69,8 @@ class DataMarketplaceFederated(DataMarketplace):
         for seller_id, seller in self.sellers.items():
             # for martfl, local have no access to the global params
             grad_np = seller.get_gradient_for_upload(base_model)
+            print(grad_np)
+            print(grad_np.dtype)
             norm = np.linalg.norm(flatten(grad_np))
             print(f"The {seller_id} gradient norm is: {norm}")
             gradients[seller_id] = grad_np
