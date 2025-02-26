@@ -155,7 +155,7 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --aggregation_method "$aggregation_method" \
                   --trigger_rate "$trigger_rate" \
                   --bkd_loc "$bkd_loc" \
-                  --data_split_mode data_split_mode \
+                  --data_split_mode "$data_split_mode" \
                   $is_sybil_flag
           done
         done

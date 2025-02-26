@@ -308,7 +308,7 @@ class GradientSeller(BaseSeller):
         # Update internal counter
         self.cur_upload_gradient_flt = gradient_flt
 
-        return gradient, gradient_flt, updated_model, local_eval_res
+        return gradient
 
     def _compute_local_grad(self, base_model, dataset):
         """
