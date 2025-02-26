@@ -528,8 +528,25 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         :param global_model: Global model to be used as starting point (will be deep copied)
         :return: Final gradient to be uploaded to the server
         """
+
+        if global_model is not None:
+            # Deep copy the provided global model
+            base_model = copy.deepcopy(global_model)
+            print(f"[{self.seller_id}] Using provided global model.")
+        else:
+            try:
+                # Load previous local model if no global model provided
+                base_model = self.load_local_model()
+                print(f"[{self.seller_id}] Loaded previous local model.")
+            except Exception as e:
+                print(f"[{self.seller_id}] No saved model found; using default initialization.")
+                base_model = get_model(self.dataset_name)  # Create a new model with default initialization
+
+        # Move the model to the correct device
+        base_model = base_model.to(self.device)
+
         # Step 1: Compute the local gradient (potentially malicious)
-        local_grad = self.get_local_gradient(global_model)
+        local_grad = self.get_local_gradient(base_model)
 
         # Save the computed gradient
         self.cur_upload_gradient_flt = local_grad
@@ -564,8 +581,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         # Get base model - either from global_model or from saved local model
         if global_model is not None:
-            base_model = copy.deepcopy(global_model)
-            base_model = base_model.to(self.device)
+            base_model = global_model
         else:
             try:
                 base_model = self.load_local_model()
