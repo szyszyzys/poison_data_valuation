@@ -136,7 +136,7 @@ def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
                   sybil_mode=False, is_sybil=False, data_split_mode='iid',
                   aggregation_method='fedavg', dataset_name='cifar10',
                   poison_strength=None, trigger_rate=None, trigger_type=None,
-                  adv_rate=None):
+                  adv_rate=None, change_base="True"):
     """
     Construct a save path based on the experiment parameters.
 
@@ -161,8 +161,12 @@ def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
     # Use is_sybil flag or, if not true, use sybil_mode
     sybil_str = str(sybil_mode) if is_sybil else "False"
 
-    base_dir = Path(
-        "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / aggregation_method / dataset_name
+    if args.aggregation_method == "martfl":
+        base_dir = Path(
+            "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / f"{aggregation_method}_{change_base}" / dataset_name
+    else:
+        base_dir = Path(
+            "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / aggregation_method / dataset_name
 
     if gradient_manipulation_mode == "None":
         subfolder = "no_attack"
@@ -205,49 +209,53 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                 for trigger_rate in [0.25, 0.5]:
                     for is_sybil in [False, True]:
                         for adv_rate in [0.1, 0.2, 0.3, 0.4]:
-                            # Get the file path
-                            save_path = get_save_path(
-                                n_sellers=30,
-                                adv_rate=adv_rate,
-                                local_epoch=local_epoch,
-                                local_lr=1e-2,
-                                gradient_manipulation_mode=grad_mode,
-                                poison_strength=0,
-                                trigger_type="blended_patch",
-                                is_sybil=is_sybil,
-                                trigger_rate=trigger_rate,
-                                aggregation_method=aggregation_method,
-                                data_split_mode=data_split_mode
-                            )
+                            for change_base in ["True", "False"]:
+                                if aggregation_method == "fedavg" and change_base == "True":
+                                    continue
+                                # Get the file path
+                                save_path = get_save_path(
+                                    n_sellers=30,
+                                    adv_rate=adv_rate,
+                                    local_epoch=local_epoch,
+                                    local_lr=1e-2,
+                                    gradient_manipulation_mode=grad_mode,
+                                    poison_strength=0,
+                                    trigger_type="blended_patch",
+                                    is_sybil=is_sybil,
+                                    trigger_rate=trigger_rate,
+                                    aggregation_method=aggregation_method,
+                                    data_split_mode=data_split_mode,
+                                    change_base=change_base
+                                )
 
-                            # Construct the full file path
-                            file_path = f"{save_path}/market_log.ckpt"
+                                # Construct the full file path
+                                file_path = f"{save_path}/market_log.ckpt"
 
-                            if not os.path.exists(file_path):
-                                print(f"File not found: {file_path}")
-                                continue
+                                if not os.path.exists(file_path):
+                                    print(f"File not found: {file_path}")
+                                    continue
 
-                            print(f"Processing: {file_path}")
+                                print(f"Processing: {file_path}")
 
-                            # Extract attack parameters
-                            attack_params = {
-                                'GRAD_MODE': grad_mode,
-                                'TRIGGER_RATE': trigger_rate,
-                                'IS_SYBIL': is_sybil,
-                                'ADV_RATE': adv_rate
-                            }
+                                # Extract attack parameters
+                                attack_params = {
+                                    'GRAD_MODE': grad_mode,
+                                    'TRIGGER_RATE': trigger_rate,
+                                    'IS_SYBIL': is_sybil,
+                                    'ADV_RATE': adv_rate
+                                }
 
-                            # Process the file
-                            processed_data, summary = process_single_experiment(
-                                file_path,
-                                attack_params,
-                                aggregation_method
-                            )
+                                # Process the file
+                                processed_data, summary = process_single_experiment(
+                                    file_path,
+                                    attack_params,
+                                    aggregation_method
+                                )
 
-                            # Add to the overall data
-                            all_processed_data.extend(processed_data)
-                            if summary:
-                                all_summary_data.append(summary)
+                                # Add to the overall data
+                                all_processed_data.extend(processed_data)
+                                if summary:
+                                    all_summary_data.append(summary)
 
     # Convert to DataFrames
     all_rounds_df = pd.DataFrame(all_processed_data)
