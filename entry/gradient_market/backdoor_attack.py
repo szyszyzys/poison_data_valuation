@@ -320,7 +320,7 @@ def parse_args():
     parser.add_argument("--bkd_loc", type=str, default="bottom_right", help="backdoor location")
     parser.add_argument("--data_split_mode", type=str, default="NonIID", help="backdoor location")
     parser.add_argument('--buyer_percentage', type=float, default=0.003, help='Strength of poisoning')
-
+    parser.add_argument("--change_base", type=str, default="True", help="backdoor location")
     args = parser.parse_args()
     return args
 
@@ -481,7 +481,8 @@ def main():
         local_attack_params=local_attack_params,
         local_training_params=local_training_params,
         buyer_percentage=args.buyer_percentage,
-        data_split_mode=args.data_split_mode
+        data_split_mode=args.data_split_mode,
+        change_base=(args.change_base == "True")
 
     )
 

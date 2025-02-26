@@ -61,7 +61,10 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
                 round_data['benign_rate'] = selection_info.get('benign_rate', None)
                 round_data['avg_malicious_rate'] = selection_info.get('avg_malicious_rate', None)
                 round_data['avg_benign_rate'] = selection_info.get('avg_benign_rate', None)
-
+            if 'martfl_baseline_id' in record:
+                round_baseline_id = record['martfl_baseline_id']
+                round_data["baseline_client_id"] = round_baseline_id
+                round_data["malicious_baseline"] = round_baseline_id.startswith("adv")
             processed_data.append(round_data)
 
         # Calculate summary metrics
@@ -202,10 +205,6 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                 for trigger_rate in [0.25, 0.5]:
                     for is_sybil in [False, True]:
                         for adv_rate in [0.1, 0.2, 0.3, 0.4]:
-                            # Skip invalid combinations
-                            if trigger_rate == 0.7 and grad_mode == 'cmd':
-                                continue
-
                             # Get the file path
                             save_path = get_save_path(
                                 n_sellers=30,
