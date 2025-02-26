@@ -1,8 +1,9 @@
 import argparse
-import numpy as np
 import os
 import random
 import shutil
+
+import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import Subset, TensorDataset, DataLoader
@@ -153,15 +154,17 @@ class FederatedEarlyStopper:
         return self.counter >= self.patience
 
 
-def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, aggregation_method='martfl',
+def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregation_method='martfl',
                     global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", save_path="/",
                     device='cpu', poison_strength=1, poison_test_sample=100, args=None, trigger_rate=0.1,
-                    buyer_count=5000,
-                    sybil_params=None, local_attack_params=None, local_training_params=None):
+                    buyer_percentage=0.02,
+                    sybil_params=None, local_attack_params=None, local_training_params=None, change_base=True,
+                    data_split_mode="NonIID"):
     sybil_coordinator = SybilCoordinator(default_mode=sybil_params['sybil_mode'], alpha=sybil_params["alpha"],
                                          amplify_factor=sybil_params["amplify_factor"],
                                          cost_scale=sybil_params["cost_scale"])
     # load the dataset
+    n_adversaries = int(n_sellers * adv_rate)
     gradient_manipulation_mode = args.gradient_manipulation_mode
     if dataset_name == "FMNIST":
         channels = 1
@@ -176,9 +179,10 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
 
     # set up the data set for the participants
-    buyer_loader, client_loaders, full_dataset, test_loader = get_data_set(dataset_name, buyer_percentage=0.02,
+    buyer_loader, client_loaders, full_dataset, test_loader = get_data_set(dataset_name,
+                                                                           buyer_percentage=buyer_percentage,
                                                                            num_sellers=n_sellers,
-                                                                           label_split_type="NonIID")
+                                                                           label_split_type=data_split_mode)
 
     # config the buyer
     buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader.dataset, dataset_name=dataset_name,
@@ -187,11 +191,13 @@ def backdoor_attack(dataset_name, n_sellers, n_adversaries, model_structure, agg
     # config the marketplace
     aggregator = Aggregator(save_path=save_path,
                             n_seller=n_sellers,
-                            n_adversaries=n_adversaries,
                             model_structure=model_structure,
                             dataset_name=dataset_name,
                             quantization=False,
-                            aggregation_method=aggregation_method
+                            aggregation_method=aggregation_method,
+                            change_base=change_base,
+                            buyer_data_loader=buyer_loader,
+                            loss_fn=loss_fn
                             )
     marketplace = DataMarketplaceFederated(aggregator,
                                            selection_method=aggregation_method, save_path=save_path)
@@ -285,8 +291,8 @@ def parse_args():
     # Required arguments
     parser.add_argument('--dataset_name', type=str, default='FMNIST',
                         help='Name of the dataset (e.g., MNIST, CIFAR10)')
-    parser.add_argument('--n_sellers', type=int, default=10, help='Number of sellers')
-    parser.add_argument('--n_adversaries', type=int, default=1, help='Number of adversaries')
+    parser.add_argument('--n_sellers', type=int, default=30, help='Number of sellers')
+    parser.add_argument('--adv_rate', type=float, default=0.2, help='Number of adversaries')
 
     # Optional arguments with defaults
     parser.add_argument('--global_rounds', type=int, default=1, help='Number of global training rounds')
@@ -312,7 +318,8 @@ def parse_args():
     parser.add_argument("--is_sybil", action="store_true", help="Enable sybil attack (default: False)")
     parser.add_argument("--sybil_mode", type=str, default="mimic", help="Sybil strategy")
     parser.add_argument("--bkd_loc", type=str, default="bottom_right", help="backdoor location")
-    parser.add_argument("--is_iid", action="store_true", help="Enable iid (default: False)")
+    parser.add_argument("--data_split_mode", type=str, default="NonIID", help="backdoor location")
+    parser.add_argument('--buyer_percentage', type=float, default=0.003, help='Strength of poisoning')
 
     args = parser.parse_args()
     return args
@@ -390,17 +397,17 @@ def get_save_path(args):
     # Use is_sybil flag or, if not true, use sybil_mode
     sybil_str = str(args.sybil_mode) if args.is_sybil else False
     base_dir = Path(
-        "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{args.is_iid}" / args.aggregation_method / args.dataset_name
+        "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / args.aggregation_method / args.dataset_name
 
     if args.gradient_manipulation_mode == "None":
         subfolder = "no_attack"
         param_str = f"n_seller_{args.n_sellers}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
     elif args.gradient_manipulation_mode == "cmd":
         subfolder = f"backdoor_mode_{args.gradient_manipulation_mode}_strength_{args.poison_strength}_trigger_rate_{args.trigger_rate}_trigger_type_{args.trigger_type}"
-        param_str = f"n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
+        param_str = f"n_seller_{args.n_sellers}_adv_rate_{args.adv_rate}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
     elif args.gradient_manipulation_mode == "single":
         subfolder = f"backdoor_mode_{args.gradient_manipulation_mode}_trigger_rate_{args.trigger_rate}_trigger_type_{args.trigger_type}"
-        param_str = f"n_seller_{args.n_sellers}_n_adv_{args.n_adversaries}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
+        param_str = f"n_seller_{args.n_sellers}_adv_rate_{args.adv_rate}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
     else:
         raise NotImplementedError(f"No such attack type: {args.gradient_manipulation_mode}")
 
@@ -429,7 +436,7 @@ def main():
         "alpha": 0.5,
         "amplify_factor": 2.0,
         "cost_scale": 1.5,
-        "n_adversaries": args.n_adversaries
+        "adv_rate": args.adv_rate
     }
 
     local_training_params = {
@@ -458,7 +465,7 @@ def main():
     backdoor_attack(
         dataset_name=args.dataset_name,
         n_sellers=args.n_sellers,
-        n_adversaries=args.n_adversaries,
+        adv_rate=args.adv_rate,
         model_structure=t_model,
         global_rounds=args.global_rounds,
         backdoor_target_label=args.backdoor_target_label,
@@ -472,7 +479,9 @@ def main():
         args=args,
         sybil_params=sybil_params,
         local_attack_params=local_attack_params,
-        local_training_params=local_training_params
+        local_training_params=local_training_params,
+        buyer_percentage=args.buyer_percentage,
+        data_split_mode=args.data_split_mode
 
     )
 

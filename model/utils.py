@@ -187,6 +187,19 @@ def apply_gradient_update(initial_model: nn.Module, grad_update: List[torch.Tens
     return updated_model
 
 
+def get_model_params(model):
+    """
+    Extracts all parameters from a PyTorch model into a dictionary.
+
+    Parameters:
+        model: A PyTorch model
+
+    Returns:
+        Dict[str, torch.Tensor]: Dictionary mapping parameter names to their values
+    """
+    return {name: param.clone().detach() for name, param in model.state_dict().items()}
+
+
 # ---------------------------
 # Model Saving/Loading Utilities
 # ---------------------------

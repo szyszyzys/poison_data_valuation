@@ -1,7 +1,7 @@
 #!/bin/bash
 # run_experiments.sh
 # This script runs the Python script with varying parameters.
-# bash script/gradient_script/backdoor.sh --n_adversaries "1,2,3,4,5" --gpu_ids 6 --dataset_name fmnist --aggregation_method fedavg --poison_strength "0.5,1" --gradient_manipulation_mode cmd --trigger_rate 0.5
+# bash script/gradient_script/backdoor.sh --adv_rate "1,2,3,4,5" --gpu_ids 6 --dataset_name fmnist --aggregation_method fedavg --poison_strength "0.5,1" --gradient_manipulation_mode cmd --trigger_rate 0.5
 WORK_DIR="/scratch/zzs5287/poison_data_valuation"
 export PYTHONPATH="$WORK_DIR:$PYTHONPATH"
 echo $PYTHONPATH
@@ -21,7 +21,7 @@ seed=42
 gpu_ids="7"
 poison_test_sample=10000
 local_lr="1e-2"
-n_adversaries_arg="1"
+adv_rate_arg="1"
 aggregation_method='martfl'
 # Initialize these to empty strings to check later
 local_epoch_arg="2"
@@ -34,8 +34,8 @@ bkd_loc="bottom_right"
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --n_adversaries)
-            n_adversaries_arg="$2"
+        --adv_rate)
+            adv_rate_arg="$2"
             shift 2
             ;;
         --local_epoch)
@@ -93,10 +93,10 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Process command-line inputs that may be comma-separated lists.
-if [[ -n "$n_adversaries_arg" ]]; then
-    IFS=',' read -r -a n_adversaries_list <<< "$n_adversaries_arg"
+if [[ -n "$adv_rate_arg" ]]; then
+    IFS=',' read -r -a adv_rate_list <<< "$adv_rate_arg"
 else
-    echo "Error: --n_adversaries argument is missing or empty."
+    echo "Error: --adv_rate argument is missing or empty."
     exit 1
 fi
 
@@ -114,7 +114,7 @@ fi
 # Debug: Print final configuration
 echo "Final configuration:"
 echo "  n_sellers: ${n_sellers_list[@]}"
-echo "  n_adversaries: ${n_adversaries_list[@]}"
+echo "  adv_rate: ${adv_rate_list[@]}"
 echo "  local_epoch: ${local_epoch_list[@]}"
 echo "  poison_strength: ${poison_strength_list[@]}"
 echo "  gradient_manipulation_mode: $gradient_manipulation_mode"
@@ -129,13 +129,13 @@ echo "  is_sybil_flag: $is_sybil_flag"
 # Loop over combinations and run experiments
 for local_epoch in "${local_epoch_list[@]}"; do
   for n_sellers in "${n_sellers_list[@]}"; do
-      for n_adversaries in "${n_adversaries_list[@]}"; do
+      for adv_rate in "${adv_rate_list[@]}"; do
           for poison_strength in "${poison_strength_list[@]}"; do
-              echo "Running experiment with n_sellers=$n_sellers, n_adversaries=$n_adversaries, poison_strength=$poison_strength"
+              echo "Running experiment with n_sellers=$n_sellers, adv_rate=$adv_rate, poison_strength=$poison_strength"
               python entry/gradient_market/backdoor_attack.py \
                   --dataset_name "$dataset_name" \
                   --n_sellers "$n_sellers" \
-                  --n_adversaries "$n_adversaries" \
+                  --adv_rate "$adv_rate" \
                   --global_rounds "$global_rounds" \
                   --backdoor_target_label "$backdoor_target_label" \
                   --trigger_type "$trigger_type" \

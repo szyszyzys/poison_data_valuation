@@ -14,13 +14,13 @@ gpu_ids=${3,-"6"}
 
 # Fixed local attack param sets
 TRIGGER_TYPES=("blended_patch")
-TRIGGER_RATES=(0.1 0.25 0.5)
+TRIGGER_RATES=(0.25 0.5)
 GRAD_MODES=("single")
 POISON_STRENGTHS=(1)
 # Sybil param sets
 SYBIL_MODES=("mimic")
-N_ADVS=(1 3 5)
-ALPHAS=(0.5)
+N_ADVS=(0.1 0.2 0.3 0.4)
+ALPHAS=(0.3 0.5)
 
 # We'll run local-only (is_sybil=False) for some combos as well.
 IS_SYBIL_VALUES=("False" "True")
@@ -45,7 +45,7 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                      --sybil_mode "$SYBIL_MODE" \
                      --aggregation_method "$agg_name" \
                      --gpu_ids "$gpu_ids" \
-                     --n_adversaries "$NADV"\
+                     --adv_rate "$NADV"\
                      --trigger_rate "$RATE"
             else
               # If is_sybil=True, we loop over sybil modes and param combos.
@@ -60,7 +60,7 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                            --sybil_mode "$SYBIL_MODE" \
                            --aggregation_method "$agg_name" \
                            --gpu_ids "$gpu_ids" \
-                           --n_adversaries "$NADV" \
+                           --adv_rate "$NADV" \
                            --trigger_rate "$RATE"
                   done
                 done

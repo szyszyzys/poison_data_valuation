@@ -1,11 +1,15 @@
+import copy
+import random
 from typing import Dict
 
 import numpy as np
 import torch
-from torch import nn
+from sklearn.metrics import confusion_matrix
+from torch import nn, softmax
+from torcheval.metrics.functional import multiclass_f1_score
 
 from marketplace.utils.gradient_market_utils.clustering import optimal_k_gap, kmeans
-from model.utils import get_model, load_model
+from model.utils import get_model, load_model, apply_gradient_update
 
 
 # -----------------------------------------------------
@@ -33,23 +37,23 @@ class Aggregator:
     def __init__(self,
                  save_path: str,
                  n_seller: int,
-                 n_adversaries: int,
                  dataset_name: str,
                  model_structure: nn.Module = None,
                  quantization: bool = False,
                  aggregation_method: str = "martfl",
-                 device=None):
+                 change_base: bool = True,
+                 device=None,
+                 clip_norm=0.01, loss_fn=None,
+                 buyer_data_loader=None):
         """
         :param save_path:         Name/identifier of the current experiment.
         :param n_seller:   Total number of participant clients.
-        :param n_adversaries:    Number of adversarial clients (not always used).
         :param model_structure:  A torch.nn.Module structure (uninitialized) used to get param shapes.
         :param quantization:     Whether to do quantized aggregation.
         :param device:           Torch device (CPU/GPU) to run computations.
         """
         self.save_path = save_path
         self.n_seller = n_seller
-        self.n_adversaries = n_adversaries
         self.model_structure = model_structure
         self.device = device
         self.quantization = quantization
@@ -57,6 +61,11 @@ class Aggregator:
         # An example to track "best candidate" or further logic if you need:
         self.max_indexes = [0]
         self.aggregation_method = aggregation_method
+        self.baseline_id = None
+        self.change_base = change_base
+        self.clip_norm = clip_norm
+        self.buyer_data_loader = buyer_data_loader
+        self.loss_fn = loss_fn
 
     # ---------------------------
     # Gradient update utilities
@@ -119,7 +128,7 @@ class Aggregator:
 
     def aggregate(self, global_epoch, seller_updates, buyer_updates):
         if self.aggregation_method == "martfl":
-            return self.martFL(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates)
+            return self.martFL(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates, )
         elif self.aggregation_method == "fedavg":
             return self.fedavg(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates)
         else:
@@ -133,185 +142,212 @@ class Aggregator:
                global_epoch: int,
                seller_updates,
                buyer_updates,
-               change_base: bool = False,
                ground_truth_model=None):
         """
         Performs the martFL aggregation:
           1) Compute each client's flattened & clipped gradient update.
-          2) Compute the cosine similarity of each client’s update to the server’s update.
+          2) Compute the cosine similarity of each client's update to the current baseline update.
           3) Cluster the cosine similarities to identify outliers.
-          4) Normalize the resulting “non-outlier” scores to derive weights.
-          5) For each seller, compute its cosine similarity to a baseline update (from a ground-truth model).
-          6) Aggregate the updates using the computed weights.
-          7) Update client models accordingly.
+          4) Normalize the resulting "non-outlier" scores to derive weights.
+          5) Aggregate the updates using the computed weights.
+          6) If change_base is True, select a new baseline seller for the next round.
 
         Returns:
            aggregated_gradient: the aggregated update (list of tensors, same structure as model parameters)
            selected_ids: list of indices of sellers whose gradients are selected (non-outliers)
            outlier_ids: list of indices of sellers whose gradients are labeled as outliers
-           baseline_similarities: list of cosine similarities of each seller's update to the baseline update.
+           baseline_seller_id: ID of the seller selected as the next baseline (if change_base=True)
         """
-        print("change_base :", change_base)
-        print("global_epoch :", global_epoch)
+        print(f"Global epoch: {global_epoch}, Change baseline: {self.change_base}")
 
         # Number of sellers
         self.n_seller = len(seller_updates)
+        seller_ids = list(seller_updates.keys())
 
-        print("start gradient aggregation")
+        print("Starting gradient aggregation")
         aggregated_gradient = [
             torch.zeros_like(param, device=self.device)
             for param in self.model_structure.parameters()
         ]
 
-        print("start flatten and clipping")
+        print("Flattening and clipping gradients")
         # Process each seller update: clip then flatten
         clients_update_flattened = [
-            flatten(clip_gradient_update(update, clip_norm=0.01))
+            flatten(clip_gradient_update(update, clip_norm=self.clip_norm))
             for sid, update in seller_updates.items()
         ]
 
-        # Process buyer update (baseline)
-        baseline_update_flattened = flatten(buyer_updates)
+        # Process the current baseline update
+        if self.baseline_id is not None and self.baseline_id in seller_updates:
+            print(f"Using seller {self.baseline_id} as baseline")
+            baseline_update_flattened = flatten(seller_updates[self.baseline_id])
+        else:
+            print("Using buyer as baseline")
+            baseline_update_flattened = flatten(buyer_updates)
+            self.baseline_id = None
 
-        print("start cosine baseline")
+        print("Computing cosine similarities")
         # Vectorize cosine similarity:
         clients_stack = torch.stack(clients_update_flattened)  # shape: (n_seller, d)
         baseline = baseline_update_flattened.unsqueeze(0)  # shape: (1, d)
         cosine_similarities = torch.nn.functional.cosine_similarity(baseline, clients_stack, dim=1)
         np_cosine_result = cosine_similarities.cpu().numpy()
         np_cosine_result = np.nan_to_num(np_cosine_result, nan=0.0)
-        # # 5. Clustering on cosine similarities:
-        diameter = np.max(np_cosine_result) - np.min(np_cosine_result)
 
-        print("Diameter:", diameter)
+        # Clustering on cosine similarities using Gap Statistics
+        diameter = np.max(np_cosine_result) - np.min(np_cosine_result)
+        print(f"Similarity diameter: {diameter:.4f}")
+
+        # Get optimal number of clusters using Gap statistics
         n_clusters = optimal_k_gap(np_cosine_result)
         if n_clusters == 1 and diameter > 0.05:
             n_clusters = 2
-        clusters, centroids = kmeans(np_cosine_result, n_clusters)
-        print("Centroids:", centroids)
-        print(f"{n_clusters} Clusters:", clusters)
-        center = centroids[-1] if len(centroids) > 0 else 0.0
 
-        # 6. Secondary clustering for further outlier detection (with k=2)
+        # Primary clustering
+        clusters, centroids = kmeans(np_cosine_result, n_clusters)
+        print(f"Centroids: {centroids}")
+        print(f"{n_clusters} Clusters: {clusters}")
+
+        # Identify the highest-score cluster centroid
+        best_centroid_idx = np.argmax(centroids)
+        center = centroids[best_centroid_idx]
+
+        # Secondary clustering for further outlier detection (with k=2)
         if n_clusters == 1:
             clusters_secondary = [1] * self.n_seller
         else:
             clusters_secondary, _ = kmeans(np_cosine_result, 2)
-        print("Secondary Clustering:", clusters_secondary)
+        print(f"Secondary Clustering: {clusters_secondary}")
 
-        # 7. Determine border for outlier detection (max distance from center, skipping server)
+        # Determine border for outlier detection (max distance from center)
         border = 0.0
         for i, (cos_sim, sec_cluster) in enumerate(zip(np_cosine_result, clusters_secondary)):
             if n_clusters == 1 or sec_cluster != 0:
                 dist = abs(center - cos_sim)
                 if dist > border:
                     border = dist
-        print("Border:", border)
+        print(f"Border: {border:.4f}")
 
-        # 8. Mark outliers: Build a list of non_outlier scores.
+        # Track different seller quality types
+        high_quality_sellers = []  # P₁ in the paper
+        qualified_sellers = []  # P₂ in the paper
+        outlier_sellers = []  # Low-quality or malicious sellers
+
+        # Mark outliers: Build a list of non_outlier scores
         non_outliers = [1.0 for _ in range(self.n_seller)]
-        candidate_server = []
         for i in range(self.n_seller):
-            if clusters_secondary[i] == 0 or np_cosine_result[i] == 0.0:
-                non_outliers[i] = 0.0  # mark as outlier
-            else:
-                dist = abs(center - np_cosine_result[i])
-                non_outliers[i] = 1.0 - dist / (border + 1e-6)
-                if clusters[i] == n_clusters - 1:
-                    candidate_server.append(i)
-                    non_outliers[i] = 1.0  # force inlier for candidate server
+            seller_id = seller_ids[i]
 
-        # Identify selected (inlier) and outlier seller indices.
+            # Skip the current baseline seller if it exists
+            if seller_id == self.baseline_id:
+                continue
+
+            if clusters_secondary[i] == 0 or np_cosine_result[i] == 0.0:
+                # Low-quality model (mark as outlier)
+                non_outliers[i] = 0.0
+                outlier_sellers.append(seller_id)
+            else:
+                if clusters[i] == best_centroid_idx:
+                    # High-quality model in the best cluster
+                    high_quality_sellers.append(seller_id)
+                    non_outliers[i] = 1.0
+                else:
+                    # Qualified but weighted model
+                    dist = abs(center - np_cosine_result[i])
+                    non_outliers[i] = 1.0 - dist / (border + 1e-6)
+                    qualified_sellers.append(seller_id)
+
+        # Identify selected (inlier) and outlier seller indices
         selected_ids = [i for i in range(self.n_seller) if non_outliers[i] > 0.0]
         outlier_ids = [i for i in range(self.n_seller) if non_outliers[i] == 0.0]
 
-        # 9. Use the non_outlier scores as final weights.
-        # (Overwrite cosine_result with non_outliers)
+        print(f"High-quality sellers: {high_quality_sellers}")
+        print(f"Qualified sellers: {qualified_sellers}")
+        print(f"Outlier sellers: {outlier_sellers}")
+
+        # Random sampling from P₂ (qualified sellers) if needed
+        # If P₂ is empty and P₁ is small, select some random additional sellers
+        if not qualified_sellers and len(high_quality_sellers) < 0.5 * self.n_seller:
+            # Get all candidate sellers excluding high quality and outliers
+            all_remaining_sellers = list(set(seller_ids) -
+                                         set(high_quality_sellers) -
+                                         set(outlier_sellers))
+
+            # Calculate random sample size (β in the paper)
+            beta = 0.1  # Default in the paper is 10%
+            random_sample_count = max(1, int(beta * self.n_seller))
+
+            # Sample randomly from remaining sellers
+            if all_remaining_sellers:
+                sampled_qualified = random.sample(all_remaining_sellers,
+                                                  min(random_sample_count, len(all_remaining_sellers)))
+                print(f"Randomly sampled additional qualified sellers: {sampled_qualified}")
+
+                # Add to qualified sellers and update weights
+                qualified_sellers.extend(sampled_qualified)
+                for seller_id in sampled_qualified:
+                    i = seller_ids.index(seller_id)
+                    non_outliers[i] = 0.5  # Assign moderate weight
+                    if i not in selected_ids:
+                        selected_ids.append(i)
+
+        # Use the non_outlier scores as final weights
         for i in range(self.n_seller):
             np_cosine_result[i] = non_outliers[i]
+
         cosine_weight = torch.tensor(np_cosine_result, dtype=torch.float, device=self.device)
         denom = torch.sum(torch.abs(cosine_weight)) + 1e-6
         weight = cosine_weight / denom
-        print(f"current_weight: {weight}")
-        print(f"similarity: {np_cosine_result}")
 
+        print(f"Aggregation weights: {weight}")
 
-        # 11. Final aggregation: sum weighted gradients.
+        # Final aggregation: sum weighted gradients
         for idx, (gradient, wt) in enumerate(zip(seller_updates.values(), weight)):
             add_gradient_updates(aggregated_gradient, gradient, weight=wt)
 
-        # Return aggregated gradient, selected seller IDs, outlier seller IDs, and baseline similarities.
-        return aggregated_gradient, selected_ids, outlier_ids
+        # ========== IMPROVED DYNAMIC BASELINE ADJUSTMENT ==========
+        if self.change_base:
+            print("Performing baseline adjustment for next round")
 
-    # def martfl_change_baseline(self, selected_ids):
-    #     # Random selection logic: pick 10% participants at random from "low-quality" group
-    #     all_candidate = []
-    #     low_quality_candidate = []
-    #     random_num = int(0.1 * self.n_seller)
-    #
-    #     for i, cl in enumerate(clusters2):
-    #         if i != 0 and i != self.server:
-    #             all_candidate.append(i)
-    #             # If cluster2[i] != 0, it means it's not an outlier cluster
-    #             if cl != 0:
-    #                 low_quality_candidate.append(i)
-    #
-    #     # If no candidate_server found, fallback
-    #     if len(candidate_server) == 0:
-    #         candidate_server = [i for i in range(self.n_participants) if (i != 0 and i != self.server)]
-    #
-    #     prepare_random = list(set(low_quality_candidate) - set(candidate_server))
-    #     # If no “prepare_random” but the candidate_server is < 50% participants, expand
-    #     if len(prepare_random) == 0 and len(candidate_server) < 0.5 * self.n_participants:
-    #         prepare_random = list(set(all_candidate) - set(candidate_server))
-    #
-    #     # Pick random subset
-    #     random_candidate = random.sample(prepare_random, min(random_num, len(prepare_random)))
-    #     print(f"Random Candidate Server(s): {random_candidate}")
-    #
-    #     # Merge them
-    #     candidate_server = sorted(set(candidate_server) | set(random_candidate))
-    #     print(f"Final Candidate Server(s): {candidate_server}")
-    #
-    #     # Evaluate each candidate to see who is best
-    #     sem = threading.Semaphore(5)  # concurrency limit
-    #     threads = []
-    #     next_server = 1
-    #     max_score = 0
-    #
-    #     # Evaluate each candidate as a potential server
-    #     for cid in candidate_server:
-    #         # Build a temp model from backup + that client's update
-    #         temp_model = import_model(self.exp_name, self.backup_models[cid], self.device)
-    #         temp_model = add_update_to_model(temp_model, client_updates[cid], weight=1.0, device=self.device)
-    #         # Run in a thread
-    #         client_thread = MyThread(
-    #             func=evaluate_model,
-    #             args=(temp_model,
-    #                   server_dataloader,
-    #                   loss_fn,
-    #                   self.device,
-    #                   0,  # presumably some epoch or trainer param
-    #                   dataset_output_dim(self.exp_name.split('-')[0])),
-    #             semaphore=sem
-    #         )
-    #         client_thread.start()
-    #         threads.append(client_thread)
-    #
-    #     # Wait for all evaluations
-    #     for t in threads:
-    #         t.join()
-    #
-    #     # Find best
-    #     for i, t in enumerate(threads):
-    #         score = t.result[2]  # e.g. if evaluate_model returns (val_loss, val_acc, something)
-    #         print(f"Client {candidate_server[i]}: {score}")
-    #         if score > max_score:
-    #             max_score = score
-    #             next_server = candidate_server[i]
-    #
-    #     self.server = next_server
-    #     print("Next Server:", self.server)
+            # Candidate sellers include all high-quality sellers and qualified sellers
+            candidate_sellers = high_quality_sellers + qualified_sellers
+
+            # If no candidates, consider all non-outlier sellers
+            if not candidate_sellers:
+                candidate_sellers = [seller_ids[i] for i in selected_ids]
+
+            print(f"Baseline candidate sellers: {candidate_sellers}")
+
+            # Early exit if no candidates
+            if not candidate_sellers:
+                print("No viable baseline candidates found")
+                return aggregated_gradient, selected_ids, outlier_ids, None
+
+            # Evaluate each candidate seller using Kappa coefficient
+            max_kappa = float('-inf')
+            best_seller = None
+
+            for seller_id in candidate_sellers:
+                # Create a model with this seller's update applied
+                seller_idx = seller_ids.index(seller_id)
+
+                # Apply the seller's update to get their model
+                updated_model = apply_gradient_update(self.global_model, seller_updates[seller_id])
+
+                kappa = martfl_eval(updated_model, self.buyer_data_loader, self.loss_fn, self.device, num_classes=10)[2]
+
+                print(f"Seller {seller_id} Kappa score: {kappa:.4f}")
+
+                # Keep track of the best seller
+                if kappa > max_kappa:
+                    max_kappa = kappa
+                    best_seller = seller_id
+
+            self.baseline_id = best_seller
+            print(f"Selected new baseline seller for next round: {self.baseline_id} with score {max_kappa:.4f}")
+
+        # Return aggregated gradient, selected seller IDs, outlier seller IDs, and new baseline seller ID
+        return aggregated_gradient, selected_ids, outlier_ids
 
     def fedavg(self,
                global_epoch: int,
@@ -351,6 +387,125 @@ class Aggregator:
 # ---------------------------------------------------------
 #  HELPER FUNCTIONS
 # ---------------------------------------------------------
+
+def martfl_eval(model, dataloader, loss_fn, device, num_classes):
+    """
+    Evaluates a model on the given dataloader and calculates various metrics including Kappa.
+
+    Parameters:
+        model: The neural network model to evaluate
+        dataloader: DataLoader containing the evaluation data
+        loss_fn: Loss function to calculate the loss
+        device: Device to run the evaluation on (cuda/cpu)
+        num_classes: Number of classes in the classification task
+
+    Returns:
+        tuple: (average_loss, accuracy, kappa_score, f1_score)
+    """
+    # Set model to evaluation mode
+    model.eval()
+    model = model.to(device)
+
+    # Initialize metrics
+    correct_samples = 0.0
+    total_samples = 0.0
+    total_loss = 0.0
+
+    # Lists to store predictions and true labels
+    y_true = []
+    y_score = []  # Probability scores
+    y_pred = []  # Predicted class labels
+
+    # No gradient calculation during evaluation
+    with torch.no_grad():
+        # Iterate through batches
+        for batch_idx, batch in enumerate(dataloader):
+            # Handle different dataset formats
+            # if isinstance(batch, Batch):  # For text datasets like TREC
+            #     data, target = batch.text, batch.label
+            #     data = data.permute(1, 0)  # Transpose for proper shape
+            # else:  # For image datasets like MNIST/CIFAR
+            data, target = batch[0], batch[1]
+
+            # Move data to the specified device
+            data, target = data.to(device), target.to(device)
+
+            # Forward pass
+            outputs = model(data)
+
+            # Calculate loss
+            loss = loss_fn(outputs, target)
+
+            # Get predictions
+            _, predicted = torch.max(outputs, 1)
+
+            # Update metrics
+            correct_samples += (predicted == target).sum().item()
+            total_samples += target.size(0)
+            total_loss += loss.item()
+
+            # Store predictions and true labels for metrics calculation
+            y_true.extend(target.cpu().numpy())
+            y_score.extend(softmax(outputs, dim=1).cpu().numpy())
+            y_pred.extend(predicted.cpu().numpy())
+
+    # Calculate final metrics
+    accuracy = correct_samples / total_samples
+    average_loss = total_loss / (batch_idx + 1)
+
+    # Calculate confusion matrix
+    cf_matrix = confusion_matrix(y_true, y_pred)
+
+    # Calculate F1 score
+    f1 = multiclass_f1_score(
+        torch.tensor(y_pred),
+        torch.tensor(y_true),
+        num_classes=num_classes,
+        average='macro'
+    ).item()
+
+    # Calculate Cohen's Kappa
+    kappa_score = calculate_kappa(cf_matrix)
+
+    return round(average_loss, 6), round(accuracy, 6), kappa_score, f1
+
+
+def calculate_kappa(confusion_matrix):
+    """
+    Calculates Cohen's Kappa coefficient from a confusion matrix.
+
+    The Kappa coefficient measures the agreement between predicted and actual classifications,
+    accounting for agreement that would happen by chance.
+
+    Parameters:
+        confusion_matrix: A numpy array representing the confusion matrix
+
+    Returns:
+        float: The Kappa coefficient (between -1 and 1)
+    """
+    # Total number of samples
+    n_samples = np.sum(confusion_matrix)
+
+    # Return 0 if confusion matrix is empty
+    if n_samples == 0:
+        return 0.0
+
+    # Calculate observed agreement (accuracy)
+    observed_agreement = np.trace(confusion_matrix) / n_samples
+
+    # Calculate expected agreement (by chance)
+    row_sums = np.sum(confusion_matrix, axis=1)
+    col_sums = np.sum(confusion_matrix, axis=0)
+    expected_agreement = np.sum(row_sums * col_sums) / (n_samples * n_samples)
+
+    # Calculate Cohen's Kappa
+    if expected_agreement == 1:
+        return 1.0  # Perfect agreement by chance
+
+    kappa = (observed_agreement - expected_agreement) / (1 - expected_agreement)
+
+    return kappa
+
 
 def clip_gradient_update(grad_update, clip_norm: float):
     """

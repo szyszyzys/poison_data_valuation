@@ -50,7 +50,7 @@ class DataMarketplaceFederated(DataMarketplace):
         """
         self.selection_method = new_method
 
-    def get_current_market_gradients(self):
+    def get_current_market_gradients(self, base_model):
         """
         Collect gradient updates from each seller for the current global model parameters.
 
@@ -68,7 +68,7 @@ class DataMarketplaceFederated(DataMarketplace):
         print(f"current sellers: {self.sellers.keys()}")
         for seller_id, seller in self.sellers.items():
             # for martfl, local have no access to the global params
-            grad_np = seller.get_gradient_for_upload()
+            grad_np = seller.get_gradient_for_upload(base_model)
             norm = np.linalg.norm(flatten(grad_np))
             print(f"The {seller_id} gradient norm is: {norm}")
             gradients[seller_id] = grad_np
@@ -176,10 +176,10 @@ class DataMarketplaceFederated(DataMarketplace):
          5. Distribute the new global model back to sellers (optional).
          6. Evaluate final model & log stats (optional).
         """
-        baseline_gradient = buyer.get_gradient_for_upload()
+        baseline_gradient = buyer.get_gradient_for_upload(self.aggregator.global_model)
 
         # 1. get gradients from sellers
-        seller_gradients, seller_ids = self.get_current_market_gradients()
+        seller_gradients, seller_ids = self.get_current_market_gradients(self.aggregator.global_model)
         # 2. perform aggregation
         aggregated_gradient, selected_ids, outlier_ids = self.aggregator.aggregate(round_number,
                                                                                    seller_gradients,
@@ -254,7 +254,7 @@ class DataMarketplaceFederated(DataMarketplace):
             "final_perf_global": final_perf_global,
             "extra_info": extra_info,
             "selection_rate_info": selection_rate_info if selection_rate_info else None,
-
+            "martfl_baseline_id": self.aggregator.baseline_id if self.aggregator.baseline_id else None
         }
 
         self.round_logs.append(round_record)
