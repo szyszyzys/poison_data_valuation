@@ -1,4 +1,3 @@
-import copy
 import random
 from typing import Dict
 
@@ -555,18 +554,46 @@ def compute_update_gradients(exp_name, old_model_name, new_model_name, device=No
     ]
 
 
-def flatten(grad_update):
+def flatten(parameters):
     """
-    Flatten a list of gradient updates (tensors) into a single 1D tensor.
-    If an element is not a tensor, convert it to one.
+    Flatten a list of tensors into a single 1D tensor.
+
+    Args:
+        parameters: List of parameter tensors or numpy arrays
+
+    Returns:
+        Flattened 1D tensor
     """
-    flattened = []
-    for param in grad_update:
-        # Convert non-tensor elements to a tensor.
-        if not isinstance(param, torch.Tensor):
-            param = torch.tensor(param)
-        flattened.append(param.view(-1))
-    return torch.cat(flattened, dim=0)
+    # Handle case where input is already a tensor
+    if isinstance(parameters, torch.Tensor):
+        return parameters.flatten()
+
+    # Handle case where input is a numpy array
+    if isinstance(parameters, np.ndarray):
+        return torch.tensor(parameters.flatten())
+
+    # For list of parameters (tensors or numpy arrays)
+    flattened_tensors = []
+    for param in parameters:
+        if isinstance(param, torch.Tensor):
+            flattened_tensors.append(param.flatten())
+        elif isinstance(param, np.ndarray):
+            flattened_tensors.append(torch.tensor(param.flatten()))
+        elif param is not None:  # Skip None values
+            # Try to convert to tensor safely
+            try:
+                tensor = torch.tensor(param)
+                flattened_tensors.append(tensor.flatten())
+            except (ValueError, TypeError) as e:
+                print(f"Warning: Could not flatten parameter of type {type(param)}: {e}")
+                # Skip this parameter
+
+    # Concatenate all flattened tensors
+    if flattened_tensors:
+        return torch.cat(flattened_tensors)
+    else:
+        # Return empty tensor if no valid parameters
+        return torch.tensor([])
 
 
 def unflatten(flattened: torch.Tensor, normal_shape):
