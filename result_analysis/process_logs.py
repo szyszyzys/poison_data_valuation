@@ -108,8 +108,8 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
                 'AVG_BENIGN_RATE': np.mean([r.get('benign_rate', 0) or 0 for r in sorted_records]),
 
                 # Calculate attack efficiency
-                'ASR_PER_ADV': (sorted_records[-1].get('asr', 0) or 0) / attack_params['N_ADV'] if attack_params[
-                                                                                                       'N_ADV'] > 0 else 0,
+                'ASR_PER_ADV': (sorted_records[-1].get('asr', 0) or 0) / attack_params['adv_rate'] if attack_params[
+                                                                                                       'adv_rate'] > 0 else 0,
 
                 # Calculate stealth (1 - abs difference between clean and final accuracy)
                 'STEALTH': 1 - abs(
