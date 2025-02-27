@@ -22,9 +22,9 @@ POISON_STRENGTHS=(1)
 SYBIL_MODES=("mimic")
 N_ADVS=(0.1 0.2 0.3 0.4)
 ALPHAS=(0.5)
-data_split_modes=("IID" "NonIID")
+data_split_modes=("IID")
 # We'll run local-only (is_sybil=False) for some combos as well.
-IS_SYBIL_VALUES=("True")
+IS_SYBIL_VALUES=("False" "True")
 #IS_SYBIL_VALUES=("False")
 
 # For each combination, we call run_experiment.py with the corresponding args.

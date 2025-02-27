@@ -250,7 +250,6 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
         # train the attack model
         print(f"=============round {gr} start=======================")
         print(f"current work path: {save_path}")
-        sybil_coordinator.precompute_current_round_gradient()
         round_record, aggregated_gradient = marketplace.train_federated_round(round_number=gr,
                                                                               buyer=buyer,
                                                                               n_adv=n_adversaries,
