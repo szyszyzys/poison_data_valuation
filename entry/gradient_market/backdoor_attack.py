@@ -179,7 +179,11 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
     buyer_loader, client_loaders, full_dataset, test_loader, class_names = get_data_set(dataset_name,
                                                                                         buyer_percentage=buyer_percentage,
                                                                                         num_sellers=n_sellers,
-                                                                                        label_split_type=data_split_mode)
+                                                                                        label_split_type=data_split_mode,
+                                                                                        n_adversaries=n_adversaries,
+                                                                                        seller_qualities={
+                                                                                            "high_quality": 0.5,
+                                                                                            "biased": 0.5})
 
     # config the buyer
     buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader.dataset, dataset_name=dataset_name,

@@ -28,9 +28,6 @@ Usage Example:
         print(f"Client {cid} has {len(loader.dataset)} samples.")
 """
 
-import random
-from collections import defaultdict
-
 import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
@@ -231,7 +228,7 @@ def load_cifar10_dataset(train=True, download=True):
 import random
 import numpy as np
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple, Union, Any
+from typing import Dict, List, Optional, Tuple, Any
 
 
 def split_dataset_buyer_seller(
@@ -307,7 +304,7 @@ def split_dataset_buyer_seller(
     # --- Create seller splits based on seller quality types ---
     if seller_qualities is None:
         # Default from paper: 30% high-quality, 30% biased, 40% malicious
-        seller_qualities = {"high_quality": 0.3, "biased": 0.3, "malicious": 0.4}
+        seller_qualities = {"high_quality": 0.5, "biased": 0.5}
 
     # Calculate number of sellers in each quality category
     seller_counts = {}
@@ -529,7 +526,8 @@ def get_data_set(
         malicious_sellers=None,
         batch_size=64,
         normalize_data=True,
-        visualize=False
+        visualize=False,
+        n_adversaries=0
 ):
     """
     Load the dataset and split it between one buyer (DA) and several sellers (DPs)
