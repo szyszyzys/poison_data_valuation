@@ -319,11 +319,11 @@ def apply_gradient(model, aggregated_gradient, learning_rate: float = 1.0, devic
 
 def save_samples(data_loader, filename, n_samples=16, nrow=4, title="Samples"):
     """
-    Save a grid of images from the provided DataLoader for visualization.
+    Save a grid of images from the provided DataLoader for visualization_226.
 
     Args:
         data_loader: DataLoader object from which to fetch a batch of images.
-        filename: Path to save the visualization image.
+        filename: Path to save the visualization_226 image.
         n_samples: Number of images to display (default: 16).
         nrow: Number of images per row in the grid (default: 4).
         title: Title for the plot.

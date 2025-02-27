@@ -285,7 +285,7 @@ def visualize_embedding_space(X, q, selected_indices, unselected_indices, method
 def fim_reverse_opt_refined(X, selected_indices, unselected_indices, dim, lambda_reg=0.1, margin=1.0, iterations=100,
                             top_n=50, top_k=10, verbose=True):
     """
-    Perform the full embedding reconstruction and visualization process with methodological improvements.
+    Perform the full embedding reconstruction and visualization_226 process with methodological improvements.
 
     Parameters:
     - X (np.ndarray): Feature matrix of shape (n_samples, n_features).
@@ -362,7 +362,7 @@ def fim_reverse_opt_refined(X, selected_indices, unselected_indices, dim, lambda
 
 def fim_reverse_emb_opt(x_s, selected_indices, unselected_indices, x_query, device, save_dir="./data", verbose=True):
     """
-    Main function to execute the refined embedding reconstruction and visualization.
+    Main function to execute the refined embedding reconstruction and visualization_226.
     """
     # Parameters
     save_dir = f"{save_dir}/reverse_opt_v1/"

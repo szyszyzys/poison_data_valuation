@@ -213,11 +213,11 @@ def plot_aggregation_comparison(summary_df, output_dir):
 
 def integrate_aggregation_comparison(run_visualization_function):
     """
-    Decorator to integrate aggregation comparison into the main visualization function.
+    Decorator to integrate aggregation comparison into the main visualization_226 function.
     """
 
     def wrapper(summary_csv, all_rounds_csv, output_dir):
-        # Run the original visualization function
+        # Run the original visualization_226 function
         run_visualization_function(summary_csv, all_rounds_csv, output_dir)
 
         # Add aggregation comparison
@@ -239,7 +239,7 @@ def main():
     parser.add_argument("--output_dir", default="./processed_results",
                         help="Output directory for processed data and visualizations")
     parser.add_argument("--skip_processing", action="store_true", help="Skip data processing step (use existing CSVs)")
-    parser.add_argument("--skip_visualization", action="store_true", help="Skip visualization step")
+    parser.add_argument("--skip_visualization", action="store_true", help="Skip visualization_226 step")
     parser.add_argument("--aggregation_methods", nargs='+', default=['martfl'],
                         help="List of aggregation methods to process (e.g., martfl fedavg)")
     parser.add_argument("--selection_analysis", action="store_true", help="Run additional selection pattern analysis")
@@ -298,7 +298,7 @@ def main():
             print(f"Aggregation comparison visualizations saved to {aggregation_comparison_dir}")
 
     else:
-        print("Skipping visualization step.")
+        print("Skipping visualization_226 step.")
 
     # Step 3: Run selection pattern analysis if requested
     if args.selection_analysis:

@@ -485,7 +485,7 @@ def plot_client_selection_heatmap(df, output_dir):
                 print("Warning: Could not parse 'used_sellers' column as a list. Skipping client selection heatmap.")
                 return
 
-    # Sample one experiment to analyze (for clarity in visualization)
+    # Sample one experiment to analyze (for clarity in visualization_226)
     # Get unique experiments
     experiment_params = []
     group_cols = []

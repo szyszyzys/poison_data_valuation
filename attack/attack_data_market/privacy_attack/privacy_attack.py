@@ -186,7 +186,7 @@ class AttackPipeline:
         import matplotlib.pyplot as plt
         import seaborn as sns
 
-        # Create visualization for each metric
+        # Create visualization_226 for each metric
         metrics = ['mean_success', 'privacy_breach_rate']
 
         for metric in metrics:

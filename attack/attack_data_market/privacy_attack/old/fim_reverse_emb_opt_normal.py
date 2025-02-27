@@ -137,7 +137,7 @@
 # def fim_reverse_opt(X, selected_indices, unselected_indices, dim, lambda_reg=0.1, lr=0.01, iterations=100, top_n=50,
 #                     top_k=10, verbose=False):
 #     """
-#     Perform the full embedding reconstruction and visualization process.
+#     Perform the full embedding reconstruction and visualization_226 process.
 #
 #     Parameters:
 #     - X (np.ndarray): Feature matrix of shape (n_samples, n_features).
@@ -196,7 +196,7 @@
 #
 # def fim_reverse_emb_opt_normal(x_s, selected_indices, unselected_indices, verbose=True):
 #     """
-#     Main function to execute the refined embedding reconstruction and visualization.
+#     Main function to execute the refined embedding reconstruction and visualization_226.
 #     """
 #     # Parameters
 #     dim = x_s.shape[-1]

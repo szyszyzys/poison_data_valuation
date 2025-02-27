@@ -249,7 +249,7 @@ def evaluate_attack_success_selection(initial_selected, updated_selected, modifi
 #             patience_counter = 0
 #         previous_loss = current_loss
 #
-#         # Optional: Save intermediate images for visualization
+#         # Optional: Save intermediate images for visualization_226
 #         if (step + 1) % 50 == 0 and verbose:
 #             intermediate_image = image_tensor.detach().cpu().squeeze(0)
 #             intermediate_pil = transforms.ToPILImage()(intermediate_image)

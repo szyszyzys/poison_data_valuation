@@ -822,7 +822,7 @@ def modify_image(
             patience_counter = 0
         previous_loss = current_loss
 
-        # Optional: Save intermediate images for visualization
+        # Optional: Save intermediate images for visualization_226
         if (step + 1) % 50 == 0 and verbose:
             intermediate_image = image_tensor.detach().cpu().squeeze(0)
             intermediate_pil = transforms.ToPILImage()(intermediate_image)

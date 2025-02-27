@@ -109,7 +109,7 @@ class StrategicDataOrganizer:
 
     def _create_coverage_map(self) -> np.ndarray:
         """Create space coverage analysis"""
-        # Project to 2D for visualization
+        # Project to 2D for visualization_226
         tsne = TSNE(n_components=2)
         projected = tsne.fit_transform(self.embeddings)
 

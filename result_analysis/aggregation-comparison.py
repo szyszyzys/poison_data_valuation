@@ -200,11 +200,11 @@ def plot_aggregation_comparison(summary_df, output_dir):
 
 def integrate_aggregation_comparison(run_visualization_function):
     """
-    Decorator to integrate aggregation comparison into the main visualization function.
+    Decorator to integrate aggregation comparison into the main visualization_226 function.
     """
 
     def wrapper(summary_csv, all_rounds_csv, output_dir):
-        # Run the original visualization function
+        # Run the original visualization_226 function
         run_visualization_function(summary_csv, all_rounds_csv, output_dir)
 
         # Add aggregation comparison

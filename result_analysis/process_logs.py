@@ -134,7 +134,7 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
 
 
 def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
-                  sybil_mode=False, is_sybil=False, data_split_mode='iid',
+                  sybil_mode=False, is_sybil="False", data_split_mode='iid',
                   aggregation_method='fedavg', dataset_name='cifar10',
                   poison_strength=None, trigger_rate=None, trigger_type=None,
                   adv_rate=None, change_base="True"):
@@ -160,7 +160,7 @@ def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
         A string representing the path.
     """
     # Use is_sybil flag or, if not true, use sybil_mode
-    sybil_str = str(sybil_mode) if is_sybil else "False"
+    sybil_str = is_sybil
 
     if aggregation_method == "martfl":
         base_dir = Path(
@@ -208,7 +208,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
         for data_split_mode in ["NonIID", "IID"]:
             for grad_mode in ['single']:
                 for trigger_rate in [0.25, 0.5]:
-                    for is_sybil in [False, True]:
+                    for is_sybil in ["False", "mimic"]:
                         for adv_rate in [0.1, 0.2, 0.3, 0.4]:
                             for change_base in ["True", "False"]:
                                 if aggregation_method == "fedavg" and change_base == "True":

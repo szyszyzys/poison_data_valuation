@@ -579,7 +579,7 @@ def plot_trigger_rate_impact(summary_df, all_rounds_df, output_dir):
     if 'ROUNDS_TO_50PCT_ASR' in summary_df.columns:
         plt.figure(figsize=(15, 10))
 
-        # Convert -1 (never reached) to NaN for visualization
+        # Convert -1 (never reached) to NaN for visualization_226
         df_plot = summary_df.copy()
         for col in ['ROUNDS_TO_50PCT_ASR', 'ROUNDS_TO_75PCT_ASR', 'ROUNDS_TO_90PCT_ASR']:
             if col in df_plot.columns:
@@ -644,7 +644,7 @@ def plot_poison_strength_impact(summary_df, all_rounds_df, output_dir):
     if 'ROUNDS_TO_50PCT_ASR' in cmd_df.columns:
         plt.figure(figsize=(15, 10))
 
-        # Convert -1 (never reached) to NaN for visualization
+        # Convert -1 (never reached) to NaN for visualization_226
         df_plot = cmd_df.copy()
         for col in ['ROUNDS_TO_50PCT_ASR', 'ROUNDS_TO_75PCT_ASR', 'ROUNDS_TO_90PCT_ASR']:
             if col in df_plot.columns:
@@ -708,7 +708,7 @@ def plot_sybil_impact(summary_df, all_rounds_df, output_dir):
     if 'ROUNDS_TO_50PCT_ASR' in summary_df.columns:
         plt.figure(figsize=(15, 10))
 
-        # Convert -1 (never reached) to NaN for visualization
+        # Convert -1 (never reached) to NaN for visualization_226
         df_plot = summary_df.copy()
         for col in ['ROUNDS_TO_50PCT_ASR', 'ROUNDS_TO_75PCT_ASR', 'ROUNDS_TO_90PCT_ASR']:
             if col in df_plot.columns:
@@ -983,7 +983,7 @@ def create_summary_table(summary_df, output_dir):
 
 def run_visualization(summary_csv, all_rounds_csv, output_dir):
     """
-    Run comprehensive visualization of backdoor attack results.
+    Run comprehensive visualization_226 of backdoor attack results.
 
     Args:
         summary_csv: Path to summary CSV file
