@@ -4,11 +4,12 @@
 # from dataset import dataset_output_dim (if needed)
 import collections
 import copy
+from typing import Dict, List, Optional, Union
+from typing import Tuple
+
 import numpy as np
 import pandas as pd
 import torch
-from typing import Dict, List, Optional, Union
-from typing import Tuple
 
 from general_utils.data_utils import list_to_tensor_dataset
 from marketplace.seller.seller import BaseSeller
@@ -31,7 +32,7 @@ class SybilCoordinator:
                  alpha: float = 0.5,
                  amplify_factor: float = 2.0,
                  cost_scale: float = 1.5,
-                 device: str = "cuda" if torch.cuda.is_available() else "cpu"):
+                 device: str = "cuda" if torch.cuda.is_available() else "cpu", aggregator = None):
         """
         Initialize the SybilCoordinator with attack parameters.
 
@@ -54,6 +55,7 @@ class SybilCoordinator:
         self.selected_gradients = {}
         # Registry of seller instances
         self.registered_clients = collections.OrderedDict()
+        self.aggregator = aggregator
 
     def register_seller(self, seller) -> None:
         """
@@ -83,12 +85,11 @@ class SybilCoordinator:
                 if seller_id in self.registered_clients:
                     self.selected_gradients[seller_id] = self._ensure_tensor(gradient)
             return
-
         # Otherwise, collect from registered sellers
         selected_last_round_list = []
         for seller_id, seller in self.registered_clients.items():
             if hasattr(seller, 'selected_last_round') and seller.selected_last_round:
-                gradient = seller.get_local_gradient()
+                gradient = seller.get_gradient_for_upload(self.aggregator.global_model)
                 selected_last_round_list.append(seller_id)
                 self.selected_gradients[seller_id] = self._ensure_tensor(gradient)
         print(f"Sybil selected in last round: {selected_last_round_list}")

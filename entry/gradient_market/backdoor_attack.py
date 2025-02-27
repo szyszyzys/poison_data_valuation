@@ -160,9 +160,6 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                     buyer_percentage=0.02,
                     sybil_params=None, local_attack_params=None, local_training_params=None, change_base=True,
                     data_split_mode="NonIID"):
-    sybil_coordinator = SybilCoordinator(default_mode=sybil_params['sybil_mode'], alpha=sybil_params["alpha"],
-                                         amplify_factor=sybil_params["amplify_factor"],
-                                         cost_scale=sybil_params["cost_scale"])
     # load the dataset
     n_adversaries = int(n_sellers * adv_rate)
     gradient_manipulation_mode = args.gradient_manipulation_mode
@@ -199,6 +196,11 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                             buyer_data_loader=buyer_loader,
                             loss_fn=loss_fn
                             )
+
+    sybil_coordinator = SybilCoordinator(default_mode=sybil_params['sybil_mode'], alpha=sybil_params["alpha"],
+                                         amplify_factor=sybil_params["amplify_factor"],
+                                         cost_scale=sybil_params["cost_scale"], aggregator=aggregator)
+
     marketplace = DataMarketplaceFederated(aggregator,
                                            selection_method=aggregation_method, save_path=save_path)
     n_adversaries_cnt = n_adversaries
