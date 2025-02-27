@@ -69,7 +69,7 @@ class DataMarketplaceFederated(DataMarketplace):
         for seller_id, seller in self.sellers.items():
             # for martfl, local have no access to the global params
             grad_np = seller.get_gradient_for_upload(base_model)
-            norm = np.linalg.norm(flatten(grad_np))
+            norm = torch.norm(flatten(grad_np))
             print(f"The {seller_id} gradient norm is: {norm}")
             gradients[seller_id] = grad_np
             seller_ids.append(seller_id)
