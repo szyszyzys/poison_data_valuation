@@ -96,6 +96,10 @@ class SybilCoordinator:
                 base_model = base_model.to(self.device)
 
                 gradient = seller.get_local_gradient(base_model)
+                print("----------------------------")
+                print(base_model)
+                print("----------------------------")
+                print(gradient)
                 selected_last_round_list.append(seller_id)
                 self.selected_gradients[seller_id] = self._ensure_tensor(gradient)
         print(f"Sybil selected in last round: {selected_last_round_list}")
