@@ -96,35 +96,40 @@ class SybilCoordinator:
                 base_model = base_model.to(self.device)
 
                 gradient = seller.get_local_gradient(base_model)
-                print("----------------------------")
-                print(base_model)
-                print("----------------------------")
-                print(gradient)
                 selected_last_round_list.append(seller_id)
                 self.selected_gradients[seller_id] = self._ensure_tensor(gradient)
         print(f"Sybil selected in last round: {selected_last_round_list}")
 
-    def _ensure_tensor(self, gradient: Union[torch.Tensor, List]) -> torch.Tensor:
+    def _ensure_tensor(self, gradient: Union[torch.Tensor, List, np.ndarray]) -> torch.Tensor:
         """
         Ensure the gradient is a single tensor on the correct device.
 
         Args:
-            gradient: Either a tensor or a list of tensors.
+            gradient: Either a tensor, numpy array, or a list of tensors/numpy arrays.
 
         Returns:
             A single tensor (flattened if needed) on the correct device.
         """
         if isinstance(gradient, list):
-            # If it's a list of tensors, flatten it
+            # If it's a list of tensors or numpy arrays, flatten it
             flat_tensors = []
             for g in gradient:
                 if isinstance(g, torch.Tensor):
                     flat_tensors.append(g.flatten().to(self.device))
+                elif isinstance(g, np.ndarray):
+                    # Convert numpy array to tensor
+                    tensor_g = torch.from_numpy(g)
+                    flat_tensors.append(tensor_g.flatten().to(self.device))
+                else:
+                    raise TypeError(f"Expected tensor or numpy array, got {type(g)}")
             return torch.cat(flat_tensors)
         elif isinstance(gradient, torch.Tensor):
             return gradient.to(self.device)
+        elif isinstance(gradient, np.ndarray):
+            # Convert single numpy array to tensor
+            return torch.from_numpy(gradient).to(self.device)
         else:
-            raise TypeError(f"Expected tensor or list of tensors, got {type(gradient)}")
+            raise TypeError(f"Expected tensor, numpy array, or list of tensors/arrays, got {type(gradient)}")
 
     def get_selected_average(self) -> Optional[torch.Tensor]:
         """
