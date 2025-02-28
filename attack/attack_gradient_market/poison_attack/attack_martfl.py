@@ -297,6 +297,8 @@ class BackdoorImageGenerator:
 
         return trigger_pattern
 
+    def update_trigger(self, new_trigger):
+        self.trigger_pattern = new_trigger
 
     def apply_trigger_tensor(self,
                              image: torch.Tensor,
@@ -383,7 +385,6 @@ class BackdoorImageGenerator:
             y_poisoned[idx] = self.target_label  # Overwrite label
 
         return X_poisoned, y_poisoned, y_clean
-
 
     def generate_poisoned_samples(self, X: torch.Tensor) -> torch.Tensor:
         """
