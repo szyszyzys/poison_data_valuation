@@ -57,6 +57,7 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
             # Extract selection rates
             if 'selection_rate_info' in record:
                 selection_info = record['selection_rate_info']
+                print(selection_info)
                 round_data['malicious_rate'] = selection_info.get('malicious_rate', None)
                 round_data['benign_rate'] = selection_info.get('benign_rate', None)
                 round_data['avg_malicious_rate'] = selection_info.get('avg_malicious_rate', None)
