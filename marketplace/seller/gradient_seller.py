@@ -214,9 +214,22 @@ class SybilCoordinator:
         """
         strat = strategy if strategy is not None else self.gradient_default_mode
         avg_grad = self.get_selected_average()
+
+        # Helper function to safely convert to numpy
+        def to_numpy(g):
+            if isinstance(g, torch.Tensor):
+                return g.cpu().numpy()
+            elif isinstance(g, np.ndarray):
+                return g
+            else:
+                raise TypeError(f"Expected torch.Tensor or numpy.ndarray but got {type(g)}.")
+
+        # If no average gradient, just return current_gradient as numpy arrays.
         if avg_grad is None:
-            return [g.cpu().numpy() for g in current_gradient] if isinstance(current_gradient, list) else [
-                current_gradient.cpu().numpy()]
+            if isinstance(current_gradient, list):
+                return [to_numpy(g) for g in current_gradient]
+            else:
+                return [to_numpy(current_gradient)]
 
         is_list = isinstance(current_gradient, list)
         original_shapes = None
@@ -243,15 +256,16 @@ class SybilCoordinator:
         else:
             new_grad = (1 - self.alpha) * current_grad_tensor + self.alpha * avg_grad
 
-        # If it was a list, reshape and return as NumPy arrays
+        # If the original gradient was a list, unflatten it to match the original shapes.
         if is_list and original_shapes:
             new_grad = self._unflatten_gradient(new_grad, original_shapes)
 
-        # Ensure new_grad is a list before conversion
-        if isinstance(new_grad, torch.Tensor):
-            new_grad = [new_grad]  # Convert to a list
+        # Ensure new_grad is a list (if it's a single tensor or array, wrap it in a list)
+        if isinstance(new_grad, (torch.Tensor, np.ndarray)):
+            new_grad = [new_grad]
 
-        return [t.cpu().numpy() for t in new_grad]  # Convert each tensor in list to NumPy
+        # Convert each element in the list to a NumPy array.
+        return [to_numpy(t) for t in new_grad]
 
     def _unflatten_gradient(self, flat_grad: torch.Tensor, original_shapes: List[torch.Size]) -> List[torch.Tensor]:
         """
