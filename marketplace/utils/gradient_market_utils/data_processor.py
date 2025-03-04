@@ -27,6 +27,9 @@ Usage Example:
     for cid, loader in client_loaders.items():
         print(f"Client {cid} has {len(loader.dataset)} samples.")
 """
+import random
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple, Any
 
 
 def load_fmnist_dataset(train=True, download=True):
@@ -54,36 +57,6 @@ def load_cifar10_dataset(train=True, download=True):
     ])
     dataset = datasets.CIFAR10(root="./data", train=train, transform=transform, download=download)
     return dataset
-
-
-# def split_dataset_buyer_seller(dataset, buyer_count, num_sellers):
-#     """
-#     Split the dataset indices such that the buyer gets a fixed number of samples,
-#     and the remaining samples are randomly split among the sellers.
-#
-#     Parameters:
-#       dataset (Dataset): The full dataset.
-#       buyer_count (int): Number of samples to assign to the buyer.
-#       num_sellers (int): Number of seller clients.
-#
-#     Returns:
-#       dict: A dictionary with keys 'buyer' and 'seller_i' for each seller,
-#             mapping to lists of indices.
-#     """
-#     # Get all indices and shuffle them.
-#     indices = np.arange(len(dataset))
-#     np.random.shuffle(indices)
-#
-#     # Assign the first buyer_count indices to the buyer.
-#     buyer_indices = indices[:buyer_count].tolist()
-#     remaining_indices = indices[buyer_count:]
-#
-#     # Split the remaining indices among sellers (roughly equal splits)
-#     seller_splits = np.array_split(remaining_indices, num_sellers)
-#     splits = {"buyer": buyer_indices}
-#     for i, seller_indices in enumerate(seller_splits):
-#         splits[f"seller_{i}"] = seller_indices.tolist()
-#     return splits
 
 
 # def create_client_dataloaders(dataset, splits, batch_size=32, shuffle=True):
@@ -138,100 +111,12 @@ def load_cifar10_dataset(train=True, download=True):
 #     test_set_loader = DataLoader(test_set, batch_size=64, shuffle=False)
 #     return client_loaders, dataset, test_set_loader
 
-
-# def split_dataset_buyer_seller(dataset, buyer_count, num_sellers, iid=True,
-#                                seller_label_distribution=None,
-#                                buyer_label_distribution=None):
-#     """
-#     Splits the dataset indices between one buyer and several sellers.
-#
-#     Parameters:
-#       dataset: A PyTorch dataset object. It should have a `targets` attribute or be indexable as (image, label).
-#       buyer_count (int): Number of samples to allocate to the buyer.
-#       num_sellers (int): Number of seller clients.
-#       iid (bool): If True, splits are IID (random); if False, non-IID splits are produced.
-#       seller_label_distribution (dict, optional): Mapping from seller IDs (e.g. 0,1,2,...)
-#            to a list of labels that that seller should predominantly receive.
-#            For example, {0: [0, 1], 1: [2, 3]}.
-#       buyer_label_distribution (list, optional): A list of labels that the buyer should predominantly receive.
-#            For example, [0, 1] means the buyer’s data will be mostly from labels 0 and 1.
-#
-#     Returns:
-#       buyer_indices (list): List of dataset indices assigned to the buyer.
-#       seller_splits (dict): Dictionary mapping seller IDs (0, 1, ..., num_sellers-1) to lists of dataset indices.
-#     """
-#     all_indices = list(range(len(dataset)))
-#     try:
-#         targets = dataset.targets
-#     except AttributeError:
-#         targets = [dataset[i][1] for i in range(len(dataset))]
-#
-#     # --- Buyer Split ---
-#     if buyer_label_distribution is not None:
-#         # Only select indices whose label is in the buyer's designated labels.
-#         buyer_candidates = [i for i in all_indices if targets[i] in buyer_label_distribution]
-#     else:
-#         buyer_candidates = all_indices.copy()
-#
-#     # If not enough candidate samples, sample from the whole dataset.
-#     if len(buyer_candidates) < buyer_count:
-#         buyer_indices = random.sample(all_indices, buyer_count)
-#     else:
-#         buyer_indices = random.sample(buyer_candidates, buyer_count)
-#
-#     remaining_indices = list(set(all_indices) - set(buyer_indices))
-#
-#     # --- Seller Splits ---
-#     if iid:
-#         # IID: simply shuffle and split remaining indices equally.
-#         random.shuffle(remaining_indices)
-#         seller_splits = {}
-#         per_seller = len(remaining_indices) // num_sellers
-#         for i in range(num_sellers):
-#             start = i * per_seller
-#             if i == num_sellers - 1:
-#                 seller_splits[i] = remaining_indices[start:]
-#             else:
-#                 seller_splits[i] = remaining_indices[start:start + per_seller]
-#     else:
-#         # Non-IID: use seller_label_distribution if provided; otherwise, assign two adjacent classes per seller.
-#         seller_splits = {i: [] for i in range(num_sellers)}
-#         if seller_label_distribution is None:
-#             unique_labels = sorted(list(set(targets)))
-#             num_classes = len(unique_labels)
-#             seller_label_distribution = {}
-#             for i in range(num_sellers):
-#                 label1 = unique_labels[i % num_classes]
-#                 label2 = unique_labels[(i + 1) % num_classes]
-#                 seller_label_distribution[i] = [label1, label2]
-#         # Build inverse mapping from label to seller IDs.
-#         label_to_sellers = defaultdict(list)
-#         for seller, label_list in seller_label_distribution.items():
-#             for lab in label_list:
-#                 label_to_sellers[lab].append(seller)
-#         # Assign each remaining index to a seller that is interested in its label.
-#         for idx in remaining_indices:
-#             lab = targets[idx]
-#             candidates = label_to_sellers.get(lab, [])
-#             if candidates:
-#                 chosen = random.choice(candidates)
-#             else:
-#                 chosen = random.choice(list(seller_splits.keys()))
-#             seller_splits[chosen].append(idx)
-#
-#     return buyer_indices, seller_splits
-
-import random
-from collections import defaultdict
-from typing import Dict, List, Optional, Tuple, Any
-
-
-def split_dataset_buyer_seller(
+def split_dataset_by_label(
         dataset: Any,
         buyer_count: int,
         num_sellers: int,
         distribution_type: str = "UNI",  # "UNI" or "POW"
-        label_split_type: str = "IID",  # "IID" or "NonIID"
+        label_split_type: str = "NonIID",  # "IID" or "NonIID"
         seller_label_distribution: Optional[Dict[int, List[int]]] = None,
         buyer_label_distribution: Optional[List[int]] = None,
         seller_qualities: Optional[Dict[str, float]] = None,
@@ -775,14 +660,19 @@ def get_data_set(
     buyer_count = int(total_samples * buyer_percentage)
     print(f"Allocating {buyer_count} samples ({buyer_percentage * 100:.2f}%) for the buyer.")
 
-    buyer_indices, seller_splits = split_dataset_buyer_seller_improved(
-        dataset=dataset,
-        buyer_count=buyer_count,
-        num_sellers=num_sellers,
-        split_method=split_method,
-        dirichlet_alpha=0.7,
-        n_adversaries=n_adversaries
-    )
+    if split_method == "label":
+        buyer_indices, seller_splits = split_dataset_by_label(dataset=dataset,
+                                                              buyer_count=buyer_count,
+                                                              num_sellers=num_sellers, )
+    else:
+        buyer_indices, seller_splits = split_dataset_buyer_seller_improved(
+            dataset=dataset,
+            buyer_count=buyer_count,
+            num_sellers=num_sellers,
+            split_method=split_method,
+            dirichlet_alpha=0.7,
+            n_adversaries=n_adversaries
+        )
     # Create DataLoaders.
     buyer_loader = DataLoader(Subset(dataset, buyer_indices), batch_size=batch_size, shuffle=True)
     seller_loaders = {i: DataLoader(Subset(dataset, indices), batch_size=batch_size, shuffle=True)
