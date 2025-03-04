@@ -28,10 +28,6 @@ Usage Example:
         print(f"Client {cid} has {len(loader.dataset)} samples.")
 """
 
-import math
-
-import matplotlib.pyplot as plt
-
 
 def load_fmnist_dataset(train=True, download=True):
     """
@@ -784,7 +780,7 @@ def get_data_set(
         buyer_count=buyer_count,
         num_sellers=num_sellers,
         split_method=split_method,
-        dirichlet_alpha=0.1,
+        dirichlet_alpha=0.5,
         n_adversaries=n_adversaries
     )
     # Create DataLoaders.
@@ -959,65 +955,6 @@ def split_dataset_buyer_seller_improved(dataset,
     # --------------------------------------------------------------------------
 
     return buyer_indices, seller_splits
-
-
-# Example test function to display class distributions.
-def test_split_setups():
-    from collections import Counter
-    from torchvision import datasets, transforms
-    # For demonstration, we use CIFAR10.
-    dataset_name = "CIFAR"
-    buyer_percentage = 0.01
-    num_sellers = 10
-    total_samples = 50000  # CIFAR10 train size.
-
-    # Define transform (including normalization)
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465),
-                             (0.2023, 0.1994, 0.2010))
-    ])
-
-    dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
-    if not hasattr(dataset, 'targets'):
-        dataset.targets = [label for (_, label) in dataset]
-
-    buyer_count = int(len(dataset) * buyer_percentage)
-
-    print("Setup 1: Dirichlet partitioning for all sellers")
-    buyer_indices, seller_splits = split_dataset_buyer_seller_improved(
-        dataset=dataset,
-        buyer_count=buyer_count,
-        num_sellers=num_sellers,
-        split_method="Dirichlet",
-        dirichlet_alpha=0.5,
-        n_adversaries=0
-    )
-    # Print buyer distribution.
-    buyer_labels = [dataset.targets[i] for i in buyer_indices]
-    print("Buyer class distribution:", dict(Counter(buyer_labels)))
-    # Print seller distributions.
-    for seller_id, indices in seller_splits.items():
-        seller_labels = [dataset.targets[i] for i in indices]
-        print(f"Seller {seller_id} distribution:", dict(Counter(seller_labels)))
-
-    print("\nSetup 2: AdversaryFirst partitioning")
-    # Suppose first 3 sellers are adversaries.
-    n_adversaries = 3
-    buyer_indices, seller_splits = split_dataset_buyer_seller_improved(
-        dataset=dataset,
-        buyer_count=buyer_count,
-        num_sellers=num_sellers,
-        split_method="AdversaryFirst",
-        dirichlet_alpha=0.5,
-        n_adversaries=n_adversaries
-    )
-    buyer_labels = [dataset.targets[i] for i in buyer_indices]
-    print("Buyer class distribution:", dict(Counter(buyer_labels)))
-    for seller_id, indices in seller_splits.items():
-        seller_labels = [dataset.targets[i] for i in indices]
-        role = "Adversary" if seller_id < n_adversaries else "Benign"
-        print(f"Seller {seller_id} ({role}) distribution:", dict(Counter(seller_labels)))
 
 
 def visualize_data_distribution(dataset, buyer_indices, seller_splits,
