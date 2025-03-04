@@ -1,10 +1,10 @@
-import os
-from pathlib import Path
-
 import numpy as np
+import os
 import pandas as pd
 import torch
 import traceback
+from pathlib import Path
+
 
 def process_single_experiment(file_path, attack_params, aggregation_method):
     """
@@ -56,14 +56,14 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
 
             # Extract selection rates
             if 'selection_rate_info' in record:
-                selection_info = record['selection_rate_info']
-                print(selection_info)
+                selection_info = record.get("selection_rate_info", {})
                 round_data['malicious_rate'] = selection_info.get('malicious_rate', None)
                 round_data['benign_rate'] = selection_info.get('benign_rate', None)
                 round_data['avg_malicious_rate'] = selection_info.get('avg_malicious_rate', None)
                 round_data['avg_benign_rate'] = selection_info.get('avg_benign_rate', None)
             if 'martfl_baseline_id' in record:
-                round_baseline_id = record['martfl_baseline_id']
+                round_baseline_id = record.get("martfl_baseline_id", None)
+
                 round_data["baseline_client_id"] = round_baseline_id
                 if round_baseline_id:
                     round_data["malicious_baseline"] = isinstance(round_baseline_id, str)
