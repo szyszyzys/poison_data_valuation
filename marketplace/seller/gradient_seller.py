@@ -268,7 +268,7 @@ class SybilCoordinator:
             # find the seller with the most selection rate
             is_first = self.cur_round == self.benign_rounds
             best_client_id = self.get_client_with_highest_selection_rate()
-            best_client = self.clients[best_client_id]
+            best_client = self.registered_clients[best_client_id]
             # use the best seller's local to update the pattern
             best_client.upload_global_trigger(self.aggregator.global_model, first_attack=is_first, lr=0.01,
                                               num_steps=50)
