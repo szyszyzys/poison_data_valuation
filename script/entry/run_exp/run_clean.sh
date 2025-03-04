@@ -39,5 +39,5 @@ for data_split_mode in "${data_split_modes[@]}"; do
       --data_split_mode "$data_split_mode" \
       --change_base "$change_base"\
       --gradient_manipulation_mode "$gradient_manipulation_mode"\
-      --adv_rate "0"
+      --adv_rate "0.2"
 done
