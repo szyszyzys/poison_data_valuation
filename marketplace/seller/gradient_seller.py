@@ -9,6 +9,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch import optim, nn
+from torch.utils.data import DataLoader
 from typing import Dict
 from typing import List, Optional, Union
 from typing import Tuple
@@ -751,79 +752,74 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         return tmp_trigger
 
-    def trigger_opt(self, model, trigger, first_attack=False, trigger_lr=0.01, num_steps=50, lambda_param=1.0):
-
-        # Set model to evaluation mode
-        model.eval()
-
-        # Initialize trigger if not already done
-        sample_batch, _ = next(iter(self.dataset))
-        sample_batch = sample_batch.to(self.device)
-
-        # Clone the trigger for optimization
-
-        # Create optimizer for the trigger
-        trigger_optimizer = optim.Adam([trigger], lr=trigger_lr)
-        criterion = nn.CrossEntropyLoss()
-
-        # Phase 1: Loss alignment (only in first attack)
-        if first_attack:
-            print("Phase 1: Loss alignment optimization (λ=0)")
-            for step in range(num_steps):
-                total_loss = 0
-                batches = 0
-
-                for data, _ in self.dataset:
-                    data = data.to(self.device)
-
-                    batches += 1
-                    backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
-                    print("Original data shape:", data.shape)
-                    print("Backdoored data shape:", backdoored_data.shape)
-
-                    # Create target labels for backdoor task
-                    backdoor_labels = torch.full((data.shape[0],), self.target_label,
-                                                 dtype=torch.long, device=self.device)
-
-                    # Forward pass - minimize classification loss for backdoor task
-                    outputs = model(backdoored_data)
-                    loss = criterion(outputs, backdoor_labels)
-                    total_loss += loss.item()
-
-                    # Backward pass and optimize
-                    trigger_optimizer.zero_grad()
-                    loss.backward()
-                    trigger_optimizer.step()
-
-                    # Clip values to valid range [0, 1]
-                    with torch.no_grad():
-                        trigger.clamp_(0, 1)
-
-                    # Limit number of batches per step for efficiency
-                    if batches >= 10:
-                        break
-
-                print(f"Step {step + 1}, Loss: {total_loss / batches:.4f}")
-
-        # Phase 2: Gradient alignment
-        print(f"Phase 2: Gradient alignment optimization (λ={lambda_param})")
+    def process_attack(self, model, trigger, criterion, trigger_optimizer, num_steps, lambda_param, batch_size=32):
+        # Phase 1: Loss alignment optimization (λ=0)
+        print("Phase 1: Loss alignment optimization (λ=0)")
+        dataloader = DataLoader(self.dataset, batch_size=batch_size, shuffle=True)
         for step in range(num_steps):
-            total_gradient_distance = 0
-            total_backdoor_loss = 0
+            total_loss = 0.0
+            batches = 0
+
+            for data, _ in dataloader:
+                # If data is missing a channel dimension, add it.
+                if data.dim() == 3:  # shape: [batch, 28, 28]
+                    data = data.unsqueeze(1)  # becomes [batch, 1, 28, 28]
+                data = data.to(self.device)
+
+                batches += 1
+                backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
+                print("Original data shape:", data.shape)
+                print("Backdoored data shape:", backdoored_data.shape)
+
+                # Create target labels for the backdoor task for the entire batch
+                backdoor_labels = torch.full((data.shape[0],), self.target_label,
+                                             dtype=torch.long, device=self.device)
+
+                # Forward pass – minimize classification loss for the backdoor task
+                outputs = model(backdoored_data)
+                loss = criterion(outputs, backdoor_labels)
+                total_loss += loss.item()
+
+                # Backward pass and optimization
+                trigger_optimizer.zero_grad()
+                loss.backward()
+                trigger_optimizer.step()
+
+                # Clip trigger values to valid range [0, 1]
+                with torch.no_grad():
+                    trigger.clamp_(0, 1)
+
+                # Limit number of batches per step for efficiency
+                if batches >= 10:
+                    break
+
+            print(f"Step {step + 1}, Loss: {total_loss / batches:.4f}")
+
+        # Phase 2: Gradient alignment optimization
+        print(f"Phase 2: Gradient alignment optimization (λ={lambda_param})")
+        dataloader = DataLoader(self.dataset, batch_size=batch_size, shuffle=True)
+        for step in range(num_steps):
+            total_gradient_distance = 0.0
+            total_backdoor_loss = 0.0
             batches_processed = 0
 
-            for data, label in self.dataset:
+            for data, label in dataloader:
+                # Ensure proper shape: [batch, 1, 28, 28]
+                if data.dim() == 3:
+                    data = data.unsqueeze(1)
                 data, label = data.to(self.device), label.to(self.device)
-                # Create backdoored data and labels
-                backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
+                batches_processed += 1
 
-                # Compute clean loss and save clean gradients
+                # Create backdoored data and corresponding target labels
+                backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
+                backdoor_labels = torch.full((data.shape[0],), self.target_label,
+                                             dtype=torch.long, device=self.device)
+
+                # Compute clean loss and store clean gradients
                 model.zero_grad()
                 clean_outputs = model(data)
                 clean_loss = criterion(clean_outputs, label)
-                clean_loss.backward(retain_graph=True)  # Use retain_graph=True here
-
-                # Store clean gradients
+                clean_loss.backward(retain_graph=True)
                 clean_grads = {}
                 for name, param in model.named_parameters():
                     if param.grad is not None:
@@ -832,14 +828,13 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 # Compute backdoor loss and gradients
                 model.zero_grad()
                 backdoor_outputs = model(backdoored_data)
-                backdoor_loss = criterion(backdoor_outputs, self.target_label)
-                backdoor_loss.backward(retain_graph=True)  # Use retain_graph=True here too
+                backdoor_loss = criterion(backdoor_outputs, backdoor_labels)
+                backdoor_loss.backward(retain_graph=True)
 
-                # Compute gradient distance
+                # Compute gradient distance (L2 norm squared of the difference)
                 gradient_distance = torch.tensor(0.0, device=self.device)
                 for name, param in model.named_parameters():
                     if param.grad is not None and name in clean_grads:
-                        # L2 distance between gradients as in paper
                         distance = torch.sum((param.grad - clean_grads[name]) ** 2)
                         gradient_distance += distance
 
@@ -849,31 +844,152 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 total_gradient_distance += gradient_distance.item()
                 total_backdoor_loss += backdoor_loss.item()
 
-                # Optimize trigger using combined loss
+                # Optimize trigger using the combined loss
                 trigger_optimizer.zero_grad()
-                # Rather than backpropagating through the combined_objective directly,
-                # manually compute the gradients for the trigger
                 if lambda_param > 0:
-                    trigger.grad = torch.autograd.grad(combined_loss, trigger, retain_graph=True)[0]
+                    trigger_grad = torch.autograd.grad(combined_loss, trigger, retain_graph=True)[0]
                 else:
-                    trigger.grad = torch.autograd.grad(backdoor_loss, trigger)[0]
-
+                    trigger_grad = torch.autograd.grad(backdoor_loss, trigger)[0]
+                trigger.grad = trigger_grad
                 trigger_optimizer.step()
 
-                # Clip values to valid range [0, 1]
                 with torch.no_grad():
                     trigger.clamp_(0, 1)
 
-                # Break after a few batches to save time
+                # Break after processing a few batches for efficiency
                 if batches_processed >= 10:
                     break
 
             print(f"Step {step + 1}, Gradient Distance: {total_gradient_distance / batches_processed:.4f}, "
                   f"Backdoor Loss: {total_backdoor_loss / batches_processed:.4f}")
 
-        # Update trigger with optimized version
+        # Detach and return the updated trigger
         trigger = trigger.detach()
         return trigger
+
+    # def trigger_opt(self, model, trigger, first_attack=False, trigger_lr=0.01, num_steps=50, lambda_param=1.0):
+    #
+    #     # Set model to evaluation mode
+    #     model.eval()
+    #
+    #     # Initialize trigger if not already done
+    #     sample_batch, _ = next(iter(self.dataset))
+    #     sample_batch = sample_batch.to(self.device)
+    #
+    #     # Clone the trigger for optimization
+    #
+    #     # Create optimizer for the trigger
+    #     trigger_optimizer = optim.Adam([trigger], lr=trigger_lr)
+    #     criterion = nn.CrossEntropyLoss()
+
+    # Phase 1: Loss alignment (only in first attack)
+    # if first_attack:
+    #     print("Phase 1: Loss alignment optimization (λ=0)")
+    #     for step in range(num_steps):
+    #         total_loss = 0
+    #         batches = 0
+    #
+    #         for data, _ in self.dataset:
+    #             data = data.to(self.device)
+    #
+    #             batches += 1
+    #             backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
+    #             print("Original data shape:", data.shape)
+    #             print("Backdoored data shape:", backdoored_data.shape)
+    #
+    #             # Create target labels for backdoor task
+    #             backdoor_labels = torch.full((data.shape[0],), self.target_label,
+    #                                          dtype=torch.long, device=self.device)
+    #
+    #             # Forward pass - minimize classification loss for backdoor task
+    #             outputs = model(backdoored_data)
+    #             loss = criterion(outputs, backdoor_labels)
+    #             total_loss += loss.item()
+    #
+    #             # Backward pass and optimize
+    #             trigger_optimizer.zero_grad()
+    #             loss.backward()
+    #             trigger_optimizer.step()
+    #
+    #             # Clip values to valid range [0, 1]
+    #             with torch.no_grad():
+    #                 trigger.clamp_(0, 1)
+    #
+    #             # Limit number of batches per step for efficiency
+    #             if batches >= 10:
+    #                 break
+    #
+    #         print(f"Step {step + 1}, Loss: {total_loss / batches:.4f}")
+    #
+    # # Phase 2: Gradient alignment
+    # print(f"Phase 2: Gradient alignment optimization (λ={lambda_param})")
+    # for step in range(num_steps):
+    #     total_gradient_distance = 0
+    #     total_backdoor_loss = 0
+    #     batches_processed = 0
+    #
+    #     for data, label in self.dataset:
+    #         data, label = data.to(self.device), label.to(self.device)
+    #         # Create backdoored data and labels
+    #         backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
+    #
+    #         # Compute clean loss and save clean gradients
+    #         model.zero_grad()
+    #         clean_outputs = model(data)
+    #         clean_loss = criterion(clean_outputs, label)
+    #         clean_loss.backward(retain_graph=True)  # Use retain_graph=True here
+    #
+    #         # Store clean gradients
+    #         clean_grads = {}
+    #         for name, param in model.named_parameters():
+    #             if param.grad is not None:
+    #                 clean_grads[name] = param.grad.clone()
+    #
+    #         # Compute backdoor loss and gradients
+    #         model.zero_grad()
+    #         backdoor_outputs = model(backdoored_data)
+    #         backdoor_loss = criterion(backdoor_outputs, self.target_label)
+    #         backdoor_loss.backward(retain_graph=True)  # Use retain_graph=True here too
+    #
+    #         # Compute gradient distance
+    #         gradient_distance = torch.tensor(0.0, device=self.device)
+    #         for name, param in model.named_parameters():
+    #             if param.grad is not None and name in clean_grads:
+    #                 # L2 distance between gradients as in paper
+    #                 distance = torch.sum((param.grad - clean_grads[name]) ** 2)
+    #                 gradient_distance += distance
+    #
+    #         # Combined loss for trigger optimization
+    #         combined_loss = lambda_param * gradient_distance + (1 - lambda_param) * backdoor_loss
+    #
+    #         total_gradient_distance += gradient_distance.item()
+    #         total_backdoor_loss += backdoor_loss.item()
+    #
+    #         # Optimize trigger using combined loss
+    #         trigger_optimizer.zero_grad()
+    #         # Rather than backpropagating through the combined_objective directly,
+    #         # manually compute the gradients for the trigger
+    #         if lambda_param > 0:
+    #             trigger.grad = torch.autograd.grad(combined_loss, trigger, retain_graph=True)[0]
+    #         else:
+    #             trigger.grad = torch.autograd.grad(backdoor_loss, trigger)[0]
+    #
+    #         trigger_optimizer.step()
+    #
+    #         # Clip values to valid range [0, 1]
+    #         with torch.no_grad():
+    #             trigger.clamp_(0, 1)
+    #
+    #         # Break after a few batches to save time
+    #         if batches_processed >= 10:
+    #             break
+    #
+    #     print(f"Step {step + 1}, Gradient Distance: {total_gradient_distance / batches_processed:.4f}, "
+    #           f"Backdoor Loss: {total_backdoor_loss / batches_processed:.4f}")
+    #
+    # # Update trigger with optimized version
+    # trigger = trigger.detach()
+    # return trigger
 
 
 def global_clip_np(arr, max_norm: float) -> np.ndarray:
