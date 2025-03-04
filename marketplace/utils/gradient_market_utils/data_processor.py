@@ -928,14 +928,14 @@ def split_dataset_buyer_seller_improved(dataset,
     # ----------------- Statistics Printing and Visualization -----------------
     print("\nSeller Data Statistics:")
     # We'll create a subplot grid with 3 columns.
-    n_cols = 3
-    n_rows = math.ceil(num_sellers / n_cols)
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
-    if num_sellers == 1:
-        axes = [axes]  # make it iterable
-    else:
-        axes = axes.flatten()
-
+    # n_cols = 3
+    # n_rows = math.ceil(num_sellers / n_cols)
+    # fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
+    # if num_sellers == 1:
+    #     axes = [axes]  # make it iterable
+    # else:
+    #     axes = axes.flatten()
+    #
     for seller in range(num_sellers):
         indices = seller_splits[seller]
         seller_labels = targets[indices]
@@ -944,18 +944,18 @@ def split_dataset_buyer_seller_improved(dataset,
         total = len(indices)
         print(f"Seller {seller}: Total Samples = {total}, Distribution = {counts}")
 
-        # Plot bar chart.
-        axes[seller].bar(list(counts.keys()), list(counts.values()))
-        axes[seller].set_title(f"Seller {seller} Distribution")
-        axes[seller].set_xlabel("Class")
-        axes[seller].set_ylabel("Count")
-
-    # If there are any unused subplots, hide them.
-    for i in range(num_sellers, len(axes)):
-        axes[i].axis("off")
-
-    plt.tight_layout()
-    plt.show()
+        # # Plot bar chart.
+        # axes[seller].bar(list(counts.keys()), list(counts.values()))
+        # axes[seller].set_title(f"Seller {seller} Distribution")
+        # axes[seller].set_xlabel("Class")
+        # axes[seller].set_ylabel("Count")
+    #
+    # # If there are any unused subplots, hide them.
+    # for i in range(num_sellers, len(axes)):
+    #     axes[i].axis("off")
+    #
+    # plt.tight_layout()
+    # plt.savefig(f"{output_dir}/asr_comparison.png", dpi=300)
     # --------------------------------------------------------------------------
 
     return buyer_indices, seller_splits
