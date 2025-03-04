@@ -766,7 +766,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         # Create optimizer for the trigger
         trigger_optimizer = optim.Adam([trigger], lr=trigger_lr)
         criterion = nn.CrossEntropyLoss()
-        dataloader = DataLoader(self.dataset, batch_size=batch_size, shuffle=True)
+        dataloader = DataLoader(self.dataset, batch_size=64, shuffle=True)
 
         # Phase 1: Loss alignment (only in first attack)
         if first_attack:
