@@ -289,7 +289,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Process federated learning backdoor attack logs")
     parser.add_argument("--output_dir", default="./processed_data", help="Output directory for processed data")
-    parser.add_argument("--local_epoch", type=int, default=5, help="Local epoch setting used in experiments")
+    parser.add_argument("--local_epoch", type=int, default=2, help="Local epoch setting used in experiments")
     parser.add_argument("--aggregation_methods", nargs='+', default=['martfl', 'fedavg'],
                         help="List of aggregation methods to process")
 

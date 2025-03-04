@@ -22,7 +22,7 @@ POISON_STRENGTHS=(1)
 SYBIL_MODES=("mimic")
 N_ADVS=(0.2 0.3)
 ALPHAS=(0.5)
-data_split_modes=("dirichlet" "adversaryfirst" "split_method")
+data_split_modes=("label")
 IS_SYBIL_VALUES=("False" "True")
 TIGGER_MODES=("static" "dynamic")
 # For each combination, we call run_experiment.py with the corresponding args.
