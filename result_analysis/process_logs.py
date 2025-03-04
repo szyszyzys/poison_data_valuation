@@ -130,6 +130,8 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
 
     except Exception as e:
         print(f"Error processing {file_path}: {e}")
+        print("Traceback details:")
+        traceback.print_exc()
         return [], {}
 
 
