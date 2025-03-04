@@ -782,8 +782,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
                     batches += 1
                     backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
-                    print("Original data shape:", data.shape)
-                    print("Backdoored data shape:", backdoored_data.shape)
 
                     # Create target labels for the backdoor task for the entire batch
                     backdoor_labels = torch.full((data.shape[0],), self.target_label,
@@ -811,7 +809,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         # Phase 2: Gradient alignment optimization
         print(f"Phase 2: Gradient alignment optimization (λ={lambda_param})")
-        dataloader = DataLoader(self.dataset, batch_size=batch_size, shuffle=True)
+        dataloader = DataLoader(self.dataset, batch_size=64, shuffle=True)
         for step in range(num_steps):
             total_gradient_distance = 0.0
             total_backdoor_loss = 0.0
