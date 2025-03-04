@@ -21,7 +21,7 @@ aggregation_method='martfl'
 # Initialize these to empty strings to check later
 local_epoch="2"
 # gradient_manipulation_mode is already set to "single" by default
-data_split_modes=("dirichlet" "adversaryfirst")
+data_split_modes=("dirichlet")
 change_base="True"
 
 for data_split_mode in "${data_split_modes[@]}"; do

@@ -137,7 +137,7 @@ def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
                   sybil_mode=False, is_sybil="False", data_split_mode='iid',
                   aggregation_method='fedavg', dataset_name='cifar10',
                   poison_strength=None, trigger_rate=None, trigger_type=None,
-                  adv_rate=None, change_base="True"):
+                  adv_rate=None, change_base="True", trigger_attack_mode =""):
     """
     Construct a save path based on the experiment parameters.
 
@@ -164,10 +164,10 @@ def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
 
     if aggregation_method == "martfl":
         base_dir = Path(
-            "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / f"{aggregation_method}_{change_base}" / dataset_name
+            "./results") / f"backdoor_trigger_{trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / f"{aggregation_method}_{change_base}" / dataset_name
     else:
         base_dir = Path(
-            "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / aggregation_method / dataset_name
+            "./results") / f"backdoor_trigger_{trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / aggregation_method / dataset_name
 
     if gradient_manipulation_mode == "None":
         subfolder = "no_attack"
@@ -205,11 +205,12 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
     # Process each aggregation method
     for aggregation_method in aggregation_methods:
         print(f"\nProcessing experiments for {aggregation_method}...")
-        for data_split_mode in ["NonIID", "IID"]:
-            for grad_mode in ['single']:
-                for trigger_rate in [0.25, 0.5]:
+        # for data_split_mode in ["NonIID", "IID"]:
+        for data_split_mode in ["dirichlet", "adversaryfirst"]:
+            for grad_mode in ['single', 'None']:
+                for trigger_rate in [0.25]:
                     for is_sybil in ["False", "mimic"]:
-                        for adv_rate in [0.1, 0.2, 0.3, 0.4]:
+                        for adv_rate in [0.2, 0.3]:
                             for change_base in ["True", "False"]:
                                 if aggregation_method == "fedavg" and change_base == "True":
                                     continue
