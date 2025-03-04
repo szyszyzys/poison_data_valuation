@@ -28,9 +28,9 @@ Usage Example:
         print(f"Client {cid} has {len(loader.dataset)} samples.")
 """
 
-import torch
-from torch.utils.data import DataLoader, Subset
-from torchvision import datasets, transforms
+import math
+
+import matplotlib.pyplot as plt
 
 
 def load_fmnist_dataset(train=True, download=True):
@@ -226,7 +226,6 @@ def load_cifar10_dataset(train=True, download=True):
 #     return buyer_indices, seller_splits
 
 import random
-import numpy as np
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -732,7 +731,7 @@ def get_data_set(
         batch_size=64,
         normalize_data=True,
         split_method="Dirichlet",
-        n_adversaries = 0
+        n_adversaries=0
 ):
     # Define transforms based on the dataset.
     if normalize_data:
@@ -920,6 +919,44 @@ def split_dataset_buyer_seller_improved(dataset,
             seller_splits[j] = benign_splits[j - n_adversaries]
     else:
         raise ValueError("Unknown split_method. Use 'Dirichlet' or 'AdversaryFirst'.")
+
+    # Ensure each seller has at least one sample.
+    for seller_id, indices in seller_splits.items():
+        if len(indices) == 0:
+            seller_splits[seller_id] = [int(np.random.choice(seller_indices))]
+
+    # ----------------- Statistics Printing and Visualization -----------------
+    print("\nSeller Data Statistics:")
+    # We'll create a subplot grid with 3 columns.
+    n_cols = 3
+    n_rows = math.ceil(num_sellers / n_cols)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
+    if num_sellers == 1:
+        axes = [axes]  # make it iterable
+    else:
+        axes = axes.flatten()
+
+    for seller in range(num_sellers):
+        indices = seller_splits[seller]
+        seller_labels = targets[indices]
+        # Compute counts per class.
+        counts = {c: int(np.sum(seller_labels == c)) for c in np.unique(targets)}
+        total = len(indices)
+        print(f"Seller {seller}: Total Samples = {total}, Distribution = {counts}")
+
+        # Plot bar chart.
+        axes[seller].bar(list(counts.keys()), list(counts.values()))
+        axes[seller].set_title(f"Seller {seller} Distribution")
+        axes[seller].set_xlabel("Class")
+        axes[seller].set_ylabel("Count")
+
+    # If there are any unused subplots, hide them.
+    for i in range(num_sellers, len(axes)):
+        axes[i].axis("off")
+
+    plt.tight_layout()
+    plt.show()
+    # --------------------------------------------------------------------------
 
     return buyer_indices, seller_splits
 
