@@ -150,7 +150,7 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
                                                 channels=channels, location=args.bkd_loc)
 
-    early_stopper = FederatedEarlyStopper(patience=50, min_delta=0.01, monitor='acc')
+    early_stopper = FederatedEarlyStopper(patience=20, min_delta=0.01, monitor='acc')
 
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
 
