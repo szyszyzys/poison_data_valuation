@@ -159,7 +159,7 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                                                                                         buyer_percentage=buyer_percentage,
                                                                                         num_sellers=n_sellers,
                                                                                         split_method=data_split_mode,
-                                                                                        n_adversaries=n_adversaries
+                                                                                        n_adversaries=n_adversaries,
                                                                                         )
 
     # config the buyer
@@ -183,7 +183,8 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                                          gradient_default_mode=sybil_params['sybil_mode'],
                                          alpha=sybil_params["alpha"],
                                          amplify_factor=sybil_params["amplify_factor"],
-                                         cost_scale=sybil_params["cost_scale"], aggregator=aggregator)
+                                         cost_scale=sybil_params["cost_scale"], aggregator=aggregator,
+                                         trigger_mode=sybil_params["trigger_mode"])
 
     marketplace = DataMarketplaceFederated(aggregator,
                                            selection_method=aggregation_method, save_path=save_path)
@@ -219,14 +220,6 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                                             local_training_params=local_training_params)
 
         marketplace.register_seller(cur_id, current_seller)
-
-    # config the attack test set.
-    # clean_loader, triggered_loader, triggered_clean_label = generate_attack_test_set(full_dataset, backdoor_generator,
-    #                                                                                  poison_test_sample)
-    # # save some
-    # save_samples(clean_loader, filename=f"{save_path}/clean_samples.png", n_samples=16, nrow=4, title="Clean Samples")
-    # save_samples(triggered_loader, filename=f"{save_path}/triggered_samples.png", n_samples=16, nrow=4,
-    #              title="Triggered Samples")
 
     # Start global round
     for gr in range(global_rounds):
@@ -331,6 +324,7 @@ def parse_args():
     parser.add_argument('--buyer_percentage', type=float, default=0.003, help='Buyer percentage')
     parser.add_argument("--change_base", type=str, default="True", help="Change base flag")
 
+    parser.add_argument("--trigger_attack_mode", type=str, default="static", help="static, dynamic")
     # New argument: path to a YAML configuration file
     parser.add_argument("--config_file", type=str, default="", help="Path to YAML configuration file")
 
@@ -409,10 +403,10 @@ def get_save_path(args):
     sybil_str = str(args.sybil_mode) if args.is_sybil else False
     if args.aggregation_method == "martfl":
         base_dir = Path(
-            "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"{args.aggregation_method}_{args.change_base}" / args.dataset_name
+            "./results") / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"{args.aggregation_method}_{args.change_base}" / args.dataset_name
     else:
         base_dir = Path(
-            "./results") / "backdoor" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / args.aggregation_method / args.dataset_name
+            "./results") / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / args.aggregation_method / args.dataset_name
 
     if args.gradient_manipulation_mode == "None":
         subfolder = "no_attack"
@@ -450,7 +444,8 @@ def main():
         "amplify_factor": 2.0,
         "cost_scale": 1.5,
         "adv_rate": args.adv_rate,
-        "benign_rounds": 5
+        "benign_rounds": 5,
+        "trigger_mode": args.trigger_attack_mode
     }
 
     local_training_params = {
