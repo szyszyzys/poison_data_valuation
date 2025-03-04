@@ -118,7 +118,7 @@ def local_training_and_get_gradient(model: nn.Module,
                                     batch_size: int,
                                     device: torch.device,
                                     local_epochs: int = 1,
-                                    lr: float = 0.01, opt="SGD"):
+                                    lr: float = 0.01, opt="SGD", momentum=0.9, weight_decay=0.0005):
     """
     Perform local training on a copy of the given model using the provided dataset.
     Returns:
@@ -137,7 +137,7 @@ def local_training_and_get_gradient(model: nn.Module,
     # Use a standard loss function and optimizer
     criterion = nn.CrossEntropyLoss()
     if opt == "SGD":
-        optimizer = optim.SGD(local_model.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
+        optimizer = optim.SGD(local_model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
     elif opt == "ADAM":
         optimizer = optim.Adam(local_model.parameters(), lr=lr)
     else:

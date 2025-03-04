@@ -300,20 +300,32 @@ class BackdoorImageGenerator:
     def update_trigger(self, new_trigger):
         self.trigger_pattern = new_trigger
 
+    def get_trigger(self):
+        res = self.trigger_pattern.clone()
+        return res
+
     def apply_trigger_tensor(self,
                              image: torch.Tensor,
-                             ) -> torch.Tensor:
+                             trigger=None) -> torch.Tensor:
         """
         Applies a given trigger pattern to a single image, supporting both CIFAR and FMNIST datasets.
 
+        If a trigger is provided, it is used for blending; otherwise, the internal self.trigger_pattern is used.
+
         :param image: A torch.Tensor of shape (C, H, W), values in [0, 1].
-                     C=3 for CIFAR (RGB) and C=1 for FMNIST (grayscale)
+                      C=3 for CIFAR (RGB) and C=1 for FMNIST (grayscale)
+        :param trigger: Optional; a torch.Tensor trigger to be applied instead of self.trigger_pattern.
         :return: A new torch.Tensor with the trigger applied, shape (C, H, W).
         """
         # Ensure float for blending
         image = image.clone().float()  # (C, H, W)
         C, H, W = image.shape
-        trigger_C, h, w = self.trigger_pattern.shape
+
+        # Select the trigger to use: provided trigger or the default one
+        used_trigger = trigger if trigger is not None else self.trigger_pattern
+
+        # Get trigger dimensions
+        trigger_C, h, w = used_trigger.shape
 
         # Validate channel dimensions
         if C not in [1, 3]:
@@ -322,12 +334,10 @@ class BackdoorImageGenerator:
         # Ensure trigger pattern matches input channels
         if trigger_C != C:
             if trigger_C == 1 and C == 3:
-                # Expand grayscale trigger to RGB
-                self.trigger_pattern = self.trigger_pattern.repeat(3, 1, 1)
+                used_trigger = used_trigger.repeat(3, 1, 1)
             elif trigger_C == 3 and C == 1:
-                # Convert RGB trigger to grayscale using luminosity method
-                weights = torch.tensor([0.2989, 0.5870, 0.1140]).view(3, 1, 1).to(self.trigger_pattern.device)
-                self.trigger_pattern = (self.trigger_pattern * weights).sum(dim=0, keepdim=True)
+                weights = torch.tensor([0.2989, 0.5870, 0.1140]).view(3, 1, 1).to(used_trigger.device)
+                used_trigger = (used_trigger * weights).sum(dim=0, keepdim=True)
             else:
                 raise ValueError(f"Incompatible trigger pattern channels ({trigger_C}) and image channels ({C})")
 
@@ -354,9 +364,8 @@ class BackdoorImageGenerator:
         # Extract the region for blending
         region = image[:, y:y + h, x:x + w]
 
-        # Blend region with trigger_pattern
-        # (1 - alpha)*original + alpha*trigger
-        blended = (1.0 - self.alpha) * region + self.alpha * self.trigger_pattern.to(region.device)
+        # Blend region with trigger: (1 - alpha)*original + alpha*trigger
+        blended = (1.0 - self.alpha) * region + self.alpha * used_trigger.to(region.device)
 
         # Place the blended region back and clamp to [0, 1]
         image[:, y:y + h, x:x + w] = torch.clamp(blended, 0.0, 1.0)

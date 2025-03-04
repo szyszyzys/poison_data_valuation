@@ -731,7 +731,8 @@ def get_data_set(
         num_sellers=10,
         batch_size=64,
         normalize_data=True,
-        split_method="Dirichlet"
+        split_method="Dirichlet",
+        n_adversaries = 0
 ):
     # Define transforms based on the dataset.
     if normalize_data:

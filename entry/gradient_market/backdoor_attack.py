@@ -1,19 +1,12 @@
 import argparse
-import argparse
-import json
-import numpy as np
-import numpy as np
-import os
 import os
 import random
-import random
 import shutil
-import shutil
-import torch
+
+import numpy as np
 import torch
 import torch.backends.cudnn
 import yaml
-from pathlib import Path
 from torch import nn
 from torch.utils.data import Subset, TensorDataset, DataLoader
 
@@ -24,7 +17,7 @@ from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
-from model.utils import get_model, save_samples
+from model.utils import get_model
 
 
 def dataloader_to_tensors(dataloader):
@@ -85,29 +78,6 @@ def generate_attack_test_set(full_dataset, backdoor_generator, n_samples=1000):
     print("+++++++++++++++++++++++++++++++++")
 
     return clean_loader, triggered_loader, triggered_clean_label
-
-    # X_list, y_list = [], []
-    # for img, label in subset_dataset:
-    #     # img is a torch.Tensor of shape (1, H, W); convert to (H, W, 1)
-    #     img = img.permute(1, 2, 0)  # now shape (H, W, C)
-    #     X_list.append(img)
-    #     y_list.append(label)
-    #
-    # X = torch.stack(X_list)  # Shape: (10000, H, W, C)
-    # y = torch.tensor(y_list)  # Shape: (10000,)
-    #
-    # X_poisoned, y_poisoned = backdoor_generator.generate_poisoned_dataset(X, y, poison_rate=0.5)
-    #
-    # X = X.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
-    # X_poisoned = X_poisoned.permute(0, 3, 1, 2)
-    #
-    # clean_dataset = TensorDataset(X, y)
-    # triggered_dataset = TensorDataset(X_poisoned, y_poisoned)
-    #
-    # batch_size = 64
-    # clean_loader = DataLoader(clean_dataset, batch_size=batch_size, shuffle=True)
-    # triggered_loader = DataLoader(triggered_dataset, batch_size=batch_size, shuffle=True)
-    # return clean_loader, triggered_loader
 
 
 def convert_np(obj):
@@ -180,7 +150,7 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
                                                 channels=channels, location=args.bkd_loc)
 
-    early_stopper = FederatedEarlyStopper(patience=20, min_delta=0.01, monitor='acc')
+    early_stopper = FederatedEarlyStopper(patience=50, min_delta=0.01, monitor='acc')
 
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
 
@@ -189,6 +159,7 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                                                                                         buyer_percentage=buyer_percentage,
                                                                                         num_sellers=n_sellers,
                                                                                         split_method=data_split_mode,
+                                                                                        n_adversaries=n_adversaries
                                                                                         )
 
     # config the buyer
@@ -207,7 +178,10 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                             loss_fn=loss_fn
                             )
 
-    sybil_coordinator = SybilCoordinator(default_mode=sybil_params['sybil_mode'], alpha=sybil_params["alpha"],
+    sybil_coordinator = SybilCoordinator(backdoor_generator=backdoor_generator,
+                                         benign_rounds=sybil_params['benign_rounds'],
+                                         gradient_default_mode=sybil_params['sybil_mode'],
+                                         alpha=sybil_params["alpha"],
                                          amplify_factor=sybil_params["amplify_factor"],
                                          cost_scale=sybil_params["cost_scale"], aggregator=aggregator)
 
@@ -247,30 +221,27 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
         marketplace.register_seller(cur_id, current_seller)
 
     # config the attack test set.
-    clean_loader, triggered_loader, triggered_clean_label = generate_attack_test_set(full_dataset, backdoor_generator,
-                                                                                     poison_test_sample)
-    # save some
-    save_samples(clean_loader, filename=f"{save_path}/clean_samples.png", n_samples=16, nrow=4, title="Clean Samples")
-    save_samples(triggered_loader, filename=f"{save_path}/triggered_samples.png", n_samples=16, nrow=4,
-                 title="Triggered Samples")
+    # clean_loader, triggered_loader, triggered_clean_label = generate_attack_test_set(full_dataset, backdoor_generator,
+    #                                                                                  poison_test_sample)
+    # # save some
+    # save_samples(clean_loader, filename=f"{save_path}/clean_samples.png", n_samples=16, nrow=4, title="Clean Samples")
+    # save_samples(triggered_loader, filename=f"{save_path}/triggered_samples.png", n_samples=16, nrow=4,
+    #              title="Triggered Samples")
 
-    # Start gloal round
+    # Start global round
     for gr in range(global_rounds):
         # train the attack model
         print(f"=============round {gr} start=======================")
         print(f"current work path: {save_path}")
+        sybil_coordinator.on_round_start()
         round_record, aggregated_gradient = marketplace.train_federated_round(round_number=gr,
                                                                               buyer=buyer,
                                                                               n_adv=n_adversaries,
-                                                                              test_dataloader_buyer_local=
-                                                                              buyer_loader,
+                                                                              test_dataloader_buyer_local=buyer_loader,
                                                                               test_dataloader_global=test_loader,
-                                                                              clean_loader=clean_loader,
-                                                                              triggered_loader=triggered_loader,
-                                                                              triggered_clean_label_loader=triggered_clean_label,
-                                                                              loss_fn=loss_fn, device=device,
-                                                                              dataset_name=dataset_name,
-                                                                              backdoor_target_label=backdoor_target_label)
+                                                                              loss_fn=loss_fn,
+                                                                              backdoor_target_label=backdoor_target_label,
+                                                                              backdoor_generator=backdoor_generator)
 
         if gr % 10 == 0:
             torch.save(marketplace.round_logs, f"{save_path}/market_log_round_{gr}.ckpt")
@@ -281,9 +252,10 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                 break
         sybil_coordinator.on_round_end()
 
-    poison_metrics = evaluate_attack_performance_backdoor_poison(marketplace.aggregator.global_model, clean_loader,
-                                                                 triggered_clean_label,
-                                                                 marketplace.aggregator.device,
+    poison_metrics = evaluate_attack_performance_backdoor_poison(marketplace.aggregator.global_model,
+                                                                 test_loader=test_loader,
+                                                                 device=marketplace.aggregator.device,
+                                                                 backdoor_generator=backdoor_generator,
                                                                  target_label=backdoor_target_label, plot=True,
                                                                  save_path=f"{save_path}/final_backdoor_attack_performance.png")
 
@@ -477,7 +449,8 @@ def main():
         "alpha": 0.5,
         "amplify_factor": 2.0,
         "cost_scale": 1.5,
-        "adv_rate": args.adv_rate
+        "adv_rate": args.adv_rate,
+        "benign_rounds": 5
     }
 
     local_training_params = {
@@ -523,7 +496,7 @@ def main():
         local_training_params=local_training_params,
         buyer_percentage=args.buyer_percentage,
         data_split_mode=args.data_split_mode,
-        change_base=(args.change_base == "True")
+        change_base=(args.change_base == "True"),
     )
 
 

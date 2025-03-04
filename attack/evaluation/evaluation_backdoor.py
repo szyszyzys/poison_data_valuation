@@ -5,7 +5,7 @@ import torch
 from sklearn.metrics import confusion_matrix
 
 
-def evaluate_attack_performance_backdoor_poison(model, clean_loader, triggered_loader, device, target_label=None,
+def evaluate_attack_performance_backdoor_poison(model, test_loader, device, backdoor_generator, target_label=None,
                                                 plot=True, save_path="attack_performance.png"):
     """
     Evaluate the final model performance in a poisoning/backdoor scenario.
@@ -35,29 +35,26 @@ def evaluate_attack_performance_backdoor_poison(model, clean_loader, triggered_l
     # Evaluate on clean test set
     all_clean_preds = []
     all_clean_labels = []
+    all_triggered_preds = []
+    all_triggered_labels = []
     with torch.no_grad():
-        for X, y in clean_loader:
+        for X, y in test_loader:
             X = X.to(device)
             y = y.to(device)
             outputs = model(X)
             preds = outputs.argmax(dim=1)
             all_clean_preds.append(preds.cpu().numpy())
             all_clean_labels.append(y.cpu().numpy())
-    all_clean_preds = np.concatenate(all_clean_preds)
-    all_clean_labels = np.concatenate(all_clean_labels)
-    clean_accuracy = np.mean(all_clean_preds == all_clean_labels)
 
-    # Evaluate on triggered test set
-    all_triggered_preds = []
-    all_triggered_labels = []
-    with torch.no_grad():
-        for X, y in triggered_loader:
-            X = X.to(device)
-            y = y.to(device)
-            outputs = model(X)
+            backdoored_data = backdoor_generator.apply_trigger_tensor(X)
+            outputs = model(backdoored_data)
             preds = outputs.argmax(dim=1)
             all_triggered_preds.append(preds.cpu().numpy())
             all_triggered_labels.append(y.cpu().numpy())
+
+    all_clean_preds = np.concatenate(all_clean_preds)
+    all_clean_labels = np.concatenate(all_clean_labels)
+    clean_accuracy = np.mean(all_clean_preds == all_clean_labels)
     all_triggered_preds = np.concatenate(all_triggered_preds)
     all_triggered_labels = np.concatenate(all_triggered_labels)
     triggered_accuracy = np.mean(all_triggered_preds == all_triggered_labels)

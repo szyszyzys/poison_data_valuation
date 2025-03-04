@@ -7,7 +7,6 @@ import torch
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.martfl import Aggregator, flatten
-from marketplace.seller.gradient_seller import update_local_model_from_global
 from marketplace.seller.seller import BaseSeller
 from model.utils import apply_gradient_update
 
@@ -159,14 +158,12 @@ class DataMarketplaceFederated(DataMarketplace):
                               round_number: int,
                               buyer,
                               n_adv=0,
-                              num_select: int = None,
                               test_dataloader_buyer_local=None,
                               test_dataloader_global=None,
                               loss_fn=None,
-                              clean_loader=None, triggered_loader=None, triggered_clean_label_loader=None, device="cpu",
                               backdoor_target_label=0,
-                              dataset_name="",
-                              **kwargs):
+                              backdoor_generator=None
+                              ):
         """
         Perform one round of federated training:
          1. Collect gradients from all sellers.
@@ -198,15 +195,15 @@ class DataMarketplaceFederated(DataMarketplace):
             # Evaluate aggregator.global_model on test set
             final_perf_local = self.evaluate_global_model(test_dataloader_buyer_local, loss_fn)
         final_perf_global = None
+        poison_metrics = None
         if test_dataloader_global is not None and loss_fn is not None:
             # Evaluate aggregator.global_model on test set
             final_perf_global = self.evaluate_global_model(test_dataloader_global, loss_fn)
 
-        poison_metrics = None
-        if clean_loader is not None and triggered_loader is not None:
-            poison_metrics = evaluate_attack_performance_backdoor_poison(self.aggregator.global_model, clean_loader,
-                                                                         triggered_clean_label_loader,
+            poison_metrics = evaluate_attack_performance_backdoor_poison(self.aggregator.global_model,
+                                                                         test_dataloader_global,
                                                                          self.aggregator.device,
+                                                                         backdoor_generator,
                                                                          target_label=backdoor_target_label, plot=False,
                                                                          save_path=f"{self.save_path}/attack_performance.png")
         # 7. Log round info to aggregator (optional)

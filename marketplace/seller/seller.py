@@ -28,7 +28,7 @@ class BaseSeller(ABC):
 
     def __init__(self,
                  seller_id: str,
-                 dataset: List[Tuple[torch.Tensor, int]],
+                 dataset,
                  price_strategy: str = 'uniform',
                  base_price: float = 1.0,
                  price_variation: float = 0.2,

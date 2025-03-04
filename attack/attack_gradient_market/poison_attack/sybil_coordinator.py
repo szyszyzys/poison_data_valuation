@@ -1,8 +1,8 @@
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
-import numpy as np
+import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
 
@@ -15,6 +15,7 @@ def embed_trigger(x, trigger, mask):
     This implements: E(x, Δ) = x ⊙ (1 - m) + Δ ⊙ m
     """
     return x * (1 - mask) + trigger * mask
+
 
 # =======================================================
 # Direct Gradient Synthesis: Compute & Blend Gradients
@@ -29,6 +30,7 @@ def compute_benign_gradient(model, data_loader, criterion):
     benign_grad = torch.cat([p.grad.flatten() for p in model.parameters() if p.grad is not None])
     return benign_grad.detach()
 
+
 def compute_adversarial_gradient(model, data_loader, criterion, target_label):
     """Compute the average gradient based on a backdoor objective."""
     model.zero_grad()
@@ -40,6 +42,7 @@ def compute_adversarial_gradient(model, data_loader, criterion, target_label):
         loss.backward()
     adv_grad = torch.cat([p.grad.flatten() for p in model.parameters() if p.grad is not None])
     return adv_grad.detach()
+
 
 def blend_gradients(benign_grad, adv_grad, similarity_threshold=0.8, initial_alpha=0.5):
     """
@@ -55,6 +58,7 @@ def blend_gradients(benign_grad, adv_grad, similarity_threshold=0.8, initial_alp
         blended_grad = (1 - alpha) * adv_grad + alpha * benign_grad
         # Optionally, iterate on alpha until cosine similarity meets threshold
         return blended_grad
+
 
 # =====================================================
 # PFedBA_SybilAttack Class: Sybil Strategies and Coordinator
@@ -97,7 +101,7 @@ class PFedBA_SybilAttack:
             # If the client has participated enough rounds and its selection rate is high,
             # switch from benign to attack phase.
             if (self.clients[cid]["rounds_participated"] >= self.benign_rounds and
-                self.clients[cid]["selection_rate"] > 0.8):
+                    self.clients[cid]["selection_rate"] > 0.8):
                 self.clients[cid]["phase"] = "attack"
             else:
                 self.clients[cid]["phase"] = "benign"
@@ -124,7 +128,7 @@ class PFedBA_SybilAttack:
         total_sim = 0.0
         count = 0
         for i in range(len(all_selected)):
-            for j in range(i+1, len(all_selected)):
+            for j in range(i + 1, len(all_selected)):
                 sim = F.cosine_similarity(all_selected[i].unsqueeze(0), all_selected[j].unsqueeze(0))[0]
                 total_sim += sim.item()
                 count += 1
@@ -160,7 +164,8 @@ class PFedBA_SybilAttack:
         """
         benign_grad = compute_benign_gradient(model, clean_loader, criterion)
         adv_grad = compute_adversarial_gradient(model, mal_loader, criterion, self.target_label)
-        final_grad = blend_gradients(benign_grad, adv_grad, similarity_threshold=self.detection_threshold, initial_alpha=initial_alpha)
+        final_grad = blend_gradients(benign_grad, adv_grad, similarity_threshold=self.detection_threshold,
+                                     initial_alpha=initial_alpha)
         return final_grad
 
     # ----------------------------
@@ -206,7 +211,8 @@ class PFedBA_SybilAttack:
                 elif client_info["role"] == "attacker":
                     current_sim = F.cosine_similarity(base_grad.unsqueeze(0), centroid.unsqueeze(0))[0].item()
                     # If current similarity is low, increase the blending factor
-                    alpha = 1.0 - (current_sim / self.detection_threshold) if current_sim < self.detection_threshold else 0.3
+                    alpha = 1.0 - (
+                            current_sim / self.detection_threshold) if current_sim < self.detection_threshold else 0.3
                 else:  # hybrid
                     rate = client_info["selection_rate"]
                     alpha = max(0.2, 0.8 - rate)
@@ -218,6 +224,7 @@ class PFedBA_SybilAttack:
         if "centroid" in self.selection_patterns:
             final_update += alpha * self.selection_patterns["centroid"].to(device)
         return final_update
+
 
 # ===========================================================
 # Local Backdoor Training Function (Coordinator Placeholder)
@@ -248,8 +255,9 @@ def local_backdoor_training(model, clean_loader, mal_loader, trigger, mask, targ
             loss = criterion(model(x_trigger), target)
             loss.backward()
             optimizer_local.step()
-        print(f"Local training epoch {epoch+1} completed.")
+        print(f"Local training epoch {epoch + 1} completed.")
     return model
+
 
 # ===========================================================
 # Coordinator for Different Local Attacks (Placeholder)
@@ -267,11 +275,15 @@ def local_attack_coordinator(model, clean_loader, mal_loader, sybil_attack_obj, 
         trigger = sybil_attack_obj.trigger
         mask = sybil_attack_obj.mask
         target_label = sybil_attack_obj.target_label
-        updated_model = local_backdoor_training(model, clean_loader, mal_loader, trigger, mask, target_label, local_epochs=3, lr=0.01)
+        updated_model = local_backdoor_training(model, clean_loader, mal_loader, trigger, mask, target_label,
+                                                local_epochs=3, lr=0.01)
     else:
         # Placeholder for other methods
-        updated_model = local_backdoor_training(model, clean_loader, mal_loader, sybil_attack_obj.trigger, sybil_attack_obj.mask, sybil_attack_obj.target_label, local_epochs=3, lr=0.01)
+        updated_model = local_backdoor_training(model, clean_loader, mal_loader, sybil_attack_obj.trigger,
+                                                sybil_attack_obj.mask, sybil_attack_obj.target_label, local_epochs=3,
+                                                lr=0.01)
     return updated_model
+
 
 # ===========================================================
 # Experiment Simulation: Federated Rounds with Sybil Clients
@@ -303,7 +315,8 @@ def simulate_federated_rounds(num_rounds=10, num_benign=10, num_malicious=5, str
     target_label = torch.tensor(0, device=device)
 
     # Instantiate the PFedBA Sybil Attack manager
-    sybil_attack = PFedBA_SybilAttack(num_malicious, initial_trigger, mask, target_label, detection_threshold=0.8, benign_rounds=3)
+    sybil_attack = PFedBA_SybilAttack(num_malicious, initial_trigger, mask, target_label, detection_threshold=0.8,
+                                      benign_rounds=3)
     for cid in range(num_malicious):
         sybil_attack.register_client(cid, role="hybrid")
 
@@ -312,7 +325,7 @@ def simulate_federated_rounds(num_rounds=10, num_benign=10, num_malicious=5, str
 
     # Simulate federated rounds
     for rnd in range(num_rounds):
-        print(f"\n=== Federated Round {rnd+1} ===")
+        print(f"\n=== Federated Round {rnd + 1} ===")
         # -------------------------
         # Benign Client Updates
         # -------------------------
@@ -321,8 +334,10 @@ def simulate_federated_rounds(num_rounds=10, num_benign=10, num_malicious=5, str
             local_model = SimpleCNN(num_classes=10).to(device)
             local_model.load_state_dict(global_model.state_dict())
             # For benign clients, we run standard local training
-            local_model = local_attack_coordinator(local_model, clean_loader, mal_loader, sybil_attack, method="default")
-            update = {k: local_model.state_dict()[k] - global_model.state_dict()[k] for k in global_model.state_dict().keys()}
+            local_model = local_attack_coordinator(local_model, clean_loader, mal_loader, sybil_attack,
+                                                   method="default")
+            update = {k: local_model.state_dict()[k] - global_model.state_dict()[k] for k in
+                      global_model.state_dict().keys()}
             flat_update = torch.cat([v.flatten() for v in update.values()])
             benign_updates.append(flat_update)
         benign_avg = torch.mean(torch.stack(benign_updates), dim=0)
@@ -333,7 +348,8 @@ def simulate_federated_rounds(num_rounds=10, num_benign=10, num_malicious=5, str
         mal_updates = {}
         for cid in range(num_malicious):
             # Each malicious client computes its update using the sybil strategy.
-            client_update = sybil_attack.get_client_update(cid, global_model, clean_loader, mal_loader, strategy=strategy)
+            client_update = sybil_attack.get_client_update(cid, global_model, clean_loader, mal_loader,
+                                                           strategy=strategy)
             mal_updates[cid] = client_update
 
         # Simulate server selection: only select malicious updates with high cosine similarity to benign average.
@@ -362,7 +378,7 @@ def simulate_federated_rounds(num_rounds=10, num_benign=10, num_malicious=5, str
         new_state = {}
         for k, v in global_state.items():
             numel = v.numel()
-            delta = avg_update[pointer:pointer+numel].view_as(v)
+            delta = avg_update[pointer:pointer + numel].view_as(v)
             new_state[k] = v + delta
             pointer += numel
         global_model.load_state_dict(new_state)
@@ -390,17 +406,19 @@ def simulate_federated_rounds(num_rounds=10, num_benign=10, num_malicious=5, str
         ASR = correct_bd / total
 
         # Compute average cosine similarity of malicious updates to benign average
-        cos_sims = [F.cosine_similarity(grad.unsqueeze(0), benign_avg.unsqueeze(0))[0].item() for grad in mal_updates.values()]
+        cos_sims = [F.cosine_similarity(grad.unsqueeze(0), benign_avg.unsqueeze(0))[0].item() for grad in
+                    mal_updates.values()]
         avg_cos = np.mean(cos_sims)
 
-        print(f"Round {rnd+1}: ACC = {ACC:.4f}, ASR = {ASR:.4f}, Avg Cosine Similarity = {avg_cos:.4f}")
-        global_metrics["round"].append(rnd+1)
+        print(f"Round {rnd + 1}: ACC = {ACC:.4f}, ASR = {ASR:.4f}, Avg Cosine Similarity = {avg_cos:.4f}")
+        global_metrics["round"].append(rnd + 1)
         global_metrics["ACC"].append(ACC)
         global_metrics["ASR"].append(ASR)
         global_metrics["Avg_Cosine"].append(avg_cos)
 
     print("\nFinal Global Metrics:")
     print(global_metrics)
+
 
 # ===========================================================
 # Run the Federated Experiment Simulation

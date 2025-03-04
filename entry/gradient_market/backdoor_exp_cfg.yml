@@ -10,12 +10,12 @@ poison_test_sample: 5000
 local_epoch: 2
 poison_strength: 0.7
 local_lr: 0.001
-trigger_rate: 0.1
-gradient_manipulation_mode: "cmd"
-model_arch: "resnet18"
+trigger_rate: 0.25
+gradient_manipulation_mode: "single"
+model_arch: "LENET"
 seed: 42
 aggregation_method: "martfl"
-gpu_ids: "0"
+gpu_ids: "7"
 is_sybil: true
 sybil_mode: "mimic"
 bkd_loc: "bottom_right"
@@ -40,4 +40,4 @@ local_attack_params:
   trigger_type: "blended_patch"
   poison_strength: 0.7
   trigger_rate: 0.1
-  gradient_manipulation_mode: "cmd"
+  gradient_manipulation_mode: "single"
