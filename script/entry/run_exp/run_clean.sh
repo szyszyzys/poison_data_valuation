@@ -25,7 +25,6 @@ data_split_modes=("dirichlet" "adversaryfirst")
 change_base="True"
 
 for data_split_mode in "${data_split_modes[@]}"; do
-
   python entry/gradient_market/backdoor_attack.py \
       --dataset_name "$dataset_name" \
       --n_sellers "$n_sellers" \
@@ -39,5 +38,6 @@ for data_split_mode in "${data_split_modes[@]}"; do
       --aggregation_method "$aggregation_method" \
       --data_split_mode "$data_split_mode" \
       --change_base "$change_base"\
-      --gradient_manipulation_mode "$gradient_manipulation_mode"
+      --gradient_manipulation_mode "$gradient_manipulation_mode"\
+      --adv_rate "0"
 done
