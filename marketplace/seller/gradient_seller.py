@@ -242,7 +242,8 @@ class SybilCoordinator:
             new_grad = self.amplify_factor * aligned_grad
         else:
             new_grad = (1 - self.alpha) * current_grad_tensor + self.alpha * avg_grad
-
+        print(current_gradient[:3])
+        print(new_grad[:3])
         if is_list and original_shapes:
             return self._unflatten_gradient(new_grad, original_shapes)
         return new_grad

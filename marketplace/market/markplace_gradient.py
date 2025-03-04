@@ -71,7 +71,6 @@ class DataMarketplaceFederated(DataMarketplace):
             norm = torch.norm(flatten(grad_np))
             print(f"The {seller_id} gradient norm is: {norm}")
             gradients[seller_id] = grad_np
-            print(grad_np.dtype)
             seller_ids.append(seller_id)
 
         return gradients, seller_ids
