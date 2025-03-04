@@ -1,10 +1,19 @@
 import argparse
+import argparse
+import json
+import numpy as np
+import numpy as np
+import os
 import os
 import random
+import random
 import shutil
-
-import numpy as np
+import shutil
 import torch
+import torch
+import torch.backends.cudnn
+import yaml
+from pathlib import Path
 from torch import nn
 from torch.utils.data import Subset, TensorDataset, DataLoader
 
@@ -179,11 +188,8 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
     buyer_loader, client_loaders, full_dataset, test_loader, class_names = get_data_set(dataset_name,
                                                                                         buyer_percentage=buyer_percentage,
                                                                                         num_sellers=n_sellers,
-                                                                                        label_split_type=data_split_mode,
-                                                                                        n_adversaries=n_adversaries,
-                                                                                        seller_qualities={
-                                                                                            "high_quality": 0.5,
-                                                                                            "biased": 0.5})
+                                                                                        split_method=data_split_mode,
+                                                                                        )
 
     # config the buyer
     buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader.dataset, dataset_name=dataset_name,
@@ -228,7 +234,10 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                                                              sybil_coordinator=sybil_coordinator
                                                              )
             n_adversaries_cnt -= 1
+
+            # register each seller
             malicious_sellers.append(current_seller)
+            sybil_coordinator.register_seller(current_seller)
         else:
             cur_id = cid
             current_seller = GradientSeller(seller_id=cur_id, local_data=loader.dataset,
@@ -292,43 +301,73 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
     # record the attack result for the final round
 
 
+# ---------------------------
+# Configuration Parsing
+# ---------------------------
+def read_config(config_file: str) -> dict:
+    """
+    Read a YAML configuration file and return its settings as a dictionary.
+    """
+    config_path = Path(config_file)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Configuration file {config_file} does not exist.")
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
+
+
+def merge_configs(arg_namespace, yaml_config: dict) -> argparse.Namespace:
+    """
+    Merge a YAML configuration dictionary with the argparse namespace.
+    YAML configuration values override command-line arguments.
+    """
+    args_dict = vars(arg_namespace)
+    for key, value in yaml_config.items():
+        args_dict[key] = value
+    return argparse.Namespace(**args_dict)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Run Backdoor Attack Experiment")
 
-    # Required arguments
+    # Command-line arguments (they will be overridden by YAML if provided)
     parser.add_argument('--dataset_name', type=str, default='FMNIST',
                         help='Name of the dataset (e.g., MNIST, CIFAR10)')
     parser.add_argument('--n_sellers', type=int, default=30, help='Number of sellers')
-    parser.add_argument('--adv_rate', type=float, default=0.2, help='Number of adversaries')
-
-    # Optional arguments with defaults
+    parser.add_argument('--adv_rate', type=float, default=0.2, help='Adversary rate')
     parser.add_argument('--global_rounds', type=int, default=1, help='Number of global training rounds')
     parser.add_argument('--backdoor_target_label', type=int, default=0, help='Target label for backdoor attack')
     parser.add_argument('--trigger_type', type=str, default="blended_patch", help='Type of backdoor trigger')
     parser.add_argument('--exp_name', type=str, default="/", help='Experiment name for logging')
     parser.add_argument('--poison_test_sample', type=int, default=1000, help='Number of samples for global test')
-    parser.add_argument('--local_epoch', type=int, default=1, help='Number of global training rounds')
-
+    parser.add_argument('--local_epoch', type=int, default=1, help='Number of local training rounds')
     parser.add_argument('--poison_strength', type=float, default=1, help='Strength of poisoning')
-    parser.add_argument('--local_lr', type=float, default=1e-3, help='Strength of poisoning')
-    parser.add_argument('--trigger_rate', type=float, default=0.5, help='Strength of poisoning')
-
+    parser.add_argument('--local_lr', type=float, default=1e-3, help='Local learning rate')
+    parser.add_argument('--trigger_rate', type=float, default=0.5, help='Trigger injection rate')
     parser.add_argument('--gradient_manipulation_mode', type=str, default="cmd",
-                        help='Type of gradient manipulation cmd single')
-    # Model architecture argument
+                        help='Gradient manipulation mode: cmd, single, etc.')
     parser.add_argument('--model_arch', type=str, default='resnet18',
                         choices=['resnet18', 'resnet34', 'mlp'],
                         help='Model architecture (resnet18, resnet34, mlp)')
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
-    parser.add_argument("--aggregation_method", type=str, default="martfl", help="agge")
+    parser.add_argument("--aggregation_method", type=str, default="martfl", help="Aggregation method")
     parser.add_argument("--gpu_ids", type=str, default="0", help="Comma-separated GPU IDs (e.g., '0,1').")
     parser.add_argument("--is_sybil", action="store_true", help="Enable sybil attack (default: False)")
     parser.add_argument("--sybil_mode", type=str, default="mimic", help="Sybil strategy")
-    parser.add_argument("--bkd_loc", type=str, default="bottom_right", help="backdoor location")
-    parser.add_argument("--data_split_mode", type=str, default="NonIID", help="backdoor location")
-    parser.add_argument('--buyer_percentage', type=float, default=0.003, help='Strength of poisoning')
-    parser.add_argument("--change_base", type=str, default="True", help="backdoor location")
+    parser.add_argument("--bkd_loc", type=str, default="bottom_right", help="Backdoor location")
+    parser.add_argument("--data_split_mode", type=str, default="NonIID", help="Data split mode")
+    parser.add_argument('--buyer_percentage', type=float, default=0.003, help='Buyer percentage')
+    parser.add_argument("--change_base", type=str, default="True", help="Change base flag")
+
+    # New argument: path to a YAML configuration file
+    parser.add_argument("--config_file", type=str, default="", help="Path to YAML configuration file")
+
     args = parser.parse_args()
+
+    # If a configuration file is provided, override command-line arguments
+    if args.config_file:
+        yaml_config = read_config(args.config_file)
+        args = merge_configs(args, yaml_config)
     return args
 
 
@@ -367,23 +406,16 @@ def get_device(args) -> str:
 def clear_work_path(path):
     """
     Delete all files and subdirectories in the specified path.
-
-    Parameters:
-        path (str): The directory path to clear.
     """
     if not os.path.exists(path):
         print(f"Path '{path}' does not exist.")
         return
-
-    # List all items in the directory.
     for filename in os.listdir(path):
         file_path = os.path.join(path, filename)
         try:
-            # Remove a file or symbolic link.
             if os.path.isfile(file_path) or os.path.islink(file_path):
                 os.unlink(file_path)
                 print(f"Deleted file: {file_path}")
-            # Remove a directory and its contents.
             elif os.path.isdir(file_path):
                 shutil.rmtree(file_path)
                 print(f"Deleted directory: {file_path}")
@@ -431,16 +463,14 @@ def main():
     args = parse_args()
     t_model = get_model(args.dataset_name)
     print(
-        f"start backdoor attack, current dataset: {args.dataset_name}, n_sellers: {args.n_sellers}, attack method: {args.gradient_manipulation_mode}")
+        f"Start backdoor attack, dataset: {args.dataset_name}, n_sellers: {args.n_sellers}, attack method: {args.gradient_manipulation_mode}")
     set_seed(args.seed)
     device = get_device(args)
-
-    # Example usage in your main code:
     save_path = get_save_path(args)
-
     Path(save_path).mkdir(parents=True, exist_ok=True)
     print("Saving results to:", save_path)
     clear_work_path(save_path)
+
     sybil_params = {
         "is_sybil": args.is_sybil,
         "sybil_mode": args.sybil_mode,
@@ -471,8 +501,8 @@ def main():
         "local_training_params": local_training_params,
         "local_attack_params": local_attack_params
     }
-
     save_to_json(all_params, f"{save_path}/attack_params.json")
+
     backdoor_attack(
         dataset_name=args.dataset_name,
         n_sellers=args.n_sellers,
@@ -494,9 +524,11 @@ def main():
         buyer_percentage=args.buyer_percentage,
         data_split_mode=args.data_split_mode,
         change_base=(args.change_base == "True")
-
     )
 
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()

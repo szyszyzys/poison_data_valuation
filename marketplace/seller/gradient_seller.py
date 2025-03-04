@@ -3,229 +3,237 @@
 # from train import compute_loss, etc. (if needed)
 # from dataset import dataset_output_dim (if needed)
 import collections
+import collections
 import copy
-from typing import Dict, List, Optional, Union
-from typing import Tuple
-
+import copy
+import numpy as np
 import numpy as np
 import pandas as pd
 import torch
+import torch
+import torch.nn.functional as F
+from typing import Dict, List, Optional, Union
+from typing import List, Tuple, Optional, Union
+from typing import Tuple
 
 from general_utils.data_utils import list_to_tensor_dataset
 from marketplace.seller.seller import BaseSeller
 from model.utils import get_model, local_training_and_get_gradient, apply_gradient_update
 
 
+# CombinedSybilCoordinator integrates functionalities from both PFedBA_SybilAttack and SybilCoordinator.
 class SybilCoordinator:
-    """
-    A comprehensive SybilCoordinator to coordinate malicious sellers (Sybil identities)
-    in a federated learning setup where selection is based on gradient similarity.
-
-    The coordinator maintains a registry of malicious sellers and stores the gradients
-    reported by those that were selected in the last round. It then provides methods for
-    non-selected sellers to update their local gradients based on the average gradient
-    of the selected ones, helping the adversaries coordinate their attack.
-    """
-
     def __init__(self,
+                 backdoor_generator: BackdoorImageGenerator,
+                 detection_threshold: float = 0.8,
+                 benign_rounds: int = 3,
                  default_mode: str = "mimic",
                  alpha: float = 0.5,
                  amplify_factor: float = 2.0,
                  cost_scale: float = 1.5,
-                 device: str = "cuda" if torch.cuda.is_available() else "cpu", aggregator=None):
-        """
-        Initialize the SybilCoordinator with attack parameters.
+                 device: str = "cuda" if torch.cuda.is_available() else "cpu",
+                 aggregator=None):
+        # PFedBA-related attributes
+        self.detection_threshold = detection_threshold
+        self.benign_rounds = benign_rounds  # rounds to act benign before switching to attack
+        self.selected_history = []  # history of gradients (dicts: seller_id -> gradient)
+        self.selection_patterns = {}  # stores computed centroid and average similarity
+        self.clients = {}  # maps seller_id to info: role, selection_history, phase, rounds_participated
 
-        Args:
-            default_mode: Default strategy for non-selected gradient updates.
-                         Options: "mimic", "pivot", "knock_out", "slowdown",
-                         "cost_inflation", "camouflage".
-            alpha: Alignment factor (0 < alpha <= 1) for blending strategies.
-            amplify_factor: Factor to amplify coordinated gradients in "camouflage" mode.
-            cost_scale: Scale factor for "cost_inflation" mode.
-            device: Device to use for tensor operations ("cuda" or "cpu").
-        """
+        # SybilCoordinator-related attributes
         self.default_mode = default_mode
         self.alpha = alpha
         self.amplify_factor = amplify_factor
         self.cost_scale = cost_scale
         self.device = device
-
-        # Dictionary to store gradients from selected malicious sellers
-        self.selected_gradients = {}
-        # Registry of seller instances
-        self.registered_clients = collections.OrderedDict()
         self.aggregator = aggregator
+        self.registered_clients = collections.OrderedDict()  # seller_id -> seller object
+        self.selected_gradients = {}  # stores gradients from sellers selected in the last round
 
+    # ----- Registration Methods -----
     def register_seller(self, seller) -> None:
         """
-        Register a malicious seller (client) with the coordinator.
-
-        Args:
-            seller: The seller object to register (must have a unique seller_id attribute).
+        Register a malicious seller with the coordinator.
+        The seller object must have a unique attribute 'seller_id'.
+        Also, add an entry to the local clients dictionary.
         """
         if not hasattr(seller, 'seller_id'):
             raise AttributeError("Seller object must have a 'seller_id' attribute")
-
         self.registered_clients[seller.seller_id] = seller
+        self.clients[seller.seller_id] = {
+            "role": "hybrid",  # initial role can be "hybrid"
+            "selection_history": [],
+            "selection_rate": 0.0,
+            "phase": "benign",  # initial phase: benign
+            "rounds_participated": 0
+        }
 
-    def precompute_current_round_gradient(self, selected_info: Dict = None) -> None:
+    # ----- Update & Analysis Methods -----
+    def update_selection_information(self, selected_client_ids: List[str],
+                                     client_gradients: dict) -> None:
         """
-        Update with gradients from malicious sellers selected in the last round.
+        Update each registered seller's selection history based on whether
+        its update was selected by the server. Also update global selection patterns.
+        """
+        for cid in self.clients:
+            was_selected = cid in selected_client_ids
+            self.clients[cid]["selection_history"].append(was_selected)
+            history = self.clients[cid]["selection_history"]
+            self.clients[cid]["selection_rate"] = sum(history) / len(history)
+            self.clients[cid]["rounds_participated"] += 1
+            # Switch phase to "attack" if enough rounds have passed and selection rate is high.
+            if (self.clients[cid]["rounds_participated"] >= self.benign_rounds and
+                    self.clients[cid]["selection_rate"] > 0.8):
+                self.clients[cid]["phase"] = "attack"
+            else:
+                self.clients[cid]["phase"] = "benign"
+        # Collect gradients from selected sellers.
+        selected_grads = {cid: grad for cid, grad in client_gradients.items() if cid in selected_client_ids}
+        self.selected_history.append(selected_grads)
+        if len(self.selected_history) > 10:
+            self.selected_history.pop(0)
+        self._analyze_selection_patterns()
 
-        Args:
-            selected_info: Optional dict mapping seller_id to gradient.
-                          If None, gradients are collected from registered sellers.
+    def _analyze_selection_patterns(self) -> None:
+        """
+        Analyze stored selected gradients to compute a centroid and average cosine similarity.
+        This pattern information is used to adjust non-selected gradients.
+        """
+        all_selected = []
+        for round_dict in self.selected_history:
+            for grad in round_dict.values():
+                all_selected.append(grad.flatten())
+        if not all_selected:
+            return
+        all_tensor = torch.stack(all_selected)
+        centroid = torch.mean(all_tensor, dim=0)
+        total_sim = 0.0
+        count = 0
+        for i in range(len(all_selected)):
+            for j in range(i + 1, len(all_selected)):
+                sim = F.cosine_similarity(all_selected[i].unsqueeze(0),
+                                          all_selected[j].unsqueeze(0))[0]
+                total_sim += sim.item()
+                count += 1
+        avg_sim = total_sim / count if count > 0 else 0.0
+        self.selection_patterns = {"centroid": centroid, "avg_similarity": avg_sim}
+
+    def adaptive_role_assignment(self) -> None:
+        """
+        Dynamically reassign roles to sellers based on their selection rates.
+        For example, the top 20% become "attacker", the bottom 40% "explorer", and the remainder "hybrid."
+        """
+        selection_rates = {cid: self.clients[cid]["selection_rate"] for cid in self.clients}
+        sorted_clients = sorted(selection_rates.items(), key=lambda x: x[1], reverse=True)
+        num_clients = len(sorted_clients)
+        top_cutoff = int(0.2 * num_clients)
+        bottom_cutoff = int(0.6 * num_clients)
+        for i, (cid, _) in enumerate(sorted_clients):
+            if i < top_cutoff:
+                self.clients[cid]["role"] = "attacker"
+            elif i >= bottom_cutoff:
+                self.clients[cid]["role"] = "explorer"
+            else:
+                self.clients[cid]["role"] = "hybrid"
+
+    # ----- Selected Gradients & Update Methods -----
+    def precompute_current_round_gradient(self, selected_info: Optional[dict] = None) -> None:
+        """
+        Update the internal storage of selected gradients.
+        If selected_info is provided, use it; otherwise, query registered sellers.
         """
         self.selected_gradients = {}
-
-        # If selected_info provided, use it directly
         if selected_info:
             for seller_id, gradient in selected_info.items():
                 if seller_id in self.registered_clients:
                     self.selected_gradients[seller_id] = self._ensure_tensor(gradient)
             return
-        # Otherwise, collect from registered sellers
-        selected_last_round_list = []
+        selected_ids = []
         for seller_id, seller in self.registered_clients.items():
             if hasattr(seller, 'selected_last_round') and seller.selected_last_round:
-                # Deep copy the provided global model
                 base_model = copy.deepcopy(self.aggregator.global_model)
-
-                # Move the model to the correct device
                 base_model = base_model.to(self.device)
-
                 gradient = seller.get_local_gradient(base_model)
-                selected_last_round_list.append(seller_id)
+                selected_ids.append(seller_id)
                 self.selected_gradients[seller_id] = self._ensure_tensor(gradient)
-        print(f"Sybil selected in last round: {selected_last_round_list}")
+        print(f"Selected sellers in last round: {selected_ids}")
 
     def _ensure_tensor(self, gradient: Union[torch.Tensor, List, np.ndarray]) -> torch.Tensor:
         """
-        Ensure the gradient is a single tensor on the correct device.
-
-        Args:
-            gradient: Either a tensor, numpy array, or a list of tensors/numpy arrays.
-
-        Returns:
-            A single tensor (flattened if needed) on the correct device.
+        Ensure that the provided gradient is a single flattened tensor on the correct device.
         """
         if isinstance(gradient, list):
-            # If it's a list of tensors or numpy arrays, flatten it
             flat_tensors = []
             for g in gradient:
                 if isinstance(g, torch.Tensor):
                     flat_tensors.append(g.flatten().to(self.device))
                 elif isinstance(g, np.ndarray):
-                    # Convert numpy array to tensor
-                    tensor_g = torch.from_numpy(g)
-                    flat_tensors.append(tensor_g.flatten().to(self.device))
+                    flat_tensors.append(torch.from_numpy(g).flatten().to(self.device))
                 else:
-                    raise TypeError(f"Expected tensor or numpy array, got {type(g)}")
+                    raise TypeError(f"Unsupported gradient element type: {type(g)}")
             return torch.cat(flat_tensors)
         elif isinstance(gradient, torch.Tensor):
             return gradient.to(self.device)
         elif isinstance(gradient, np.ndarray):
-            # Convert single numpy array to tensor
             return torch.from_numpy(gradient).to(self.device)
         else:
-            raise TypeError(f"Expected tensor, numpy array, or list of tensors/arrays, got {type(gradient)}")
+            raise TypeError(f"Unsupported gradient type: {type(gradient)}")
 
     def get_selected_average(self) -> Optional[torch.Tensor]:
         """
-        Compute the average gradient from selected malicious sellers.
-
-        Returns:
-            Average gradient tensor, or None if no gradients stored.
+        Compute and return the average gradient of all selected sellers.
         """
         if not self.selected_gradients:
             return None
+        gradients = list(self.selected_gradients.values())
+        gradients = [g.to(self.device) for g in gradients]
+        avg_grad = torch.mean(torch.stack(gradients), dim=0)
+        return avg_grad
 
-        try:
-            gradients = list(self.selected_gradients.values())
-            # Ensure all gradients are on the same device and have the same shape
-            gradients = [g.to(self.device) for g in gradients]
-            avg_grad = torch.mean(torch.stack(gradients), dim=0)
-            return avg_grad
-        except Exception as e:
-            print(f"Error computing average gradient: {e}")
-            return None
-
-    def update_nonselected_gradient(self, current_gradient: Union[torch.Tensor, List],
+    def update_nonselected_gradient(self,
+                                    current_gradient: Union[torch.Tensor, List],
                                     strategy: Optional[str] = None) -> Union[torch.Tensor, List]:
         """
-        Update a non-selected seller's gradient based on the selected sellers' average.
-
-        Args:
-            current_gradient: Current local gradient (tensor or list of tensors).
-            strategy: Strategy to use; if None, uses default mode.
-                     Options: "mimic", "pivot", "knock_out", "slowdown",
-                     "cost_inflation", "camouflage".
-
-        Returns:
-            Updated gradient in the same format as input.
+        Update the gradient for a non-selected seller based on the average gradient of selected sellers.
+        Strategies include "mimic", "pivot", "knock_out", "slowdown", "cost_inflation", "camouflage", etc.
         """
-        # Determine which strategy to use
         strat = strategy if strategy is not None else self.default_mode
-
-        # Get average gradient from selected sellers
         avg_grad = self.get_selected_average()
         if avg_grad is None:
-            # No information available; return unchanged
             return current_gradient
 
-        # Convert input to tensor for manipulation
         is_list = isinstance(current_gradient, list)
         original_shapes = None
-
         if is_list:
-            # Remember original shapes for reconstruction
             original_shapes = [g.shape for g in current_gradient]
             current_grad_tensor = self._ensure_tensor(current_gradient)
         else:
             current_grad_tensor = current_gradient.to(self.device)
 
-        # Apply the selected strategy
         if strat == "mimic":
-            # Blend current gradient with the average
             new_grad = (1 - self.alpha) * current_grad_tensor + self.alpha * avg_grad
         elif strat == "pivot":
-            # Fully replace with the average
             new_grad = avg_grad.clone()
         elif strat == "knock_out":
-            # Use higher alignment factor
             alpha_knock = min(self.alpha * 2, 1.0)
             new_grad = (1 - alpha_knock) * current_grad_tensor + alpha_knock * avg_grad
         elif strat == "slowdown":
-            # Scale down to stall progress
             new_grad = 0.1 * current_grad_tensor
         elif strat == "cost_inflation":
-            # Scale up to inflate buyer's cost
             new_grad = self.cost_scale * avg_grad
         elif strat == "camouflage":
-            # Align then amplify
             aligned_grad = (1 - self.alpha) * current_grad_tensor + self.alpha * avg_grad
             new_grad = self.amplify_factor * aligned_grad
         else:
-            # Default to mimic for unknown strategy
             new_grad = (1 - self.alpha) * current_grad_tensor + self.alpha * avg_grad
 
-        # Convert back to original format if needed
         if is_list and original_shapes:
             return self._unflatten_gradient(new_grad, original_shapes)
         return new_grad
 
-    def _unflatten_gradient(self, flat_grad: torch.Tensor,
-                            original_shapes: List[torch.Size]) -> List[torch.Tensor]:
+    def _unflatten_gradient(self, flat_grad: torch.Tensor, original_shapes: List[torch.Size]) -> List[torch.Tensor]:
         """
-        Convert flattened gradient back to list of tensors with original shapes.
-
-        Args:
-            flat_grad: Flattened gradient tensor.
-            original_shapes: List of original tensor shapes.
-
-        Returns:
-            List of tensors with original shapes.
+        Reconstruct a list of tensors with original shapes from a flattened gradient.
         """
         result = []
         offset = 0
@@ -237,13 +245,41 @@ class SybilCoordinator:
             offset += num_elements
         return result
 
+    # ----- Reset and End-of-Round Handling -----
     def reset(self) -> None:
-        """Reset the stored gradients for the next round."""
+        """Reset stored selected gradients for the next round."""
         self.selected_gradients = {}
 
     def on_round_end(self) -> None:
-        """Handle end-of-round operations."""
+        """Operations to be performed at the end of a round."""
         self.reset()
+
+    def update_global_trigger(self, new_trigger: torch.Tensor) -> None:
+        """
+        Update the global trigger maintained by the coordinator.
+        This new trigger will be used by all malicious sellers.
+        """
+        self.trigger = new_trigger.clone().detach().to(self.device)
+        print("Coordinator: Global trigger updated.")
+
+    def get_global_trigger(self) -> torch.Tensor:
+        """
+        Retrieve the current global trigger.
+        """
+        return self.trigger
+
+# Example usage:
+# In your malicious seller, you would initialize:
+#
+#     coordinator = CombinedSybilCoordinator(initial_trigger, mask, target_label, detection_threshold=0.8, benign_rounds=3, ...)
+#
+# And then in your seller's get_gradient_for_upload method, you can do:
+#
+#     if self.is_sybil:
+#         coordinated_grad = coordinator.update_nonselected_gradient(local_grad)
+#         return coordinated_grad
+#     else:
+#         return local_grad
 
 
 class GradientSeller(BaseSeller):
@@ -427,12 +463,17 @@ class GradientSeller(BaseSeller):
         return {self.exp_save_path}
 
 
+# Assume GradientSeller and SybilCoordinator are defined elsewhere.
+# Also assume get_model() returns a new model instance, and unflatten_np converts a flattened numpy array back to parameter shapes.
+
 class AdvancedBackdoorAdversarySeller(GradientSeller):
     """
-    A more sophisticated backdoor attacker that:
-      1) Dynamically inserts a stealthy trigger pattern into a fraction of images.
-      2) Blends the backdoor gradient with the benign gradient.
-      3) Aligns the final gradient with a guessed server gradient to remain an inlier.
+    An advanced seller that supports multiple adversary behaviors.
+    This seller can:
+      1) Dynamically inject stealthy trigger patterns.
+      2) Compute a local gradient that is a blend of benign and backdoor signals.
+      3) Optionally align the final gradient with a guessed server gradient.
+      4) Integrate with a coordinator to adjust its behavior (e.g., in a Sybil setting).
     """
 
     def __init__(self,
@@ -440,290 +481,256 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  local_data: List[Tuple[torch.Tensor, int]],
                  target_label: int,
                  alpha_align: float = 0.5,
-                 trigger_rate=0.1,
+                 trigger_rate: float = 0.1,
                  poison_strength: float = 0.7,
                  clip_value: float = 0.01,
                  trigger_type: str = "blended_patch",
                  backdoor_generator=None,
-                 device='cpu',
-                 save_path="",
-                 local_epochs=2,
-                 dataset_name="",
-                 local_training_params=None,
-                 gradient_manipulation_mode="cmd",
-                 is_sybil=False,
-                 sybil_coordinator: SybilCoordinator = None
-                 ):
-        """
-        :param local_data:        List[(image_tensor, label_int)] for the local training set.
-        :param target_label:      The label the attacker wants the model to predict for triggered images.
-        :param trigger_fraction:  Fraction of local data to be turned into backdoor samples.
-        :param alpha_align:       How strongly to align with server guess (0 -> purely backdoor, 1 -> purely guess).
-        :param poison_strength:   Weighting factor for combining backdoor and benign gradients.
-        :param clip_value:        Max abs value for gradient components (aggregator clamp).
-        :param trigger_type:      e.g. "blended_patch", "invisible", "random_noise_patch", etc.
-        """
-        super().__init__(seller_id, local_data, save_path=save_path, device=device, local_epochs=local_epochs,
-                         dataset_name=dataset_name, local_training_params=local_training_params)
+                 device: str = 'cpu',
+                 save_path: str = "",
+                 local_epochs: int = 2,
+                 dataset_name: str = "",
+                 local_training_params: Optional[dict] = None,
+                 gradient_manipulation_mode: str = "cmd",
+                 is_sybil: bool = False,
+                 sybil_coordinator: Optional['SybilCoordinator'] = None):
+        super().__init__(seller_id, local_data, save_path=save_path, device=device,
+                         local_epochs=local_epochs, dataset_name=dataset_name,
+                         local_training_params=local_training_params)
+
         self.target_label = target_label
         self.alpha_align = alpha_align
         self.poison_strength = poison_strength
         self.clip_value = clip_value
         self.trigger_type = trigger_type
-
-        # For analysis: store the last "benign" and "poisoned" gradients
-        self.last_benign_grad = None
-        self.last_poisoned_grad = None
-
-        # Pre-split data
         self.backdoor_generator = backdoor_generator
+
+        # Pre-split data: inject triggers into a fraction of the local data.
         self.backdoor_data, self.clean_data = self._inject_triggers(local_data, trigger_rate)
-        self.local_training_params = local_training_params
+
         self.gradient_manipulation_mode = gradient_manipulation_mode
         self.cur_upload_gradient_flt = None
         self.is_sybil = is_sybil
         self.sybil_coordinator = sybil_coordinator
         self.cur_gradient = None
-        self.sybil_coordinator.register_seller(self)
+        self.federated_round_history = []
+        self.selected_last_round = False
 
+        # # Register this seller with the coordinator if available.
+        # if self.sybil_coordinator is not None:
+        #     self.sybil_coordinator.register_seller(self)
+
+        # Adversary behaviors registry: maps a mode to a function.
+        self.adversary_behaviors = {
+            "cmd": self.gradient_manipulation_cmd,
+            "single": self.gradient_manipulation_single,
+            "none": self.get_clean_gradient,
+            # New strategies can be added here.
+        }
+
+    # ============================
+    # Data Injection Methods
+    # ============================
     def _inject_triggers(self, data: List[Tuple[torch.Tensor, int]], fraction: float):
         """
-        Insert a small, stealthy pattern into a fraction of images
-        and change their label to self.target_label.
+        Insert a stealthy trigger into a fraction of images.
         """
         n = len(data)
         n_trigger = int(n * fraction)
         idxs = np.random.choice(n, size=n_trigger, replace=False)
-
-        # We'll build new data lists
-        backdoor_data = []
-        clean_data = []
-
+        backdoor_data, clean_data = [], []
         for i, (img, label) in enumerate(data):
             if i in idxs:
-                # create a triggered version of 'img'
                 if self.backdoor_generator is None:
-                    triggered_img = self._apply_stealth_trigger(img)
+                    raise NotImplementedError(f"Cannot find the backdoor generator")
                 else:
                     triggered_img = self.backdoor_generator.apply_trigger_tensor(img)
                 backdoor_data.append((triggered_img, self.target_label))
             else:
                 clean_data.append((img, label))
-
         return backdoor_data, clean_data
 
-    def _apply_stealth_trigger(self, img_tensor: torch.Tensor) -> torch.Tensor:
+    # ============================
+    # Adversary Behavior Methods
+    # ============================
+    def get_clean_gradient(self, base_model):
         """
-        Modify the input image with a 'stealthy' pattern.
-        Examples:
-          - Blending a small patch with alpha < 0.2 so it's barely visible
-          - Random noise in a corner
-          - 'Invisible' triggers using transparency
-        We'll do a small 'blended patch' as an example.
+        Compute the gradient on clean (benign) local data.
         """
-        # Let's assume (C,H,W) shape
-        # For demonstration, place a small patch in the top-left corner
-        # with a random pattern that has low alpha blending
-        c, h, w = img_tensor.shape
-        patch_size = 4
-        patch = torch.rand(c, patch_size, patch_size)  # random pattern
-        alpha = 0.2  # blend ratio
+        gradient, gradient_flt, updated_model, local_eval_res = self._compute_local_grad(base_model, self.clean_data)
+        self.recent_metrics = local_eval_res
+        return gradient
 
-        # Inset the patch at top-left
-        # shape => [c, patch_size, patch_size]
-        triggered_img = img_tensor.clone()
-        triggered_img[:, :patch_size, :patch_size] = (
-                (1 - alpha) * triggered_img[:, :patch_size, :patch_size] + alpha * patch
-        )
-
-        return triggered_img
-
-    def get_gradient_for_upload(self, global_model=None):
+    def gradient_manipulation_cmd(self, base_model):
         """
-        Compute the local gradient and, if this seller is a Sybil attacker, query the coordinator
-        to update the gradient based on coordinated malicious updates.
-
-        :param global_model: Global model to be used as starting point (will be deep copied)
-        :return: Final gradient to be uploaded to the server
+        Compute a gradient that combines benign and backdoor gradients.
         """
+        grad_benign, g_benign_flt, _, _ = self._compute_local_grad(base_model, self.clean_data)
+        original_shapes = [param.shape for param in grad_benign]
+        g_backdoor, g_backdoor_flt, _, _ = self._compute_local_grad(base_model, self.backdoor_data)
+        final_poisoned_flt = ((1 - self.poison_strength) * g_benign_flt +
+                              self.poison_strength * g_backdoor_flt)
+        self.last_benign_grad = g_benign_flt
+        final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
+        return final_poisoned
 
-        if global_model is not None:
-            # Deep copy the provided global model
-            base_model = copy.deepcopy(global_model)
-            print(f"[{self.seller_id}] Using provided global model.")
-        else:
-            try:
-                # Load previous local model if no global model provided
-                base_model = self.load_local_model()
-                print(f"[{self.seller_id}] Loaded previous local model.")
-            except Exception as e:
-                print(f"[{self.seller_id}] No saved model found; using default initialization.")
-                base_model = get_model(self.dataset_name)  # Create a new model with default initialization
-
-        # Move the model to the correct device
-        base_model = base_model.to(self.device)
-
-        # Step 1: Compute the local gradient (potentially malicious)
-        local_grad = self.get_local_gradient(base_model)
-
-        # Save the computed gradient
-        self.cur_upload_gradient_flt = local_grad
-
-        # Return immediately if not doing Sybil attack
-        if not self.is_sybil:
-            return local_grad
-
-        # Don't perturb if this seller was selected in the previous round
-        if self.selected_last_round:
-            return local_grad
-
-        # For Sybil attackers, update the gradient using the coordinator
-        coordinated_grad = self.sybil_coordinator.update_nonselected_gradient(local_grad)
-        self.cur_upload_gradient_flt = coordinated_grad
-
-        return coordinated_grad
+    def gradient_manipulation_single(self, base_model):
+        """
+        Compute the gradient on combined (backdoor + clean) data.
+        """
+        g_combined, g_combined_flt, _, _ = self._compute_local_grad(base_model, self.backdoor_data + self.clean_data)
+        original_shapes = [param.shape for param in g_combined]
+        final_poisoned = unflatten_np(g_combined_flt, original_shapes)
+        return final_poisoned
 
     def get_local_gradient(self, global_model=None):
         """
-        Return a single 'final' gradient that merges:
-          1) benign gradient
-          2) backdoor gradient
-          3) partial alignment with a guessed server gradient.
-
-        :param global_model: Global model to be used as starting point (will be deep copied)
-        :return: Final gradient (as a list of parameter tensors)
+        Compute the local gradient using the selected adversary behavior.
+        The behavior is selected via self.gradient_manipulation_mode.
         """
-        # If calculated before, return the cached value
         if self.cur_gradient is not None:
             return self.cur_gradient
 
-        # Get base model - either from global_model or from saved local model
         if global_model is not None:
             base_model = global_model
         else:
             try:
                 base_model = self.load_local_model()
-                print(f"[{self.seller_id}] Loaded previous local model.")
             except Exception as e:
-                print(f"[{self.seller_id}] No saved local model found; using default initialization.")
                 base_model = get_model(self.dataset_name)
                 base_model = base_model.to(self.device)
 
-        # Calculate gradient based on selected manipulation mode
-        if self.gradient_manipulation_mode == "cmd":
-            local_gradient = self.gradient_manipulation_cmd(base_model)
-        elif self.gradient_manipulation_mode == "single":
-            local_gradient = self.gradient_manipulation_single(base_model)
-        elif self.gradient_manipulation_mode == "none":
-            local_gradient = self.get_clean_gradient(base_model)
-        else:
-            raise NotImplementedError(f"Unknown gradient manipulation mode: {self.gradient_manipulation_mode}")
-
-        # Cache the result
+        # Select the behavior function from the registry; default to clean gradient.
+        behavior_func = self.adversary_behaviors.get(self.gradient_manipulation_mode, self.get_clean_gradient)
+        local_gradient = behavior_func(base_model)
         self.cur_gradient = local_gradient
         return local_gradient
 
-    def get_clean_gradient(self, base_model):
+    # ============================
+    # Coordinator Integration Methods
+    # ============================
+    def get_gradient_for_upload(self, global_model=None):
         """
-        Compute the gradient with respect to a base model using this seller's local data.
-
-        :param base_model: Base model to use for gradient computation (already on device)
-        :return: Gradient update (list of parameter tensors)
+        Compute the local gradient for upload.
+        If not in a Sybil setting, return the local gradient directly.
+        If Sybil and not selected last round, query the coordinator to update the gradient.
         """
-        # Train locally starting from base_model, obtain the local gradient update
-        gradient, gradient_flt, updated_model, local_eval_res = self._compute_local_grad(
-            base_model, self.clean_data
-        )
-
-        # Store metrics for reporting
-        self.recent_metrics = local_eval_res
-
-        return gradient
-
-    def gradient_manipulation_cmd(self, base_model):
-        """
-        Compute a manipulated gradient that combines benign and backdoor gradients
-        with controlled mixing strength.
-
-        :param base_model: Base model to use for gradient computation (already on device)
-        :return: Manipulated gradient (list of parameter tensors)
-        """
-        if self.poison_strength != 1:
-            # 1) Compute benign gradient
-            grad_benign, g_benign_flt, local_model_benign, local_eval_res_n = self._compute_local_grad(
-                base_model,
-                self.clean_data
-            )
-            original_shapes = [param.shape for param in grad_benign]
-
-            # 2) Compute backdoor gradient
-            g_backdoor, g_backdoor_flt, local_model_malicious, local_eval_res_m = self._compute_local_grad(
-                base_model,
-                self.backdoor_data
-            )
-
-            # 3) Combine them with poison_strength as the mixing factor
-            final_poisoned_flt = (1 - self.poison_strength) * g_benign_flt + (self.poison_strength) * g_backdoor_flt
-
-            # Save benign gradient for later reference
-            self.last_benign_grad = g_benign_flt
+        if global_model is not None:
+            base_model = copy.deepcopy(global_model)
+            print(f"[{self.seller_id}] Using provided global model.")
         else:
-            # Pure backdoor gradient when poison_strength is 1
-            g_backdoor, g_backdoor_flt, local_model_malicious, local_eval_res_m = self._compute_local_grad(
-                base_model,
-                self.backdoor_data
-            )
-            final_poisoned_flt = g_backdoor_flt
-            original_shapes = [param.shape for param in g_backdoor]
+            try:
+                base_model = self.load_local_model()
+                print(f"[{self.seller_id}] Loaded previous local model.")
+            except Exception as e:
+                print(f"[{self.seller_id}] No saved model found; using default initialization.")
+                base_model = get_model(self.dataset_name)
 
-        # Convert flattened gradient back to parameter-shaped tensors
-        final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
+        base_model = base_model.to(self.device)
+        local_grad = self.get_local_gradient(base_model)
+        self.cur_upload_gradient_flt = local_grad
 
-        return final_poisoned
+        if not self.is_sybil:
+            return local_grad
 
-    def gradient_manipulation_single(self, base_model):
+        # If selected in last round, do not modify gradient.
+        if getattr(self, "selected_last_round", False):
+            return local_grad
+
+        # Provide information to the coordinator and get an updated gradient.
+        coordinated_grad = self._query_coordinator(local_grad)
+        self.cur_upload_gradient_flt = coordinated_grad
+        return coordinated_grad
+
+    def _query_coordinator(self, local_grad):
         """
-        Compute a manipulated gradient using combined clean and backdoor data.
-
-        :param base_model: Base model to use for gradient computation (already on device)
-        :return: Manipulated gradient (list of parameter tensors)
+        Send the current local gradient to the coordinator and get an updated gradient.
+        This is an extension point—different coordinator integration strategies can be implemented here.
         """
-        # Compute gradient on combined dataset
-        g_backdoor, g_backdoor_flt, local_model_malicious, local_eval_res_m = self._compute_local_grad(
-            base_model,
-            self.backdoor_data + self.clean_data
-        )
+        if self.sybil_coordinator is not None:
+            # For example, the coordinator might adjust the gradient for non-selected sellers.
+            updated_grad = self.sybil_coordinator.update_nonselected_gradient(local_grad)
+            return updated_grad
+        return local_grad
 
-        original_shapes = [param.shape for param in g_backdoor]
+    def reset_current_local_gradient(self):
+        """Reset cached gradient information."""
+        self.cur_gradient = None
+        self.cur_upload_gradient_flt = None
 
-        # Convert flattened gradient back to parameter-shaped tensors if needed
-        final_poisoned = unflatten_np(g_backdoor_flt, original_shapes)
-
-        return final_poisoned
-
+    # ============================
+    # Federated Round Reporting
+    # ============================
     def record_federated_round(self, round_number: int, is_selected: bool,
                                final_model_params: Optional[np.ndarray] = None):
         """
-        Tracks if we were selected. We can store additional info
-        about the 'last_benign_grad' or 'last_poisoned_grad' if needed.
+        Record the result of a federated round.
         """
         record = {
             "round_number": round_number,
             "timestamp": pd.Timestamp.now().isoformat(),
             "is_selected": is_selected,
-            'gradient': self.cur_upload_gradient_flt,
+            "gradient": self.cur_upload_gradient_flt,
         }
         self.selected_last_round = is_selected
         self.federated_round_history.append(record)
 
-    def round_end_process(self, round_number,
-                          is_selected,
+    def round_end_process(self, round_number: int, is_selected: bool,
                           final_model_params=None):
+        """
+        Process the end-of-round tasks: reset gradient cache and record round info.
+        """
         self.reset_current_local_gradient()
-        self.record_federated_round(
-            round_number,
-            is_selected,
-            final_model_params)
+        self.record_federated_round(round_number, is_selected, final_model_params)
+
+    def update_trigger(self, mal_loader, lr=0.01, num_steps=50, lambda_val=1):
+        """
+        Optimize the local trigger using malicious data (PFedBA iterative method).
+        This function updates self.trigger and returns the new trigger.
+        """
+        # Use a copy of the global model as the basis for optimization.
+        model = global_model
+        model.eval()
+
+        # Clone current trigger and enable gradient computation.
+        trigger = self.trigger.clone().detach().to(self.device)
+        trigger.requires_grad = True
+        optimizer_trigger = optim.Adam([trigger], lr=lr)
+        criterion = nn.CrossEntropyLoss()
+
+        # Iteratively update the trigger based on the malicious data.
+        for step in range(num_steps):
+            optimizer_trigger.zero_grad()
+            total_loss = 0.0
+            for x, _ in mal_loader:
+                x = x.to(self.device)
+                # Embed trigger into inputs.
+                x_trigger = embed_trigger(x, trigger, self.mask)
+                output = model(x_trigger)
+                target = torch.full((x.size(0),), self.target_label, device=self.device, dtype=torch.long)
+                loss = criterion(output, target)
+                total_loss += loss
+            total_loss.backward()
+            optimizer_trigger.step()
+            if step % 10 == 0:
+                print(f"[{self.seller_id}] Trigger update step {step}: loss={total_loss.item():.4f}")
+
+        # Update seller's stored trigger.
+        new_trigger = trigger.detach()
+        self.trigger = new_trigger
+        return new_trigger
+
+    def broadcast_new_trigger(self, global_model, mal_loader, lr=0.01, num_steps=50, lambda_val=1):
+        """
+        If this seller is selected and designated as the trigger broadcaster,
+        update the trigger and then broadcast the new trigger to all malicious sellers
+        via the coordinator.
+        """
+        print(f"[{self.seller_id}] Broadcasting new trigger...")
+        new_trigger = self.update_trigger(global_model, mal_loader, lr, num_steps, lambda_val)
+        if self.sybil_coordinator is not None:
+            self.sybil_coordinator.update_global_trigger(new_trigger)
+        return new_trigger
 
 
 def global_clip_np(arr, max_norm: float) -> np.ndarray:

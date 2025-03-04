@@ -513,46 +513,227 @@ def create_client_dataloaders(dataset, splits, batch_size=64, shuffle=True):
 #     test_set_loader = DataLoader(test_set, batch_size=64, shuffle=False)
 #     return buyer_loader, client_loaders, dataset, test_set_loader
 
+# def get_data_set(
+#         dataset_name,
+#         buyer_count=None,
+#         buyer_percentage=0.01,
+#         num_sellers=10,
+#         distribution_type="UNI",  # "UNI" or "POW"
+#         label_split_type="IID",  # "IID" or "NonIID"
+#         seller_label_distribution=None,
+#         buyer_label_distribution=None,
+#         seller_qualities=None,
+#         malicious_sellers=None,
+#         batch_size=64,
+#         normalize_data=True,
+#         visualize=False,
+#         n_adversaries=0
+# ):
+#     """
+#     Load the dataset and split it between one buyer (DA) and several sellers (DPs)
+#     according to the martFL paper's setup.
+#
+#     Parameters:
+#       dataset_name (str): Name of the dataset ("FMNIST", "CIFAR", "MNIST", "AGNEWS", "TREC")
+#       buyer_count (int, optional): Number of samples to allocate to the buyer. If None, uses buyer_percentage.
+#       buyer_percentage (float): Percentage of total data for buyer (default: 0.01 = 1%)
+#       num_sellers (int): Number of seller clients (DPs).
+#       distribution_type (str): "UNI" for uniform distribution among sellers, "POW" for power-law distribution
+#       label_split_type (str): "IID" for IID splits, "NonIID" for non-IID splits
+#       seller_label_distribution (dict, optional): Mapping for seller non-IID splits.
+#       buyer_label_distribution (list, optional): List of labels for buyer's biased data.
+#       seller_qualities (dict, optional): Quality distribution among sellers (e.g., {"high_quality": 0.3, "biased": 0.3, "malicious": 0.4})
+#       malicious_sellers (list, optional): List of seller IDs to treat as malicious
+#       batch_size (int): Batch size for DataLoaders
+#       seed (int): Random seed for reproducibility
+#       normalize_data (bool): Whether to normalize data
+#       visualize (bool): Whether to visualize the data distribution
+#
+#     Returns:
+#       tuple: (buyer_loader, seller_loaders, full_dataset, test_loader, class_names)
+#     """
+#     # Define transforms based on the dataset
+#     if normalize_data:
+#         if dataset_name == "FMNIST":
+#             transform = transforms.Compose([
+#                 transforms.ToTensor(),
+#                 transforms.Normalize((0.2860,), (0.3530,))
+#             ])
+#         elif dataset_name == "CIFAR":
+#             transform = transforms.Compose([
+#                 transforms.ToTensor(),
+#                 transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+#             ])
+#         elif dataset_name == "MNIST":
+#             transform = transforms.Compose([
+#                 transforms.ToTensor(),
+#                 transforms.Normalize((0.1307,), (0.3081,))
+#             ])
+#         else:
+#             transform = transforms.ToTensor()  # Default for other datasets
+#     else:
+#         transform = transforms.ToTensor()
+#
+#     # Load dataset
+#     if dataset_name == "FMNIST":
+#         dataset = datasets.FashionMNIST(root='./data', train=True, download=True, transform=transform)
+#         test_set = datasets.FashionMNIST(root='./data', train=False, download=True, transform=transform)
+#         class_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
+#                        'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
+#     elif dataset_name == "CIFAR":
+#         dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+#         test_set = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+#         class_names = ['airplane', 'automobile', 'bird', 'cat', 'deer',
+#                        'dog', 'frog', 'horse', 'ship', 'truck']
+#     elif dataset_name == "MNIST":
+#         dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+#         test_set = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+#         class_names = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+#     elif dataset_name == "AGNEWS":
+#         try:
+#             from torchtext.datasets import AG_NEWS
+#             from torchtext.data.utils import get_tokenizer
+#             from torchtext.vocab import build_vocab_from_iterator
+#             # This is a placeholder for AGNEWS, which would need additional text processing
+#             print("AGNEWS dataset requires additional setup and is not fully implemented in this function")
+#             # You would need to implement text tokenization, vocabulary building, etc.
+#             class_names = ['World', 'Sports', 'Business', 'Sci/Tech']
+#         except ImportError:
+#             raise ImportError("torchtext is required for AGNEWS dataset")
+#     elif dataset_name == "TREC":
+#         # This would require a custom dataset loader since it's not in torchvision
+#         raise NotImplementedError("TREC dataset is not implemented in this function. Please implement a custom loader.")
+#     else:
+#         raise NotImplementedError(f"Dataset {dataset_name} is not implemented.")
+#
+#     # Calculate buyer count if not provided
+#     if buyer_count is None:
+#         buyer_count = int(len(dataset) * buyer_percentage)
+#         print(f"Setting buyer count to {buyer_count} samples ({buyer_percentage * 100:.2f}% of data)")
+#
+#     # Set default buyer label distribution if not provided and using NonIID
+#     if buyer_label_distribution is None and label_split_type == "NonIID":
+#         num_classes = len(class_names)
+#         # In martFL paper, buyer often has biased dataset with half the labels
+#         buyer_label_distribution = list(range(num_classes // 2))
+#         print(f"Setting buyer to have biased data with labels: {buyer_label_distribution}")
+#
+#     # Set default seller qualities if not provided
+#     if seller_qualities is None:
+#         # Default from martFL paper: 30% high-quality, 30% biased, 40% malicious
+#         seller_qualities = {"high_quality": 0.3, "biased": 0.3, "malicious": 0.4}
+#         print(f"Using default seller qualities: {seller_qualities}")
+#
+#     # Split the dataset into buyer and sellers
+#     buyer_indices, seller_splits = split_dataset_buyer_seller(
+#         dataset=dataset,
+#         buyer_count=buyer_count,
+#         num_sellers=num_sellers,
+#         distribution_type=distribution_type,
+#         label_split_type=label_split_type,
+#         seller_label_distribution=seller_label_distribution,
+#         buyer_label_distribution=buyer_label_distribution,
+#         seller_qualities=seller_qualities,
+#         malicious_sellers=malicious_sellers,
+#     )
+#
+#     # Create DataLoader for the buyer
+#     buyer_loader = DataLoader(
+#         Subset(dataset, buyer_indices),
+#         batch_size=batch_size,
+#         shuffle=True,
+#         num_workers=2,
+#         pin_memory=torch.cuda.is_available()
+#     )
+#
+#     # Create DataLoaders for sellers
+#     seller_loaders = {}
+#     for seller_id, indices in seller_splits.items():
+#         seller_loaders[seller_id] = DataLoader(
+#             Subset(dataset, indices),
+#             batch_size=batch_size,
+#             shuffle=True,
+#             num_workers=2,
+#             pin_memory=torch.cuda.is_available()
+#         )
+#
+#     # Create test loader
+#     test_loader = DataLoader(
+#         test_set,
+#         batch_size=batch_size,
+#         shuffle=False,
+#         num_workers=2,
+#         pin_memory=torch.cuda.is_available()
+#     )
+#
+#     # Print summary statistics
+#     print("\nData Distribution Summary:")
+#     print(f"Buyer (DA): {len(buyer_indices)} samples")
+#
+#     # Calculate distribution of classes in buyer data
+#     buyer_labels = [dataset.targets[i] if hasattr(dataset, 'targets') else dataset[i][1] for i in buyer_indices]
+#     if hasattr(buyer_labels[0], 'item'):
+#         buyer_labels = [label.item() for label in buyer_labels]
+#     buyer_class_counts = {class_names[i]: buyer_labels.count(i) for i in range(len(class_names))}
+#     print(f"Buyer class distribution: {buyer_class_counts}")
+#
+#     # Calculate quality types for each seller
+#     seller_quality_types = {}
+#     high_quality_count = int(num_sellers * seller_qualities.get("high_quality", 0))
+#     biased_count = int(num_sellers * seller_qualities.get("biased", 0))
+#
+#     for seller_id in range(num_sellers):
+#         if seller_id < high_quality_count:
+#             quality = "high_quality"
+#         elif seller_id < high_quality_count + biased_count:
+#             quality = "biased"
+#         else:
+#             quality = "malicious"
+#
+#         # Override if in malicious_sellers list
+#         if malicious_sellers is not None and seller_id in malicious_sellers:
+#             quality = "malicious"
+#
+#         seller_quality_types[seller_id] = quality
+#
+#     # Print seller information
+#     print("\nSeller distribution:")
+#     for seller_id, loader in seller_loaders.items():
+#         quality = seller_quality_types[seller_id]
+#         print(f"Seller {seller_id} ({quality}): {len(loader.dataset)} samples")
+#
+#         # For the first few sellers, print class distribution
+#         if seller_id < 3:  # Limit to avoid too much output
+#             seller_indices = seller_splits[seller_id]
+#             seller_labels = [dataset.targets[i] if hasattr(dataset, 'targets') else dataset[i][1] for i in
+#                              seller_indices]
+#             if hasattr(seller_labels[0], 'item'):
+#                 seller_labels = [label.item() for label in seller_labels]
+#
+#             seller_class_counts = {class_names[i]: seller_labels.count(i) for i in range(len(class_names))}
+#             print(f"  Class distribution: {seller_class_counts}")
+#
+#     # Visualize the data distribution if requested
+#     if visualize:
+#         visualize_data_distribution(dataset, buyer_indices, seller_splits,
+#                                     seller_quality_types, class_names)
+#
+#     return buyer_loader, seller_loaders, dataset, test_loader, class_names
+
+import numpy as np
+from torch.utils.data import DataLoader, Subset
+from torchvision import datasets, transforms
+
+
 def get_data_set(
         dataset_name,
-        buyer_count=None,
         buyer_percentage=0.01,
         num_sellers=10,
-        distribution_type="UNI",  # "UNI" or "POW"
-        label_split_type="IID",  # "IID" or "NonIID"
-        seller_label_distribution=None,
-        buyer_label_distribution=None,
-        seller_qualities=None,
-        malicious_sellers=None,
         batch_size=64,
         normalize_data=True,
-        visualize=False,
-        n_adversaries=0
+        split_method="Dirichlet"
 ):
-    """
-    Load the dataset and split it between one buyer (DA) and several sellers (DPs)
-    according to the martFL paper's setup.
-
-    Parameters:
-      dataset_name (str): Name of the dataset ("FMNIST", "CIFAR", "MNIST", "AGNEWS", "TREC")
-      buyer_count (int, optional): Number of samples to allocate to the buyer. If None, uses buyer_percentage.
-      buyer_percentage (float): Percentage of total data for buyer (default: 0.01 = 1%)
-      num_sellers (int): Number of seller clients (DPs).
-      distribution_type (str): "UNI" for uniform distribution among sellers, "POW" for power-law distribution
-      label_split_type (str): "IID" for IID splits, "NonIID" for non-IID splits
-      seller_label_distribution (dict, optional): Mapping for seller non-IID splits.
-      buyer_label_distribution (list, optional): List of labels for buyer's biased data.
-      seller_qualities (dict, optional): Quality distribution among sellers (e.g., {"high_quality": 0.3, "biased": 0.3, "malicious": 0.4})
-      malicious_sellers (list, optional): List of seller IDs to treat as malicious
-      batch_size (int): Batch size for DataLoaders
-      seed (int): Random seed for reproducibility
-      normalize_data (bool): Whether to normalize data
-      visualize (bool): Whether to visualize the data distribution
-
-    Returns:
-      tuple: (buyer_loader, seller_loaders, full_dataset, test_loader, class_names)
-    """
-    # Define transforms based on the dataset
+    # Define transforms based on the dataset.
     if normalize_data:
         if dataset_name == "FMNIST":
             transform = transforms.Compose([
@@ -562,7 +743,8 @@ def get_data_set(
         elif dataset_name == "CIFAR":
             transform = transforms.Compose([
                 transforms.ToTensor(),
-                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+                transforms.Normalize((0.4914, 0.4822, 0.4465),
+                                     (0.2023, 0.1994, 0.2010))
             ])
         elif dataset_name == "MNIST":
             transform = transforms.Compose([
@@ -570,11 +752,11 @@ def get_data_set(
                 transforms.Normalize((0.1307,), (0.3081,))
             ])
         else:
-            transform = transforms.ToTensor()  # Default for other datasets
+            transform = transforms.ToTensor()
     else:
         transform = transforms.ToTensor()
 
-    # Load dataset
+    # Load training and test datasets.
     if dataset_name == "FMNIST":
         dataset = datasets.FashionMNIST(root='./data', train=True, download=True, transform=transform)
         test_set = datasets.FashionMNIST(root='./data', train=False, download=True, transform=transform)
@@ -588,137 +770,216 @@ def get_data_set(
     elif dataset_name == "MNIST":
         dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
         test_set = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
-        class_names = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
-    elif dataset_name == "AGNEWS":
-        try:
-            from torchtext.datasets import AG_NEWS
-            from torchtext.data.utils import get_tokenizer
-            from torchtext.vocab import build_vocab_from_iterator
-            # This is a placeholder for AGNEWS, which would need additional text processing
-            print("AGNEWS dataset requires additional setup and is not fully implemented in this function")
-            # You would need to implement text tokenization, vocabulary building, etc.
-            class_names = ['World', 'Sports', 'Business', 'Sci/Tech']
-        except ImportError:
-            raise ImportError("torchtext is required for AGNEWS dataset")
-    elif dataset_name == "TREC":
-        # This would require a custom dataset loader since it's not in torchvision
-        raise NotImplementedError("TREC dataset is not implemented in this function. Please implement a custom loader.")
+        class_names = [str(i) for i in range(10)]
     else:
         raise NotImplementedError(f"Dataset {dataset_name} is not implemented.")
 
-    # Calculate buyer count if not provided
-    if buyer_count is None:
-        buyer_count = int(len(dataset) * buyer_percentage)
-        print(f"Setting buyer count to {buyer_count} samples ({buyer_percentage * 100:.2f}% of data)")
+    # Determine the number of buyer samples.
+    total_samples = len(dataset)
+    buyer_count = int(total_samples * buyer_percentage)
+    print(f"Allocating {buyer_count} samples ({buyer_percentage * 100:.2f}%) for the buyer.")
 
-    # Set default buyer label distribution if not provided and using NonIID
-    if buyer_label_distribution is None and label_split_type == "NonIID":
-        num_classes = len(class_names)
-        # In martFL paper, buyer often has biased dataset with half the labels
-        buyer_label_distribution = list(range(num_classes // 2))
-        print(f"Setting buyer to have biased data with labels: {buyer_label_distribution}")
-
-    # Set default seller qualities if not provided
-    if seller_qualities is None:
-        # Default from martFL paper: 30% high-quality, 30% biased, 40% malicious
-        seller_qualities = {"high_quality": 0.3, "biased": 0.3, "malicious": 0.4}
-        print(f"Using default seller qualities: {seller_qualities}")
-
-    # Split the dataset into buyer and sellers
-    buyer_indices, seller_splits = split_dataset_buyer_seller(
+    buyer_indices, seller_splits = split_dataset_buyer_seller_improved(
         dataset=dataset,
         buyer_count=buyer_count,
         num_sellers=num_sellers,
-        distribution_type=distribution_type,
-        label_split_type=label_split_type,
-        seller_label_distribution=seller_label_distribution,
-        buyer_label_distribution=buyer_label_distribution,
-        seller_qualities=seller_qualities,
-        malicious_sellers=malicious_sellers,
+        split_method=split_method,
+        dirichlet_alpha=0.5,
+        n_adversaries=n_adversaries
     )
-
-    # Create DataLoader for the buyer
-    buyer_loader = DataLoader(
-        Subset(dataset, buyer_indices),
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=2,
-        pin_memory=torch.cuda.is_available()
-    )
-
-    # Create DataLoaders for sellers
-    seller_loaders = {}
-    for seller_id, indices in seller_splits.items():
-        seller_loaders[seller_id] = DataLoader(
-            Subset(dataset, indices),
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=2,
-            pin_memory=torch.cuda.is_available()
-        )
-
-    # Create test loader
-    test_loader = DataLoader(
-        test_set,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=2,
-        pin_memory=torch.cuda.is_available()
-    )
-
-    # Print summary statistics
-    print("\nData Distribution Summary:")
-    print(f"Buyer (DA): {len(buyer_indices)} samples")
-
-    # Calculate distribution of classes in buyer data
-    buyer_labels = [dataset.targets[i] if hasattr(dataset, 'targets') else dataset[i][1] for i in buyer_indices]
-    if hasattr(buyer_labels[0], 'item'):
-        buyer_labels = [label.item() for label in buyer_labels]
-    buyer_class_counts = {class_names[i]: buyer_labels.count(i) for i in range(len(class_names))}
-    print(f"Buyer class distribution: {buyer_class_counts}")
-
-    # Calculate quality types for each seller
-    seller_quality_types = {}
-    high_quality_count = int(num_sellers * seller_qualities.get("high_quality", 0))
-    biased_count = int(num_sellers * seller_qualities.get("biased", 0))
-
-    for seller_id in range(num_sellers):
-        if seller_id < high_quality_count:
-            quality = "high_quality"
-        elif seller_id < high_quality_count + biased_count:
-            quality = "biased"
-        else:
-            quality = "malicious"
-
-        # Override if in malicious_sellers list
-        if malicious_sellers is not None and seller_id in malicious_sellers:
-            quality = "malicious"
-
-        seller_quality_types[seller_id] = quality
-
-    # Print seller information
-    print("\nSeller distribution:")
-    for seller_id, loader in seller_loaders.items():
-        quality = seller_quality_types[seller_id]
-        print(f"Seller {seller_id} ({quality}): {len(loader.dataset)} samples")
-
-        # For the first few sellers, print class distribution
-        if seller_id < 3:  # Limit to avoid too much output
-            seller_indices = seller_splits[seller_id]
-            seller_labels = [dataset.targets[i] if hasattr(dataset, 'targets') else dataset[i][1] for i in
-                             seller_indices]
-            if hasattr(seller_labels[0], 'item'):
-                seller_labels = [label.item() for label in seller_labels]
-
-            seller_class_counts = {class_names[i]: seller_labels.count(i) for i in range(len(class_names))}
-            print(f"  Class distribution: {seller_class_counts}")
-
-    # Visualize the data distribution if requested
-    if visualize:
-        visualize_data_distribution(dataset, buyer_indices, seller_splits,
-                                    seller_quality_types, class_names)
+    # Create DataLoaders.
+    buyer_loader = DataLoader(Subset(dataset, buyer_indices), batch_size=batch_size, shuffle=True)
+    seller_loaders = {i: DataLoader(Subset(dataset, indices), batch_size=batch_size, shuffle=True)
+                      for i, indices in seller_splits.items()}
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False)
 
     return buyer_loader, seller_loaders, dataset, test_loader, class_names
+
+
+def dirichlet_partition(indices_by_class: dict, n_clients: int, alpha: float) -> dict:
+    """
+    Partition indices among n_clients using a Dirichlet distribution.
+
+    Parameters:
+        indices_by_class (dict): Mapping from class label to list of indices.
+        n_clients (int): Number of clients to partition data among.
+        alpha (float): Dirichlet concentration parameter.
+
+    Returns:
+        client_indices (dict): Mapping from client id (0 to n_clients-1) to list of assigned indices.
+    """
+    client_indices = {i: [] for i in range(n_clients)}
+    for c, indices in indices_by_class.items():
+        indices = np.array(indices)
+        np.random.shuffle(indices)
+        # Sample proportions from Dirichlet distribution.
+        proportions = np.random.dirichlet(alpha * np.ones(n_clients))
+        # Determine the split points
+        proportions = (np.cumsum(proportions) * len(indices)).astype(int)[:-1]
+        splits = np.split(indices, proportions)
+        for i, split in enumerate(splits):
+            client_indices[i].extend(split.tolist())
+    return client_indices
+
+
+def balanced_partition(indices_by_class: dict, n_clients: int) -> dict:
+    """
+    Partition indices evenly among n_clients in a balanced (IID) manner.
+
+    Parameters:
+        indices_by_class (dict): Mapping from class label to list of indices.
+        n_clients (int): Number of clients.
+
+    Returns:
+        client_indices (dict): Mapping from client id (0 to n_clients-1) to list of indices.
+    """
+    client_indices = {i: [] for i in range(n_clients)}
+    for c, indices in indices_by_class.items():
+        indices = np.array(indices)
+        np.random.shuffle(indices)
+        split_size = len(indices) // n_clients
+        # For simplicity, each client gets an equal number; remainder is discarded.
+        for i in range(n_clients):
+            client_indices[i].extend(indices[i * split_size: (i + 1) * split_size].tolist())
+    return client_indices
+
+
+def split_dataset_buyer_seller_improved(dataset,
+                                        buyer_count: int,
+                                        num_sellers: int,
+                                        split_method: str = "Dirichlet",
+                                        dirichlet_alpha: float = 0.5,
+                                        n_adversaries: int = 0) -> (np.ndarray, dict):
+    """
+    Split the dataset indices into a buyer set and seller splits.
+
+    Two modes are supported:
+      - "Dirichlet": Partition the remaining data among all sellers using a Dirichlet distribution.
+      - "AdversaryFirst": First assign balanced (IID) data to the first n_adversaries sellers,
+                           then partition the remaining data among the remaining sellers using Dirichlet.
+
+    Parameters:
+      dataset: A dataset object with attribute 'targets' (list/array of labels).
+      buyer_count (int): Number of samples reserved for the buyer.
+      num_sellers (int): Total number of seller clients.
+      split_method (str): "Dirichlet" or "AdversaryFirst".
+      dirichlet_alpha (float): Dirichlet parameter for non-IID partitioning.
+      n_adversaries (int): Number of sellers to assign balanced data (for "AdversaryFirst").
+
+    Returns:
+      buyer_indices (np.ndarray): Array of indices for the buyer.
+      seller_splits (dict): Mapping from seller id to list of indices.
+    """
+    total_samples = len(dataset)
+    all_indices = np.arange(total_samples)
+    np.random.shuffle(all_indices)
+    buyer_indices = all_indices[:buyer_count]
+    seller_indices = all_indices[buyer_count:]
+
+    # Obtain the targets for the seller data.
+    if hasattr(dataset, 'targets'):
+        targets = np.array(dataset.targets)
+    else:
+        # Assume dataset[i] returns (data, label)
+        targets = np.array([dataset[i][1] for i in range(total_samples)])
+    seller_targets = targets[seller_indices]
+
+    # Build dictionary: class -> list of indices among seller_indices
+    indices_by_class = {}
+    unique_classes = np.unique(seller_targets)
+    for c in unique_classes:
+        indices_by_class[c] = seller_indices[seller_targets == c].tolist()
+
+    seller_splits = {}
+    if split_method.lower() == "dirichlet":
+        # Partition all seller data using Dirichlet.
+        seller_splits = dirichlet_partition(indices_by_class, num_sellers, dirichlet_alpha)
+    elif split_method.lower() == "adversaryfirst":
+        # For the first n_adversaries, assign balanced (IID) data.
+        if n_adversaries <= 0 or n_adversaries > num_sellers:
+            raise ValueError("n_adversaries must be between 1 and num_sellers")
+        adversary_splits = balanced_partition(indices_by_class, n_adversaries)
+        # Remove the indices assigned to adversaries.
+        adversary_assigned = []
+        for i in range(n_adversaries):
+            adversary_assigned.extend(adversary_splits[i])
+        remaining_indices = np.setdiff1d(seller_indices, np.array(adversary_assigned))
+        # Recompute indices_by_class for the remaining indices.
+        remaining_targets = targets[remaining_indices]
+        indices_by_class_remaining = {}
+        for c in unique_classes:
+            indices_by_class_remaining[c] = remaining_indices[remaining_targets == c].tolist()
+        benign_splits = dirichlet_partition(indices_by_class_remaining, num_sellers - n_adversaries, dirichlet_alpha)
+        seller_splits = {}
+        # First n_adversaries get balanced splits.
+        for i in range(n_adversaries):
+            seller_splits[i] = adversary_splits[i]
+        # The remaining sellers get non-IID splits.
+        for j in range(n_adversaries, num_sellers):
+            seller_splits[j] = benign_splits[j - n_adversaries]
+    else:
+        raise ValueError("Unknown split_method. Use 'Dirichlet' or 'AdversaryFirst'.")
+
+    return buyer_indices, seller_splits
+
+
+# Example test function to display class distributions.
+def test_split_setups():
+    from collections import Counter
+    from torchvision import datasets, transforms
+    # For demonstration, we use CIFAR10.
+    dataset_name = "CIFAR"
+    buyer_percentage = 0.01
+    num_sellers = 10
+    total_samples = 50000  # CIFAR10 train size.
+
+    # Define transform (including normalization)
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465),
+                             (0.2023, 0.1994, 0.2010))
+    ])
+
+    dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+    if not hasattr(dataset, 'targets'):
+        dataset.targets = [label for (_, label) in dataset]
+
+    buyer_count = int(len(dataset) * buyer_percentage)
+
+    print("Setup 1: Dirichlet partitioning for all sellers")
+    buyer_indices, seller_splits = split_dataset_buyer_seller_improved(
+        dataset=dataset,
+        buyer_count=buyer_count,
+        num_sellers=num_sellers,
+        split_method="Dirichlet",
+        dirichlet_alpha=0.5,
+        n_adversaries=0
+    )
+    # Print buyer distribution.
+    buyer_labels = [dataset.targets[i] for i in buyer_indices]
+    print("Buyer class distribution:", dict(Counter(buyer_labels)))
+    # Print seller distributions.
+    for seller_id, indices in seller_splits.items():
+        seller_labels = [dataset.targets[i] for i in indices]
+        print(f"Seller {seller_id} distribution:", dict(Counter(seller_labels)))
+
+    print("\nSetup 2: AdversaryFirst partitioning")
+    # Suppose first 3 sellers are adversaries.
+    n_adversaries = 3
+    buyer_indices, seller_splits = split_dataset_buyer_seller_improved(
+        dataset=dataset,
+        buyer_count=buyer_count,
+        num_sellers=num_sellers,
+        split_method="AdversaryFirst",
+        dirichlet_alpha=0.5,
+        n_adversaries=n_adversaries
+    )
+    buyer_labels = [dataset.targets[i] for i in buyer_indices]
+    print("Buyer class distribution:", dict(Counter(buyer_labels)))
+    for seller_id, indices in seller_splits.items():
+        seller_labels = [dataset.targets[i] for i in indices]
+        role = "Adversary" if seller_id < n_adversaries else "Benign"
+        print(f"Seller {seller_id} ({role}) distribution:", dict(Counter(seller_labels)))
 
 
 def visualize_data_distribution(dataset, buyer_indices, seller_splits,
