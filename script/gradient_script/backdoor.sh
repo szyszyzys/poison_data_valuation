@@ -33,6 +33,7 @@ sybil_mode=""
 bkd_loc="bottom_right"
 data_split_mode="IID"
 change_base="True"
+trigger_attack_mode=""
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -82,6 +83,10 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         --bkd_loc)
           bkd_loc="$2"
+            shift 2
+            ;;
+        --trigger_attack_mode)
+            trigger_attack_mode="$2"
             shift 2
             ;;
         --change_base)
@@ -163,6 +168,7 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --bkd_loc "$bkd_loc" \
                   --data_split_mode "$data_split_mode" \
                   --change_base "$change_base"\
+                  --trigger_attack_mode "$trigger_attack_mode" \
                   $is_sybil_flag
           done
         done
