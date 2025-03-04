@@ -137,7 +137,7 @@ def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
                   sybil_mode=False, is_sybil="False", data_split_mode='iid',
                   aggregation_method='fedavg', dataset_name='cifar10',
                   poison_strength=None, trigger_rate=None, trigger_type=None,
-                  adv_rate=None, change_base="True", trigger_attack_mode =""):
+                  adv_rate=None, change_base="True", trigger_attack_mode=""):
     """
     Construct a save path based on the experiment parameters.
 
@@ -208,59 +208,63 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
         # for data_split_mode in ["NonIID", "IID"]:
         for data_split_mode in ["dirichlet", "adversaryfirst"]:
             for grad_mode in ['single', 'None']:
-                for trigger_rate in [0.25]:
-                    for is_sybil in ["False", "mimic"]:
-                        for adv_rate in [0.2, 0.3]:
-                            for change_base in ["True", "False"]:
-                                if aggregation_method == "fedavg" and change_base == "True":
-                                    continue
-                                # Get the file path
-                                save_path = get_save_path(
-                                    n_sellers=30,
-                                    adv_rate=adv_rate,
-                                    local_epoch=local_epoch,
-                                    local_lr=1e-2,
-                                    gradient_manipulation_mode=grad_mode,
-                                    poison_strength=0,
-                                    trigger_type="blended_patch",
-                                    is_sybil=is_sybil,
-                                    trigger_rate=trigger_rate,
-                                    aggregation_method=aggregation_method,
-                                    data_split_mode=data_split_mode,
-                                    change_base=change_base,
-                                    dataset_name="FMNIST"
-                                )
+                for trigger_attack_mode in ['static', 'dynamic']:
+                    for trigger_rate in [0.25]:
+                        for is_sybil in ["False", "mimic"]:
+                            for adv_rate in [0.2, 0.3]:
+                                for change_base in ["True", "False"]:
+                                    if aggregation_method == "fedavg" and change_base == "True":
+                                        continue
+                                    # Get the file path
+                                    save_path = get_save_path(
+                                        n_sellers=30,
 
-                                # Construct the full file path
-                                file_path = f"{save_path}/market_log.ckpt"
+                                        adv_rate=adv_rate,
+                                        local_epoch=local_epoch,
+                                        local_lr=1e-2,
+                                        gradient_manipulation_mode=grad_mode,
+                                        poison_strength=0,
+                                        trigger_type="blended_patch",
+                                        is_sybil=is_sybil,
+                                        trigger_rate=trigger_rate,
+                                        aggregation_method=aggregation_method,
+                                        data_split_mode=data_split_mode,
+                                        change_base=change_base,
+                                        dataset_name="FMNIST",
+                                        trigger_attack_mode=trigger_attack_mode
+                                    )
 
-                                if not os.path.exists(file_path):
-                                    print(f"File not found: {file_path}")
-                                    continue
+                                    # Construct the full file path
+                                    file_path = f"{save_path}/market_log.ckpt"
 
-                                print(f"Processing: {file_path}")
+                                    if not os.path.exists(file_path):
+                                        print(f"File not found: {file_path}")
+                                        continue
 
-                                # Extract attack parameters
-                                attack_params = {
-                                    'GRAD_MODE': grad_mode,
-                                    'TRIGGER_RATE': trigger_rate,
-                                    'IS_SYBIL': is_sybil,
-                                    'ADV_RATE': adv_rate,
-                                    'CHANGE_BASE': change_base,
-                                    'IID': data_split_mode
-                                }
+                                    print(f"Processing: {file_path}")
 
-                                # Process the file
-                                processed_data, summary = process_single_experiment(
-                                    file_path,
-                                    attack_params,
-                                    aggregation_method
-                                )
+                                    # Extract attack parameters
+                                    attack_params = {
+                                        'ATTACK_METHOD': grad_mode,
+                                        'TRIGGER_RATE': trigger_rate,
+                                        'IS_SYBIL': is_sybil,
+                                        'ADV_RATE': adv_rate,
+                                        'CHANGE_BASE': change_base,
+                                        'DATA_SPLIT_MODE': data_split_mode,
+                                        'TRIGGER_MODE': trigger_attack_mode
+                                    }
 
-                                # Add to the overall data
-                                all_processed_data.extend(processed_data)
-                                if summary:
-                                    all_summary_data.append(summary)
+                                    # Process the file
+                                    processed_data, summary = process_single_experiment(
+                                        file_path,
+                                        attack_params,
+                                        aggregation_method
+                                    )
+
+                                    # Add to the overall data
+                                    all_processed_data.extend(processed_data)
+                                    if summary:
+                                        all_summary_data.append(summary)
 
     # Convert to DataFrames
     all_rounds_df = pd.DataFrame(all_processed_data)
