@@ -187,9 +187,6 @@ class Aggregator:
 
         print("Computing cosine similarities")
         # Vectorize cosine similarity:
-        for i, tensor in enumerate(clients_update_flattened):
-            print(f"Tensor {i} is on device: {tensor.device}")
-
         clients_stack = torch.stack(clients_update_flattened)  # shape: (n_seller, d)
         baseline = baseline_update_flattened.unsqueeze(0)  # shape: (1, d)
         cosine_similarities = torch.nn.functional.cosine_similarity(baseline, clients_stack, dim=1)
