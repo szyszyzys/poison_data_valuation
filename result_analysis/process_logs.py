@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-
+import traceback
 
 def process_single_experiment(file_path, attack_params, aggregation_method):
     """
