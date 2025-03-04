@@ -733,19 +733,19 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         # For first attack (round 0), use loss alignment then gradient alignment
         # first load the base trigger
         trigger = self.backdoor_generator.get_trigger().detach().to(self.device).requires_grad_(True)
-
+        model = global_model.to(self.device)
         if first_attack:
             # First optimize trigger with both objectives
-            tmp_trigger = self.trigger_opt(global_model, trigger, first_attack=True, trigger_lr=lr, num_steps=num_steps,
+            tmp_trigger = self.trigger_opt(model, trigger, first_attack=True, trigger_lr=lr, num_steps=num_steps,
                                            lambda_param=0.0)
 
             # Then use gradient alignment
-            tmp_trigger = self.trigger_opt(global_model, tmp_trigger, first_attack=False, trigger_lr=lr,
+            tmp_trigger = self.trigger_opt(model, tmp_trigger, first_attack=False, trigger_lr=lr,
                                            num_steps=num_steps,
                                            lambda_param=1.0)
         else:
             # For subsequent rounds, only use gradient alignment
-            tmp_trigger = self.trigger_opt(global_model, trigger, first_attack=False, trigger_lr=lr,
+            tmp_trigger = self.trigger_opt(model, trigger, first_attack=False, trigger_lr=lr,
                                            num_steps=num_steps,
                                            lambda_param=1.0)
 
