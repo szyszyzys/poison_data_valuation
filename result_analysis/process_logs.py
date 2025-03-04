@@ -317,8 +317,8 @@ if __name__ == "__main__":
             print(f"  Average Main Accuracy: {agg_data['FINAL_MAIN_ACC'].mean():.4f}")
 
             # Group by gradient mode within each aggregation method
-            for grad_mode in agg_data['GRAD_MODE'].unique():
-                grad_data = agg_data[agg_data['GRAD_MODE'] == grad_mode]
+            for grad_mode in agg_data['ATTACK_METHOD'].unique():
+                grad_data = agg_data[agg_data['ATTACK_METHOD'] == grad_mode]
                 print(f"    Gradient Mode: {grad_mode}")
                 print(f"      Average ASR: {grad_data['FINAL_ASR'].mean():.4f}")
                 print(f"      Average Main Accuracy: {grad_data['FINAL_MAIN_ACC'].mean():.4f}")
