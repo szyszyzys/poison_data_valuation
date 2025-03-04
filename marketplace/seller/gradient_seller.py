@@ -567,7 +567,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         """
         Compute the gradient on clean (benign) local data.
         """
-        gradient, gradient_flt, updated_model, local_eval_res = self._compute_local_grad(base_model, self.clean_data)
+        gradient, gradient_flt, updated_model, local_eval_res = self._compute_local_grad(base_model, self.dataset)
         self.recent_metrics = local_eval_res
         return gradient
 
@@ -575,7 +575,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         """
         Compute a gradient that combines benign and backdoor gradients.
         """
-        grad_benign, g_benign_flt, _, _ = self._compute_local_grad(base_model, self.clean_data)
+        grad_benign, g_benign_flt, _, _ = self._compute_local_grad(base_model, self.dataset)
         original_shapes = [param.shape for param in grad_benign]
         g_backdoor, g_backdoor_flt, _, _ = self._compute_local_grad(base_model, self.backdoor_data)
         final_poisoned_flt = ((1 - self.poison_strength) * g_benign_flt +
