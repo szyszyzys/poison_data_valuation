@@ -207,7 +207,7 @@ class SybilCoordinator:
 
     def update_nonselected_gradient(self,
                                     current_gradient: Union[torch.Tensor, List],
-                                    strategy: Optional[str] = None) -> Union[torch.Tensor, List]:
+                                    strategy: Optional[str] = None) -> List[np.ndarray]:
         """
         Update the gradient for a non-selected seller based on the average gradient of selected sellers.
         Strategies include "mimic", "pivot", "knock_out", "slowdown", "cost_inflation", "camouflage", etc.
@@ -215,7 +215,8 @@ class SybilCoordinator:
         strat = strategy if strategy is not None else self.gradient_default_mode
         avg_grad = self.get_selected_average()
         if avg_grad is None:
-            return current_gradient
+            return [g.cpu().numpy() for g in current_gradient] if isinstance(current_gradient, list) else [
+                current_gradient.cpu().numpy()]
 
         is_list = isinstance(current_gradient, list)
         original_shapes = None
@@ -241,12 +242,16 @@ class SybilCoordinator:
             new_grad = self.amplify_factor * aligned_grad
         else:
             new_grad = (1 - self.alpha) * current_grad_tensor + self.alpha * avg_grad
-        # print(current_gradient[:3])
-        # print(new_grad[:3])
+
+        # If it was a list, reshape and return as NumPy arrays
         if is_list and original_shapes:
-            return self._unflatten_gradient(new_grad, original_shapes)
-        new_grad_np = [t.cpu().numpy() for t in new_grad]
-        return new_grad_np
+            new_grad = self._unflatten_gradient(new_grad, original_shapes)
+
+        # Ensure new_grad is a list before conversion
+        if isinstance(new_grad, torch.Tensor):
+            new_grad = [new_grad]  # Convert to a list
+
+        return [t.cpu().numpy() for t in new_grad]  # Convert each tensor in list to NumPy
 
     def _unflatten_gradient(self, flat_grad: torch.Tensor, original_shapes: List[torch.Size]) -> List[torch.Tensor]:
         """
