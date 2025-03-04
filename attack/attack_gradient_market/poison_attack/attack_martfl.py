@@ -312,26 +312,30 @@ class BackdoorImageGenerator:
 
         If a trigger is provided, it is used for blending; otherwise, the internal self.trigger_pattern is used.
 
-        :param image: A torch.Tensor of shape (C, H, W), values in [0, 1].
+        :param image: A torch.Tensor of shape (C, H, W) or a batch of images (N, C, H, W), values in [0, 1].
                       C=3 for CIFAR (RGB) and C=1 for FMNIST (grayscale)
         :param trigger: Optional; a torch.Tensor trigger to be applied instead of self.trigger_pattern.
-        :return: A new torch.Tensor with the trigger applied, shape (C, H, W).
+        :return: A new torch.Tensor with the trigger applied, shape (C, H, W) or (N, C, H, W) for batches.
         """
-        # Ensure float for blending
-        image = image.clone().float()  # (C, H, W)
-        C, H, W = image.shape
+        # If image has more than 3 dimensions, assume the first is the batch dimension.
+        if image.ndim > 3:
+            return torch.stack([self.apply_trigger_tensor(x, trigger=trigger) for x in image])
 
-        # Select the trigger to use: provided trigger or the default one
+        # Otherwise, process a single image with shape (C, H, W)
+        image = image.clone().float()
+        try:
+            C, H, W = image.shape
+        except ValueError:
+            raise ValueError(f"Expected image shape to be (C, H, W), but got {image.shape}")
+
         used_trigger = trigger if trigger is not None else self.trigger_pattern
-
-        # Get trigger dimensions
         trigger_C, h, w = used_trigger.shape
 
         # Validate channel dimensions
         if C not in [1, 3]:
             raise ValueError(f"Expected 1 (FMNIST) or 3 (CIFAR) channels, got {C}")
 
-        # Ensure trigger pattern matches input channels
+        # Adjust trigger channels if necessary
         if trigger_C != C:
             if trigger_C == 1 and C == 3:
                 used_trigger = used_trigger.repeat(3, 1, 1)
@@ -341,9 +345,8 @@ class BackdoorImageGenerator:
             else:
                 raise ValueError(f"Incompatible trigger pattern channels ({trigger_C}) and image channels ({C})")
 
-        # Calculate trigger position
+        # Determine trigger placement
         if self.randomize_location:
-            # Random valid coordinates
             y = torch.randint(0, max(H - h, 1), (1,)).item()
             x = torch.randint(0, max(W - w, 1), (1,)).item()
         else:
@@ -357,17 +360,12 @@ class BackdoorImageGenerator:
                 y = (H - h) // 2
                 x = (W - w) // 2
             else:
-                # Default fallback: bottom_right
                 y = H - h
                 x = W - w
 
-        # Extract the region for blending
+        # Extract region and blend
         region = image[:, y:y + h, x:x + w]
-
-        # Blend region with trigger: (1 - alpha)*original + alpha*trigger
         blended = (1.0 - self.alpha) * region + self.alpha * used_trigger.to(region.device)
-
-        # Place the blended region back and clamp to [0, 1]
         image[:, y:y + h, x:x + w] = torch.clamp(blended, 0.0, 1.0)
 
         return image
