@@ -780,7 +780,7 @@ def get_data_set(
         buyer_count=buyer_count,
         num_sellers=num_sellers,
         split_method=split_method,
-        dirichlet_alpha=0.5,
+        dirichlet_alpha=0.7,
         n_adversaries=n_adversaries
     )
     # Create DataLoaders.
