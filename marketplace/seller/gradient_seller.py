@@ -752,48 +752,62 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         return tmp_trigger
 
-    def process_attack(self, model, trigger, criterion, trigger_optimizer, num_steps, lambda_param, batch_size=32):
-        # Phase 1: Loss alignment optimization (λ=0)
-        print("Phase 1: Loss alignment optimization (λ=0)")
+    def trigger_opt(self, model, trigger, first_attack=False, trigger_lr=0.01, num_steps=50, lambda_param=1.0):
+
+        # Set model to evaluation mode
+        model.eval()
+
+        # Initialize trigger if not already done
+        sample_batch, _ = next(iter(self.dataset))
+        sample_batch = sample_batch.to(self.device)
+
+        # Clone the trigger for optimization
+
+        # Create optimizer for the trigger
+        trigger_optimizer = optim.Adam([trigger], lr=trigger_lr)
+        criterion = nn.CrossEntropyLoss()
         dataloader = DataLoader(self.dataset, batch_size=batch_size, shuffle=True)
-        for step in range(num_steps):
-            total_loss = 0.0
-            batches = 0
 
-            for data, _ in dataloader:
-                # If data is missing a channel dimension, add it.
-                if data.dim() == 3:  # shape: [batch, 28, 28]
-                    data = data.unsqueeze(1)  # becomes [batch, 1, 28, 28]
-                data = data.to(self.device)
+        # Phase 1: Loss alignment (only in first attack)
+        if first_attack:
+            for step in range(num_steps):
+                total_loss = 0.0
+                batches = 0
 
-                batches += 1
-                backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
-                print("Original data shape:", data.shape)
-                print("Backdoored data shape:", backdoored_data.shape)
+                for data, _ in dataloader:
+                    # If data is missing a channel dimension, add it.
+                    if data.dim() == 3:  # shape: [batch, 28, 28]
+                        data = data.unsqueeze(1)  # becomes [batch, 1, 28, 28]
+                    data = data.to(self.device)
 
-                # Create target labels for the backdoor task for the entire batch
-                backdoor_labels = torch.full((data.shape[0],), self.target_label,
-                                             dtype=torch.long, device=self.device)
+                    batches += 1
+                    backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
+                    print("Original data shape:", data.shape)
+                    print("Backdoored data shape:", backdoored_data.shape)
 
-                # Forward pass – minimize classification loss for the backdoor task
-                outputs = model(backdoored_data)
-                loss = criterion(outputs, backdoor_labels)
-                total_loss += loss.item()
+                    # Create target labels for the backdoor task for the entire batch
+                    backdoor_labels = torch.full((data.shape[0],), self.target_label,
+                                                 dtype=torch.long, device=self.device)
 
-                # Backward pass and optimization
-                trigger_optimizer.zero_grad()
-                loss.backward()
-                trigger_optimizer.step()
+                    # Forward pass – minimize classification loss for the backdoor task
+                    outputs = model(backdoored_data)
+                    loss = criterion(outputs, backdoor_labels)
+                    total_loss += loss.item()
 
-                # Clip trigger values to valid range [0, 1]
-                with torch.no_grad():
-                    trigger.clamp_(0, 1)
+                    # Backward pass and optimization
+                    trigger_optimizer.zero_grad()
+                    loss.backward()
+                    trigger_optimizer.step()
 
-                # Limit number of batches per step for efficiency
-                if batches >= 10:
-                    break
+                    # Clip trigger values to valid range [0, 1]
+                    with torch.no_grad():
+                        trigger.clamp_(0, 1)
 
-            print(f"Step {step + 1}, Loss: {total_loss / batches:.4f}")
+                    # Limit number of batches per step for efficiency
+                    if batches >= 10:
+                        break
+
+                print(f"Step {step + 1}, Loss: {total_loss / batches:.4f}")
 
         # Phase 2: Gradient alignment optimization
         print(f"Phase 2: Gradient alignment optimization (λ={lambda_param})")
