@@ -775,8 +775,11 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
                 for data, _ in self.dataset:
                     data = data.to(self.device)
+
                     batches += 1
                     backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
+                    print("Original data shape:", data.shape)
+                    print("Backdoored data shape:", backdoored_data.shape)
 
                     # Create target labels for backdoor task
                     backdoor_labels = torch.full((data.shape[0],), self.target_label,
