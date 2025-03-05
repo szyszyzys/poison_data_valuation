@@ -51,6 +51,7 @@ class SybilCoordinator:
         self.registered_clients = collections.OrderedDict()  # seller_id -> seller object
         self.selected_gradients = {}  # stores gradients from sellers selected in the last round
         self.cur_round = 0
+        self.start_atk = False
 
         self.backdoor_generator = backdoor_generator
 
@@ -295,6 +296,8 @@ class SybilCoordinator:
             best_client.upload_global_trigger(self.aggregator.global_model, first_attack=is_first, lr=0.01,
                                               num_steps=50)
         # save the result after tigger updates
+        if self.cur_round >= self.benign_rounds:
+            self.start_atk = True
         self.precompute_current_round_gradient()
 
     # ----- Reset and End-of-Round Handling -----
@@ -525,6 +528,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  local_training_params: Optional[dict] = None,
                  gradient_manipulation_mode: str = "cmd",
                  is_sybil: bool = False,
+                 benign_rounds=3,
                  sybil_coordinator: Optional['SybilCoordinator'] = None):
         super().__init__(seller_id, local_data, save_path=save_path, device=device,
                          local_epochs=local_epochs, dataset_name=dataset_name,
@@ -547,7 +551,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         self.cur_local_gradient = None
         self.federated_round_history = []
         self.selected_last_round = False
-
+        self.benign_rounds = benign_rounds
         # # Register this seller with the coordinator if available.
         # if self.sybil_coordinator is not None:
         #     self.sybil_coordinator.register_seller(self)
@@ -634,7 +638,10 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 base_model = base_model.to(self.device)
 
         # Select the behavior function from the registry; default to clean gradient.
-        behavior_func = self.adversary_behaviors.get(self.gradient_manipulation_mode, self.get_clean_gradient)
+        if self.sybil_coordinator.start_atk:
+            behavior_func = self.adversary_behaviors.get(self.gradient_manipulation_mode, self.get_clean_gradient)
+        else:
+            behavior_func = self.get_clean_gradient
 
         # get local gradient
         local_gradient = behavior_func(base_model)

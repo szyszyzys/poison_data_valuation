@@ -211,7 +211,8 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                                                              local_training_params=local_training_params,
                                                              gradient_manipulation_mode=gradient_manipulation_mode,
                                                              is_sybil=args.is_sybil,
-                                                             sybil_coordinator=sybil_coordinator
+                                                             sybil_coordinator=sybil_coordinator,
+                                                             benign_rounds = sybil_params['benign_rounds']
                                                              )
             n_adversaries_cnt -= 1
 
