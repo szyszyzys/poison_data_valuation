@@ -25,6 +25,7 @@ for GMODE in "${GRAD_MODES[@]}"; do
           for discovery_quality in "${discovery_qualitys[@]}"; do
             # If is_sybil=False, we skip sybil-mode loops entirely:
                 bash script/gradient_script/backdoor.sh \
+                 --gradient_manipulation_mode=$GMODE \
                  --dataset_name "$dataset_name" \
                  --aggregation_method "$agg_name" \
                  --gpu_ids "$gpu_ids" \
