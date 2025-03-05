@@ -23,10 +23,10 @@ SYBIL_MODES=("mimic")
 N_ADVS=(0.2 0.3)
 ALPHAS=(0.5)
 data_split_modes=("dirichlet" "label")
-#IS_SYBIL_VALUES=("False" "True")
-IS_SYBIL_VALUES=("True")
-#TIGGER_MODES=("static" "dynamic")
-TIGGER_MODES=("dynamic")
+IS_SYBIL_VALUES=("False" "True")
+#IS_SYBIL_VALUES=("True")
+TIGGER_MODES=("static" "dynamic")
+#TIGGER_MODES=("dynamic")
 # For each combination, we call run_experiment.py with the corresponding args.
 # In practice, you might want to limit how big this grid is, or do partial loops.
 
