@@ -20,7 +20,6 @@ data_split_modes=("discovery")
 buyer_data_modes=("random" "biased")
 discovery_qualitys=(0.2 0.5)
 for GMODE in "${GRAD_MODES[@]}"; do
-  for NADV in "${N_ADVS[@]}"; do
     for data_split_mode in "${data_split_modes[@]}"; do
         for buyer_data_mode in "${buyer_data_modes[@]}"; do
           for discovery_quality in "${discovery_qualitys[@]}"; do
@@ -34,7 +33,6 @@ for GMODE in "${GRAD_MODES[@]}"; do
                  --buyer_data_mode "$buyer_data_mode"\
                  --discovery_quality "$discovery_quality"
         done
-      done
     done
   done
 done
