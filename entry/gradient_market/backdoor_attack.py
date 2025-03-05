@@ -305,7 +305,7 @@ def parse_args():
     parser.add_argument('--dataset_name', type=str, default='FMNIST',
                         help='Name of the dataset (e.g., MNIST, CIFAR10)')
     parser.add_argument('--n_sellers', type=int, default=30, help='Number of sellers')
-    parser.add_argument('--adv_rate', type=float, default=0.2, help='Adversary rate')
+    parser.add_argument('--adv_rate', type=float, default=0, help='Adversary rate')
     parser.add_argument('--global_rounds', type=int, default=1, help='Number of global training rounds')
     parser.add_argument('--backdoor_target_label', type=int, default=0, help='Target label for backdoor attack')
     parser.add_argument('--trigger_type', type=str, default="blended_patch", help='Type of backdoor trigger')
