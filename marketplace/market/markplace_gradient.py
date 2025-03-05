@@ -135,7 +135,9 @@ class DataMarketplaceFederated(DataMarketplace):
         round_selected_set = set(round_selected)
 
         # Calculate selection rate for malicious sellers in this round.
-        malicious_rate = len(malicious_ids.intersection(round_selected_set)) / len(malicious_ids)
+        malicious_rate = 0
+        if len(malicious_ids):
+            malicious_rate = len(malicious_ids.intersection(round_selected_set)) / len(malicious_ids)
         self.malicious_selection_rate_list.append(malicious_rate)
 
         # Calculate selection rate for benign sellers in this round.
