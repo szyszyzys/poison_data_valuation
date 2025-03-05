@@ -138,8 +138,9 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                     device='cpu', poison_strength=1, poison_test_sample=100, args=None, trigger_rate=0.1,
                     buyer_percentage=0.02,
                     sybil_params=None, local_attack_params=None, local_training_params=None, change_base=True,
-                    data_split_mode="NonIID"):
+                    data_split_mode="NonIID", dm_params=None):
     # load the dataset
+
     n_adversaries = int(n_sellers * adv_rate)
     gradient_manipulation_mode = args.gradient_manipulation_mode
     if dataset_name == "FMNIST":
@@ -152,15 +153,17 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
     es_monitor = 'acc'
     early_stopper = FederatedEarlyStopper(patience=20, min_delta=0.01, monitor='acc')
 
-    # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
-
     # set up the data set for the participants
     buyer_loader, client_loaders, full_dataset, test_loader, class_names = get_data_set(dataset_name,
                                                                                         buyer_percentage=buyer_percentage,
                                                                                         num_sellers=n_sellers,
                                                                                         split_method=data_split_mode,
                                                                                         n_adversaries=n_adversaries,
-                                                                                        save_path=save_path
+                                                                                        save_path=save_path,
+                                                                                        discovery_quality=dm_params[
+                                                                                            "discovery_quality"],
+                                                                                        buyer_data_mode=dm_params[
+                                                                                            "buyer_data_mode"]
                                                                                         )
 
     # config the buyer
@@ -326,6 +329,9 @@ def parse_args():
     parser.add_argument('--buyer_percentage', type=float, default=0.003, help='Buyer percentage')
     parser.add_argument("--change_base", type=str, default="True", help="Change base flag")
 
+    parser.add_argument("--buyer_data_mode", type=str, default="random", help="random | biased")
+
+    parser.add_argument('--discovery_quality', type=float, default=0.3, help='quality of data discovery')
     parser.add_argument("--trigger_attack_mode", type=str, default="static", help="static, dynamic")
     # New argument: path to a YAML configuration file
     parser.add_argument("--config_file", type=str, default="", help="Path to YAML configuration file")
@@ -408,8 +414,9 @@ def get_save_path(args):
             "./results") / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"{args.aggregation_method}_{args.change_base}" / args.dataset_name
     else:
         base_dir = Path(
-            "./results") / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / args.aggregation_method / args.dataset_name
-
+            "./results") / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"buyer_data_{args.buyer_data_mode}" / args.aggregation_method / args.dataset_name
+    if args.data_split_mode == "discovery":
+        base_dir = f"{base_dir}/discovery_quality_{args.discovery_quality}"
     if args.gradient_manipulation_mode == "None":
         subfolder = "no_attack"
         param_str = f"n_seller_{args.n_sellers}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
@@ -471,30 +478,40 @@ def main():
         "local_training_params": local_training_params,
         "local_attack_params": local_attack_params
     }
+    dm_params = {
+        "discovery_quality": args.discovery_quality,
+        "buyer_data_mode": args.buyer_data_mode
+    }
     save_to_json(all_params, f"{save_path}/attack_params.json")
+    cur_seed = args.seed
 
-    backdoor_attack(
-        dataset_name=args.dataset_name,
-        n_sellers=args.n_sellers,
-        adv_rate=args.adv_rate,
-        model_structure=t_model,
-        global_rounds=args.global_rounds,
-        backdoor_target_label=args.backdoor_target_label,
-        trigger_type=args.trigger_type,
-        save_path=save_path,
-        device=device,
-        poison_strength=args.poison_strength,
-        poison_test_sample=args.poison_test_sample,
-        aggregation_method=args.aggregation_method,
-        trigger_rate=args.trigger_rate,
-        args=args,
-        sybil_params=sybil_params,
-        local_attack_params=local_attack_params,
-        local_training_params=local_training_params,
-        buyer_percentage=args.buyer_percentage,
-        data_split_mode=args.data_split_mode,
-        change_base=(args.change_base == "True"),
-    )
+    for i in range(100):
+        set_seed(cur_seed + i)
+        cur_path = f"{save_path}/run_{i}"
+        Path(cur_path).mkdir(parents=True, exist_ok=True)
+        backdoor_attack(
+            dataset_name=args.dataset_name,
+            n_sellers=args.n_sellers,
+            adv_rate=args.adv_rate,
+            model_structure=t_model,
+            global_rounds=args.global_rounds,
+            backdoor_target_label=args.backdoor_target_label,
+            trigger_type=args.trigger_type,
+            save_path=cur_path,
+            device=device,
+            poison_strength=args.poison_strength,
+            poison_test_sample=args.poison_test_sample,
+            aggregation_method=args.aggregation_method,
+            trigger_rate=args.trigger_rate,
+            args=args,
+            sybil_params=sybil_params,
+            local_attack_params=local_attack_params,
+            local_training_params=local_training_params,
+            buyer_percentage=args.buyer_percentage,
+            data_split_mode=args.data_split_mode,
+            change_base=(args.change_base == "True"),
+            dm_params=dm_params
+        )
 
 
 if __name__ == "__main__":

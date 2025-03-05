@@ -34,6 +34,8 @@ bkd_loc="bottom_right"
 data_split_mode="IID"
 change_base="True"
 trigger_attack_mode=""
+buyer_data_mode=""
+discovery_quality=""
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -63,6 +65,16 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         --poison_strength)
             poison_strength_arg="$2"
+            shift 2
+            ;;
+
+
+        --buyer_data_mode)
+            buyer_data_mode="$2"
+            shift 2
+            ;;
+        --discovery_quality)
+            discovery_quality="$2"
             shift 2
             ;;
         --gradient_manipulation_mode)
@@ -169,6 +181,8 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --data_split_mode "$data_split_mode" \
                   --change_base "$change_base"\
                   --trigger_attack_mode "$trigger_attack_mode" \
+                  --buyer_data_mode "$buyer_data_mode" \
+                  --discovery_quality "$discovery_quality"\
                   $is_sybil_flag
           done
         done

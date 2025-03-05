@@ -22,14 +22,13 @@ POISON_STRENGTHS=(1)
 SYBIL_MODES=("mimic")
 N_ADVS=(0.2 0.3 0.4)
 ALPHAS=(0.5)
-data_split_modes=("dirichlet" "label")
+data_split_modes=("discovery")
 IS_SYBIL_VALUES=("False" "True")
-#IS_SYBIL_VALUES=("True")
-TIGGER_MODES=("static" "dynamic")
-#TIGGER_MODES=("dynamic")
+TIGGER_MODES=("static")
 # For each combination, we call run_experiment.py with the corresponding args.
 # In practice, you might want to limit how big this grid is, or do partial loops.
-
+buyer_data_modes=("random" "biased")
+discovery_qualitys=(0.2)
 for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
   for TRIGGER_TYPE in "${TRIGGER_TYPES[@]}"; do
     for PS in "${POISON_STRENGTHS[@]}"; do
@@ -38,6 +37,9 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
           for NADV in "${N_ADVS[@]}"; do
             for data_split_mode in "${data_split_modes[@]}"; do
               for trigger_attack_mode in "${TIGGER_MODES[@]}"; do
+                for buyer_data_mode in "${buyer_data_modes[@]}"; do
+                  for discovery_quality in "${discovery_qualitys[@]}"; do
+
               # If is_sybil=False, we skip sybil-mode loops entirely:
               if [ "$IS_SYBIL" = "False" ]; then
                 echo "Running local-only: $TRIGGER_TYPE, $PS, $RATE, $GMODE"
@@ -52,6 +54,8 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                        --trigger_rate "$RATE" \
                        --data_split_mode "$data_split_mode"\
                        --change_base "$change_base" \
+                       --buyer_data_mode "$buyer_data_mode"\
+                       --discovery_quality "$discovery_quality"\
                        --trigger_attack_mode "$trigger_attack_mode"
               else
                 # If is_sybil=True, we loop over sybil modes and param combos.
@@ -70,10 +74,14 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                              --trigger_rate "$RATE" \
                              --data_split_mode "$data_split_mode"\
                              --change_base "$change_base" \
+                             --buyer_data_mode "$buyer_data_mode"\
+                             --discovery_quality "$discovery_quality" \
                              --trigger_attack_mode "$trigger_attack_mode"
                     done
                   done
               fi
+               done
+              done
             done
           done
          done
