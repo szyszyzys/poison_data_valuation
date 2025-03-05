@@ -407,9 +407,7 @@ def martfl_eval(model, dataloader, loss_fn, device, num_classes):
     """
     # Set model to evaluation mode
     model.eval()
-    print("Before eval:", next(model.parameters()).device)
     model = model.to(device)
-    print("After eval:", next(model.parameters()).device)
 
     # Initialize metrics
     correct_samples = 0.0

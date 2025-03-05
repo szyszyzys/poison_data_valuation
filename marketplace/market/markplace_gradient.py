@@ -132,8 +132,6 @@ class DataMarketplaceFederated(DataMarketplace):
              - 'avg_malicious_rate': average malicious selection rate over rounds.
              - 'avg_benign_rate': average benign selection rate over rounds.
         """
-        print(malicious_ids)
-        print(benign_ids)
         round_selected_set = set(round_selected)
 
         # Calculate selection rate for malicious sellers in this round.

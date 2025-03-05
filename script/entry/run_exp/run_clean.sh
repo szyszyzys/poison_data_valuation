@@ -32,7 +32,8 @@ for GMODE in "${GRAD_MODES[@]}"; do
                  --data_split_mode "$data_split_mode"\
                  --change_base "$change_base" \
                  --buyer_data_mode "$buyer_data_mode"\
-                 --discovery_quality "$discovery_quality"
+                 --discovery_quality "$discovery_quality"\
+                 --adv_rate 0
         done
     done
   done
