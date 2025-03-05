@@ -20,7 +20,7 @@ GRAD_MODES=("single")
 POISON_STRENGTHS=(1)
 # Sybil param sets
 SYBIL_MODES=("mimic")
-N_ADVS=(0.2 0.3)
+N_ADVS=(0.2 0.3 0.4)
 ALPHAS=(0.5)
 data_split_modes=("dirichlet" "label")
 IS_SYBIL_VALUES=("False" "True")
