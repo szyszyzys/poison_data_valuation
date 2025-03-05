@@ -415,8 +415,6 @@ def get_save_path(args):
     else:
         base_dir = Path(
             "./results") / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"buyer_data_{args.buyer_data_mode}" / args.aggregation_method / args.dataset_name
-    if args.data_split_mode == "discovery":
-        base_dir = f"{base_dir}/discovery_quality_{args.discovery_quality}"
     if args.gradient_manipulation_mode == "None":
         subfolder = "no_attack"
         param_str = f"n_seller_{args.n_sellers}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
@@ -428,9 +426,12 @@ def get_save_path(args):
         param_str = f"n_seller_{args.n_sellers}_adv_rate_{args.adv_rate}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
     else:
         raise NotImplementedError(f"No such attack type: {args.gradient_manipulation_mode}")
-
+    if args.data_split_mode == "discovery":
+        discovery_str = f"discovery_quality_{args.discovery_quality}"
+        save_path = base_dir / discovery_str / subfolder / param_str
     # Construct the full save path
-    save_path = base_dir / subfolder / param_str
+    else:
+        save_path = base_dir / subfolder / param_str
     return str(save_path)
 
 
