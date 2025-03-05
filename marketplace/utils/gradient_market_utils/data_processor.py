@@ -898,7 +898,7 @@ def print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_r
         buyer_fig_file = os.path.join(output_dir, 'buyer_distribution.png')
         plt.savefig(buyer_fig_file)
         print(f"Buyer distribution figure saved to {buyer_fig_file}")
-    plt.show()
+    plt.close()
 
     # Visualize Seller Distributions.
     num_sellers = len(seller_splits)
