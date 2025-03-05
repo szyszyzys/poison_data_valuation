@@ -212,7 +212,7 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                                                              gradient_manipulation_mode=gradient_manipulation_mode,
                                                              is_sybil=args.is_sybil,
                                                              sybil_coordinator=sybil_coordinator,
-                                                             benign_rounds = sybil_params['benign_rounds']
+                                                             benign_rounds=sybil_params['benign_rounds']
                                                              )
             n_adversaries_cnt -= 1
 
@@ -412,7 +412,7 @@ def get_save_path(args):
     sybil_str = str(args.sybil_mode) if args.is_sybil else False
     if args.aggregation_method == "martfl":
         base_dir = Path(
-            "./results") / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"{args.aggregation_method}_{args.change_base}" / args.dataset_name
+            "./results") / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"buyer_data_{args.buyer_data_mode}" / f"{args.aggregation_method}_{args.change_base}" / args.dataset_name
     else:
         base_dir = Path(
             "./results") / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"buyer_data_{args.buyer_data_mode}" / args.aggregation_method / args.dataset_name
@@ -433,6 +433,7 @@ def get_save_path(args):
     # Construct the full save path
     else:
         save_path = base_dir / subfolder / param_str
+
     return str(save_path)
 
 
