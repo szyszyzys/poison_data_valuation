@@ -363,7 +363,7 @@ def get_device(args) -> str:
         # Set CUDA_VISIBLE_DEVICES so that only these GPUs are visible.
         os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(map(str, gpu_ids))
         # Return the first GPU as the default device string.
-        device_str = "cuda:0"
+        device_str = f"cuda:{gpu_ids[0]}"
         print(f"[INFO] Using GPUs: {gpu_ids}. Default device set to {device_str}.")
     else:
         device_str = "cpu"
