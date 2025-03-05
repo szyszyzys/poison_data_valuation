@@ -149,7 +149,7 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
     loss_fn = nn.CrossEntropyLoss()
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
                                                 channels=channels, location=args.bkd_loc)
-
+    es_monitor = 'acc'
     early_stopper = FederatedEarlyStopper(patience=20, min_delta=0.01, monitor='acc')
 
     # setup buyers, only one buyer per query. Set buyer cid as 0 for data split
@@ -241,7 +241,7 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
         if gr % 10 == 0:
             torch.save(marketplace.round_logs, f"{save_path}/market_log_round_{gr}.ckpt")
         if round_record["final_perf_global"] is not None:
-            current_val_loss = round_record["final_perf_global"]["loss"]
+            current_val_loss = round_record["final_perf_global"][es_monitor]
             if early_stopper.update(current_val_loss):
                 print(f"Early stopping triggered at round {gr}.")
                 break
