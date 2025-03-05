@@ -171,11 +171,14 @@ class Aggregator:
 
         print("Flattening and clipping gradients")
         # Process each seller update: clip then flatten
+        # clients_update_flattened = [
+        #     flatten(clip_gradient_update(update, clip_norm=self.clip_norm))
+        #     for sid, update in seller_updates.items()
+        # ]
         clients_update_flattened = [
-            flatten(clip_gradient_update(update, clip_norm=self.clip_norm))
+            flatten(update)
             for sid, update in seller_updates.items()
         ]
-
         # Process the current baseline update
         if self.baseline_id is not None and self.baseline_id in seller_updates:
             print(f"Using seller {self.baseline_id} as baseline")
