@@ -160,6 +160,7 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                                                                                         num_sellers=n_sellers,
                                                                                         split_method=data_split_mode,
                                                                                         n_adversaries=n_adversaries,
+                                                                                        save_path=save_path
                                                                                         )
 
     # config the buyer

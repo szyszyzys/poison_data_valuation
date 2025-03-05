@@ -27,9 +27,15 @@ Usage Example:
     for cid, loader in client_loaders.items():
         print(f"Client {cid} has {len(loader.dataset)} samples.")
 """
+import json
+import os
 import random
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple, Any
+
+import numpy as np
+from torch.utils.data import DataLoader, Subset
+from torchvision import datasets, transforms
 
 
 def load_fmnist_dataset(train=True, download=True):
@@ -600,10 +606,6 @@ def create_client_dataloaders(dataset, splits, batch_size=64, shuffle=True):
 #
 #     return buyer_loader, seller_loaders, dataset, test_loader, class_names
 
-import numpy as np
-from torch.utils.data import DataLoader, Subset
-from torchvision import datasets, transforms
-
 
 def get_data_set(
         dataset_name,
@@ -612,7 +614,8 @@ def get_data_set(
         batch_size=64,
         normalize_data=True,
         split_method="Dirichlet",
-        n_adversaries=0
+        n_adversaries=0,
+        save_path='./result'
 ):
     # Define transforms based on the dataset.
     if normalize_data:
@@ -673,6 +676,8 @@ def get_data_set(
             dirichlet_alpha=0.7,
             n_adversaries=n_adversaries
         )
+    data_distribution_info = print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_results=True,
+                                                            output_dir=save_path)
     # Create DataLoaders.
     buyer_loader = DataLoader(Subset(dataset, buyer_indices), batch_size=batch_size, shuffle=True)
     seller_loaders = {i: DataLoader(Subset(dataset, indices), batch_size=batch_size, shuffle=True)
@@ -811,40 +816,120 @@ def split_dataset_buyer_seller_improved(dataset,
         if len(indices) == 0:
             seller_splits[seller_id] = [int(np.random.choice(seller_indices))]
 
-    # ----------------- Statistics Printing and Visualization -----------------
-    print("\nSeller Data Statistics:")
-    # We'll create a subplot grid with 3 columns.
-    # n_cols = 3
-    # n_rows = math.ceil(num_sellers / n_cols)
-    # fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
-    # if num_sellers == 1:
-    #     axes = [axes]  # make it iterable
-    # else:
-    #     axes = axes.flatten()
-    #
-    for seller in range(num_sellers):
-        indices = seller_splits[seller]
-        seller_labels = targets[indices]
-        # Compute counts per class.
-        counts = {c: int(np.sum(seller_labels == c)) for c in np.unique(targets)}
-        total = len(indices)
-        print(f"Seller {seller}: Total Samples = {total}, Distribution = {counts}")
-
-        # # Plot bar chart.
-        # axes[seller].bar(list(counts.keys()), list(counts.values()))
-        # axes[seller].set_title(f"Seller {seller} Distribution")
-        # axes[seller].set_xlabel("Class")
-        # axes[seller].set_ylabel("Count")
-    #
-    # # If there are any unused subplots, hide them.
-    # for i in range(num_sellers, len(axes)):
-    #     axes[i].axis("off")
-    #
-    # plt.tight_layout()
-    # plt.savefig(f"{output_dir}/asr_comparison.png", dpi=300)
-    # --------------------------------------------------------------------------
-
     return buyer_indices, seller_splits
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_results=True, output_dir='./results'):
+    """
+    Print and visualize the class distribution statistics for the buyer and each seller.
+    Optionally, save the statistics to a JSON file and the figures as PNG images.
+
+    Parameters:
+      dataset: Dataset object with attribute 'targets' or that returns (data, label).
+      buyer_indices: Array-like of indices for the buyer.
+      seller_splits: Dictionary mapping seller id to list of indices.
+      save_results (bool): Whether to save the results.
+      output_dir (str): Directory where the results will be saved.
+    """
+    # Get the targets from the dataset.
+    if hasattr(dataset, 'targets'):
+        targets = np.array(dataset.targets)
+    else:
+        # Assume dataset[i] returns (data, label)
+        targets = np.array([dataset[i][1] for i in range(len(dataset))])
+
+    # Compute unique classes present in the dataset.
+    unique_classes = np.unique(targets)
+
+    # Compute buyer statistics.
+    buyer_targets = targets[buyer_indices]
+    buyer_counts = {str(c): int(np.sum(buyer_targets == c)) for c in unique_classes}
+    buyer_stats = {
+        "total_samples": int(len(buyer_indices)),
+        "class_distribution": buyer_counts
+    }
+
+    print("Buyer Data Statistics:")
+    print(f"  Total Samples: {buyer_stats['total_samples']}")
+    for c in unique_classes:
+        print(f"  Class {c}: {buyer_counts[str(c)]}")
+    print("\n" + "=" * 40 + "\n")
+
+    # Compute seller statistics.
+    seller_stats = {}
+    for seller_id, indices in seller_splits.items():
+        seller_targets = targets[indices]
+        counts = {str(c): int(np.sum(seller_targets == c)) for c in unique_classes}
+        seller_stats[seller_id] = {
+            "total_samples": int(len(indices)),
+            "class_distribution": counts
+        }
+        print(f"Seller {seller_id} Data Statistics:")
+        print(f"  Total Samples: {seller_stats[seller_id]['total_samples']}")
+        for c in unique_classes:
+            print(f"  Class {c}: {counts[str(c)]}")
+        print("-" * 30)
+
+    # Save statistics to a dictionary.
+    results = {
+        "buyer_stats": buyer_stats,
+        "seller_stats": seller_stats
+    }
+
+    # Save the results if requested.
+    if save_results:
+        os.makedirs(output_dir, exist_ok=True)
+        stats_file = os.path.join(output_dir, 'data_statistics.json')
+        with open(stats_file, 'w') as f:
+            json.dump(results, f, indent=2)
+        print(f"Statistics saved to {stats_file}")
+
+    # Visualize Buyer Distribution.
+    plt.figure(figsize=(8, 4))
+    plt.bar([str(c) for c in unique_classes], [buyer_counts[str(c)] for c in unique_classes])
+    plt.title("Buyer Class Distribution")
+    plt.xlabel("Class")
+    plt.ylabel("Count")
+    if save_results:
+        buyer_fig_file = os.path.join(output_dir, 'buyer_distribution.png')
+        plt.savefig(buyer_fig_file)
+        print(f"Buyer distribution figure saved to {buyer_fig_file}")
+    plt.show()
+
+    # Visualize Seller Distributions.
+    num_sellers = len(seller_splits)
+    n_cols = 3
+    n_rows = int(np.ceil(num_sellers / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
+    if num_sellers == 1:
+        axes = [axes]  # make it iterable
+    else:
+        axes = axes.flatten()
+
+    for i, (seller_id, indices) in enumerate(seller_splits.items()):
+        seller_targets = targets[indices]
+        counts = {str(c): int(np.sum(seller_targets == c)) for c in unique_classes}
+        axes[i].bar([str(c) for c in unique_classes], [counts[str(c)] for c in unique_classes])
+        axes[i].set_title(f"Seller {seller_id}")
+        axes[i].set_xlabel("Class")
+        axes[i].set_ylabel("Count")
+
+    # Hide any unused subplots.
+    for j in range(i + 1, len(axes)):
+        axes[j].axis("off")
+
+    plt.tight_layout()
+    if save_results:
+        sellers_fig_file = os.path.join(output_dir, 'seller_distribution.png')
+        plt.savefig(sellers_fig_file)
+        print(f"Seller distribution figure saved to {sellers_fig_file}")
+    plt.close()
+
+    return results
 
 
 def visualize_data_distribution(dataset, buyer_indices, seller_splits,
