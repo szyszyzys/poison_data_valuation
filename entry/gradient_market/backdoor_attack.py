@@ -176,7 +176,8 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                             aggregation_method=aggregation_method,
                             change_base=change_base,
                             buyer_data_loader=buyer_loader,
-                            loss_fn=loss_fn
+                            loss_fn=loss_fn,
+                            device=device
                             )
 
     sybil_coordinator = SybilCoordinator(backdoor_generator=backdoor_generator,
