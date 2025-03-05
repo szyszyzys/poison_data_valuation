@@ -2,8 +2,10 @@ import os
 import traceback
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import scipy.stats as stats
 import torch
 
 
@@ -69,6 +71,9 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
                 round_data["baseline_client_id"] = round_baseline_id
                 if round_baseline_id:
                     round_data["malicious_baseline"] = isinstance(round_baseline_id, str)
+            round_data['selected_clients'] = record["used_sellers"]
+            round_data['outlier_clients'] = record["outlier_ids"]
+            round_data['n_selected_clients'] = record["num_sellers_selected"]
             processed_data.append(round_data)
 
         # Calculate summary metrics
@@ -287,6 +292,127 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
         print(f"Saved summary data to {summary_csv}")
 
     return all_rounds_df, summary_df
+
+
+def analyze_client_level_selection(processed_data, seller_raw_data_stats):
+    """
+    Analyze individual client-level selection behavior and its relation to the sellers' raw data distribution.
+
+    Args:
+        processed_data (list of dict): Processed round data from process_single_experiment.
+            Each dictionary should contain keys such as 'selected_clients', 'round', etc.
+        seller_raw_data_stats (dict): Dictionary mapping seller IDs to raw data distribution metrics.
+            For example: {
+                'seller1': {'distribution_similarity': 0.95, 'kl_divergence': 0.1, ...},
+                'seller2': {'distribution_similarity': 0.80, 'kl_divergence': 0.3, ...},
+                ...
+            }
+
+    Returns:
+        analysis_results (dict): A dictionary containing aggregated insights, including:
+            - Total rounds
+            - Per-seller selection counts and frequency (percentage)
+            - Basic statistics (mean, variance) of selection frequency
+            - Pearson correlation between a chosen raw distribution metric and selection frequency
+            - Optionally, plots for further visual analysis.
+    """
+    # Total rounds in the experiment
+    total_rounds = len(processed_data)
+
+    # Gather list of all seller IDs from seller_raw_data_stats
+    all_seller_ids = list(seller_raw_data_stats.keys())
+
+    # Initialize counts for each seller (even if they never appear as selected)
+    seller_selection_counts = {seller: 0 for seller in all_seller_ids}
+
+    # Iterate over each round record and update selection counts.
+    for record in processed_data:
+        selected = record.get('selected_clients', [])
+        for cid in selected:
+            if cid in seller_selection_counts:
+                seller_selection_counts[cid] += 1
+            else:
+                seller_selection_counts[cid] = 1
+
+    # Compute selection frequency (rate per seller)
+    seller_selection_freq = {seller: count / total_rounds
+                             for seller, count in seller_selection_counts.items()}
+
+    # Compute summary statistics for selection frequency
+    freq_values = np.array(list(seller_selection_freq.values()))
+    mean_freq = np.mean(freq_values)
+    var_freq = np.var(freq_values)
+
+    # Now, correlate selection frequency with a raw data distribution metric.
+    # We assume that each seller has a metric "distribution_similarity"
+    # (if not, we can convert from "kl_divergence": lower divergence -> higher similarity).
+    metric_list = []
+    selection_freq_list = []
+    for seller in all_seller_ids:
+        stats_dict = seller_raw_data_stats.get(seller, {})
+        # Use 'distribution_similarity' if available; else derive one from 'kl_divergence'
+        if "distribution_similarity" in stats_dict:
+            metric = stats_dict["distribution_similarity"]
+        elif "kl_divergence" in stats_dict:
+            # A simple conversion: similarity = exp(-KL divergence)
+            metric = np.exp(-stats_dict["kl_divergence"])
+        else:
+            continue  # skip if no metric is provided
+        metric_list.append(metric)
+        selection_freq_list.append(seller_selection_freq.get(seller, 0))
+
+    if len(metric_list) > 1:
+        corr, p_val = stats.pearsonr(metric_list, selection_freq_list)
+    else:
+        corr, p_val = None, None
+
+    # Optionally, produce a scatter plot showing the relation between raw distribution metric and selection frequency.
+    plt.figure(figsize=(6, 4))
+    plt.scatter(metric_list, selection_freq_list, alpha=0.7)
+    plt.xlabel('Raw Data Distribution Similarity')
+    plt.ylabel('Selection Frequency')
+    plt.title('Per-Seller Selection Frequency vs. Raw Data Distribution')
+    plt.grid(True)
+    plt.show()
+
+    # You might also want to plot a histogram of selection frequencies:
+    plt.figure(figsize=(6, 4))
+    plt.hist(freq_values, bins=10, alpha=0.8, edgecolor='black')
+    plt.xlabel('Selection Frequency')
+    plt.ylabel('Number of Sellers')
+    plt.title('Histogram of Seller Selection Frequencies')
+    plt.grid(True)
+    plt.show()
+
+    # Compile analysis results into a dictionary
+    analysis_results = {
+        "total_rounds": total_rounds,
+        "seller_selection_counts": seller_selection_counts,
+        "seller_selection_frequency": seller_selection_freq,
+        "mean_selection_frequency": mean_freq,
+        "variance_selection_frequency": var_freq,
+        "raw_metric": metric_list,
+        "selection_freq_list": selection_freq_list,
+        "pearson_correlation": corr,
+        "p_value": p_val,
+    }
+
+    print("Total Rounds:", total_rounds)
+    print("Mean Selection Frequency:", mean_freq)
+    print("Variance in Selection Frequency:", var_freq)
+    if corr is not None:
+        print("Correlation between raw data similarity and selection frequency:", corr)
+        print("P-value:", p_val)
+    else:
+        print("Not enough data to compute correlation.")
+
+    return analysis_results
+
+
+# Example usage:
+# processed_data = process_single_experiment(file_path, attack_params, aggregation_method)[0]
+# seller_raw_data_stats = load_seller_distribution_stats()  # Your function to load distribution stats.
+# analysis_results = analyze_client_level_selection(processed_data, seller_raw_data_stats)
 
 
 if __name__ == "__main__":

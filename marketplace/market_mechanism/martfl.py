@@ -407,7 +407,6 @@ def martfl_eval(model, dataloader, loss_fn, device, num_classes):
     # Set model to evaluation mode
     model.eval()
     model = model.to(device)
-
     # Initialize metrics
     correct_samples = 0.0
     total_samples = 0.0
@@ -428,9 +427,8 @@ def martfl_eval(model, dataloader, loss_fn, device, num_classes):
             #     data = data.permute(1, 0)  # Transpose for proper shape
             # else:  # For image datasets like MNIST/CIFAR
             data, target = batch[0], batch[1]
-
             # Move data to the specified device
-            data, target = data.to(device), target.to(device)
+            data, target = data.to(model.device), target.to(model.device)
 
             # Forward pass
             outputs = model(data)
