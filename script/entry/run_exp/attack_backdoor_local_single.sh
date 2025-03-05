@@ -28,7 +28,7 @@ TIGGER_MODES=("static")
 # For each combination, we call run_experiment.py with the corresponding args.
 # In practice, you might want to limit how big this grid is, or do partial loops.
 buyer_data_modes=("random" "biased")
-discovery_qualitys=(0.2)
+discovery_qualitys=(0.2 0.5)
 for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
   for TRIGGER_TYPE in "${TRIGGER_TYPES[@]}"; do
     for PS in "${POISON_STRENGTHS[@]}"; do
