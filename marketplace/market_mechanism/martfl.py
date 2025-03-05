@@ -192,6 +192,7 @@ class Aggregator:
         cosine_similarities = torch.nn.functional.cosine_similarity(baseline, clients_stack, dim=1)
         np_cosine_result = cosine_similarities.cpu().numpy()
         np_cosine_result = np.nan_to_num(np_cosine_result, nan=0.0)
+        print(f"Similarity metrics: {np_cosine_result}")
 
         # Clustering on cosine similarities using Gap Statistics
         diameter = np.max(np_cosine_result) - np.min(np_cosine_result)
