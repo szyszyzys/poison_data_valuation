@@ -4,15 +4,16 @@
 # from dataset import dataset_output_dim (if needed)
 import collections
 import copy
+from typing import Dict
+from typing import List, Optional, Union
+from typing import Tuple
+
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch import optim, nn
 from torch.utils.data import DataLoader
-from typing import Dict
-from typing import List, Optional, Union
-from typing import Tuple
 
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
 from general_utils.data_utils import list_to_tensor_dataset
@@ -753,30 +754,37 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         return tmp_trigger
 
     def trigger_opt(self, model, trigger, first_attack=False, trigger_lr=0.01, num_steps=50, lambda_param=1.0):
+        """
+        Optimize the backdoor trigger in two phases:
+          Phase 1: Loss alignment (if first_attack is True) minimizes the classification loss
+                   on backdoored data.
+          Phase 2: Gradient alignment optimizes the trigger such that the difference between
+                   the gradients on clean and backdoored data is minimized (weighted by lambda_param).
 
+        Returns the updated trigger.
+        """
         # Set model to evaluation mode
         model.eval()
 
-        # Initialize trigger if not already done
-        sample_batch, _ = next(iter(self.dataset))
-        sample_batch = sample_batch.to(self.device)
-
-        # Clone the trigger for optimization
+        # (Optional) Ensure trigger has gradients enabled from the start.
+        if not trigger.requires_grad:
+            trigger = trigger.clone().detach().requires_grad_(True)
 
         # Create optimizer for the trigger
         trigger_optimizer = optim.Adam([trigger], lr=trigger_lr)
         criterion = nn.CrossEntropyLoss()
         dataloader = DataLoader(self.dataset, batch_size=64, shuffle=True)
 
-        # Phase 1: Loss alignment (only in first attack)
+        # Phase 1: Loss alignment (only for first attack)
         if first_attack:
+            print("Phase 1: Loss alignment")
             for step in range(num_steps):
                 total_loss = 0.0
                 batches = 0
 
                 for data, _ in dataloader:
                     # If data is missing a channel dimension, add it.
-                    if data.dim() == 3:  # shape: [batch, 28, 28]
+                    if data.dim() == 3:  # [batch, 28, 28]
                         data = data.unsqueeze(1)  # becomes [batch, 1, 28, 28]
                     data = data.to(self.device)
 
@@ -804,12 +812,16 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                     # Limit number of batches per step for efficiency
                     if batches >= 10:
                         break
-
-                print(f"Step {step + 1}, Loss: {total_loss / batches:.4f}")
+                if (step + 1) % 10 == 0:
+                    print(f"Phase 1 - Step {step + 1}, Loss: {total_loss / batches:.4f}")
 
         # Phase 2: Gradient alignment optimization
         print(f"Phase 2: Gradient alignment optimization (λ={lambda_param})")
         dataloader = DataLoader(self.dataset, batch_size=64, shuffle=True)
+        # Ensure trigger requires grad in Phase 2
+        if not trigger.requires_grad:
+            trigger = trigger.clone().detach().requires_grad_(True)
+
         for step in range(num_steps):
             total_gradient_distance = 0.0
             total_backdoor_loss = 0.0
@@ -843,7 +855,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 backdoor_loss = criterion(backdoor_outputs, backdoor_labels)
                 backdoor_loss.backward(retain_graph=True)
 
-                # Compute gradient distance (L2 norm squared of the difference)
+                # Compute gradient distance (L2 norm squared difference)
                 gradient_distance = torch.tensor(0.0, device=self.device)
                 for name, param in model.named_parameters():
                     if param.grad is not None and name in clean_grads:
@@ -871,9 +883,10 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 # Break after processing a few batches for efficiency
                 if batches_processed >= 10:
                     break
-
-            print(f"Step {step + 1}, Gradient Distance: {total_gradient_distance / batches_processed:.4f}, "
-                  f"Backdoor Loss: {total_backdoor_loss / batches_processed:.4f}")
+            if (step + 1) % 10 == 0:
+                print(
+                    f"Phase 2 - Step {step + 1}, Gradient Distance: {total_gradient_distance / batches_processed:.4f}, "
+                    f"Backdoor Loss: {total_backdoor_loss / batches_processed:.4f}")
 
         # Detach and return the updated trigger
         trigger = trigger.detach()

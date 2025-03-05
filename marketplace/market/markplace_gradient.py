@@ -236,11 +236,9 @@ class DataMarketplaceFederated(DataMarketplace):
         print(f"Buyer local eval result: {final_perf_local}")
         print(f"Backdoor Metrics on Global model: {poison_metrics}")
 
-        selection_rate_info = None
-        if n_adv > 0:
-            selection_rate_info = self.compute_selection_rates(selected_ids, set(range(n_adv)),
-                                                               set(range(n_adv, len(self.sellers))))
-            print(selection_rate_info)
+        selection_rate_info = self.compute_selection_rates(selected_ids, set(range(n_adv)),
+                                                           set(range(n_adv, len(self.sellers))))
+        print(selection_rate_info)
         round_record = {
             "round_number": round_number,
             "used_sellers": selected_ids,

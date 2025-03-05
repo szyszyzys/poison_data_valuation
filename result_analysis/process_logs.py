@@ -1,9 +1,10 @@
-import numpy as np
 import os
-import pandas as pd
-import torch
 import traceback
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import torch
 
 
 def process_single_experiment(file_path, attack_params, aggregation_method):
@@ -55,12 +56,13 @@ def process_single_experiment(file_path, attack_params, aggregation_method):
                 round_data['asr'] = poison_metrics.get('attack_success_rate', None)
 
             # Extract selection rates
-            if 'selection_rate_info' in record:
+            if 'selection_rate_info' in record and record['selection_rate_info']:
                 selection_info = record.get("selection_rate_info", {})
                 round_data['malicious_rate'] = selection_info.get('malicious_rate', None)
                 round_data['benign_rate'] = selection_info.get('benign_rate', None)
                 round_data['avg_malicious_rate'] = selection_info.get('avg_malicious_rate', None)
                 round_data['avg_benign_rate'] = selection_info.get('avg_benign_rate', None)
+
             if 'martfl_baseline_id' in record:
                 round_baseline_id = record.get("martfl_baseline_id", None)
 
