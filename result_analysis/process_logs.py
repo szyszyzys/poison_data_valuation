@@ -216,7 +216,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
     for aggregation_method in aggregation_methods:
         print(f"\nProcessing experiments for {aggregation_method}...")
         # for data_split_mode in ["NonIID", "IID"]:
-        for data_split_mode in ["dirichlet", "adversaryfirst"]:
+        for data_split_mode in ["dirichlet", "label"]:
             for grad_mode in ['single', 'None']:
                 for trigger_attack_mode in ['static', 'dynamic']:
                     for trigger_rate in [0.25]:
