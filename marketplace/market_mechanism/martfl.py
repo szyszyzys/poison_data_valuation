@@ -643,6 +643,8 @@ def add_gradient_updates(grad_accumulator, grad_update, weight=1.0):
         # Ensure g is a tensor (if it's not, convert it)
         if not isinstance(g, torch.Tensor):
             g = torch.tensor(g, device=acc.device)
+        else:
+            g = g.to(acc.device)
         # Perform the update in-place
         acc.add_(g * weight)
 
