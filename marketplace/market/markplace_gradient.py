@@ -181,7 +181,6 @@ class DataMarketplaceFederated(DataMarketplace):
         aggregated_gradient, selected_ids, outlier_ids = self.aggregator.aggregate(round_number,
                                                                                    seller_gradients,
                                                                                    baseline_gradient)
-        aggregated_gradient = aggregated_gradient.cpu()
         print(f"round {round_number} aggregated gradient norm: {np.linalg.norm(flatten(aggregated_gradient))}")
         # 4. update global model
         self.update_global_model(aggregated_gradient)
