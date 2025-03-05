@@ -579,9 +579,8 @@ def flatten(parameters):
     # For list of parameters (tensors or numpy arrays)
     flattened_tensors = []
     for param in parameters:
-        print(param)
         if isinstance(param, torch.Tensor):
-            flattened_tensors.append(param.flatten())
+            flattened_tensors.append(param.cpu().flatten())
         elif isinstance(param, np.ndarray):
             flattened_tensors.append(torch.tensor(param.flatten()))
         elif param is not None:  # Skip None values
