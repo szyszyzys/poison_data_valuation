@@ -193,7 +193,7 @@ class Aggregator:
             else:
                 cg = buyer_updates
 
-            baseline_update_flattened = clip_gradient_update(cg, clip_norm=self.clip_norm)
+            baseline_update_flattened = flatten(cg)
             self.baseline_id = None
 
         print("Computing cosine similarities")
