@@ -184,6 +184,7 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --buyer_data_mode "$buyer_data_mode" \
                   --discovery_quality "$discovery_quality"\
                   --clip\
+                  --remove_baseline\
                   --exp_name "test_clip" \
                   $is_sybil_flag
           done

@@ -1,8 +1,9 @@
 import argparse
-import numpy as np
 import os
 import random
 import shutil
+
+import numpy as np
 import torch
 import torch.backends.cudnn
 import yaml
@@ -240,7 +241,8 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                                                                               loss_fn=loss_fn,
                                                                               backdoor_target_label=backdoor_target_label,
                                                                               backdoor_generator=backdoor_generator,
-                                                                              clip=args.clip)
+                                                                              clip=args.clip,
+                                                                              remove_baseline=args.remove_baseline)
 
         if gr % 10 == 0:
             torch.save(marketplace.round_logs, f"{save_path}/market_log_round_{gr}.ckpt")
@@ -337,6 +339,8 @@ def parse_args():
     # New argument: path to a YAML configuration file
     parser.add_argument("--config_file", type=str, default="", help="Path to YAML configuration file")
     parser.add_argument("--clip", action="store_true", help="Enable clip gradient (default: False)")
+
+    parser.add_argument("--remove_baseline", action="store_true", help="Enable clip gradient (default: False)")
 
     args = parser.parse_args()
 

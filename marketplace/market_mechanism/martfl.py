@@ -1,10 +1,11 @@
-import numpy as np
 import random
+from typing import Dict
+
+import numpy as np
 import torch
 from sklearn.metrics import confusion_matrix
 from torch import nn, softmax
 from torcheval.metrics.functional import multiclass_f1_score
-from typing import Dict
 
 from marketplace.utils.gradient_market_utils.clustering import optimal_k_gap, kmeans
 from model.utils import get_model, load_model, apply_gradient_update
@@ -124,9 +125,10 @@ class Aggregator:
             # Load updated parameters back into the model
             self.global_model.load_state_dict(updated_params)
 
-    def aggregate(self, global_epoch, seller_updates, buyer_updates, clip = False):
+    def aggregate(self, global_epoch, seller_updates, buyer_updates, remove_baseline, clip=False):
         if self.aggregation_method == "martfl":
-            return self.martFL(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates, clip = clip)
+            return self.martFL(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates,
+                               clip=clip, remove_baseline = remove_baseline)
         elif self.aggregation_method == "fedavg":
             return self.fedavg(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates)
         else:
@@ -140,7 +142,7 @@ class Aggregator:
                global_epoch: int,
                seller_updates,
                buyer_updates,
-               ground_truth_model=None, clip=False):
+               ground_truth_model=None, clip=False, remove_baseline=False):
         """
         Performs the martFL aggregation:
           1) Compute each client's flattened & clipped gradient update.
@@ -161,6 +163,7 @@ class Aggregator:
         # Number of sellers
         self.n_seller = len(seller_updates)
         seller_ids = list(seller_updates.keys())
+        seller_id_to_index = {seller_id: index for index, seller_id in enumerate(seller_ids)}
 
         print("Starting gradient aggregation")
         aggregated_gradient = [
@@ -203,6 +206,8 @@ class Aggregator:
         cosine_similarities = torch.nn.functional.cosine_similarity(baseline, clients_stack, dim=1)
         np_cosine_result = cosine_similarities.cpu().numpy()
         np_cosine_result = np.nan_to_num(np_cosine_result, nan=0.0)
+        if remove_baseline and self.baseline_id is not None:
+            np_cosine_result[seller_id_to_index[self.baseline_id]] = 0.0
         print(f"Similarity metrics: {np_cosine_result}")
 
         # Clustering on cosine similarities using Gap Statistics
@@ -275,6 +280,7 @@ class Aggregator:
         print(f"High-quality sellers: {high_quality_sellers}")
         print(f"Qualified sellers: {qualified_sellers}")
         print(f"Outlier sellers: {outlier_sellers}")
+        print(f"Current base in outlier: {self.baseline_id in outlier_sellers}")
 
         # Random sampling from P₂ (qualified sellers) if needed
         # If P₂ is empty and P₁ is small, select some random additional sellers

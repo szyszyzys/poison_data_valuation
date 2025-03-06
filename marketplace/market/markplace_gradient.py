@@ -164,7 +164,8 @@ class DataMarketplaceFederated(DataMarketplace):
                               loss_fn=None,
                               backdoor_target_label=0,
                               backdoor_generator=None,
-                              clip = False
+                              clip = False,
+                              remove_baseline = False
                               ):
         """
         Perform one round of federated training:
@@ -182,7 +183,7 @@ class DataMarketplaceFederated(DataMarketplace):
         # 2. perform aggregation
         aggregated_gradient, selected_ids, outlier_ids = self.aggregator.aggregate(round_number,
                                                                                    seller_gradients,
-                                                                                   baseline_gradient, clip=clip)
+                                                                                   baseline_gradient, clip=clip, remove_baseline =remove_baseline)
         print(f"round {round_number} aggregated gradient norm: {np.linalg.norm(flatten(aggregated_gradient))}")
         # 4. update global model
         self.update_global_model(aggregated_gradient)
