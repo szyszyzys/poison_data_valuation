@@ -156,7 +156,7 @@ class Aggregator:
            outlier_ids: list of indices of sellers whose gradients are labeled as outliers
            baseline_seller_id: ID of the seller selected as the next baseline (if change_base=True)
         """
-        print(f"Global epoch: {global_epoch}, Change baseline: {self.change_base}")
+        print(f"Global epoch: {global_epoch}, Change baseline: {self.change_base}, if clip: {clip}")
 
         # Number of sellers
         self.n_seller = len(seller_updates)
