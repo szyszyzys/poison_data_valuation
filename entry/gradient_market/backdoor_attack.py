@@ -341,6 +341,7 @@ def parse_args():
     parser.add_argument("--clip", action="store_true", help="Enable clip gradient (default: False)")
 
     parser.add_argument("--remove_baseline", action="store_true", help="Enable clip gradient (default: False)")
+    parser.add_argument("--benign_rounds", type=int, default=5, help="benign_rounds.")
 
     args = parser.parse_args()
 
@@ -462,7 +463,7 @@ def main():
         "amplify_factor": 2.0,
         "cost_scale": 1.5,
         "adv_rate": args.adv_rate,
-        "benign_rounds": 5,
+        "benign_rounds": args.benign_rounds,
         "trigger_mode": args.trigger_attack_mode
     }
 
