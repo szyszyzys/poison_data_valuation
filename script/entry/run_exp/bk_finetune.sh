@@ -193,7 +193,7 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --remove_baseline\
                   --benign_rounds "$benign_rounds"\
                   --n_samples "$n_samples"\
-                  --exp_name "test_clip" \
+                  --exp_name "test_all" \
                   $is_sybil_flag
           done
         done
