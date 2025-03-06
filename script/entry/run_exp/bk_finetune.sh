@@ -22,6 +22,7 @@ gpu_ids="7"
 poison_test_sample=10000
 local_lr="1e-2"
 adv_rate_arg="0.2"
+benign_rounds=5
 aggregation_method='martfl'
 # Initialize these to empty strings to check later
 local_epoch_arg="2"
@@ -105,6 +106,10 @@ while [[ "$#" -gt 0 ]]; do
           change_base="$2"
             shift 2
             ;;
+        --benign_rounds)
+          benign_rounds="$2"
+            shift 2
+            ;;
         --is_sybil)
             # If the flag is provided, set sybil mode to true.
             is_sybil_flag="--is_sybil"
@@ -185,6 +190,7 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --discovery_quality "$discovery_quality"\
                   --clip\
                   --remove_baseline\
+                  --benign_rounds "$benign_rounds"\
                   --exp_name "test_clip" \
                   $is_sybil_flag
           done
