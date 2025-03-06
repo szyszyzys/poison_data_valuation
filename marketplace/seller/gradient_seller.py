@@ -174,7 +174,7 @@ class SybilCoordinator:
                 gradient = seller.get_local_gradient(base_model)
                 selected_ids.append(seller_id)
                 self.selected_gradients[seller_id] = self._ensure_tensor(gradient)
-        print(f"Selected sellers in last round: {selected_ids}")
+        print(f"Selected adv sellers in last round: {selected_ids}")
 
     def _ensure_tensor(self, gradient: Union[torch.Tensor, List, np.ndarray]) -> torch.Tensor:
         """

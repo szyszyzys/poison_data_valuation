@@ -37,6 +37,7 @@ change_base="True"
 trigger_attack_mode="static"
 buyer_data_mode="random"
 discovery_quality="0.2"
+n_samples=10
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -191,6 +192,7 @@ for local_epoch in "${local_epoch_list[@]}"; do
                   --clip\
                   --remove_baseline\
                   --benign_rounds "$benign_rounds"\
+                  --n_samples "$n_samples"\
                   --exp_name "test_clip" \
                   $is_sybil_flag
           done

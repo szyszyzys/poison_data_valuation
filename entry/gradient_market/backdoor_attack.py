@@ -342,6 +342,7 @@ def parse_args():
 
     parser.add_argument("--remove_baseline", action="store_true", help="Enable clip gradient (default: False)")
     parser.add_argument("--benign_rounds", type=int, default=5, help="benign_rounds.")
+    parser.add_argument("--n_samples", type=int, default=100, help="benign_rounds.")
 
     args = parser.parse_args()
 
@@ -495,7 +496,7 @@ def main():
     save_to_json(all_params, f"{save_path}/attack_params.json")
     cur_seed = args.seed
 
-    for i in range(100):
+    for i in range(args.n_samples):
         set_seed(cur_seed + i)
         cur_path = f"{save_path}/run_{i}"
         Path(cur_path).mkdir(parents=True, exist_ok=True)
