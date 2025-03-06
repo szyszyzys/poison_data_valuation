@@ -221,6 +221,9 @@ class Aggregator:
 
         # Primary clustering
         clusters, centroids = kmeans(np_cosine_result, n_clusters)
+        if remove_baseline and self.baseline_id is not None:
+            clusters[seller_id_to_index[self.baseline_id]] = 0
+
         print(f"Centroids: {centroids}")
         print(f"{n_clusters} Clusters: {clusters}")
 
@@ -234,10 +237,15 @@ class Aggregator:
         else:
             clusters_secondary, _ = kmeans(np_cosine_result, 2)
         print(f"Secondary Clustering: {clusters_secondary}")
+        if remove_baseline and self.baseline_id is not None:
+            clusters_secondary[seller_id_to_index[self.baseline_id]] = 0
 
         # Determine border for outlier detection (max distance from center)
         border = 0.0
         for i, (cos_sim, sec_cluster) in enumerate(zip(np_cosine_result, clusters_secondary)):
+            if remove_baseline and self.baseline_id is not None:
+                if i == seller_id_to_index[self.baseline_id]:
+                    continue
             if n_clusters == 1 or sec_cluster != 0:
                 dist = abs(center - cos_sim)
                 if dist > border:
@@ -255,8 +263,10 @@ class Aggregator:
             seller_id = seller_ids[i]
 
             # Skip the current baseline seller if it exists
-            if seller_id == self.baseline_id:
-                continue
+            if remove_baseline and self.baseline_id is not None:
+                if i == seller_id_to_index[self.baseline_id]:
+                    non_outliers[i] = 0.0
+                    continue
 
             if clusters_secondary[i] == 0 or np_cosine_result[i] == 0.0:
                 # Low-quality model (mark as outlier)
