@@ -22,7 +22,7 @@ gpu_ids="7"
 poison_test_sample=10000
 local_lr="1e-2"
 adv_rate_arg="0.2"
-benign_rounds=5
+benign_rounds=0
 aggregation_method='martfl'
 # Initialize these to empty strings to check later
 local_epoch_arg="2"
