@@ -27,7 +27,7 @@ aggregation_method='martfl'
 # Initialize these to empty strings to check later
 local_epoch_arg="2"
 poison_strength_arg="0.1"
-trigger_rate="0.25"
+trigger_rate="0.1"
 # gradient_manipulation_mode is already set to "single" by default
 is_sybil_flag=""
 sybil_mode="mimic"
