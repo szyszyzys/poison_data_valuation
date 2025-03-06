@@ -1,144 +1,115 @@
-import os
-import traceback
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 import pandas as pd
 import scipy.stats as stats
 import torch
+import traceback
+from pathlib import Path
 
 
-def process_single_experiment(file_path, attack_params, aggregation_method):
+def calculate_distribution_similarity(buyer_distribution, seller_distribution):
+    buyer_dist_array = np.array(list(buyer_distribution.values()))
+    seller_dist_array = np.array(list(seller_distribution.values()))
+    similarity = np.dot(buyer_dist_array, seller_dist_array) / (
+            np.linalg.norm(buyer_dist_array) * np.linalg.norm(seller_dist_array)
+    )
+    return similarity
+
+
+def process_single_experiment(file_path, attack_params, market_params, data_statistics_path, adv_rate):
     """
-    Process a single experiment file and extract metrics.
+    Process a single experiment file and extract metrics, incorporating data distribution similarity.
 
     Args:
         file_path: Path to the market_log.ckpt file
         attack_params: Dictionary containing attack parameters
-        aggregation_method: The aggregation method used in the experiment
+        market_params: Dictionary containing market parameters
+        data_statistics_path: Path to the data_statistics.json file
+        adv_rate: Proportion of sellers considered adversaries
 
     Returns:
         processed_data: List of dictionaries with processed round data
         summary_data: Dictionary with summary metrics
     """
     try:
-        # Load the experiment data
-        experiment_data = torch.load(file_path, map_location=torch.device('cpu'))
+        experiment_data = torch.load(file_path, map_location='cpu')
+        data_stats = load_json(data_statistics_path)
 
-        # Extract round records
-        round_records = experiment_data
-        if not round_records:
+        buyer_distribution = data_stats['buyer_stats']['class_distribution']
+        seller_distributions = data_stats['seller_stats']
+
+        if not experiment_data:
             print(f"Warning: No round records found in {file_path}")
             return [], {}
 
         processed_data = []
+        num_adversaries = int(len(seller_distributions) * adv_rate)
 
-        for i, record in enumerate(round_records):
+        for i, record in enumerate(experiment_data):
             round_num = record.get('round_number', i)
 
-            # Extract basic round info
+            selected_clients = record.get("used_sellers", [])
+            adversary_selections = [cid for cid in selected_clients if int(cid) < num_adversaries]
+            benign_selections = [cid for cid in selected_clients if int(cid) >= num_adversaries]
+
             round_data = {
                 'round': round_num,
-                'AGGREGATION_METHOD': aggregation_method,  # Add aggregation method
-                **attack_params  # Include attack parameters
+                **attack_params,
+                **market_params,
+                'n_selected_clients': len(selected_clients),
+                'selected_clients': selected_clients,
+                'adversary_selection_rate': len(adversary_selections) / len(
+                    selected_clients) if selected_clients else 0,
+                'benign_selection_rate': len(benign_selections) / len(selected_clients) if selected_clients else 0
             }
 
-            # Extract performance metrics
-            if 'final_perf_global' in record and record['final_perf_global'] is not None:
-                round_data['main_acc'] = record['final_perf_global'].get('acc', None)
-                round_data['main_loss'] = record['final_perf_global'].get('loss', None)
+            similarities = [
+                calculate_distribution_similarity(buyer_distribution, seller_distributions[cid]['class_distribution'])
+                for cid in selected_clients
+            ]
 
-            # Extract backdoor attack metrics
-            extra_info = record.get('extra_info', {})
-            if 'poison_metrics' in extra_info:
-                poison_metrics = extra_info['poison_metrics']
-                round_data['clean_acc'] = poison_metrics.get('clean_accuracy', None)
-                round_data['triggered_acc'] = poison_metrics.get('triggered_accuracy', None)
-                round_data['asr'] = poison_metrics.get('attack_success_rate', None)
+            round_data['avg_distribution_similarity'] = np.mean(similarities) if similarities else 0
 
-            # Extract selection rates
-            if 'selection_rate_info' in record and record['selection_rate_info']:
-                selection_info = record.get("selection_rate_info", {})
-                round_data['malicious_rate'] = selection_info.get('malicious_rate', None)
-                round_data['benign_rate'] = selection_info.get('benign_rate', None)
-                round_data['avg_malicious_rate'] = selection_info.get('avg_malicious_rate', None)
-                round_data['avg_benign_rate'] = selection_info.get('avg_benign_rate', None)
+            final_perf = record.get('final_perf_global', {})
+            round_data['main_acc'] = final_perf.get('acc')
+            round_data['main_loss'] = final_perf.get('loss')
 
-            if 'martfl_baseline_id' in record:
-                round_baseline_id = record.get("martfl_baseline_id", None)
+            poison_metrics = record.get('extra_info', {}).get('poison_metrics', {})
+            round_data.update({
+                'clean_acc': poison_metrics.get('clean_accuracy'),
+                'triggered_acc': poison_metrics.get('triggered_accuracy'),
+                'asr': poison_metrics.get('attack_success_rate')
+            })
 
-                round_data["baseline_client_id"] = round_baseline_id
-                if round_baseline_id:
-                    round_data["malicious_baseline"] = isinstance(round_baseline_id, str)
-            round_data['selected_clients'] = record["used_sellers"]
-            round_data['outlier_clients'] = record["outlier_ids"]
-            round_data['n_selected_clients'] = record["num_sellers_selected"]
             processed_data.append(round_data)
 
-        # Calculate summary metrics
-        if processed_data:
-            # Sort records by round
-            sorted_records = sorted(processed_data, key=lambda x: x['round'])
+        sorted_records = sorted(processed_data, key=lambda x: x['round'])
 
-            # Calculate summary metrics
+        if sorted_records:
+            asr_values = [r.get('asr') or 0 for r in sorted_records]
+            final_record = sorted_records[-1]
+
             summary = {
-                'AGGREGATION_METHOD': aggregation_method,  # Add aggregation method
+                **market_params,
                 **attack_params,
-
-                # Calculate max ASR achieved during training
-                'MAX_ASR': max([r.get('asr', 0) or 0 for r in sorted_records]),
-
-                # Calculate final metrics (last round)
-                'FINAL_ASR': sorted_records[-1].get('asr', None),
-                'FINAL_MAIN_ACC': sorted_records[-1].get('main_acc', None),
-                'FINAL_CLEAN_ACC': sorted_records[-1].get('clean_acc', None),
-                'FINAL_TRIGGERED_ACC': sorted_records[-1].get('triggered_acc', None),
-
-                # Calculate ASR at different stages of training
-                'ASR_25PCT': next(
-                    (r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.25), None),
-                'ASR_50PCT': next(
-                    (r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.5), None),
-                'ASR_75PCT': next(
-                    (r.get('asr', None) for r in sorted_records if r['round'] >= len(sorted_records) * 0.75), None),
-
-                # Calculate rounds to reach specific ASR thresholds
-                'ROUNDS_TO_50PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.5),
-                                            float('inf')),
-                'ROUNDS_TO_75PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.75),
-                                            float('inf')),
-                'ROUNDS_TO_90PCT_ASR': next((r['round'] for r in sorted_records if (r.get('asr', 0) or 0) >= 0.9),
-                                            float('inf')),
-
-                # Calculate average selection rates
-                'AVG_MALICIOUS_RATE': np.mean([r.get('malicious_rate', 0) or 0 for r in sorted_records]),
-                'AVG_BENIGN_RATE': np.mean([r.get('benign_rate', 0) or 0 for r in sorted_records]),
-
-                # Calculate attack efficiency
-                'ASR_PER_ADV': (sorted_records[-1].get('asr', 0) or 0) / attack_params['ADV_RATE'] if attack_params[
-                                                                                                          'ADV_RATE'] > 0 else 0,
-
-                # Calculate stealth (1 - abs difference between clean and final accuracy)
-                'STEALTH': 1 - abs(
-                    (sorted_records[-1].get('main_acc', 0) or 0) - (sorted_records[-1].get('clean_acc', 0) or 0)),
-
-                # Total rounds
+                'MAX_ASR': max(asr_values),
+                'FINAL_ASR': final_record.get('asr'),
+                'FINAL_MAIN_ACC': final_record.get('main_acc'),
+                'FINAL_CLEAN_ACC': final_record.get('clean_acc'),
+                'FINAL_TRIGGERED_ACC': final_record.get('triggered_acc'),
+                'AVG_DISTRIBUTION_SIMILARITY': np.mean([r['avg_distribution_similarity'] for r in sorted_records]),
+                'AVG_ADVERSARY_SELECTION_RATE': np.mean([r['adversary_selection_rate'] for r in sorted_records]),
+                'AVG_BENIGN_SELECTION_RATE': np.mean([r['benign_selection_rate'] for r in sorted_records]),
                 'TOTAL_ROUNDS': len(sorted_records)
             }
 
-            # Handle infinite values for CSV export
-            for key, value in summary.items():
-                if value == float('inf'):
-                    summary[key] = -1  # Use -1 to represent "never reached threshold"
-
             return processed_data, summary
-        else:
-            return [], {}
+
+        return [], {}
 
     except Exception as e:
         print(f"Error processing {file_path}: {e}")
-        print("Traceback details:")
         traceback.print_exc()
         return [], {}
 
@@ -147,7 +118,7 @@ def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
                   sybil_mode=False, is_sybil="False", data_split_mode='iid',
                   aggregation_method='fedavg', dataset_name='cifar10',
                   poison_strength=None, trigger_rate=None, trigger_type=None,
-                  adv_rate=None, change_base="True", trigger_attack_mode=""):
+                  adv_rate=None, change_base="True", trigger_attack_mode="", exp_name=""):
     """
     Construct a save path based on the experiment parameters.
 
@@ -174,10 +145,10 @@ def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
 
     if aggregation_method == "martfl":
         base_dir = Path(
-            "./results") / f"backdoor_trigger_{trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / f"{aggregation_method}_{change_base}" / dataset_name
+            "./results") / exp_name / f"backdoor_trigger_{trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / f"{aggregation_method}_{change_base}" / dataset_name
     else:
         base_dir = Path(
-            "./results") / f"backdoor_trigger_{trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / aggregation_method / dataset_name
+            "./results") / exp_name / f"backdoor_trigger_{trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / aggregation_method / dataset_name
 
     if gradient_manipulation_mode == "None":
         subfolder = "no_attack"
@@ -196,6 +167,11 @@ def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
     return str(save_path)
 
 
+def load_attack_params(path):
+    with open(os.path.join(path, "attack_params.json"), 'r') as f:
+        return json.load(f)
+
+
 def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                             aggregation_methods=['martfl', 'fedavg']):
     """
@@ -208,6 +184,9 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
     """
     all_processed_data = []
     all_summary_data = []
+    trigger_type = "blended_patch"
+    dataset_name = "FMNIST"
+    n_sellers = 30
 
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -215,8 +194,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
     # Process each aggregation method
     for aggregation_method in aggregation_methods:
         print(f"\nProcessing experiments for {aggregation_method}...")
-        # for data_split_mode in ["NonIID", "IID"]:
-        for data_split_mode in ["dirichlet", "label"]:
+        for data_split_mode in ["discovery"]:
             for grad_mode in ['single', 'None']:
                 for trigger_attack_mode in ['static', 'dynamic']:
                     for trigger_rate in [0.25]:
@@ -225,56 +203,91 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                 for change_base in ["True", "False"]:
                                     if aggregation_method == "fedavg" and change_base == "True":
                                         continue
-                                    # Get the file path
-                                    save_path = get_save_path(
-                                        n_sellers=30,
 
+                                    base_save_path = get_save_path(
+                                        n_sellers=n_sellers,
                                         adv_rate=adv_rate,
                                         local_epoch=local_epoch,
                                         local_lr=1e-2,
                                         gradient_manipulation_mode=grad_mode,
                                         poison_strength=0,
-                                        trigger_type="blended_patch",
+                                        trigger_type=trigger_type,
                                         is_sybil=is_sybil,
                                         trigger_rate=trigger_rate,
                                         aggregation_method=aggregation_method,
                                         data_split_mode=data_split_mode,
                                         change_base=change_base,
-                                        dataset_name="FMNIST",
+                                        dataset_name=dataset_name,
                                         trigger_attack_mode=trigger_attack_mode
                                     )
 
-                                    # Construct the full file path
-                                    file_path = f"{save_path}/market_log.ckpt"
-
-                                    if not os.path.exists(file_path):
-                                        print(f"File not found: {file_path}")
+                                    # Find all runs
+                                    run_paths = sorted(glob.glob(f"{base_save_path}/run_*"))
+                                    if not run_paths:
+                                        print(f"No runs found in: {base_save_path}")
                                         continue
 
-                                    print(f"Processing: {file_path}")
+                                    aggregated_processed_data = []
+                                    aggregated_summaries = []
 
-                                    # Extract attack parameters
-                                    attack_params = {
-                                        'ATTACK_METHOD': grad_mode,
-                                        'TRIGGER_RATE': trigger_rate,
-                                        'IS_SYBIL': is_sybil,
-                                        'ADV_RATE': adv_rate,
-                                        'CHANGE_BASE': change_base,
-                                        'DATA_SPLIT_MODE': data_split_mode,
-                                        'TRIGGER_MODE': trigger_attack_mode
-                                    }
+                                    for run_path in run_paths:
+                                        file_path = os.path.join(run_path, "market_log.ckpt")
 
-                                    # Process the file
-                                    processed_data, summary = process_single_experiment(
-                                        file_path,
-                                        attack_params,
-                                        aggregation_method
-                                    )
+                                        if not os.path.exists(file_path):
+                                            print(f"File not found: {file_path}")
+                                            continue
 
-                                    # Add to the overall data
-                                    all_processed_data.extend(processed_data)
-                                    if summary:
-                                        all_summary_data.append(summary)
+                                        print(f"Processing: {file_path}")
+
+                                        # Load params from attack_params.json
+                                        params = load_attack_params(run_path)
+
+                                        attack_params = {
+                                            'ATTACK_METHOD': params["local_attack_params"][
+                                                "gradient_manipulation_mode"],
+                                            'TRIGGER_RATE': params["local_attack_params"]["trigger_rate"],
+                                            'IS_SYBIL': params["sybil_params"]["sybil_mode"] if params["sybil_params"][
+                                                "is_sybil"] else "False",
+                                            'ADV_RATE': params["sybil_params"]["adv_rate"],
+                                            'CHANGE_BASE': change_base,
+                                            'TRIGGER_MODE': params["sybil_params"]["trigger_mode"],
+                                            "benign_rounds": params["sybil_params"]["benign_rounds"],
+                                            "trigger_mode": params["sybil_params"]["trigger_mode"],
+
+                                        }
+                                        if data_split_mode == "discovery":
+                                            market_params = {
+                                                'AGGREGATION_METHOD': aggregation_method,
+                                                'DATA_SPLIT_MODE': data_split_mode,
+                                                "discovery_quality": params["dm_params"]["discovery_quality"],
+                                                "buyer_data_mode": params["dm_params"]["buyer_data_mode"]},
+                                        else:
+                                            market_params = {
+                                                'AGGREGATION_METHOD': aggregation_method,
+                                                'DATA_SPLIT_MODE': data_split_mode,
+                                            }
+                                        processed_data, summary = process_single_experiment(
+                                            file_path,
+                                            attack_params,
+                                            market_params
+                                        )
+
+                                        aggregated_processed_data.append(processed_data)
+                                        if summary:
+                                            aggregated_summaries.append(summary)
+
+                                    # Averaging results over multiple runs
+                                    if aggregated_processed_data:
+                                        mean_processed_data = np.mean(aggregated_processed_data, axis=0)
+                                        mean_summary = np.mean(aggregated_summaries,
+                                                               axis=0) if aggregated_summaries else None
+
+                                        all_processed_data.extend(mean_processed_data)
+                                        if mean_summary is not None:
+                                            all_summary_data.append(mean_summary)
+
+                                        print(
+                                            f"Averaged results over {len(aggregated_processed_data)} runs for configuration at {base_save_path}")
 
     # Convert to DataFrames
     all_rounds_df = pd.DataFrame(all_processed_data)
