@@ -483,16 +483,17 @@ def main():
         "trigger_rate": args.trigger_rate,
         "gradient_manipulation_mode": args.gradient_manipulation_mode,
     }
-
-    all_params = {
-        "sybil_params": sybil_params,
-        "local_training_params": local_training_params,
-        "local_attack_params": local_attack_params
-    }
     dm_params = {
         "discovery_quality": args.discovery_quality,
         "buyer_data_mode": args.buyer_data_mode
     }
+    all_params = {
+        "sybil_params": sybil_params,
+        "local_training_params": local_training_params,
+        "local_attack_params": local_attack_params,
+        "dm_params":dm_params
+    }
+
     save_to_json(all_params, f"{save_path}/attack_params.json")
     cur_seed = args.seed
 
