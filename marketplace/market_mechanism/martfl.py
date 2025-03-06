@@ -1,11 +1,10 @@
-import random
-from typing import Dict
-
 import numpy as np
+import random
 import torch
 from sklearn.metrics import confusion_matrix
 from torch import nn, softmax
 from torcheval.metrics.functional import multiclass_f1_score
+from typing import Dict
 
 from marketplace.utils.gradient_market_utils.clustering import optimal_k_gap, kmeans
 from model.utils import get_model, load_model, apply_gradient_update
@@ -125,9 +124,9 @@ class Aggregator:
             # Load updated parameters back into the model
             self.global_model.load_state_dict(updated_params)
 
-    def aggregate(self, global_epoch, seller_updates, buyer_updates):
+    def aggregate(self, global_epoch, seller_updates, buyer_updates, clip = False):
         if self.aggregation_method == "martfl":
-            return self.martFL(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates, )
+            return self.martFL(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates, clip = clip)
         elif self.aggregation_method == "fedavg":
             return self.fedavg(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates)
         else:
@@ -141,7 +140,7 @@ class Aggregator:
                global_epoch: int,
                seller_updates,
                buyer_updates,
-               ground_truth_model=None):
+               ground_truth_model=None, clip=False):
         """
         Performs the martFL aggregation:
           1) Compute each client's flattened & clipped gradient update.
@@ -171,21 +170,30 @@ class Aggregator:
 
         print("Flattening and clipping gradients")
         # Process each seller update: clip then flatten
-        # clients_update_flattened = [
-        #     flatten(clip_gradient_update(update, clip_norm=self.clip_norm))
-        #     for sid, update in seller_updates.items()
-        # ]
         clients_update_flattened = [
-            flatten(update)
+            flatten(clip_gradient_update(update, clip_norm=self.clip_norm))
             for sid, update in seller_updates.items()
         ]
+        # clients_update_flattened = [
+        #     flatten(update)
+        #     for sid, update in seller_updates.items()
+        # ]
         # Process the current baseline update
         if self.baseline_id is not None and self.baseline_id in seller_updates:
             print(f"Using seller {self.baseline_id} as baseline")
-            baseline_update_flattened = flatten(seller_updates[self.baseline_id])
+            if clip:
+                cg = clip_gradient_update(seller_updates[self.baseline_id], clip_norm=self.clip_norm)
+            else:
+                cg = seller_updates[self.baseline_id]
+            baseline_update_flattened = flatten(cg)
         else:
             print("Using buyer as baseline")
-            baseline_update_flattened = flatten(buyer_updates)
+            if clip:
+                cg = clip_gradient_update(buyer_updates, clip_norm=self.clip_norm)
+            else:
+                cg = buyer_updates
+
+            baseline_update_flattened = clip_gradient_update(cg, clip_norm=self.clip_norm)
             self.baseline_id = None
 
         print("Computing cosine similarities")

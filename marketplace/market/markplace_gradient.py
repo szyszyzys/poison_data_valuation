@@ -1,8 +1,7 @@
-from collections import OrderedDict
-from typing import Dict, Union, List, Tuple, Any
-
 import numpy as np
 import torch
+from collections import OrderedDict
+from typing import Dict, Union, List, Tuple, Any
 
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
 from marketplace.market.data_market import DataMarketplace
@@ -164,7 +163,8 @@ class DataMarketplaceFederated(DataMarketplace):
                               test_dataloader_global=None,
                               loss_fn=None,
                               backdoor_target_label=0,
-                              backdoor_generator=None
+                              backdoor_generator=None,
+                              clip = False
                               ):
         """
         Perform one round of federated training:
@@ -182,7 +182,7 @@ class DataMarketplaceFederated(DataMarketplace):
         # 2. perform aggregation
         aggregated_gradient, selected_ids, outlier_ids = self.aggregator.aggregate(round_number,
                                                                                    seller_gradients,
-                                                                                   baseline_gradient)
+                                                                                   baseline_gradient, clip=clip)
         print(f"round {round_number} aggregated gradient norm: {np.linalg.norm(flatten(aggregated_gradient))}")
         # 4. update global model
         self.update_global_model(aggregated_gradient)

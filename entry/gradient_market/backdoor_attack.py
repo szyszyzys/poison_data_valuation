@@ -1,9 +1,8 @@
 import argparse
+import numpy as np
 import os
 import random
 import shutil
-
-import numpy as np
 import torch
 import torch.backends.cudnn
 import yaml
@@ -240,7 +239,8 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                                                                               test_dataloader_global=test_loader,
                                                                               loss_fn=loss_fn,
                                                                               backdoor_target_label=backdoor_target_label,
-                                                                              backdoor_generator=backdoor_generator)
+                                                                              backdoor_generator=backdoor_generator,
+                                                                              clip=args.clip)
 
         if gr % 10 == 0:
             torch.save(marketplace.round_logs, f"{save_path}/market_log_round_{gr}.ckpt")
@@ -336,6 +336,7 @@ def parse_args():
     parser.add_argument("--trigger_attack_mode", type=str, default="static", help="static, dynamic")
     # New argument: path to a YAML configuration file
     parser.add_argument("--config_file", type=str, default="", help="Path to YAML configuration file")
+    parser.add_argument("--clip", action="store_true", help="Enable clip gradient (default: False)")
 
     args = parser.parse_args()
 
@@ -409,13 +410,14 @@ def get_save_path(args):
         A string representing the path.
     """
     # Use is_sybil flag or, if not true, use sybil_mode
+    exp_name = args.exp_name
     sybil_str = str(args.sybil_mode) if args.is_sybil else False
     if args.aggregation_method == "martfl":
         base_dir = Path(
-            "./results") / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"buyer_data_{args.buyer_data_mode}" / f"{args.aggregation_method}_{args.change_base}" / args.dataset_name
+            "./results") / exp_name / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"buyer_data_{args.buyer_data_mode}" / f"{args.aggregation_method}_{args.change_base}" / args.dataset_name
     else:
         base_dir = Path(
-            "./results") / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"buyer_data_{args.buyer_data_mode}" / args.aggregation_method / args.dataset_name
+            "./results") / exp_name / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"buyer_data_{args.buyer_data_mode}" / args.aggregation_method / args.dataset_name
     if args.gradient_manipulation_mode == "None":
         subfolder = "no_attack"
         param_str = f"n_seller_{args.n_sellers}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
@@ -516,9 +518,6 @@ def main():
             dm_params=dm_params
         )
 
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
