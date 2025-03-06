@@ -458,7 +458,6 @@ def martfl_eval(model, dataloader, loss_fn, device, num_classes):
             data, target = batch[0], batch[1]
             # Move data to the specified device
             data, target = data.to(device), target.to(device)
-            print(data.device, target.device)
             # Forward pass
             outputs = model(data)
 

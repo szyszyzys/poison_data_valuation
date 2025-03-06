@@ -27,8 +27,6 @@ Usage Example:
     for cid, loader in client_loaders.items():
         print(f"Client {cid} has {len(loader.dataset)} samples.")
 """
-import json
-import os
 import random
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple, Any
@@ -828,13 +826,13 @@ def split_dataset_buyer_seller_improved(dataset,
 
 
 import numpy as np
-import matplotlib.pyplot as plt
 
 
 def print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_results=True, output_dir='./results'):
     """
     Print and visualize the class distribution statistics for the buyer and each seller.
-    Optionally, save the statistics to a JSON file and the figures as PNG images.
+    Also compute and print the distribution alignment metrics between the buyer's data and each seller's data,
+    and then print the ranking of sellers from high to low alignment.
 
     Parameters:
       dataset: Dataset object with attribute 'targets' or that returns (data, label).
@@ -843,6 +841,10 @@ def print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_r
       save_results (bool): Whether to save the results.
       output_dir (str): Directory where the results will be saved.
     """
+    import os, json
+    import numpy as np
+    import matplotlib.pyplot as plt
+
     # Get the targets from the dataset.
     if hasattr(dataset, 'targets'):
         targets = np.array(dataset.targets)
@@ -936,6 +938,24 @@ def print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_r
         plt.savefig(sellers_fig_file)
         print(f"Seller distribution figure saved to {sellers_fig_file}")
     plt.close()
+
+    # ----- Compute and print distribution alignment metrics -----
+    # Using cosine similarity between the buyer's and each seller's class count vectors.
+    alignment_metrics = {}
+    buyer_vector = np.array([buyer_counts[str(c)] for c in unique_classes])
+    for seller_id, stats in seller_stats.items():
+        seller_counts = stats["class_distribution"]
+        seller_vector = np.array([seller_counts[str(c)] for c in unique_classes])
+        similarity = np.dot(buyer_vector, seller_vector) / (
+                np.linalg.norm(buyer_vector) * np.linalg.norm(seller_vector))
+        alignment_metrics[seller_id] = similarity
+        print(f"Alignment metric for Seller {seller_id}: {similarity:.4f}")
+
+    print("\n" + "=" * 40 + "\n")
+    print("Sellers ranked by alignment (high to low):")
+    sorted_sellers = sorted(alignment_metrics.items(), key=lambda x: x[1], reverse=True)
+    for rank, (seller_id, metric) in enumerate(sorted_sellers, start=1):
+        print(f"{rank}. Seller {seller_id} with metric {metric:.4f}")
 
     return results
 
@@ -1102,137 +1122,3 @@ def split_dataset_martfl_discovery(dataset,
         seller_splits[client_id] = client_indices
 
     return buyer_indices, seller_splits
-
-
-def visualize_data_distribution(dataset, buyer_indices, seller_splits,
-                                seller_quality_types, class_names):
-    """Visualize the distribution of data among buyer and sellers."""
-    import matplotlib.pyplot as plt
-
-    # Get targets
-    try:
-        targets = dataset.targets
-        if hasattr(targets, 'numpy'):
-            targets = targets.numpy().tolist()
-    except AttributeError:
-        targets = [dataset[i][1] for i in range(len(dataset))]
-        if hasattr(targets[0], 'item'):
-            targets = [t.item() for t in targets]
-
-    num_classes = len(class_names)
-
-    # Count class distribution for buyer
-    buyer_dist = [0] * num_classes
-    for idx in buyer_indices:
-        target = targets[idx]
-        if hasattr(target, 'item'):
-            target = target.item()
-        buyer_dist[target] += 1
-
-    # Count class distribution for each seller
-    seller_distributions = {}
-
-    for seller_id, indices in seller_splits.items():
-        seller_distributions[seller_id] = [0] * num_classes
-        for idx in indices:
-            target = targets[idx]
-            if hasattr(target, 'item'):
-                target = target.item()
-            seller_distributions[seller_id][target] += 1
-
-    # Plot
-    plt.figure(figsize=(15, 10))
-
-    # Plot buyer distribution
-    plt.subplot(2, 1, 1)
-    plt.bar(range(num_classes), buyer_dist, tick_label=class_names)
-    plt.title("Buyer (DA) Data Distribution")
-    plt.xlabel("Class")
-    plt.ylabel("Count")
-    plt.xticks(rotation=45)
-
-    # Plot seller distributions
-    plt.subplot(2, 1, 2)
-    colors = {"high_quality": 'green', "biased": 'orange', "malicious": 'red'}
-
-    # Group sellers by quality type
-    high_quality_sellers = []
-    biased_sellers = []
-    malicious_sellers = []
-
-    for seller_id, quality in seller_quality_types.items():
-        if quality == "high_quality":
-            high_quality_sellers.append(seller_id)
-        elif quality == "biased":
-            biased_sellers.append(seller_id)
-        else:
-            malicious_sellers.append(seller_id)
-
-    # Plot average distribution for each seller type
-    for quality, seller_ids in [
-        ("high_quality", high_quality_sellers),
-        ("biased", biased_sellers),
-        ("malicious", malicious_sellers)
-    ]:
-        if not seller_ids:
-            continue
-
-        # Calculate average distribution
-        avg_dist = [0] * num_classes
-        for seller_id in seller_ids:
-            for i in range(num_classes):
-                avg_dist[i] += seller_distributions[seller_id][i]
-
-        # Normalize
-        if seller_ids:
-            avg_dist = [count / len(seller_ids) for count in avg_dist]
-
-        plt.bar(
-            range(num_classes),
-            avg_dist,
-            alpha=0.5,
-            label=f"{quality.capitalize()} Sellers (avg)",
-            color=colors[quality]
-        )
-
-    plt.title("Average Distribution by Seller Type")
-    plt.xlabel("Class")
-    plt.ylabel("Average Count")
-    plt.xticks(range(num_classes), class_names, rotation=45)
-    plt.legend()
-
-    plt.tight_layout()
-    plt.show()
-
-    # Plot individual seller distributions by type
-    plt.figure(figsize=(15, 15))
-
-    # Plot a few individual sellers of each type
-    for i, (quality, seller_ids) in enumerate([
-        ("high_quality", high_quality_sellers[:3]),  # Show up to 3 of each type
-        ("biased", biased_sellers[:3]),
-        ("malicious", malicious_sellers[:3])
-    ]):
-        if not seller_ids:
-            continue
-
-        plt.subplot(3, 1, i + 1)
-
-        for seller_id in seller_ids:
-            plt.plot(
-                range(num_classes),
-                seller_distributions[seller_id],
-                marker='o',
-                linestyle='-',
-                alpha=0.7,
-                label=f"Seller {seller_id}"
-            )
-
-        plt.title(f"{quality.capitalize()} Sellers - Class Distribution")
-        plt.xlabel("Class")
-        plt.ylabel("Count")
-        plt.xticks(range(num_classes), class_names, rotation=45)
-        plt.legend()
-
-    plt.tight_layout()
-    plt.show()
