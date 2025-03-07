@@ -79,6 +79,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                                                   seller_distributions[str(cid)]['class_distribution'])
                 for cid in selected_clients
             ]
+            print(similarities)
 
 
             round_data['avg_distribution_similarity'] = np.mean(similarities) if similarities else 0
