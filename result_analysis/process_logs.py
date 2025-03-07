@@ -279,7 +279,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                                         'AGGREGATION_METHOD': aggregation_method,
                                                         'DATA_SPLIT_MODE': data_split_mode,
                                                         "discovery_quality": params["dm_params"]["discovery_quality"],
-                                                        "buyer_data_mode": params["dm_params"]["buyer_data_mode"]},
+                                                        "buyer_data_mode": params["dm_params"]["buyer_data_mode"]}
                                                 else:
                                                     market_params = {
                                                         'AGGREGATION_METHOD': aggregation_method,
