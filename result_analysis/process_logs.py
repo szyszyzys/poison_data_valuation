@@ -2,7 +2,6 @@ import glob
 import json
 import os
 import traceback
-from collections import defaultdict
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -26,7 +25,7 @@ def calculate_distribution_similarity(buyer_distribution, seller_distribution):
     return similarity
 
 
-def process_single_experiment(file_path, attack_params, market_params, data_statistics_path, adv_rate):
+def process_single_experiment(file_path, attack_params, market_params, data_statistics_path, adv_rate, cur_run):
     """
     Process a single experiment file and extract metrics, incorporating data distribution similarity.
 
@@ -63,6 +62,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
             benign_selections = [cid for cid in selected_clients if int(cid) >= num_adversaries]
 
             round_data = {
+                'run': cur_run,
                 'round': round_num,
                 **attack_params,
                 **market_params,
@@ -100,6 +100,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
             final_record = sorted_records[-1]
 
             summary = {
+                "run": cur_run,
                 **market_params,
                 **attack_params,
                 'MAX_ASR': max(asr_values),
@@ -186,6 +187,15 @@ def load_attack_params(path):
         return json.load(f)
 
 
+def average_dicts(dict_list):
+    numeric_keys = dict_list[0].keys()
+    averages = {}
+    for key in numeric_keys:
+        vals = [d[key] for d in dict_list if isinstance(d.get(key), (int, float))]
+        averages[key] = np.mean(vals) if vals else None
+    return averages
+
+
 def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                             aggregation_methods=['martfl', 'fedavg'], exp_name=""):
     """
@@ -197,6 +207,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
         aggregation_methods: List of aggregation methods to process
     """
     all_processed_data = []
+    all_summary_data_avg = []
     all_summary_data = []
     trigger_type = "blended_patch"
     dataset_name = "FMNIST"
@@ -249,7 +260,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                             aggregated_processed_data = []
                                             aggregated_summaries = []
                                             params = load_attack_params(base_save_path)
-
+                                            run_cnt = 0
                                             for run_path in run_paths:
                                                 file_path = os.path.join(run_path, "market_log.ckpt")
                                                 data_statistics_path = os.path.join(run_path, "data_statistics.json")
@@ -293,76 +304,45 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                                     market_params,
                                                     data_statistics_path=data_statistics_path,
                                                     adv_rate=adv_rate,
+                                                    cur_run=run_cnt
 
                                                 )
+                                                run_cnt += 1
                                                 aggregated_processed_data.append(processed_data)
                                                 if summary:
                                                     aggregated_summaries.append(summary)
 
                                                 # Aggregate numeric fields safely:
-                                            def average_dicts(dict_list):
-                                                numeric_keys = dict_list[0].keys()
-                                                averages = {}
-                                                for key in numeric_keys:
-                                                    vals = [d[key] for d in dict_list if isinstance(d.get(key), (int, float))]
-                                                    averages[key] = np.mean(vals) if vals else None
-                                                return averages
-                                            print(aggregated_summaries)
-                                            # # Average processed_data per round
-                                            # mean_processed_data = []
-                                            # num_rounds = len(aggregated_processed_data[0])
-                                            # for round_idx in range(len(aggregated_processed_data[0])):
-                                            #     round_entries = [run[round_idx] for run in aggregated_processed_data if len(run) > round]
-                                            #     avg_round_data = defaultdict(list)
-                                            #     for rd in round_data:
-                                            #         for k, v in rd.items():
-                                            #             if isinstance(v, (int, float)):
-                                            #                 avg_round_data[k].append(v)
-                                            #     avg_round_summary = {k: np.mean(v) for k, v in avg_round_data.items()}
-                                            #     mean_selected_clients = list(set(sum([rd['selected_clients'] for rd in round_data if 'selected_clients' in rd], [])))
-                                            #     avg_round_summary['selected_clients'] = mean_selected_clients  # or skip entirely
-                                            #     processed_data.append(avg_round_summary)
-                                            #
-                                            # # Average summaries only numeric fields
-                                            # mean_summary = average_dicts(aggregated_summaries)
-                                            #
-                                            # # Now store these results:
-                                            # all_processed_data.extend(mean_summary)  # or avg_round_summary based on your needs
-                                            # if mean_summary:
-                                            #     all_summary_data.append(mean_summary)
-                                            #     aggregated_processed_data.append(processed_data)
-                                            #     if summary:
-                                            #         aggregated_summaries.append(summary)
-                                            #
-                                            # # Averaging results over multiple runs
-                                            # if aggregated_processed_data:
-                                            #     mean_processed_data = np.mean(aggregated_processed_data, axis=0)
-                                            #     mean_summary = np.mean(aggregated_summaries,
-                                            #                            axis=0) if aggregated_summaries else None
-                                            #
-                                            #     all_processed_data.extend(mean_processed_data)
-                                            #     if mean_summary is not None:
-                                            #         all_summary_data.append(mean_summary)
-                                            #
-                                            #     print(
-                                            #         f"Averaged results over {len(aggregated_processed_data)} runs for configuration at {base_save_path}")
 
+                                            if aggregated_summaries:
+                                                avg_summary = average_dicts(aggregated_summaries)
+                                                all_summary_data_avg.append(avg_summary)
+
+                                            all_processed_data.extend(aggregated_processed_data)
+                                            all_summary_data.extend(aggregated_summaries)
     # Convert to DataFrames
     all_rounds_df = pd.DataFrame(all_processed_data)
-    summary_df = pd.DataFrame(all_summary_data)
+    summary_df_avg = pd.DataFrame(all_summary_data_avg)
+    summary_data = pd.DataFrame(all_summary_data)
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
 
     # Save to CSV
-    if not all_rounds_df.empty:
-        all_rounds_csv = f"{output_dir}/all_rounds.csv"
-        all_rounds_df.to_csv(all_rounds_csv, index=False)
-        print(f"Saved all rounds data to {all_rounds_csv}")
+    all_rounds_csv = f"{output_dir}/all_rounds.csv"
+    summary_csv_avg = f"{output_dir}/summary.csv"
+    summary_csv = f"{output_dir}/summary.csv"
 
-    if not summary_df.empty:
-        summary_csv = f"{output_dir}/summary.csv"
-        summary_df.to_csv(summary_csv, index=False)
-        print(f"Saved summary data to {summary_csv}")
+    all_rounds_df.to_csv(all_rounds_csv, index=False)
+    print(f"Saved all rounds data to {all_rounds_csv}")
 
-    return all_rounds_df, summary_df
+    summary_df_avg.to_csv(summary_csv_avg, index=False)
+    print(f"Saved summary data to {summary_csv_avg}")
+
+    summary_data.to_csv(summary_csv, index=False)
+    print(f"Saved summary data to {summary_csv}")
+
+    # Return DataFrames for further analysis if desired
+    return all_rounds_df, summary_df_avg
 
 
 def analyze_client_level_selection(processed_data, seller_raw_data_stats):
