@@ -126,7 +126,8 @@ def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
                   sybil_mode=False, is_sybil="False", data_split_mode='iid',
                   aggregation_method='fedavg', dataset_name='cifar10',
                   poison_strength=None, trigger_rate=None, trigger_type=None,
-                  adv_rate=None, change_base="True", trigger_attack_mode="", exp_name="", discovery_quality=0.1):
+                  adv_rate=None, change_base="True", trigger_attack_mode="", exp_name="", discovery_quality=0.1,
+                  buyer_data_mode=""):
     """
     Construct a save path based on the experiment parameters.
 
@@ -153,10 +154,10 @@ def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
 
     if aggregation_method == "martfl":
         base_dir = Path(
-            "./results") / exp_name / f"backdoor_trigger_{trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / f"{aggregation_method}_{change_base}" / dataset_name
+            "./results") / exp_name / f"backdoor_trigger_{trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / f"buyer_data_{buyer_data_mode}" / f"{aggregation_method}_{change_base}" / dataset_name
     else:
         base_dir = Path(
-            "./results") / exp_name / f"backdoor_trigger_{trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / aggregation_method / dataset_name
+            "./results") / exp_name / f"backdoor_trigger_{trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{data_split_mode}" / f"buyer_data_{buyer_data_mode}" / aggregation_method / dataset_name
 
     if gradient_manipulation_mode == "None":
         subfolder = "no_attack"
@@ -214,99 +215,101 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                             for adv_rate in [0.2, 0.3]:
                                 for change_base in ["True", "False"]:
                                     for discovery_quality in [0.1, 1, 10]:
-                                        if aggregation_method == "fedavg" and change_base == "True":
-                                            continue
-
-                                        base_save_path = get_save_path(
-                                            n_sellers=n_sellers,
-                                            adv_rate=adv_rate,
-                                            local_epoch=local_epoch,
-                                            local_lr=1e-2,
-                                            gradient_manipulation_mode=grad_mode,
-                                            poison_strength=0,
-                                            trigger_type=trigger_type,
-                                            is_sybil=is_sybil,
-                                            trigger_rate=trigger_rate,
-                                            aggregation_method=aggregation_method,
-                                            data_split_mode=data_split_mode,
-                                            change_base=change_base,
-                                            dataset_name=dataset_name,
-                                            trigger_attack_mode=trigger_attack_mode,
-                                            exp_name=exp_name,
-                                            discovery_quality=discovery_quality
-                                        )
-
-                                        # Find all runs
-                                        run_paths = sorted(glob.glob(f"{base_save_path}/run_*"))
-                                        if not run_paths:
-                                            print(f"No runs found in: {base_save_path}")
-                                            continue
-
-                                        aggregated_processed_data = []
-                                        aggregated_summaries = []
-
-                                        for run_path in run_paths:
-                                            file_path = os.path.join(run_path, "market_log.ckpt")
-                                            data_statistics_path = os.path.join(run_path, "data_statistics.json")
-                                            if not os.path.exists(file_path):
-                                                print(f"File not found: {file_path}")
+                                        for buyer_data_mode in ["random", "biased"]:
+                                            if aggregation_method == "fedavg" and change_base == "True":
                                                 continue
 
-                                            print(f"Processing: {file_path}")
-
-                                            # Load params from attack_params.json
-                                            params = load_attack_params(run_path)
-
-                                            attack_params = {
-                                                'ATTACK_METHOD': params["local_attack_params"][
-                                                    "gradient_manipulation_mode"],
-                                                'TRIGGER_RATE': params["local_attack_params"]["trigger_rate"],
-                                                'IS_SYBIL': params["sybil_params"]["sybil_mode"] if
-                                                params["sybil_params"][
-                                                    "is_sybil"] else "False",
-                                                'ADV_RATE': params["sybil_params"]["adv_rate"],
-                                                'CHANGE_BASE': change_base,
-                                                'TRIGGER_MODE': params["sybil_params"]["trigger_mode"],
-                                                "benign_rounds": params["sybil_params"]["benign_rounds"],
-                                                "trigger_mode": params["sybil_params"]["trigger_mode"],
-
-                                            }
-                                            if data_split_mode == "discovery":
-                                                market_params = {
-                                                    'AGGREGATION_METHOD': aggregation_method,
-                                                    'DATA_SPLIT_MODE': data_split_mode,
-                                                    "discovery_quality": params["dm_params"]["discovery_quality"],
-                                                    "buyer_data_mode": params["dm_params"]["buyer_data_mode"]},
-                                            else:
-                                                market_params = {
-                                                    'AGGREGATION_METHOD': aggregation_method,
-                                                    'DATA_SPLIT_MODE': data_split_mode,
-                                                }
-                                            processed_data, summary = process_single_experiment(
-                                                file_path,
-                                                attack_params,
-                                                market_params,
-                                                data_statistics_path=data_statistics_path,
+                                            base_save_path = get_save_path(
+                                                n_sellers=n_sellers,
                                                 adv_rate=adv_rate,
-
+                                                local_epoch=local_epoch,
+                                                local_lr=1e-2,
+                                                gradient_manipulation_mode=grad_mode,
+                                                poison_strength=0,
+                                                trigger_type=trigger_type,
+                                                is_sybil=is_sybil,
+                                                trigger_rate=trigger_rate,
+                                                aggregation_method=aggregation_method,
+                                                data_split_mode=data_split_mode,
+                                                change_base=change_base,
+                                                dataset_name=dataset_name,
+                                                trigger_attack_mode=trigger_attack_mode,
+                                                exp_name=exp_name,
+                                                discovery_quality=discovery_quality,
+                                                buyer_data_mode=buyer_data_mode
                                             )
 
-                                            aggregated_processed_data.append(processed_data)
-                                            if summary:
-                                                aggregated_summaries.append(summary)
+                                            # Find all runs
+                                            run_paths = sorted(glob.glob(f"{base_save_path}/run_*"))
+                                            if not run_paths:
+                                                print(f"No runs found in: {base_save_path}")
+                                                continue
 
-                                        # Averaging results over multiple runs
-                                        if aggregated_processed_data:
-                                            mean_processed_data = np.mean(aggregated_processed_data, axis=0)
-                                            mean_summary = np.mean(aggregated_summaries,
-                                                                   axis=0) if aggregated_summaries else None
+                                            aggregated_processed_data = []
+                                            aggregated_summaries = []
 
-                                            all_processed_data.extend(mean_processed_data)
-                                            if mean_summary is not None:
-                                                all_summary_data.append(mean_summary)
+                                            for run_path in run_paths:
+                                                file_path = os.path.join(run_path, "market_log.ckpt")
+                                                data_statistics_path = os.path.join(run_path, "data_statistics.json")
+                                                if not os.path.exists(file_path):
+                                                    print(f"File not found: {file_path}")
+                                                    continue
 
-                                            print(
-                                                f"Averaged results over {len(aggregated_processed_data)} runs for configuration at {base_save_path}")
+                                                print(f"Processing: {file_path}")
+
+                                                # Load params from attack_params.json
+                                                params = load_attack_params(run_path)
+
+                                                attack_params = {
+                                                    'ATTACK_METHOD': params["local_attack_params"][
+                                                        "gradient_manipulation_mode"],
+                                                    'TRIGGER_RATE': params["local_attack_params"]["trigger_rate"],
+                                                    'IS_SYBIL': params["sybil_params"]["sybil_mode"] if
+                                                    params["sybil_params"][
+                                                        "is_sybil"] else "False",
+                                                    'ADV_RATE': params["sybil_params"]["adv_rate"],
+                                                    'CHANGE_BASE': change_base,
+                                                    'TRIGGER_MODE': params["sybil_params"]["trigger_mode"],
+                                                    "benign_rounds": params["sybil_params"]["benign_rounds"],
+                                                    "trigger_mode": params["sybil_params"]["trigger_mode"],
+
+                                                }
+                                                if data_split_mode == "discovery":
+                                                    market_params = {
+                                                        'AGGREGATION_METHOD': aggregation_method,
+                                                        'DATA_SPLIT_MODE': data_split_mode,
+                                                        "discovery_quality": params["dm_params"]["discovery_quality"],
+                                                        "buyer_data_mode": params["dm_params"]["buyer_data_mode"]},
+                                                else:
+                                                    market_params = {
+                                                        'AGGREGATION_METHOD': aggregation_method,
+                                                        'DATA_SPLIT_MODE': data_split_mode,
+                                                    }
+                                                processed_data, summary = process_single_experiment(
+                                                    file_path,
+                                                    attack_params,
+                                                    market_params,
+                                                    data_statistics_path=data_statistics_path,
+                                                    adv_rate=adv_rate,
+
+                                                )
+
+                                                aggregated_processed_data.append(processed_data)
+                                                if summary:
+                                                    aggregated_summaries.append(summary)
+
+                                            # Averaging results over multiple runs
+                                            if aggregated_processed_data:
+                                                mean_processed_data = np.mean(aggregated_processed_data, axis=0)
+                                                mean_summary = np.mean(aggregated_summaries,
+                                                                       axis=0) if aggregated_summaries else None
+
+                                                all_processed_data.extend(mean_processed_data)
+                                                if mean_summary is not None:
+                                                    all_summary_data.append(mean_summary)
+
+                                                print(
+                                                    f"Averaged results over {len(aggregated_processed_data)} runs for configuration at {base_save_path}")
 
     # Convert to DataFrames
     all_rounds_df = pd.DataFrame(all_processed_data)
