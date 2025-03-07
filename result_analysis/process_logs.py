@@ -72,6 +72,8 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                 'benign_selection_rate': len(benign_selections) / len(selected_clients) if selected_clients else 0
             }
 
+            print(selected_clients)
+            print(seller_distributions)
             similarities = [
                 calculate_distribution_similarity(buyer_distribution, seller_distributions[cid]['class_distribution'])
                 for cid in selected_clients
