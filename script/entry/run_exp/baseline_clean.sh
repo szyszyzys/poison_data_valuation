@@ -56,7 +56,8 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                        --change_base "$change_base" \
                        --buyer_data_mode "$buyer_data_mode"\
                        --discovery_quality "$discovery_quality"\
-                       --trigger_attack_mode "$trigger_attack_mode"
+                       --trigger_attack_mode "$trigger_attack_mode"\
+                       --exp_name "exp_36"
               else
                 # If is_sybil=True, we loop over sybil modes and param combos.
                   for SYBIL_MODE in "${SYBIL_MODES[@]}"; do
@@ -76,7 +77,8 @@ for IS_SYBIL in "${IS_SYBIL_VALUES[@]}"; do
                              --change_base "$change_base" \
                              --buyer_data_mode "$buyer_data_mode"\
                              --discovery_quality "$discovery_quality" \
-                             --trigger_attack_mode "$trigger_attack_mode"
+                             --trigger_attack_mode "$trigger_attack_mode"\
+                            --exp_name "exp_36"
                     done
                   done
               fi
