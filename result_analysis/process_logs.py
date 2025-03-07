@@ -285,6 +285,10 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                                         'AGGREGATION_METHOD': aggregation_method,
                                                         'DATA_SPLIT_MODE': data_split_mode,
                                                     }
+                                                print(type(attack_params), attack_params)
+                                                print(type(market_params))
+                                                print(attack_params)
+                                                print(market_params)
                                                 processed_data, summary = process_single_experiment(
                                                     file_path,
                                                     attack_params,
