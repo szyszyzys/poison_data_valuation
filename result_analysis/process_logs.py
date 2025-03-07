@@ -188,12 +188,21 @@ def load_attack_params(path):
 
 
 def average_dicts(dict_list):
-    numeric_keys = dict_list[0].keys()
-    averages = {}
-    for key in numeric_keys:
-        vals = [d[key] for d in dict_list if isinstance(d.get(key), (int, float))]
-        averages[key] = np.mean(vals) if vals else None
-    return averages
+    if not dict_list:
+        return {}
+
+    averaged_dict = {}
+    keys = dict_list[0].keys()
+
+    for key in keys:
+        values = [d[key] for d in dict_list]
+        if isinstance(values[0], (int, float, np.number)):
+            averaged_dict[key] = np.mean(values)
+        else:
+            averaged_dict[key] = values[0]  # Keep the first non-numeric value (assuming all are identical)
+
+    return averaged_dict
+
 
 
 def process_all_experiments(output_dir='./processed_data', local_epoch=2,
