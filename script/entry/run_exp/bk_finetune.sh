@@ -111,6 +111,10 @@ while [[ "$#" -gt 0 ]]; do
           benign_rounds="$2"
             shift 2
             ;;
+        --exp_name)
+          exp_name="$2"
+            shift 2
+            ;;
         --is_sybil)
             # If the flag is provided, set sybil mode to true.
             is_sybil_flag="--is_sybil"
