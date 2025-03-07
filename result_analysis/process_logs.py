@@ -205,6 +205,8 @@ def average_dicts(dict_list):
 
     for key in keys:
         values = [d[key] for d in dict_list]
+        if key == "run":
+            averaged_dict[key] = max(values)  # Keep the first non-numeric value (assuming all are identical)
         if isinstance(values[0], (int, float, np.number)):
             averaged_dict[key] = np.mean(values)
         else:
@@ -338,7 +340,6 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                             if aggregated_summaries:
                                                 avg_summary = average_dicts(aggregated_summaries)
                                                 all_summary_data_avg.append(avg_summary)
-                                            del avg_summary["run"]
                                             all_processed_data.extend(aggregated_processed_data)
                                             all_summary_data.extend(aggregated_summaries)
     # Convert to DataFrames
