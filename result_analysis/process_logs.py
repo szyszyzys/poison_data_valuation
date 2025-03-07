@@ -329,7 +329,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
 
     # Save to CSV
     all_rounds_csv = f"{output_dir}/all_rounds.csv"
-    summary_csv_avg = f"{output_dir}/summary.csv"
+    summary_csv_avg = f"{output_dir}/summary_avg.csv"
     summary_csv = f"{output_dir}/summary.csv"
 
     all_rounds_df.to_csv(all_rounds_csv, index=False)
