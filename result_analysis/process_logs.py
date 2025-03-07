@@ -2,6 +2,7 @@ import glob
 import json
 import os
 import traceback
+from collections import defaultdict
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -71,16 +72,11 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                     selected_clients) if selected_clients else 0,
                 'benign_selection_rate': len(benign_selections) / len(selected_clients) if selected_clients else 0
             }
-            for cid in selected_clients:
-                print(len(seller_distributions[str(cid)]['class_distribution']))
-                print(seller_distributions[str(cid)]['class_distribution'])
             similarities = [
                 calculate_distribution_similarity(buyer_distribution,
                                                   seller_distributions[str(cid)]['class_distribution'])
                 for cid in selected_clients
             ]
-            print(similarities)
-
 
             round_data['avg_distribution_similarity'] = np.mean(similarities) if similarities else 0
 
@@ -290,10 +286,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                                         'AGGREGATION_METHOD': aggregation_method,
                                                         'DATA_SPLIT_MODE': data_split_mode,
                                                     }
-                                                print(type(attack_params), attack_params)
-                                                print(type(market_params))
-                                                print(attack_params)
-                                                print(market_params)
+
                                                 processed_data, summary = process_single_experiment(
                                                     file_path,
                                                     attack_params,
@@ -302,23 +295,57 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                                     adv_rate=adv_rate,
 
                                                 )
-
                                                 aggregated_processed_data.append(processed_data)
                                                 if summary:
                                                     aggregated_summaries.append(summary)
 
-                                            # Averaging results over multiple runs
-                                            if aggregated_processed_data:
-                                                mean_processed_data = np.mean(aggregated_processed_data, axis=0)
-                                                mean_summary = np.mean(aggregated_summaries,
-                                                                       axis=0) if aggregated_summaries else None
-
-                                                all_processed_data.extend(mean_processed_data)
-                                                if mean_summary is not None:
-                                                    all_summary_data.append(mean_summary)
-
-                                                print(
-                                                    f"Averaged results over {len(aggregated_processed_data)} runs for configuration at {base_save_path}")
+                                                # Aggregate numeric fields safely:
+                                            def average_dicts(dict_list):
+                                                numeric_keys = dict_list[0].keys()
+                                                averages = {}
+                                                for key in numeric_keys:
+                                                    vals = [d[key] for d in dict_list if isinstance(d.get(key), (int, float))]
+                                                    averages[key] = np.mean(vals) if vals else None
+                                                return averages
+                                            print(aggregated_summaries)
+                                            # # Average processed_data per round
+                                            # mean_processed_data = []
+                                            # num_rounds = len(aggregated_processed_data[0])
+                                            # for round_idx in range(len(aggregated_processed_data[0])):
+                                            #     round_entries = [run[round_idx] for run in aggregated_processed_data if len(run) > round]
+                                            #     avg_round_data = defaultdict(list)
+                                            #     for rd in round_data:
+                                            #         for k, v in rd.items():
+                                            #             if isinstance(v, (int, float)):
+                                            #                 avg_round_data[k].append(v)
+                                            #     avg_round_summary = {k: np.mean(v) for k, v in avg_round_data.items()}
+                                            #     mean_selected_clients = list(set(sum([rd['selected_clients'] for rd in round_data if 'selected_clients' in rd], [])))
+                                            #     avg_round_summary['selected_clients'] = mean_selected_clients  # or skip entirely
+                                            #     processed_data.append(avg_round_summary)
+                                            #
+                                            # # Average summaries only numeric fields
+                                            # mean_summary = average_dicts(aggregated_summaries)
+                                            #
+                                            # # Now store these results:
+                                            # all_processed_data.extend(mean_summary)  # or avg_round_summary based on your needs
+                                            # if mean_summary:
+                                            #     all_summary_data.append(mean_summary)
+                                            #     aggregated_processed_data.append(processed_data)
+                                            #     if summary:
+                                            #         aggregated_summaries.append(summary)
+                                            #
+                                            # # Averaging results over multiple runs
+                                            # if aggregated_processed_data:
+                                            #     mean_processed_data = np.mean(aggregated_processed_data, axis=0)
+                                            #     mean_summary = np.mean(aggregated_summaries,
+                                            #                            axis=0) if aggregated_summaries else None
+                                            #
+                                            #     all_processed_data.extend(mean_processed_data)
+                                            #     if mean_summary is not None:
+                                            #         all_summary_data.append(mean_summary)
+                                            #
+                                            #     print(
+                                            #         f"Averaged results over {len(aggregated_processed_data)} runs for configuration at {base_save_path}")
 
     # Convert to DataFrames
     all_rounds_df = pd.DataFrame(all_processed_data)
