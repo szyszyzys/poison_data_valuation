@@ -237,7 +237,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
     for aggregation_method in aggregation_methods:
         print(f"\nProcessing experiments for {aggregation_method}...")
         for data_split_mode in ["discovery"]:
-            for grad_mode in ['single']:
+            for grad_mode in ['single', "None"]:
                 for trigger_attack_mode in ['static', 'dynamic']:
                     for trigger_rate in [0.1]:
                         for is_sybil in ["False", "mimic"]:
@@ -338,7 +338,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                             if aggregated_summaries:
                                                 avg_summary = average_dicts(aggregated_summaries)
                                                 all_summary_data_avg.append(avg_summary)
-
+                                            del avg_summary["run"]
                                             all_processed_data.extend(aggregated_processed_data)
                                             all_summary_data.extend(aggregated_summaries)
     # Convert to DataFrames
