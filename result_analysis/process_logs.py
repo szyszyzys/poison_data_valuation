@@ -332,7 +332,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
 
                                                 )
                                                 run_cnt += 1
-                                                aggregated_processed_data.append(processed_data)
+                                                aggregated_processed_data.extend(processed_data)
                                                 if summary:
                                                     aggregated_summaries.append(summary)
 
