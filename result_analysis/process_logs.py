@@ -116,7 +116,8 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                 'FINAL_MAIN_ACC': final_record.get('main_acc'),
                 'FINAL_CLEAN_ACC': final_record.get('clean_acc'),
                 'FINAL_TRIGGERED_ACC': final_record.get('triggered_acc'),
-                'AVG_DISTRIBUTION_SIMILARITY': np.mean([r['avg_distribution_similarity'] for r in sorted_records]),
+                'AVG_SELECTED_DISTRIBUTION_SIMILARITY': np.mean([r['avg_selected_data_distribution_similarity'] for r in sorted_records]),
+                'AVG_UNSELECTED_DISTRIBUTION_SIMILARITY': np.mean([r['avg_unselected_data_distribution_similarity'] for r in sorted_records]),
                 'AVG_ADVERSARY_SELECTION_RATE': np.mean([r['adversary_selection_rate'] for r in sorted_records]),
                 'AVG_BENIGN_SELECTION_RATE': np.mean([r['benign_selection_rate'] for r in sorted_records]),
                 'TOTAL_ROUNDS': len(sorted_records)
