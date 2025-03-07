@@ -169,9 +169,13 @@ def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
         param_str = f"n_seller_{n_sellers}_adv_rate_{adv_rate}_local_epoch_{local_epoch}_local_lr_{local_lr}"
     else:
         raise NotImplementedError(f"No such attack type: {gradient_manipulation_mode}")
-
+    if data_split_mode == "discovery":
+        discovery_str = f"discovery_quality_{args.discovery_quality}"
+        save_path = base_dir / discovery_str / subfolder / param_str
     # Construct the full save path
-    save_path = base_dir / subfolder / param_str
+    else:
+        # Construct the full save path
+        save_path = base_dir / subfolder / param_str
     return str(save_path)
 
 
@@ -203,7 +207,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
     for aggregation_method in aggregation_methods:
         print(f"\nProcessing experiments for {aggregation_method}...")
         for data_split_mode in ["discovery"]:
-            for grad_mode in ['single', 'None']:
+            for grad_mode in ['single']:
                 for trigger_attack_mode in ['static', 'dynamic']:
                     for trigger_rate in [0.25]:
                         for is_sybil in ["False", "mimic"]:
