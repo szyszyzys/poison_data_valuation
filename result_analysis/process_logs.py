@@ -78,7 +78,15 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                 for cid in selected_clients
             ]
 
-            round_data['avg_distribution_similarity'] = np.mean(similarities) if similarities else 0
+            round_data['avg_selected_data_distribution_similarity'] = np.mean(similarities) if similarities else 0
+
+            un_selected_similarities = [
+                calculate_distribution_similarity(buyer_distribution,
+                                                  seller_distributions[str(cid)]['class_distribution'])
+                for cid in range(market_params["N_CLIENTS"]) if cid not in selected_clients
+            ]
+            round_data['avg_unselected_data_distribution_similarity'] = np.mean(
+                un_selected_similarities) if un_selected_similarities else 0
 
             final_perf = record.get('final_perf_global', {})
             round_data['main_acc'] = final_perf.get('acc')
@@ -204,7 +212,6 @@ def average_dicts(dict_list):
     return averaged_dict
 
 
-
 def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                             aggregation_methods=['martfl', 'fedavg'], exp_name=""):
     """
@@ -300,11 +307,15 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                                         'AGGREGATION_METHOD': aggregation_method,
                                                         'DATA_SPLIT_MODE': data_split_mode,
                                                         "discovery_quality": params["dm_params"]["discovery_quality"],
-                                                        "buyer_data_mode": params["dm_params"]["buyer_data_mode"]}
+                                                        "buyer_data_mode": params["dm_params"]["buyer_data_mode"],
+                                                        'N_CLIENTS': n_sellers
+                                                    }
+
                                                 else:
                                                     market_params = {
                                                         'AGGREGATION_METHOD': aggregation_method,
                                                         'DATA_SPLIT_MODE': data_split_mode,
+                                                        'N_CLIENTS': n_sellers
                                                     }
 
                                                 processed_data, summary = process_single_experiment(
