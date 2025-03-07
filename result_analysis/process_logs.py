@@ -247,6 +247,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
 
                                             aggregated_processed_data = []
                                             aggregated_summaries = []
+                                            params = load_attack_params(base_save_path)
 
                                             for run_path in run_paths:
                                                 file_path = os.path.join(run_path, "market_log.ckpt")
@@ -258,7 +259,6 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                                 print(f"Processing: {file_path}")
 
                                                 # Load params from attack_params.json
-                                                params = load_attack_params(run_path)
 
                                                 attack_params = {
                                                     'ATTACK_METHOD': params["local_attack_params"][
