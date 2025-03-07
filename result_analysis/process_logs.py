@@ -1,3 +1,4 @@
+import glob
 import json
 import os
 import traceback
@@ -8,6 +9,11 @@ import numpy as np
 import pandas as pd
 import scipy.stats as stats
 import torch
+
+
+def load_json(json_path):
+    with open(json_path, 'r') as f:
+        return json.load(f)
 
 
 def calculate_distribution_similarity(buyer_distribution, seller_distribution):
@@ -235,7 +241,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
 
                                     for run_path in run_paths:
                                         file_path = os.path.join(run_path, "market_log.ckpt")
-
+                                        data_statistics_path = os.path.join(run_path, "data_statistics.json")
                                         if not os.path.exists(file_path):
                                             print(f"File not found: {file_path}")
                                             continue
@@ -272,7 +278,10 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                         processed_data, summary = process_single_experiment(
                                             file_path,
                                             attack_params,
-                                            market_params
+                                            market_params,
+                                            data_statistics_path=data_statistics_path,
+                                            adv_rate=adv_rate,
+
                                         )
 
                                         aggregated_processed_data.append(processed_data)
