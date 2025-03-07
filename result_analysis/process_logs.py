@@ -339,6 +339,7 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
 
                                             if aggregated_summaries:
                                                 avg_summary = average_dicts(aggregated_summaries)
+                                                print(avg_summary)
                                                 all_summary_data_avg.append(avg_summary)
                                             all_processed_data.extend(aggregated_processed_data)
                                             all_summary_data.extend(aggregated_summaries)
