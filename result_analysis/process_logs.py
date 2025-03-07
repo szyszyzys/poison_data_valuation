@@ -71,14 +71,14 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                     selected_clients) if selected_clients else 0,
                 'benign_selection_rate': len(benign_selections) / len(selected_clients) if selected_clients else 0
             }
-
-            print(selected_clients)
-            print(seller_distributions)
+            for cid in selected_clients:
+                print(len(seller_distributions[str(cid)]['class_distribution']))
             similarities = [
                 calculate_distribution_similarity(buyer_distribution,
                                                   seller_distributions[str(cid)]['class_distribution'])
                 for cid in selected_clients
             ]
+
 
             round_data['avg_distribution_similarity'] = np.mean(similarities) if similarities else 0
 
