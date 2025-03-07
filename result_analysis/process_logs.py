@@ -207,6 +207,7 @@ def average_dicts(dict_list):
         values = [d[key] for d in dict_list]
         if key == "run":
             averaged_dict[key] = max(values)  # Keep the first non-numeric value (assuming all are identical)
+            continue
         if isinstance(values[0], (int, float, np.number)):
             averaged_dict[key] = np.mean(values)
         else:
