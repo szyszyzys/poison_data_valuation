@@ -1,11 +1,13 @@
+import json
+import os
+import traceback
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
-import os
 import pandas as pd
 import scipy.stats as stats
 import torch
-import traceback
-from pathlib import Path
 
 
 def calculate_distribution_similarity(buyer_distribution, seller_distribution):
@@ -173,7 +175,7 @@ def load_attack_params(path):
 
 
 def process_all_experiments(output_dir='./processed_data', local_epoch=2,
-                            aggregation_methods=['martfl', 'fedavg']):
+                            aggregation_methods=['martfl', 'fedavg'], exp_name=""):
     """
     Process all experiment files for multiple aggregation methods.
 
@@ -218,7 +220,8 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                         data_split_mode=data_split_mode,
                                         change_base=change_base,
                                         dataset_name=dataset_name,
-                                        trigger_attack_mode=trigger_attack_mode
+                                        trigger_attack_mode=trigger_attack_mode,
+                                        exp_name=exp_name
                                     )
 
                                     # Find all runs
@@ -434,8 +437,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process federated learning backdoor attack logs")
     parser.add_argument("--output_dir", default="./processed_data", help="Output directory for processed data")
     parser.add_argument("--local_epoch", type=int, default=2, help="Local epoch setting used in experiments")
-    parser.add_argument("--aggregation_methods", nargs='+', default=['martfl', 'fedavg'],
+    parser.add_argument("--aggregation_methods", nargs='+', default=['martfl'],
                         help="List of aggregation methods to process")
+    parser.add_argument("--exp_name", type=str, default="experiment_20250306_170329", help="experiment name")
 
     args = parser.parse_args()
 
@@ -443,7 +447,8 @@ if __name__ == "__main__":
     all_rounds_df, summary_df = process_all_experiments(
         output_dir=args.output_dir,
         local_epoch=args.local_epoch,
-        aggregation_methods=args.aggregation_methods
+        aggregation_methods=args.aggregation_methods,
+        exp_name=args.exp_name
     )
 
     # Print summary statistics
