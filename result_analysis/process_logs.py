@@ -73,6 +73,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
             }
             for cid in selected_clients:
                 print(len(seller_distributions[str(cid)]['class_distribution']))
+                print(seller_distributions[str(cid)]['class_distribution'])
             similarities = [
                 calculate_distribution_similarity(buyer_distribution,
                                                   seller_distributions[str(cid)]['class_distribution'])
