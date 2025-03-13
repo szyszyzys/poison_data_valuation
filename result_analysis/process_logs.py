@@ -244,9 +244,9 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                 for trigger_attack_mode in ['static', 'dynamic']:
                     for trigger_rate in [0.1, 0.5]:
                         for is_sybil in ["False", "mimic"]:
-                            for adv_rate in [0.2, 0.3]:
+                            for adv_rate in [0.2, 0.3, 0.4]:
                                 for change_base in ["True", "False"]:
-                                    for discovery_quality in [0.1, 1, 10]:
+                                    for discovery_quality in ["0.1", "1.0", "10.0"]:
                                         for buyer_data_mode in ["random", "biased"]:
                                             if aggregation_method == "fedavg" and change_base == "True":
                                                 continue
