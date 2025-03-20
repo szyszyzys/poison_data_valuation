@@ -15,12 +15,12 @@ change_base=${4:-"True"}
 
 # Fixed local attack param sets
 TRIGGER_TYPES=("blended_patch")
-TRIGGER_RATES=(0.1 0.5)
+TRIGGER_RATES=(0.2 0.3 0.4)
 GRAD_MODES=("single")
 POISON_STRENGTHS=(1)
 # Sybil param sets
 SYBIL_MODES=("mimic")
-N_ADVS=(0.2 0.3 0.4)
+N_ADVS=(0.2 0.3 0.4 0.5)
 ALPHAS=(0.5)
 data_split_modes=("discovery")
 IS_SYBIL_VALUES=("False" "True")
