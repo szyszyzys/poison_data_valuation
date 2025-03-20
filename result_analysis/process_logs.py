@@ -116,8 +116,10 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                 'FINAL_MAIN_ACC': final_record.get('main_acc'),
                 'FINAL_CLEAN_ACC': final_record.get('clean_acc'),
                 'FINAL_TRIGGERED_ACC': final_record.get('triggered_acc'),
-                'AVG_SELECTED_DISTRIBUTION_SIMILARITY': np.mean([r['avg_selected_data_distribution_similarity'] for r in sorted_records]),
-                'AVG_UNSELECTED_DISTRIBUTION_SIMILARITY': np.mean([r['avg_unselected_data_distribution_similarity'] for r in sorted_records]),
+                'AVG_SELECTED_DISTRIBUTION_SIMILARITY': np.mean(
+                    [r['avg_selected_data_distribution_similarity'] for r in sorted_records]),
+                'AVG_UNSELECTED_DISTRIBUTION_SIMILARITY': np.mean(
+                    [r['avg_unselected_data_distribution_similarity'] for r in sorted_records]),
                 'AVG_ADVERSARY_SELECTION_RATE': np.mean([r['adversary_selection_rate'] for r in sorted_records]),
                 'AVG_BENIGN_SELECTION_RATE': np.mean([r['benign_selection_rate'] for r in sorted_records]),
                 'TOTAL_ROUNDS': len(sorted_records)
@@ -242,11 +244,11 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
         for data_split_mode in ["discovery"]:
             for grad_mode in ['single', "None"]:
                 for trigger_attack_mode in ['static', 'dynamic']:
-                    for trigger_rate in [0.1]:
+                    for trigger_rate in [0.1, 0.5]:
                         for is_sybil in ["False", "mimic"]:
-                            for adv_rate in [0.2, 0.3]:
+                            for adv_rate in [0.2, 0.3, 0.4]:
                                 for change_base in ["True", "False"]:
-                                    for discovery_quality in [0.1, 1, 10]:
+                                    for discovery_quality in ["0.1", "1.0", "10.0"]:
                                         for buyer_data_mode in ["random", "biased"]:
                                             if aggregation_method == "fedavg" and change_base == "True":
                                                 continue
@@ -299,7 +301,8 @@ def process_all_experiments(output_dir='./processed_data', local_epoch=2,
                                                     'IS_SYBIL': params["sybil_params"]["sybil_mode"] if
                                                     params["sybil_params"][
                                                         "is_sybil"] else "False",
-                                                    'ADV_RATE': params["sybil_params"]["adv_rate"],
+                                                    'ADV_RATE': adv_rate if params["sybil_params"]["adv_rate"] == 0 else
+                                                    params["sybil_params"]["adv_rate"],
                                                     'CHANGE_BASE': change_base,
                                                     'TRIGGER_MODE': params["sybil_params"]["trigger_mode"],
                                                     "benign_rounds": params["sybil_params"]["benign_rounds"],
