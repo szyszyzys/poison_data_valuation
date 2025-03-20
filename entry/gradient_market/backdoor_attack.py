@@ -453,6 +453,13 @@ def main():
     set_seed(args.seed)
     device = get_device(args)
     save_path = get_save_path(args)
+
+    if os.path.exists(save_path):
+        print(f"File {save_path} exists. Skipping experiment setup.")
+        return
+    else:
+        print(f"File {save_path} not found. Proceeding with experiment setup.")
+
     Path(save_path).mkdir(parents=True, exist_ok=True)
     print("Saving results to:", save_path)
     clear_work_path(save_path)
