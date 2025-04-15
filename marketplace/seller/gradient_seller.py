@@ -463,7 +463,7 @@ class GradientSeller(BaseSeller):
         # if final_model_params is not None:
         #     # Convert state_dict tensors to lists (or use another serialization as needed).
         #     record['final_model_params'] = {k: v.cpu().numpy().tolist() for k, v in final_model_params.items()}
-        self.federated_round_history.append(record)
+        # self.federated_round_history.append(record)
 
     def round_end_process(self, round_number,
                           is_selected,
@@ -715,7 +715,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             "gradient": self.cur_upload_gradient_flt,
         }
         self.selected_last_round = is_selected
-        self.federated_round_history.append(record)
+        # self.federated_round_history.append(record)
 
     def round_end_process(self, round_number: int, is_selected: bool,
                           final_model_params=None):
