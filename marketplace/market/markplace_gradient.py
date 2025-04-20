@@ -269,7 +269,8 @@ class DataMarketplaceFederated(DataMarketplace):
             seller_gradients_dict, # Assuming aggregate works with list of gradients
             baseline_gradient,
             clip=clip,
-            remove_baseline=remove_baseline
+            remove_baseline=remove_baseline,
+            server_data=test_dataloader_buyer_local
         )
         agg_end_time = time.time()
         server_aggregation_time_ms = (agg_end_time - agg_start_time) * 1000

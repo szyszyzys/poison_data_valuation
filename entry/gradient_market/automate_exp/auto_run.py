@@ -126,7 +126,7 @@ def main():
     parser.add_argument(
         '--parallel',
         type=int,
-        default=1,
+        default=0,
         help="Number of experiments to run in parallel (default: 1). Use 0 or negative for cpu_count()."
     )
 

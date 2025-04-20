@@ -242,7 +242,7 @@ def generate_sybil_configs(output_dir):
     print("\n--- Generating Sybil Attack Configs ---")
     datasets = ['CIFAR']
     adv_rates = [0.3]  # Fix adversary rate
-    aggregations = ['fedavg', 'martfl']  # Compare how Sybil affects different aggregators
+    aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
     amplify_factors = [1.0, 5.0, 10.0]  # Vary amplification
 
     for ds, rate, agg, amplify in itertools.product(datasets, adv_rates, aggregations, amplify_factors):
