@@ -2,10 +2,46 @@
 import copy
 import itertools
 import os
+from types import NoneType  # Import NoneType for the representer
+
+import numpy as np  # Make sure numpy is imported
 import torch
-import numpy as np  # Used for linspace if needed
 import yaml
 
+
+# --- Custom YAML Dumper ---
+class MyDumper(yaml.SafeDumper):
+    """Custom Dumper to handle specific types like None and numpy."""
+    pass  # Start with SafeDumper
+
+
+def represent_none(self, _):
+    """Represent None as an empty string '' instead of 'null' or '~'."""
+    return self.represent_scalar('tag:yaml.org,2002:null', '')
+
+
+def numpy_representer(dumper, data):
+    """Represent numpy types as standard Python types."""
+    if isinstance(data, np.integer):
+        return dumper.represent_int(int(data))
+    elif isinstance(data, np.floating):
+        return dumper.represent_float(float(data))
+    elif isinstance(data, np.ndarray):
+        return dumper.represent_list(data.tolist())
+    elif isinstance(data, np.bool_):
+        return dumper.represent_bool(bool(data))
+    # Add other numpy types if needed
+    # Fallback for unhandled numpy types (optional, could raise error)
+    return dumper.represent_data(data)
+
+
+# Add the representers to our custom Dumper
+MyDumper.add_representer(NoneType, represent_none)
+MyDumper.add_representer(np.integer, numpy_representer)
+MyDumper.add_representer(np.floating, numpy_representer)
+MyDumper.add_representer(np.ndarray, numpy_representer)
+MyDumper.add_representer(np.bool_, numpy_representer)
+# Add representers for other numpy types if they appear in your configs
 # --- Configuration Templates ---
 
 BASE_CONFIG_TEMPLATE = {
@@ -110,28 +146,19 @@ DEFAULT_LRS = {  # Example: Adjust learning rates per dataset
 }
 
 
-# --- Helper Function ---
 def save_config(config_dict, path):
-    """Saves a dictionary as a YAML file."""
+    """Saves a dictionary as a YAML file using the custom Dumper."""
     try:
+        # Ensure parent directory exists
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
-        # Convert numpy types for YAML compatibility if they sneak in
-        def numpy_converter(obj):
-            if isinstance(obj, np.integer):
-                return int(obj)
-            elif isinstance(obj, np.floating):
-                return float(obj)
-            elif isinstance(obj, np.ndarray):
-                return obj.tolist()
-            return obj
-
         with open(path, 'w') as f:
-            yaml.dump(config_dict, f, sort_keys=False, default_flow_style=False, indent=2, default_dumper=yaml.Dumper,
-                      default_representer=lambda dumper, data: dumper.represent_scalar('tag:yaml.org,2002:null',
-                                                                                       '') if data is None else dumper.represent_data(
-                          data))
-
+            # Use the custom Dumper class here
+            yaml.dump(config_dict, f,
+                      Dumper=MyDumper,  # Pass the custom Dumper
+                      sort_keys=False,
+                      default_flow_style=False,
+                      indent=2)
         print(f"  Saved config: {path}")
     except Exception as e:
         print(f"  Error saving config {path}: {e}")
