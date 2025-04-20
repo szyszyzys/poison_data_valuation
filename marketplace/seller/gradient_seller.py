@@ -4,6 +4,11 @@
 # from dataset import dataset_output_dim (if needed)
 import collections
 import copy
+import logging
+import sys
+import time
+from collections import abc  # abc.Mapping for general dicts
+from typing import Any
 from typing import Dict
 from typing import List, Optional, Union
 from typing import Tuple
@@ -19,6 +24,74 @@ from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorIm
 from general_utils.data_utils import list_to_tensor_dataset
 from marketplace.seller.seller import BaseSeller
 from model.utils import get_model, local_training_and_get_gradient, apply_gradient_update
+
+
+def estimate_byte_size(data: Any) -> int:
+    """
+    Recursively estimates the size in bytes of potentially complex data structures
+    containing primarily numpy arrays or torch tensors. Handles basic types poorly.
+
+    Args:
+        data: The data structure (dict, list, tensor, array, etc.).
+
+    Returns:
+        Estimated size in bytes. Returns 0 for None or empty structures.
+    """
+    total_size = 0
+
+    if data is None:
+        return 0
+
+    # --- Handle Iterables (Lists, Tuples, Sets) ---
+    if isinstance(data, (list, tuple, set)):
+        if not data: return 0  # Empty iterable
+        for item in data:
+            total_size += estimate_byte_size(item)  # Recurse
+
+    # --- Handle Mappings (Dictionaries, OrderedDict) ---
+    elif isinstance(data, abc.Mapping):  # Handles dict, OrderedDict, etc.
+        if not data: return 0  # Empty mapping
+        # Iterate through values as keys are usually small strings
+        for value in data.values():
+            total_size += estimate_byte_size(value)  # Recurse on values
+
+    # --- Handle Numpy Arrays ---
+    elif isinstance(data, np.ndarray):
+        total_size = data.nbytes
+
+    # --- Handle Torch Tensors ---
+    elif isinstance(data, torch.Tensor):
+        # element_size() gives bytes per element (e.g., float32=4)
+        total_size = data.element_size() * data.numel()
+
+    # --- Handle Basic Python Numeric/Bool Types (Approximate) ---
+    # Often negligible compared to large arrays/tensors, but can include
+    elif isinstance(data, (int, float, bool, np.integer, np.floating, np.bool_)):
+        # np.dtype(...).itemsize is more accurate than sys.getsizeof for raw size
+        try:
+            total_size = np.dtype(type(data)).itemsize
+        except TypeError:
+            # Fallback for standard python types if numpy dtype fails
+            total_size = sys.getsizeof(data)  # Includes Python object overhead
+            # Or just use fixed estimates: 8 for int/float, 1 for bool?
+            # total_size = 8 if isinstance(data, (int, float)) else 1
+
+    # --- Handle Other Types ---
+    # Add elif blocks here for other data types you expect (e.g., strings)
+    # elif isinstance(data, str):
+    #    total_size = sys.getsizeof(data) # Includes overhead
+
+    # --- Unhandled Type ---
+    else:
+        # You might want to log a warning for unexpected types
+        # logging.warning(f"estimate_byte_size encountered unhandled type: {type(data)}. Size may be inaccurate.")
+        # Attempt sys.getsizeof as a fallback, but it includes Python overhead
+        try:
+            total_size = sys.getsizeof(data)
+        except TypeError:
+            total_size = 0  # Cannot determine size
+
+    return total_size
 
 
 # CombinedSybilCoordinator integrates functionalities from both PFedBA_SybilAttack and SybilCoordinator.
@@ -388,39 +461,139 @@ class GradientSeller(BaseSeller):
         base_model = base_model.to(self.device)
 
         # 2. Train locally and obtain the gradient update
-        gradient, gradient_flt, updated_model, local_eval_res = self._compute_local_grad(
-            base_model, self.dataset
-        )
+        try:
+            # Call the MODIFIED local training method
+            gradient, gradient_flt, updated_model, local_eval_res, training_stats = self._compute_local_grad(
+                base_model, self.dataset  # Pass the actual dataset attribute
+            )
+
+            # Ensure training_stats is a dict, even if _compute_local_grad fails partially
+            if not isinstance(training_stats, dict):
+                logging.warning(f"Seller {self.seller_id}: _compute_local_grad did not return a valid stats dict.")
+                training_stats = {'train_loss': None, 'compute_time_ms': None}
+
+
+        except Exception as e:
+            logging.error(f"Seller {self.seller_id}: Error during _compute_local_grad: {e}", exc_info=True)
+            # Return None gradient and empty stats on error? Or raise?
+            # Returning None gradient signals failure to the marketplace loop
+            return None, {'train_loss': None, 'compute_time_ms': None, 'upload_bytes': None}
 
         # Update internal counter
         self.cur_upload_gradient_flt = gradient_flt
 
-        return gradient
+        try:
+            upload_bytes = estimate_byte_size(gradient)  # Use a helper to estimate size
+        except Exception as e:
+            logging.warning(f"Seller {self.seller_id}: Could not estimate gradient size: {e}")
+            upload_bytes = None  # Indicate failure to estimate
 
-    def _compute_local_grad(self, base_model, dataset):
+        # 4. Add upload_bytes to the stats dictionary
+        training_stats['upload_bytes'] = upload_bytes
+
+        # 5. Return the gradient data and the completed stats dictionary
+        #    Make sure the 'gradient' variable holds the data structure you intend to send
+        #    (e.g., the dict of weight differences, NOT necessarily gradient_flt)
+        return gradient, training_stats
+
+    # def _compute_local_grad(self, base_model, dataset):
+    #     """
+    #     Train a local model and compute the gradient update.
+    #
+    #     :param base_model: The initial model for local training (already on correct device)
+    #     :param dataset: Local data as a list of (image, label) tuples
+    #     :return: Tuple (gradient, flattened_gradient, updated_model, eval_results)
+    #     """
+    #     # The base_model is already initialized and on the correct device
+    #
+    #     # Perform local training and get the gradient update
+    #     # grad_update, grad_update_flt, local_model, local_eval_res, avg_train_loss
+    #     grad_update, grad_update_flt, local_model, local_eval_res, avg_train_loss = local_training_and_get_gradient(
+    #         base_model,
+    #         list_to_tensor_dataset(dataset),
+    #         batch_size=64,
+    #         device=self.device,
+    #         local_epochs=self.local_training_params["local_epochs"],
+    #         lr=self.local_training_params["learning_rate"],
+    #     )
+    #
+    #     # Clean up to help with memory
+    #     torch.cuda.empty_cache()
+    #
+    #     return grad_update, grad_update_flt, local_model, local_eval_res
+
+    def _compute_local_grad(self, base_model, dataset) -> Tuple[Any, Any, Any, Dict, Dict]:
         """
-        Train a local model and compute the gradient update.
+        MODIFIED: Train local model, compute gradient, AND gather training stats.
 
-        :param base_model: The initial model for local training (already on correct device)
-        :param dataset: Local data as a list of (image, label) tuples
-        :return: Tuple (gradient, flattened_gradient, updated_model, eval_results)
+        Args:
+            base_model: Initial model for local training (on correct device).
+            dataset: Local data (expects structure usable by list_to_tensor_dataset).
+
+        Returns:
+            Tuple (gradient, gradient_flt, updated_model, local_eval_res, training_stats):
+                gradient: Calculated gradient (e.g., weight diff).
+                gradient_flt: Flattened gradient.
+                updated_model: Model after local training.
+                local_eval_res: Evaluation results (potentially basic).
+                training_stats: {'train_loss': float|None, 'compute_time_ms': float|None}.
         """
-        # The base_model is already initialized and on the correct device
+        start_time = time.time()  # Start timing
 
-        # Perform local training and get the gradient update
-        grad_update, grad_update_flt, local_model, local_eval_res = local_training_and_get_gradient(
-            base_model,
-            list_to_tensor_dataset(dataset),
-            batch_size=64,
-            device=self.device,
-            local_epochs=self.local_training_params["local_epochs"],
-            lr=self.local_training_params["learning_rate"],
-        )
+        # Prepare dataset if needed
+        try:
+            # Use your actual conversion function
+            tensor_dataset = list_to_tensor_dataset(dataset)
+            if tensor_dataset is None:
+                raise ValueError("Dataset conversion returned None.")
+        except Exception as e:
+            logging.error(f"Seller {self.seller_id}: Failed to convert dataset: {e}", exc_info=True)
+            stats_error = {'train_loss': None, 'compute_time_ms': (time.time() - start_time) * 1000}
+            return None, None, base_model, {}, stats_error  # Return base model on dataset error
 
-        # Clean up to help with memory
-        torch.cuda.empty_cache()
+        # Call the MODIFIED external training function which now returns avg_loss
+        try:
+            # Check if local_training_params are available
+            if not hasattr(self, 'local_training_params') or not self.local_training_params:
+                raise ValueError("Missing 'local_training_params' attribute on seller.")
 
-        return grad_update, grad_update_flt, local_model, local_eval_res
+            # Call the function - IT MUST NOW RETURN 5 VALUES
+            grad_update, grad_update_flt, local_model, local_eval_res, avg_train_loss = local_training_and_get_gradient(
+                model=base_model,
+                train_dataset=tensor_dataset,  # Pass the converted dataset
+                batch_size=self.local_training_params.get('batch_size', 64),  # Use batch size from params
+                device=self.device,
+                # Ensure key names match your actual params dict
+                local_epochs=self.local_training_params.get("epochs",
+                                                            self.local_training_params.get("local_epochs", 1)),
+                lr=self.local_training_params.get("learning_rate", self.local_training_params.get("lr", 0.01)),
+                # Pass other necessary params if local_training_and_get_gradient needs them
+            )
+
+        except Exception as e:
+            logging.error(f"Seller {self.seller_id}: Error during call to local_training_and_get_gradient: {e}",
+                          exc_info=True)
+            end_time_error = time.time()
+            stats_error = {'train_loss': None, 'compute_time_ms': (end_time_error - start_time) * 1000}
+            # Return None for gradient components, keep original model, empty eval, computed stats
+            return None, None, base_model, {}, stats_error
+
+        # Calculate compute time
+        end_time = time.time()
+        compute_time_ms = (end_time - start_time) * 1000
+
+        # Package the stats
+        training_stats = {
+            'train_loss': avg_train_loss,  # Use the value returned by the training function
+            'compute_time_ms': compute_time_ms
+        }
+
+        # Clean up GPU memory (keep this if useful)
+        if self.device.type == 'cuda':
+            torch.cuda.empty_cache()
+
+        # Return all original values PLUS the new stats dict
+        return grad_update, grad_update_flt, local_model, local_eval_res, training_stats
 
     def save_local_model(self, model: torch.nn.Module):
         """
@@ -591,7 +764,8 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         """
         Compute the gradient on clean (benign) local data.
         """
-        gradient, gradient_flt, updated_model, local_eval_res = self._compute_local_grad(base_model, self.dataset)
+        gradient, gradient_flt, updated_model, local_eval_res, training_stats = self._compute_local_grad(base_model,
+                                                                                                         self.dataset)
         self.recent_metrics = local_eval_res
         return gradient
 
@@ -599,9 +773,9 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         """
         Compute a gradient that combines benign and backdoor gradients.
         """
-        grad_benign, g_benign_flt, _, _ = self._compute_local_grad(base_model, self.dataset)
+        grad_benign, g_benign_flt, _, _, _ = self._compute_local_grad(base_model, self.dataset)
         original_shapes = [param.shape for param in grad_benign]
-        g_backdoor, g_backdoor_flt, _, _ = self._compute_local_grad(base_model, self.backdoor_data)
+        g_backdoor, g_backdoor_flt, _, _, _ = self._compute_local_grad(base_model, self.backdoor_data)
         final_poisoned_flt = ((1 - self.poison_strength) * g_benign_flt +
                               self.poison_strength * g_backdoor_flt)
         self.last_benign_grad = g_benign_flt
@@ -613,7 +787,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         Compute the gradient on combined (backdoor + clean) data.
         """
         backdoor_data, clean_data = self._inject_triggers(self.dataset, self.trigger_rate)
-        g_combined, g_combined_flt, _, _ = self._compute_local_grad(base_model, backdoor_data + clean_data)
+        g_combined, g_combined_flt, _, _, _ = self._compute_local_grad(base_model, backdoor_data + clean_data)
         original_shapes = [param.shape for param in g_combined]
         final_poisoned = unflatten_np(g_combined_flt, original_shapes)
         return final_poisoned

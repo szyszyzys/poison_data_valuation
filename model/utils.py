@@ -14,8 +14,10 @@ Usage (within a seller’s get_gradient method):
 """
 
 import copy
+import logging
 import os
-from typing import List
+import time
+from typing import List, Tuple, Any, Dict
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -28,29 +30,92 @@ from torch.utils.data import DataLoader, TensorDataset
 # from model.text_model import TEXTCNN
 from model.vision_model import CNN_CIFAR, LeNet
 
-
 def train_local_model(model: nn.Module,
                       train_loader: DataLoader,
                       criterion: nn.Module,
                       optimizer: optim.Optimizer,
                       device: torch.device,
-                      epochs: int = 1) -> nn.Module:
+                      epochs: int = 1) -> Tuple[nn.Module, float or None]: # Modified return type
     """
     Train the model on the given train_loader for a specified number of epochs.
+    Calculates and returns the average loss over all batches trained.
+
+    Args:
+        model: The model to train (will be modified in place).
+        train_loader: DataLoader for the training data.
+        criterion: Loss function module.
+        optimizer: Optimizer instance.
+        device: The torch device ('cuda' or 'cpu').
+        epochs: Number of local epochs to train.
+
+    Returns:
+        Tuple (trained_model, average_loss):
+            trained_model: The model after training (same object as input model).
+            average_loss: The average loss across all batches and epochs.
+                          Returns None if train_loader was empty or no batches completed.
     """
-    model.train()
+    model.train() # Set model to training mode
+    batch_losses_all = [] # Collect losses from ALL batches across ALL epochs
+
+
+    logging.debug(f"Starting local training for {epochs} epochs...")
     for epoch in range(epochs):
-        for batch_data, batch_labels in train_loader:
-            batch_data = batch_data.to(device)
-            batch_labels = batch_labels.to(device)
-            optimizer.zero_grad()
-            outputs = model(batch_data)
-            loss = criterion(outputs, batch_labels)
-            loss.backward()
-            optimizer.step()
+        num_batches_processed_epoch = 0
+        epoch_start_time = time.time() # Optional: time epochs
 
-    return model
+        for batch_idx, batch_data in enumerate(train_loader):
+            # --- Standard Training Batch ---
+            # Handle different data formats (vision vs text with lengths)
+            if len(batch_data) == 3 and isinstance(batch_data[2], torch.Tensor): # Text format check
+                data, labels, _ = batch_data # Ignore lengths for basic training loss calc
+            elif len(batch_data) == 2: # Vision format
+                data, labels = batch_data
+            else:
+                 logging.warning(f"Unexpected batch data format len {len(batch_data)} in epoch {epoch}, batch {batch_idx}. Skipping.")
+                 continue # Skip batch
 
+            try:
+                data, labels = data.to(device), labels.to(device)
+
+                optimizer.zero_grad()
+                outputs = model(data)
+                loss = criterion(outputs, labels)
+
+                # Check for NaN loss
+                if torch.isnan(loss):
+                    logging.warning(f"NaN loss encountered in epoch {epoch}, batch {batch_idx}. Skipping batch update.")
+                    continue # Skip optimizer step if loss is NaN
+
+                loss.backward()
+                # Optional: Gradient Clipping
+                # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=...)
+                optimizer.step()
+
+                batch_losses_all.append(loss.item()) # Append loss of this batch
+                num_batches_processed_epoch += 1
+
+            except Exception as batch_e:
+                logging.error(f"Error during batch {batch_idx} in epoch {epoch}: {batch_e}", exc_info=True)
+                # Optionally break or continue depending on desired robustness
+                continue # Skip to next batch on error
+
+        epoch_duration = time.time() - epoch_start_time
+        avg_epoch_loss_display = np.mean(batch_losses_all[-num_batches_processed_epoch:]) if num_batches_processed_epoch > 0 else float('nan')
+        logging.debug(f"Epoch {epoch+1}/{epochs} completed in {epoch_duration:.2f}s. Avg Loss (epoch): {avg_epoch_loss_display:.4f}")
+
+
+    # Calculate overall average loss from all recorded batch losses
+    if not batch_losses_all:
+        logging.warning("No batches were successfully processed during training.")
+        overall_avg_loss = None
+    else:
+        overall_avg_loss = np.mean(batch_losses_all)
+        logging.debug(f"Finished local training. Overall Avg Loss: {overall_avg_loss:.4f}")
+
+    # Model was trained in-place, so we return the same object
+    # Optionally set to eval mode if needed, but train mode is often fine before grad calc
+    # model.eval()
+    return model, overall_avg_loss
 
 def compute_gradient_update(initial_model: nn.Module,
                             trained_model: nn.Module) -> List[torch.Tensor]:
@@ -113,40 +178,114 @@ def test_local_model(model: nn.Module,
     return {"loss": avg_loss, "accuracy": accuracy}
 
 
+# def local_training_and_get_gradient(model: nn.Module,
+#                                     train_dataset: TensorDataset,
+#                                     batch_size: int,
+#                                     device: torch.device,
+#                                     local_epochs: int = 1,
+#                                     lr: float = 0.01, opt="SGD", momentum=0.9, weight_decay=0.0005):
+#     """
+#     Perform local training on a copy of the given model using the provided dataset.
+#     Returns:
+#       - flat_update: a flattened numpy array representing the gradient update (trained - initial)
+#       - data_size: the number of samples in the train_dataset
+#
+#     This function is intended to be used by a seller in a federated learning setup.
+#     """
+#     # Create a local copy of the model for training
+#     local_model = copy.deepcopy(model)
+#     local_model.to(device)
+#
+#     # Create a DataLoader for the local dataset
+#     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+#
+#     # Use a standard loss function and optimizer
+#     criterion = nn.CrossEntropyLoss()
+#     if opt == "SGD":
+#         optimizer = optim.SGD(local_model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
+#     elif opt == "ADAM":
+#         optimizer = optim.Adam(local_model.parameters(), lr=lr)
+#     else:
+#         raise NotImplementedError(f"No such optimizer: {opt}")
+#     # Save a copy of the initial model parameters for computing the update
+#     initial_model = copy.deepcopy(local_model)
+#
+#     # Train the local model for a few epochs
+#     local_model = train_local_model(local_model, train_loader, criterion, optimizer, device, epochs=local_epochs)
+#
+#     # Compute the gradient update as (trained_model - initial_model)
+#     grad_update = compute_gradient_update(initial_model, local_model)
+#
+#     # Flatten the list of gradients into a single vector
+#     flat_update = flatten_gradients(grad_update)
+#
+#     # evaluate the model
+#     eval_res_o = test_local_model(initial_model, train_loader, criterion, device)
+#     eval_res = test_local_model(local_model, train_loader, criterion, device)
+#     print(f"evaluation_result before local train: {eval_res_o}")
+#     print(f"evaluation_result after local train: {eval_res}")
+#
+#     return grad_update, flat_update, local_model, eval_res
+
 def local_training_and_get_gradient(model: nn.Module,
                                     train_dataset: TensorDataset,
                                     batch_size: int,
                                     device: torch.device,
                                     local_epochs: int = 1,
-                                    lr: float = 0.01, opt="SGD", momentum=0.9, weight_decay=0.0005):
+                                    lr: float = 0.01,
+                                    opt: str = "SGD", # Changed opt typo to opt
+                                    momentum: float = 0.9,
+                                    weight_decay: float = 0.0005
+                                    ) -> Tuple[Any, Any, nn.Module, Dict, float or None]: # Added float|None for avg_loss
     """
-    Perform local training on a copy of the given model using the provided dataset.
-    Returns:
-      - flat_update: a flattened numpy array representing the gradient update (trained - initial)
-      - data_size: the number of samples in the train_dataset
+    MODIFIED: Perform local training and return gradient, model, eval results, AND avg loss.
 
-    This function is intended to be used by a seller in a federated learning setup.
+    Requires train_local_model to return (trained_model, average_loss).
+
+    Returns:
+        Tuple (gradient, flattened_gradient, updated_model, eval_results, avg_train_loss)
     """
     # Create a local copy of the model for training
     local_model = copy.deepcopy(model)
     local_model.to(device)
+    initial_model = copy.deepcopy(local_model) # Keep initial state for gradient calc
 
     # Create a DataLoader for the local dataset
+    # Handle potential empty dataset
+    if len(train_dataset) == 0:
+        logging.warning("Received empty dataset for local training. Returning zero gradient.")
+        # Return zero gradient of the same structure as model params
+        zero_grad = OrderedDict([(n, np.zeros_like(p.cpu().detach().numpy())) for n, p in model.named_parameters()])
+        zero_flat = flatten_gradients(zero_grad)
+        return zero_grad, zero_flat, local_model, {"acc": float('nan'), "loss": float('nan')}, None
+
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     # Use a standard loss function and optimizer
     criterion = nn.CrossEntropyLoss()
-    if opt == "SGD":
+    if opt.upper() == "SGD": # Use .upper() for case-insensitivity
         optimizer = optim.SGD(local_model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
-    elif opt == "ADAM":
-        optimizer = optim.Adam(local_model.parameters(), lr=lr)
+    elif opt.upper() == "ADAM":
+        optimizer = optim.Adam(local_model.parameters(), lr=lr, weight_decay=weight_decay)
     else:
-        raise NotImplementedError(f"No such optimizer: {opt}")
-    # Save a copy of the initial model parameters for computing the update
-    initial_model = copy.deepcopy(local_model)
+        # Defaulting or raising error is better than NotImplementedError in except block later
+        logging.warning(f"Unsupported optimizer: {opt}. Defaulting to SGD.")
+        optimizer = optim.SGD(local_model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
 
-    # Train the local model for a few epochs
-    local_model = train_local_model(local_model, train_loader, criterion, optimizer, device, epochs=local_epochs)
+
+    # --- Call MODIFIED train_local_model ---
+    # It now returns the average training loss as the second value
+    try:
+        local_model, avg_train_loss = train_local_model(
+            local_model, train_loader, criterion, optimizer, device, epochs=local_epochs
+        )
+    except Exception as e:
+         logging.error(f"Error during train_local_model call: {e}", exc_info=True)
+         # Return zero gradient and None loss on error
+         zero_grad = OrderedDict([(n, np.zeros_like(p.cpu().detach().numpy())) for n, p in model.named_parameters()])
+         zero_flat = flatten_gradients(zero_grad)
+         return zero_grad, zero_flat, local_model, {"acc": float('nan'), "loss": float('nan')}, None
+    # --------------------------------------
 
     # Compute the gradient update as (trained_model - initial_model)
     grad_update = compute_gradient_update(initial_model, local_model)
@@ -154,14 +293,14 @@ def local_training_and_get_gradient(model: nn.Module,
     # Flatten the list of gradients into a single vector
     flat_update = flatten_gradients(grad_update)
 
-    # evaluate the model
+    # evaluate the model (optional, maybe use avg_train_loss instead?)
     eval_res_o = test_local_model(initial_model, train_loader, criterion, device)
     eval_res = test_local_model(local_model, train_loader, criterion, device)
     print(f"evaluation_result before local train: {eval_res_o}")
     print(f"evaluation_result after local train: {eval_res}")
 
-    return grad_update, flat_update, local_model, eval_res
-
+    # Return original values PLUS the average training loss
+    return grad_update, flat_update, local_model, eval_res, avg_train_loss
 
 def apply_gradient_update(initial_model: nn.Module, grad_update: List[torch.Tensor]) -> nn.Module:
     """

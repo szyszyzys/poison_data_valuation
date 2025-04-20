@@ -254,7 +254,6 @@ class DataMarketplaceFederated(DataMarketplace):
         baseline_gradient = buyer.get_gradient_for_upload(self.aggregator.global_model)
 
         # --- 1. Get Gradients & Stats from Sellers ---
-        # !! ASSUMPTION !!: Modify get_current_market_gradients to return stats
         seller_gradients, seller_ids, seller_stats = self.get_current_market_gradients(self.aggregator.global_model)
         # Process returned stats
         for stats in seller_stats:
