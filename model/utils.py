@@ -232,7 +232,7 @@ def load_param(path: str, device: torch.device):
     return state_dict
 
 
-def get_model(dataset_name, model_structure_name):
+def get_model(dataset_name, model_structure_name= ""):
     match dataset_name:
         case "CIFAR":
             model = CNN_CIFAR()

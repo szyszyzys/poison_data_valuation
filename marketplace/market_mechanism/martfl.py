@@ -128,14 +128,34 @@ class Aggregator:
     def aggregate(self, global_epoch, seller_updates, buyer_updates, remove_baseline, clip=False):
         if self.aggregation_method == "martfl":
             return self.martFL(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates,
-                               clip=clip, remove_baseline = remove_baseline)
+                               clip=clip, remove_baseline=remove_baseline)
         elif self.aggregation_method == "fedavg":
             return self.fedavg(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates)
+        elif self.aggregation_method == "skymask":
+            return self.skymask(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates,
+                                clip=clip, remove_baseline=remove_baseline)
+
+        elif self.aggregation_method == "fltrust":
+            return self.fltrust(global_epoch=global_epoch, seller_updates=seller_updates, buyer_updates=buyer_updates,
+                                clip=clip, remove_baseline=remove_baseline)
         else:
             raise NotImplementedError(f"current aggregator not implemented {self.aggregation_method}")
 
     # ---------------------------
     # Main Federated Aggregation (martFL)
+    def skymask(self,
+                global_epoch: int,
+                seller_updates,
+                buyer_updates,
+                ground_truth_model=None, clip=False, remove_baseline=False):
+        pass
+
+    def fltrust(self,
+                global_epoch: int,
+                seller_updates,
+                buyer_updates,
+                ground_truth_model=None, clip=False, remove_baseline=False):
+        pass
 
     # ---------------------------
     def martFL(self,
@@ -177,11 +197,6 @@ class Aggregator:
             flatten(clip_gradient_update(update, clip_norm=self.clip_norm))
             for sid, update in seller_updates.items()
         ]
-        # clients_update_flattened = [
-        #     flatten(update)
-        #     for sid, update in seller_updates.items()
-        # ]
-        # Process the current baseline update
         if self.baseline_id is not None and self.baseline_id in seller_updates:
             print(f"Using seller {self.baseline_id} as baseline")
             if clip:
