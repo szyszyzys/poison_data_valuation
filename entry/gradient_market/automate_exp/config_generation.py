@@ -83,11 +83,8 @@ BASE_CONFIG_TEMPLATE = {
 
     # --- Federated Learning / Aggregation Params ---
     'federated_learning': {
-        'change_base': True,  # Passed to Aggregator (related to martfl?)
-        'remove_baseline': False,  # From args.remove_baseline (related to martfl?)
-        # --- Add params specific to other aggregators if needed ---
-        # 'skymask_param': value,
-        # 'fltrust_param': value,
+        'change_base': True,
+        'remove_baseline': False,
     },
 
     # --- Attack Params ---
