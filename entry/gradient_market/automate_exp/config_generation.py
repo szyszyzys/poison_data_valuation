@@ -49,7 +49,7 @@ BASE_CONFIG_TEMPLATE = {
     'dataset_name': 'CIFAR',  # Default, override per experiment
     'model_structure': 'SimpleCNN',  # Default, override per experiment
     'aggregation_method': 'fedavg',  # Default, override per experiment
-    'global_rounds': 100,
+    'global_rounds': 200,
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',  # Detect device
 
     # --- Data Split Info (Passed to get_data_set) ---
@@ -71,7 +71,7 @@ BASE_CONFIG_TEMPLATE = {
     'training': {
         'batch_size': 64,
         'local_training_params': {  # Passed to sellers/buyer
-            'local_epochs': 5,
+            'local_epochs': 2,
             'optimizer': 'Adam',
             'learning_rate': 0.001,  # Adjust per dataset/model maybe
             # Add other params like weight_decay if needed
@@ -124,8 +124,8 @@ BASE_CONFIG_TEMPLATE = {
 # --- Model Configs per Dataset (Simplified) ---
 # You might need more details (layers, etc.) depending on model structure definition
 MODEL_CONFIGS = {
-    'CIFAR': 'SimpleCNN', 'CIFAR10': 'SimpleCNN',
-    'FMNIST': 'SimpleCNN',  # Or SimpleMLP
+    'CIFAR': 'CNN', 'CIFAR10': 'CNN',
+    'FMNIST': 'LENET',  # Or SimpleMLP
     'MNIST': 'SimpleMLP',
     'AG_NEWS': 'SimpleLSTM',
     'TREC': 'SimpleLSTM',
@@ -171,8 +171,9 @@ def generate_baseline_configs(output_dir):
     print("\n--- Generating Baseline Configs ---")
     datasets = ['CIFAR', 'FMNIST']
     split_methods = ['discovery']  # Add 'discovery' if desired
+    aggregations = ['fedavg', 'martfl']  # Compare how Sybil affects different aggregators
 
-    for ds in datasets:
+    for (ds, agg) in itertools.product(datasets, aggregations):
         for split in split_methods:
             config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
             exp_id = f"baseline_{ds.lower()}_{split.lower()}"
@@ -184,6 +185,7 @@ def generate_baseline_configs(output_dir):
             config['training']['local_training_params']['learning_rate'] = DEFAULT_LRS.get(ds, 0.001)
             config['data_split']['data_split_mode'] = split
             config['data_split']['normalize_data'] = (DATASET_CHANNELS[ds] is not None)  # Normalize vision only
+            config['aggregation_method'] = agg
 
             # Disable attack and sybil
             config['attack']['enabled'] = False
@@ -286,8 +288,9 @@ def generate_discovery_configs(output_dir):
     datasets = ['CIFAR']  # Discovery might be more interesting with complex data
     qualities = [0.3, 0.7, 0.95]  # Low, Medium, High quality simulation
     buyer_modes = ['biased', 'unbiased']  # Add 'biased' if construct_buyer_set supports it well
+    aggregations = ['fedavg', 'martfl']  # Compare how Sybil affects different aggregators
 
-    for ds, quality, buyer_mode in itertools.product(datasets, qualities, buyer_modes):
+    for ds, quality, buyer_mode, agg in itertools.product(datasets, qualities, buyer_modes, aggregations):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
         exp_id = f"discovery_{ds.lower()}_q{quality}_{buyer_mode}"
 
@@ -296,7 +299,7 @@ def generate_discovery_configs(output_dir):
         config['model_structure'] = MODEL_CONFIGS.get(ds, 'DefaultModel')
         config['training']['local_training_params']['learning_rate'] = DEFAULT_LRS.get(ds, 0.001)
         config['data_split']['normalize_data'] = (DATASET_CHANNELS[ds] is not None)
-
+        config['aggregation_method'] = agg
         # Set split method to discovery
         config['data_split']['data_split_mode'] = 'discovery'
         config['data_split']['dm_params']['discovery_quality'] = quality
