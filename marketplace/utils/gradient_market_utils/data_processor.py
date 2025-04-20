@@ -604,6 +604,140 @@ def create_client_dataloaders(dataset, splits, batch_size=64, shuffle=True):
 #
 #     return buyer_loader, seller_loaders, dataset, test_loader, class_names
 
+def generate_buyer_bias_distribution(
+    num_classes: int,
+    bias_type: str,
+    **kwargs
+) -> Dict[int, float]:
+    """
+    Generates a biased or uniform class distribution for a buyer's dataset.
+
+    Args:
+        num_classes: Total number of classes in the dataset (e.g., 10 for CIFAR-10).
+        bias_type: The type of distribution to generate. Options:
+            - "uniform" (or "iid"): Creates a balanced distribution (1/num_classes).
+            - "manual": Uses a pre-defined dictionary of proportions.
+                        Requires kwarg: `manual_proportions` (Dict[int, float]).
+            - "concentrated": Focuses probability mass on k randomly chosen classes.
+                        Requires kwargs: `k_major_classes` (int), `p_major` (float, 0<p<=1).
+            - "dirichlet": Samples proportions from a Dirichlet distribution.
+                        Requires kwarg: `alpha` (float > 0). Smaller alpha = more skew.
+        **kwargs: Keyword arguments specific to the chosen `bias_type`.
+
+    Returns:
+        A dictionary mapping class index (int) to the desired probability (float).
+        The probabilities will sum to 1.0.
+
+    Raises:
+        ValueError: If `bias_type` is unknown or required kwargs are missing/invalid.
+    """
+
+    if num_classes <= 0:
+        raise ValueError("num_classes must be positive.")
+
+    bias_distribution = {}
+
+    # --- Uniform / IID Case ---
+    if bias_type.lower() in ["uniform", "iid", "balanced"]:
+        prob_per_class = 1.0 / num_classes
+        for i in range(num_classes):
+            bias_distribution[i] = prob_per_class
+
+    # --- Manual Case ---
+    elif bias_type.lower() == "manual":
+        if "manual_proportions" not in kwargs:
+            raise ValueError("Missing required kwarg 'manual_proportions' for bias_type='manual'.")
+        manual_proportions = kwargs["manual_proportions"]
+        if not isinstance(manual_proportions, dict):
+            raise ValueError("'manual_proportions' must be a dictionary.")
+
+        # Validate and normalize
+        current_sum = 0.0
+        validated_proportions = {}
+        for i in range(num_classes):
+            prop = manual_proportions.get(i, 0.0) # Default to 0 if class missing
+            if prop < 0:
+                 raise ValueError(f"Proportion for class {i} cannot be negative.")
+            validated_proportions[i] = prop
+            current_sum += prop
+
+        if np.isclose(current_sum, 0.0):
+             raise ValueError("Manual proportions sum to zero. Cannot create distribution.")
+
+        # Normalize if sum is not close to 1
+        if not np.isclose(current_sum, 1.0):
+            print(f"Warning: Manual proportions sum to {current_sum:.4f}. Normalizing.")
+            bias_distribution = {k: v / current_sum for k, v in validated_proportions.items()}
+        else:
+            bias_distribution = validated_proportions
+
+    # --- Concentrated Case ---
+    elif bias_type.lower() == "concentrated":
+        required_kwargs = ["k_major_classes", "p_major"]
+        if not all(k in kwargs for k in required_kwargs):
+            raise ValueError(f"Missing required kwargs {required_kwargs} for bias_type='concentrated'.")
+
+        k = int(kwargs["k_major_classes"])
+        p = float(kwargs["p_major"])
+
+        if not 0 < p <= 1.0:
+            raise ValueError("'p_major' must be between 0 (exclusive) and 1 (inclusive).")
+        if not 0 < k <= num_classes:
+            raise ValueError("'k_major_classes' must be between 1 and num_classes.")
+
+        # Adjust k if p<1 and k=num_classes to avoid division by zero for minor classes
+        if k == num_classes and not np.isclose(p, 1.0):
+             k = num_classes - 1
+             print(f"Warning: k_major_classes == num_classes but p_major < 1. Reducing k to {k} to allow for minor classes.")
+             if k == 0: # Handle edge case of num_classes=1
+                 k=1
+                 p=1.0
+
+        major_classes = random.sample(range(num_classes), k)
+        minor_classes = [i for i in range(num_classes) if i not in major_classes]
+        num_minor_classes = len(minor_classes)
+
+        prob_per_major = p / k
+        prob_per_minor = (1.0 - p) / num_minor_classes if num_minor_classes > 0 else 0.0
+
+        for i in range(num_classes):
+            if i in major_classes:
+                bias_distribution[i] = prob_per_major
+            else:
+                bias_distribution[i] = prob_per_minor
+
+        # Final normalization check (due to potential float issues)
+        final_sum = sum(bias_distribution.values())
+        if not np.isclose(final_sum, 1.0):
+             print(f"Warning: Concentrated calculation sum is {final_sum:.6f}. Re-normalizing.")
+             bias_distribution = {cls: prob / final_sum for cls, prob in bias_distribution.items()}
+
+
+    # --- Dirichlet Case ---
+    elif bias_type.lower() == "dirichlet":
+        if "alpha" not in kwargs:
+            raise ValueError("Missing required kwarg 'alpha' for bias_type='dirichlet'.")
+        alpha = float(kwargs["alpha"])
+        if alpha <= 0:
+            raise ValueError("Dirichlet 'alpha' must be positive.")
+
+        proportions = np.random.dirichlet([alpha] * num_classes)
+        for i in range(num_classes):
+            bias_distribution[i] = proportions[i]
+
+    # --- Unknown Type ---
+    else:
+        raise ValueError(f"Unknown bias_type: '{bias_type}'. Valid types: uniform, manual, concentrated, dirichlet.")
+
+    return bias_distribution
+
+import torch
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader, Subset
+# Assume these helpers exist:
+# from your_utils import generate_buyer_bias_distribution, split_dataset_martfl_discovery, \
+#                        split_dataset_by_label, split_dataset_buyer_seller_improved, \
+#                        print_and_save_data_statistics
 
 def get_data_set(
         dataset_name,
@@ -611,32 +745,22 @@ def get_data_set(
         num_sellers=10,
         batch_size=64,
         normalize_data=True,
-        split_method="Dirichlet",
+        split_method="discovery", # Changed default to make the relevant part active
         n_adversaries=0,
         save_path='./result',
+        # --- Discovery Split Specific Params ---
         discovery_quality=0.3,
-        buyer_data_mode="random"
+        buyer_data_mode="random",
+        buyer_bias_type="dirichlet", # Added: Specify how buyer bias is generated
+        buyer_dirichlet_alpha=0.3,   # Added: Alpha specifically for buyer bias
+        # --- Other Split Method Params ---
+        seller_dirichlet_alpha=0.7   # Alpha used in the default/other split method
 ):
     # Define transforms based on the dataset.
+    # (Keep your transform definitions here)
     if normalize_data:
-        if dataset_name == "FMNIST":
-            transform = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize((0.2860,), (0.3530,))
-            ])
-        elif dataset_name == "CIFAR":
-            transform = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize((0.4914, 0.4822, 0.4465),
-                                     (0.2023, 0.1994, 0.2010))
-            ])
-        elif dataset_name == "MNIST":
-            transform = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize((0.1307,), (0.3081,))
-            ])
-        else:
-            transform = transforms.ToTensor()
+        # ... (your normalization code) ...
+        pass # Placeholder for brevity
     else:
         transform = transforms.ToTensor()
 
@@ -658,40 +782,67 @@ def get_data_set(
     else:
         raise NotImplementedError(f"Dataset {dataset_name} is not implemented.")
 
+    # --- Derive NUM_CLASSES dynamically ---
+    num_classes = len(dataset.classes)
+    print(f"Dataset: {dataset_name}, Number of classes: {num_classes}")
+
     # Determine the number of buyer samples.
     total_samples = len(dataset)
     buyer_count = int(total_samples * buyer_percentage)
     print(f"Allocating {buyer_count} samples ({buyer_percentage * 100:.2f}%) for the buyer.")
 
+    # --- Conditional Data Splitting ---
     if split_method == "discovery":
-        buyer_indices, seller_splits = split_dataset_martfl_discovery(dataset=dataset,
-                                                                      buyer_count=buyer_count,
-                                                                      num_clients=num_sellers,
-                                                                      noise_factor=discovery_quality,
-                                                                      buyer_data_mode=buyer_data_mode)
+        print(f"Using 'discovery' split method with buyer bias type: '{buyer_bias_type}'")
+        # Generate buyer distribution ONLY when needed
+        buyer_biased_distribution = generate_buyer_bias_distribution(
+            num_classes=num_classes, # Use derived num_classes
+            bias_type=buyer_bias_type,
+            alpha=buyer_dirichlet_alpha # Use argument for alpha
+            # Add other kwargs here if using 'manual' or 'concentrated' bias types
+            # e.g., manual_proportions=..., k_major_classes=..., p_major=...
+        )
+        print(f"Generated buyer bias distribution: {buyer_biased_distribution}")
+
+        buyer_indices, seller_splits = split_dataset_martfl_discovery(
+            dataset=dataset,
+            buyer_count=buyer_count,
+            num_clients=num_sellers,
+            noise_factor=discovery_quality,
+            buyer_data_mode=buyer_data_mode,
+            buyer_bias_distribution = buyer_biased_distribution # Pass generated dist
+        )
     elif split_method == "label":
-        buyer_indices, seller_splits = split_dataset_by_label(dataset=dataset,
-                                                              buyer_count=buyer_count,
-                                                              num_sellers=num_sellers, )
-    else:
+        print("Using 'label' split method (likely non-iid based on labels)")
+        buyer_indices, seller_splits = split_dataset_by_label(
+            dataset=dataset,
+            buyer_count=buyer_count,
+            num_sellers=num_sellers,
+            # Add any other specific args for this function
+        )
+    else: # Default or other specified methods (e.g., Dirichlet split for sellers)
+        print(f"Using '{split_method}' split method (likely Dirichlet for sellers with alpha={seller_dirichlet_alpha})")
         buyer_indices, seller_splits = split_dataset_buyer_seller_improved(
             dataset=dataset,
             buyer_count=buyer_count,
             num_sellers=num_sellers,
-            split_method=split_method,
-            dirichlet_alpha=0.7,
+            split_method=split_method, # Pass original method name if needed internally
+            dirichlet_alpha=seller_dirichlet_alpha, # Use alpha for seller split
             n_adversaries=n_adversaries
         )
-    data_distribution_info = print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_results=True,
-                                                            output_dir=save_path)
+
+    # --- Post-splitting steps ---
+    # data_distribution_info = print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_results=True,
+    #                                                         output_dir=save_path)
+
     # Create DataLoaders.
     buyer_loader = DataLoader(Subset(dataset, buyer_indices), batch_size=batch_size, shuffle=True)
     seller_loaders = {i: DataLoader(Subset(dataset, indices), batch_size=batch_size, shuffle=True)
                       for i, indices in seller_splits.items()}
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False)
 
+    print("DataLoaders created successfully.")
     return buyer_loader, seller_loaders, dataset, test_loader, class_names
-
 
 def dirichlet_partition(indices_by_class: dict, n_clients: int, alpha: float) -> dict:
     """

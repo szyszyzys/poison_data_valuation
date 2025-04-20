@@ -167,7 +167,7 @@ def generate_baseline_configs(output_dir):
     print("\n--- Generating Baseline Configs ---")
     datasets = ['CIFAR', 'FMNIST']
     split_methods = ['discovery']  # Add 'discovery' if desired
-    aggregations = ['fedavg', 'martfl']  # Compare how Sybil affects different aggregators
+    aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
 
     for (ds, agg) in itertools.product(datasets, aggregations):
         for split in split_methods:
@@ -200,7 +200,7 @@ def generate_attack_configs(output_dir):
     print("\n--- Generating Attack Configs ---")
     datasets = ['CIFAR']  # Focus on one dataset for this example
     adv_rates = [0.1, 0.3]
-    aggregations = ['fedavg', 'martfl']  # Add others like 'median', 'trimmed_mean', 'skymask', 'fltrust'
+    aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
     target_labels = [0]  # Could vary this too
     trigger_types = ['blended_patch']  # Could vary
 
@@ -284,7 +284,7 @@ def generate_discovery_configs(output_dir):
     datasets = ['CIFAR']  # Discovery might be more interesting with complex data
     qualities = [0.3, 0.7, 0.95]  # Low, Medium, High quality simulation
     buyer_modes = ['biased', 'unbiased']  # Add 'biased' if construct_buyer_set supports it well
-    aggregations = ['fedavg', 'martfl']  # Compare how Sybil affects different aggregators
+    aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
 
     for ds, quality, buyer_mode, agg in itertools.product(datasets, qualities, buyer_modes, aggregations):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
