@@ -334,8 +334,8 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
 
         if gr % 10 == 0:
             torch.save(marketplace.round_logs, f"{save_path}/market_log_round_{gr}.ckpt")
-        if round_record["final_perf_global"] is not None:
-            current_val_loss = round_record["final_perf_global"][es_monitor]
+        if round_record["perf_global"] is not None:
+            current_val_loss = round_record["perf_global"][es_monitor]
             if early_stopper.update(current_val_loss):
                 print(f"Early stopping triggered at round {gr}.")
                 break
