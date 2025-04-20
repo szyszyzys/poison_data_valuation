@@ -2,7 +2,7 @@
 import copy
 import itertools
 import os
-
+import torch
 import numpy as np  # Used for linspace if needed
 import yaml
 
@@ -25,8 +25,7 @@ BASE_CONFIG_TEMPLATE = {
         'dirichlet_alpha': 0.5,  # Used if data_split_mode="NonIID"
         'dm_params': {  # Used if data_split_mode="discovery"
             'discovery_quality': 0.7,  # Example default
-            'buyer_data_mode': 'random',  # Example default ('random' or 'biased')
-            # 'buyer_bias_distribution': {0: 0.8, 1: 0.1, ...} # Add if buyer_data_mode='biased'
+            'buyer_data_mode': 'unbiased',  # Example default ('random' or 'biased')
         },
         'normalize_data': True,
         'data_path': './data',
@@ -259,7 +258,7 @@ def generate_discovery_configs(output_dir):
     print("\n--- Generating Discovery Split Configs ---")
     datasets = ['CIFAR']  # Discovery might be more interesting with complex data
     qualities = [0.3, 0.7, 0.95]  # Low, Medium, High quality simulation
-    buyer_modes = ['unbiased', 'unbiased']  # Add 'biased' if construct_buyer_set supports it well
+    buyer_modes = ['biased', 'unbiased']  # Add 'biased' if construct_buyer_set supports it well
 
     for ds, quality, buyer_mode in itertools.product(datasets, qualities, buyer_modes):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
