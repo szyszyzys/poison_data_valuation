@@ -25,7 +25,7 @@ def get_free_gpu():
         )
         free_mem = [int(x) for x in smi_output.decode('utf-8').strip().split('\n')]
         best_gpu = int(free_mem.index(max(free_mem)))
-        return torch.device(f'cuda:{best_gpu}')
+        return f'cuda:{best_gpu}'
     except Exception as e:
         print(f"GPU detection failed: {e}")
         return torch.device('cpu')  # fallback
@@ -242,7 +242,6 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                     sybil_params=None, local_attack_params=None, local_training_params=None, change_base=True,
                     data_split_mode="NonIID", dm_params=None):
     # load the dataset
-    device = get_free_gpu()
 
     n_adversaries = int(n_sellers * adv_rate)
     gradient_manipulation_mode = args.gradient_manipulation_mode
@@ -735,7 +734,8 @@ def main():
         # Update seed within the simulated args object if backdoor_attack uses args.seed
         if hasattr(run_specific_args['args'], 'seed'):
             run_specific_args['args'].seed = current_seed
-
+        device = get_free_gpu()
+        run_specific_args[device] = device
         # Clear path if necessary for this specific run
         clear_work_path(current_run_save_path)
 
