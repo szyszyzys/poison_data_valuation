@@ -589,8 +589,7 @@ class GradientSeller(BaseSeller):
         }
 
         # Clean up GPU memory (keep this if useful)
-        if self.device.type == 'cuda':
-            torch.cuda.empty_cache()
+        torch.cuda.empty_cache()
 
         # Return all original values PLUS the new stats dict
         return grad_update, grad_update_flt, local_model, local_eval_res, training_stats
