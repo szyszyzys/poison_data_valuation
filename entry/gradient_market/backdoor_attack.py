@@ -734,8 +734,8 @@ def main():
         # Update seed within the simulated args object if backdoor_attack uses args.seed
         if hasattr(run_specific_args['args'], 'seed'):
             run_specific_args['args'].seed = current_seed
-        device = get_free_gpu()
-        run_specific_args["device"] = device
+        # device = get_free_gpu()
+        # run_specific_args["device"] = device
         # Clear path if necessary for this specific run
         clear_work_path(current_run_save_path)
 

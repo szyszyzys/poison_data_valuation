@@ -27,13 +27,10 @@ Usage Example:
     for cid, loader in client_loaders.items():
         print(f"Client {cid} has {len(loader.dataset)} samples.")
 """
-import random
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple, Any
 
 import numpy as np
-from torch.utils.data import DataLoader, Subset
-from torchvision import datasets, transforms
 
 
 def load_fmnist_dataset(train=True, download=True):
@@ -733,9 +730,7 @@ def generate_buyer_bias_distribution(
     return bias_distribution
 
 
-import torch
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, Subset
 
 
 # Assume these helpers exist:
@@ -1034,9 +1029,6 @@ def split_dataset_buyer_seller_improved(dataset,
     return buyer_indices, seller_splits
 
 
-import numpy as np
-
-
 def print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_results=True, output_dir='./results'):
     """
     Print and visualize the class distribution statistics for the buyer and each seller.
@@ -1052,7 +1044,6 @@ def print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_r
     """
     import os, json
     import numpy as np
-    import matplotlib.pyplot as plt
 
     # Get the targets from the dataset.
     if hasattr(dataset, 'targets'):
@@ -1334,16 +1325,14 @@ def print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_r
 
 
 # refined_data_split.py
-import os
 import logging
 import random
 from typing import Dict, List, Tuple, Any, Optional, Union
 
 import numpy as np
-import torch
 from torch.utils.data import Dataset, Subset, DataLoader
 # Assuming vision datasets, add text imports if needed later
-from torchvision import datasets as vision_datasets, transforms
+from torchvision import transforms
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
