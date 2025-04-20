@@ -1,19 +1,20 @@
+from collections import OrderedDict
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from collections import OrderedDict
 
-import mytorch as my
+import entry.gradient_market.skymask.mytorch as my
 
 
 def create_masknet(param_list, net_type, ctx):
     nworker = len(param_list)
     if net_type == "cnn":
-        masknet = models.CNNMaskNet(param_list, nworker, ctx)
+        masknet = CNNMaskNet(param_list, nworker, ctx)
     elif net_type == "resnet20":
-        masknet = models.ResMaskNet(param_list, nworker, ctx)
+        masknet = ResMaskNet(param_list, nworker, ctx)
     elif net_type == "LR":
-        masknet = models.LRMaskNet(param_list, nworker, ctx)
+        masknet = LRMaskNet(param_list, nworker, ctx)
     else:
         masknet = None
 
