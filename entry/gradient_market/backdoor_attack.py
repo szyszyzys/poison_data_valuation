@@ -238,7 +238,7 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
     loss_fn = nn.CrossEntropyLoss()
     backdoor_generator = BackdoorImageGenerator(trigger_type="blended_patch", target_label=backdoor_target_label,
                                                 channels=channels, location=args.bkd_loc)
-    es_monitor = 'acc'
+    es_monitor = 'accuracy'
     early_stopper = FederatedEarlyStopper(patience=20, min_delta=0.01, monitor='acc')
 
     # set up the data set for the participants
