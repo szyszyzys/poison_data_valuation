@@ -308,7 +308,7 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
             malicious_sellers.append(current_seller)
             sybil_coordinator.register_seller(current_seller)
         else:
-            cur_id = int(cid)
+            cur_id = f"bn_{cid}"
             current_seller = GradientSeller(seller_id=cur_id, local_data=loader.dataset,
                                             dataset_name=dataset_name, save_path=save_path, device=device,
                                             local_training_params=local_training_params)
