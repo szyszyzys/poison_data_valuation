@@ -1244,10 +1244,3 @@ def unflatten_np(flat_array, shapes):
     return arrays
 
 
-def update_local_model_from_global(client: GradientSeller, dataset_name, aggregated_gradient):
-    s_local_model_dict = client.load_local_model()
-    s_local_model = get_model(dataset_name=dataset_name)
-    # Load base parameters into the model
-    s_local_model.load_state_dict(s_local_model_dict)
-    cur_local_model = apply_gradient_update(s_local_model, aggregated_gradient)
-    client.save_local_model(cur_local_model)

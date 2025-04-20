@@ -321,8 +321,6 @@ class DataMarketplaceFederated(DataMarketplace):
                      self.aggregator.device,
                      backdoor_generator,
                      target_label=backdoor_target_label, plot=False,
-                     # Save path could be made round-specific if needed
-                     save_path=f"{self.save_path}/attack_performance_round_{round_number}.png"
                  )
                  global_asr = poison_metrics.get("attack_success_rate")
                  perf_global["attack_success_rate"] = global_asr # Add ASR to perf dict
@@ -333,8 +331,6 @@ class DataMarketplaceFederated(DataMarketplace):
             perf_local = {
                 "accuracy": eval_local_res.get("acc"),
                 "loss": eval_local_res.get("loss"),
-                # Add other metrics if available
-                # "attack_success_rate": local_asr, # Log local ASR if evaluated
             }
 
         # --- 6. Calculate Overhead Metrics (Averages/Max) ---
