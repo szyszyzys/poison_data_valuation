@@ -413,8 +413,8 @@ class GradientSeller(BaseSeller):
             list_to_tensor_dataset(dataset),
             batch_size=64,
             device=self.device,
-            local_epochs=self.local_training_params["epochs"],
-            lr=self.local_training_params["lr"],
+            local_epochs=self.local_training_params["local_epochs"],
+            lr=self.local_training_params["learning_rate"],
             momentum=self.local_training_params["momentum"],
             weight_decay=self.local_training_params["weight_decay"]
         )
