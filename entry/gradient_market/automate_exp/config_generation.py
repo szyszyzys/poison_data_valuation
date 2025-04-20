@@ -57,8 +57,7 @@ BASE_CONFIG_TEMPLATE = {
         'num_sellers': 10,
         'adv_rate': 0.0,  # Default: no adversaries
         'buyer_percentage': 0.02,
-        'data_split_mode': 'NonIID',  # Options: NonIID, IID, discovery
-        'dirichlet_alpha': 0.5,  # Used if data_split_mode="NonIID"
+        'data_split_mode': 'discovery',
         'dm_params': {  # Used if data_split_mode="discovery"
             'discovery_quality': 0.7,  # Example default
             'buyer_data_mode': 'unbiased',  # Example default ('random' or 'biased')

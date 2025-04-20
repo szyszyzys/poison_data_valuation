@@ -513,10 +513,10 @@ def get_save_path(args):
     sybil_str = str(args.sybil_mode) if args.is_sybil else False
     if args.aggregation_method == "martfl":
         base_dir = Path(
-            "./results") / exp_name / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"buyer_data_{args.buyer_data_mode}" / f"{args.aggregation_method}_{args.change_base}" / args.dataset_name
+            "./results") / exp_name / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"data_split_mode_{args.data_split_mode}" / f"buyer_data_{args.buyer_data_mode}" / f"{args.aggregation_method}_{args.change_base}" / args.dataset_name
     else:
         base_dir = Path(
-            "./results") / exp_name / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"is_iid_{args.data_split_mode}" / f"buyer_data_{args.buyer_data_mode}" / args.aggregation_method / args.dataset_name
+            "./results") / exp_name / f"backdoor_trigger_{args.trigger_attack_mode}" / f"is_sybil_{sybil_str}" / f"data_split_mode_{args.data_split_mode}" / f"buyer_data_{args.buyer_data_mode}" / args.aggregation_method / args.dataset_name
     if args.gradient_manipulation_mode == "None":
         subfolder = "no_attack"
         param_str = f"n_seller_{args.n_sellers}_local_epoch_{args.local_epoch}_local_lr_{args.local_lr}"
