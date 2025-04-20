@@ -735,7 +735,7 @@ def main():
         if hasattr(run_specific_args['args'], 'seed'):
             run_specific_args['args'].seed = current_seed
         device = get_free_gpu()
-        run_specific_args[device] = device
+        run_specific_args["device"] = device
         # Clear path if necessary for this specific run
         clear_work_path(current_run_save_path)
 
