@@ -404,7 +404,7 @@ class GradientSeller(BaseSeller):
                  save_path="",
                  device="cpu",
                  local_epochs=2, local_training_params=None):
-        """
+        """.
         :param seller_id: Unique ID for the seller.
         :param local_data: The local dataset this seller holds for gradient computation.
         :param price_strategy: If needed, you can still keep a pricing concept or set to 'none'.

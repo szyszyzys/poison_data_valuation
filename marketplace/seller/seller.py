@@ -56,7 +56,7 @@ class BaseSeller(ABC):
         self.cur_price = self.prices
         self.save_path = save_path
 
-        Path(self.exp_save_path).mkdir(parents=True, exist_ok=True)
+        # Path(self.exp_save_path).mkdir(parents=True, exist_ok=True)
 
     @property
     def get_data(self) -> Dict[str, Any]:
