@@ -898,64 +898,64 @@ def print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_r
             json.dump(results, f, indent=2)
         print(f"Statistics saved to {stats_file}")
 
-    # Visualize Buyer Distribution.
-    plt.figure(figsize=(8, 4))
-    plt.bar([str(c) for c in unique_classes], [buyer_counts[str(c)] for c in unique_classes])
-    plt.title("Buyer Class Distribution")
-    plt.xlabel("Class")
-    plt.ylabel("Count")
-    if save_results:
-        buyer_fig_file = os.path.join(output_dir, 'buyer_distribution.png')
-        plt.savefig(buyer_fig_file)
-        print(f"Buyer distribution figure saved to {buyer_fig_file}")
-    plt.close()
-
-    # Visualize Seller Distributions.
-    num_sellers = len(seller_splits)
-    n_cols = 3
-    n_rows = int(np.ceil(num_sellers / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
-    if num_sellers == 1:
-        axes = [axes]  # make it iterable
-    else:
-        axes = axes.flatten()
-
-    for i, (seller_id, indices) in enumerate(seller_splits.items()):
-        seller_targets = targets[indices]
-        counts = {str(c): int(np.sum(seller_targets == c)) for c in unique_classes}
-        axes[i].bar([str(c) for c in unique_classes], [counts[str(c)] for c in unique_classes])
-        axes[i].set_title(f"Seller {seller_id}")
-        axes[i].set_xlabel("Class")
-        axes[i].set_ylabel("Count")
-
-    # Hide any unused subplots.
-    for j in range(i + 1, len(axes)):
-        axes[j].axis("off")
-
-    plt.tight_layout()
-    if save_results:
-        sellers_fig_file = os.path.join(output_dir, 'seller_distribution.png')
-        plt.savefig(sellers_fig_file)
-        print(f"Seller distribution figure saved to {sellers_fig_file}")
-    plt.close()
-
-    # ----- Compute and print distribution alignment metrics -----
-    # Using cosine similarity between the buyer's and each seller's class count vectors.
-    alignment_metrics = {}
-    buyer_vector = np.array([buyer_counts[str(c)] for c in unique_classes])
-    for seller_id, stats in seller_stats.items():
-        seller_counts = stats["class_distribution"]
-        seller_vector = np.array([seller_counts[str(c)] for c in unique_classes])
-        similarity = np.dot(buyer_vector, seller_vector) / (
-                np.linalg.norm(buyer_vector) * np.linalg.norm(seller_vector))
-        alignment_metrics[seller_id] = similarity
-        print(f"Alignment metric for Seller {seller_id}: {similarity:.4f}")
-
-    print("\n" + "=" * 40 + "\n")
-    print("Sellers ranked by alignment (high to low):")
-    sorted_sellers = sorted(alignment_metrics.items(), key=lambda x: x[1], reverse=True)
-    for rank, (seller_id, metric) in enumerate(sorted_sellers, start=1):
-        print(f"{rank}. Seller {seller_id} with metric {metric:.4f}")
+    # # Visualize Buyer Distribution.
+    # plt.figure(figsize=(8, 4))
+    # plt.bar([str(c) for c in unique_classes], [buyer_counts[str(c)] for c in unique_classes])
+    # plt.title("Buyer Class Distribution")
+    # plt.xlabel("Class")
+    # plt.ylabel("Count")
+    # if save_results:
+    #     buyer_fig_file = os.path.join(output_dir, 'buyer_distribution.png')
+    #     plt.savefig(buyer_fig_file)
+    #     print(f"Buyer distribution figure saved to {buyer_fig_file}")
+    # plt.close()
+    #
+    # # Visualize Seller Distributions.
+    # num_sellers = len(seller_splits)
+    # n_cols = 3
+    # n_rows = int(np.ceil(num_sellers / n_cols))
+    # fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
+    # if num_sellers == 1:
+    #     axes = [axes]  # make it iterable
+    # else:
+    #     axes = axes.flatten()
+    #
+    # for i, (seller_id, indices) in enumerate(seller_splits.items()):
+    #     seller_targets = targets[indices]
+    #     counts = {str(c): int(np.sum(seller_targets == c)) for c in unique_classes}
+    #     axes[i].bar([str(c) for c in unique_classes], [counts[str(c)] for c in unique_classes])
+    #     axes[i].set_title(f"Seller {seller_id}")
+    #     axes[i].set_xlabel("Class")
+    #     axes[i].set_ylabel("Count")
+    #
+    # # Hide any unused subplots.
+    # for j in range(i + 1, len(axes)):
+    #     axes[j].axis("off")
+    #
+    # plt.tight_layout()
+    # if save_results:
+    #     sellers_fig_file = os.path.join(output_dir, 'seller_distribution.png')
+    #     plt.savefig(sellers_fig_file)
+    #     print(f"Seller distribution figure saved to {sellers_fig_file}")
+    # plt.close()
+    #
+    # # ----- Compute and print distribution alignment metrics -----
+    # # Using cosine similarity between the buyer's and each seller's class count vectors.
+    # alignment_metrics = {}
+    # buyer_vector = np.array([buyer_counts[str(c)] for c in unique_classes])
+    # for seller_id, stats in seller_stats.items():
+    #     seller_counts = stats["class_distribution"]
+    #     seller_vector = np.array([seller_counts[str(c)] for c in unique_classes])
+    #     similarity = np.dot(buyer_vector, seller_vector) / (
+    #             np.linalg.norm(buyer_vector) * np.linalg.norm(seller_vector))
+    #     alignment_metrics[seller_id] = similarity
+    #     print(f"Alignment metric for Seller {seller_id}: {similarity:.4f}")
+    #
+    # print("\n" + "=" * 40 + "\n")
+    # print("Sellers ranked by alignment (high to low):")
+    # sorted_sellers = sorted(alignment_metrics.items(), key=lambda x: x[1], reverse=True)
+    # for rank, (seller_id, metric) in enumerate(sorted_sellers, start=1):
+    #     print(f"{rank}. Seller {seller_id} with metric {metric:.4f}")
 
     return results
 

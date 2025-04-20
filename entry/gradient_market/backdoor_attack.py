@@ -643,6 +643,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run Federated Learning Experiment from Config File")
     parser.add_argument("config", help="Path to the YAML configuration file")
     cli_args = parser.parse_args()
+    print(f"start run with config: {cli_args.config}")
 
     # 2. Load the configuration file
     config = load_config(cli_args.config)
@@ -746,5 +747,4 @@ if __name__ == "__main__":
     except ImportError:
         print("Warning: PyTorch or NumPy not found. Device detection/saving might be affected.")
         # Handle fallback if necessary
-
     main()
