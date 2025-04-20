@@ -1,6 +1,7 @@
 import argparse
 import random
 import shutil
+import subprocess
 
 import torch.backends.cudnn
 import yaml
@@ -15,6 +16,19 @@ from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
 from model.utils import get_model
+
+
+def get_free_gpu():
+    try:
+        smi_output = subprocess.check_output(
+            ['nvidia-smi', '--query-gpu=memory.free', '--format=csv,nounits,noheader']
+        )
+        free_mem = [int(x) for x in smi_output.decode('utf-8').strip().split('\n')]
+        best_gpu = int(free_mem.index(max(free_mem)))
+        return torch.device(f'cuda:{best_gpu}')
+    except Exception as e:
+        print(f"GPU detection failed: {e}")
+        return torch.device('cpu')  # fallback
 
 
 def dataloader_to_tensors(dataloader):
@@ -228,6 +242,7 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                     sybil_params=None, local_attack_params=None, local_training_params=None, change_base=True,
                     data_split_mode="NonIID", dm_params=None):
     # load the dataset
+    device = get_free_gpu()
 
     n_adversaries = int(n_sellers * adv_rate)
     gradient_manipulation_mode = args.gradient_manipulation_mode
