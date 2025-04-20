@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import random
 import shutil
@@ -12,6 +13,7 @@ from torch.utils.data import Subset, TensorDataset, DataLoader
 
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
+from entry.gradient_market.automate_exp.config_parser import parse_config_for_attack_function
 from general_utils.file_utils import save_to_json
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
@@ -252,19 +254,19 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                 print(f"Early stopping triggered at round {gr}.")
                 break
         sybil_coordinator.on_round_end()
+    torch.save(marketplace.round_logs, f"{save_path}/market_log.ckpt")
 
-    poison_metrics = evaluate_attack_performance_backdoor_poison(marketplace.aggregator.global_model,
-                                                                 test_loader=test_loader,
-                                                                 device=marketplace.aggregator.device,
-                                                                 backdoor_generator=backdoor_generator,
-                                                                 target_label=backdoor_target_label, plot=True,
-                                                                 save_path=f"{save_path}/final_backdoor_attack_performance.png")
+    # poison_metrics = evaluate_attack_performance_backdoor_poison(marketplace.aggregator.global_model,
+    #                                                              test_loader=test_loader,
+    #                                                              device=marketplace.aggregator.device,
+    #                                                              backdoor_generator=backdoor_generator,
+    #                                                              target_label=backdoor_target_label, plot=True,
+    #                                                              save_path=f"{save_path}/final_backdoor_attack_performance.png")
 
     # post fl process, test the final model.
-    torch.save(marketplace.aggregator.global_model.state_dict(), f"{save_path}/final_global_model.pt")
-    torch.save(marketplace.round_logs, f"{save_path}/market_log.ckpt")
-    converted_logs = convert_np(marketplace.round_logs)
-    save_to_json(converted_logs, f"{save_path}/market_log.json")
+    # torch.save(marketplace.aggregator.global_model.state_dict(), f"{save_path}/final_global_model.pt")
+    # converted_logs = convert_np(marketplace.round_logs)
+    # save_to_json(converted_logs, f"{save_path}/market_log.json")
     # record the result for each seller
     all_sellers = marketplace.get_all_sellers
     # for seller_id, seller in all_sellers.items():
@@ -445,93 +447,211 @@ def get_save_path(args):
     return str(save_path)
 
 
+# def main():
+#     args = parse_args()
+#     t_model = get_model(args.dataset_name)
+#     print(
+#         f"Start backdoor attack, dataset: {args.dataset_name}, n_sellers: {args.n_sellers}, attack method: {args.gradient_manipulation_mode}")
+#     set_seed(args.seed)
+#     device = get_device(args)
+#     save_path = get_save_path(args)
+#
+#     if os.path.exists(save_path):
+#         print(f"File {save_path} exists. Skipping experiment setup.")
+#         return
+#     else:
+#         print(f"File {save_path} not found. Proceeding with experiment setup.")
+#
+#     Path(save_path).mkdir(parents=True, exist_ok=True)
+#     print("Saving results to:", save_path)
+#     clear_work_path(save_path)
+#
+#     sybil_params = {
+#         "is_sybil": args.is_sybil,
+#         "sybil_mode": args.sybil_mode,
+#         "alpha": 0.5,
+#         "amplify_factor": 2.0,
+#         "cost_scale": 1.5,
+#         "adv_rate": args.adv_rate,
+#         "benign_rounds": args.benign_rounds,
+#         "trigger_mode": args.trigger_attack_mode
+#     }
+#
+#     local_training_params = {
+#         "lr": args.local_lr,
+#         "epochs": args.local_epoch,
+#         "optimizer": "SGD",
+#         "weight_decay": 0.0005,
+#         "momentum": 0.9
+#     }
+#
+#     local_attack_params = {
+#         "target_label": args.backdoor_target_label,
+#         "trigger_type": args.trigger_type,
+#         "poison_strength": args.poison_strength,
+#         "trigger_rate": args.trigger_rate,
+#         "gradient_manipulation_mode": args.gradient_manipulation_mode,
+#     }
+#     dm_params = {
+#         "discovery_quality": args.discovery_quality,
+#         "buyer_data_mode": args.buyer_data_mode
+#     }
+#     all_params = {
+#         "sybil_params": sybil_params,
+#         "local_training_params": local_training_params,
+#         "local_attack_params": local_attack_params,
+#         "dm_params":dm_params
+#     }
+#
+#     save_to_json(all_params, f"{save_path}/attack_params.json")
+#     cur_seed = args.seed
+#
+#     for i in range(args.n_samples):
+#         set_seed(cur_seed + i)
+#         cur_path = f"{save_path}/run_{i}"
+#         Path(cur_path).mkdir(parents=True, exist_ok=True)
+#         backdoor_attack(
+#             dataset_name=args.dataset_name,
+#             n_sellers=args.n_sellers,
+#             adv_rate=args.adv_rate,
+#             model_structure=t_model,
+#             global_rounds=args.global_rounds,
+#             backdoor_target_label=args.backdoor_target_label,
+#             trigger_type=args.trigger_type,
+#             save_path=cur_path,
+#             device=device,
+#             poison_strength=args.poison_strength,
+#             poison_test_sample=args.poison_test_sample,
+#             aggregation_method=args.aggregation_method,
+#             trigger_rate=args.trigger_rate,
+#             args=args,
+#             sybil_params=sybil_params,
+#             local_attack_params=local_attack_params,
+#             local_training_params=local_training_params,
+#             buyer_percentage=args.buyer_percentage,
+#             data_split_mode=args.data_split_mode,
+#             change_base=(args.change_base == "True"),
+#             dm_params=dm_params
+#         )
+def load_config(path):
+    import yaml
+    try:
+        with open(path, 'r') as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        print(f"Error loading config {path}: {e}")
+        return None
+
+# if __name__ == "__main__":
+    # main()
+
+
 def main():
-    args = parse_args()
-    t_model = get_model(args.dataset_name)
-    print(
-        f"Start backdoor attack, dataset: {args.dataset_name}, n_sellers: {args.n_sellers}, attack method: {args.gradient_manipulation_mode}")
-    set_seed(args.seed)
-    device = get_device(args)
-    save_path = get_save_path(args)
+    # 1. Set up argparse to accept only the config file path
+    parser = argparse.ArgumentParser(description="Run Federated Learning Experiment from Config File")
+    parser.add_argument("config", help="Path to the YAML configuration file")
+    cli_args = parser.parse_args()
 
-    if os.path.exists(save_path):
-        print(f"File {save_path} exists. Skipping experiment setup.")
+    # 2. Load the configuration file
+    config = load_config(cli_args.config)
+    if config is None:
+        logging.error(f"Failed to load configuration from {cli_args.config}. Exiting.")
+        return # Exit if config loading fails
+
+    # 3. Extract parameters needed for setup (outside the loop)
+    experiment_id = config.get('experiment_id', os.path.splitext(os.path.basename(cli_args.config))[0])
+    dataset_name = config.get('dataset_name')
+    model_structure_name = config.get('model_structure') # Get model name from config
+    base_save_dir = config.get('output', {}).get('save_path_base', './experiment_results')
+    n_samples = config.get('output', {}).get('n_samples', 1) # Number of runs with different seeds
+    initial_seed = config.get('seed', 42)
+
+    if not dataset_name or not model_structure_name:
+         logging.error("Config missing 'dataset_name' or 'model_structure'. Exiting.")
+         return
+
+    # Construct the base save path for this specific experiment config
+    experiment_base_path = os.path.join(base_save_dir, experiment_id)
+    print(f"Base results directory for this experiment: {experiment_base_path}")
+
+    # Check if *all* runs for this experiment already exist (optional)
+    # This simple check looks for the base folder; more robust checks could look for run_N folders
+    # if os.path.exists(experiment_base_path) and n_samples == 1: # Adjust logic if needed
+    #     print(f"Base path {experiment_base_path} exists. Skipping experiment setup.")
+    #     # return # Decide if you want to skip the entire config if base path exists
+
+    # Ensure base path exists
+    Path(experiment_base_path).mkdir(parents=True, exist_ok=True)
+
+    # 4. Prepare arguments dictionary using the parser function
+    # This encapsulates the mapping logic
+    attack_func_args = parse_config_for_attack_function(config)
+    if attack_func_args is None:
+        logging.error("Failed to parse configuration into function arguments. Exiting.")
         return
-    else:
-        print(f"File {save_path} not found. Proceeding with experiment setup.")
 
-    Path(save_path).mkdir(parents=True, exist_ok=True)
-    print("Saving results to:", save_path)
-    clear_work_path(save_path)
+    # 5. Get Model structure (do this once outside the loop)
+    # Pass model structure name or definition from config
+    t_model = get_model(dataset_name, model_structure_name=attack_func_args['model_structure'])
+    if t_model is None:
+        logging.error(f"Could not get model for dataset {dataset_name}, structure {attack_func_args['model_structure']}. Exiting.")
+        return
+    attack_func_args['model_structure'] = t_model # Pass the actual model object/class
 
-    sybil_params = {
-        "is_sybil": args.is_sybil,
-        "sybil_mode": args.sybil_mode,
-        "alpha": 0.5,
-        "amplify_factor": 2.0,
-        "cost_scale": 1.5,
-        "adv_rate": args.adv_rate,
-        "benign_rounds": args.benign_rounds,
-        "trigger_mode": args.trigger_attack_mode
+    # 6. Save parameters used for this experiment group (optional)
+    all_params_to_save = {
+        "sybil_params": attack_func_args.get('sybil_params'),
+        "local_training_params": attack_func_args.get('local_training_params'),
+        "local_attack_params": attack_func_args.get('local_attack_params'), # Usually None here
+        "dm_params": attack_func_args.get('dm_params'),
+        "full_config": config # Save the original config for traceability
     }
+    save_to_json(all_params_to_save, f"{experiment_base_path}/experiment_params.json")
 
-    local_training_params = {
-        "lr": args.local_lr,
-        "epochs": args.local_epoch,
-        "optimizer": "SGD",
-        "weight_decay": 0.0005,
-        "momentum": 0.9
-    }
 
-    local_attack_params = {
-        "target_label": args.backdoor_target_label,
-        "trigger_type": args.trigger_type,
-        "poison_strength": args.poison_strength,
-        "trigger_rate": args.trigger_rate,
-        "gradient_manipulation_mode": args.gradient_manipulation_mode,
-    }
-    dm_params = {
-        "discovery_quality": args.discovery_quality,
-        "buyer_data_mode": args.buyer_data_mode
-    }
-    all_params = {
-        "sybil_params": sybil_params,
-        "local_training_params": local_training_params,
-        "local_attack_params": local_attack_params,
-        "dm_params":dm_params
-    }
+    # 7. Loop for multiple runs (if n_samples > 1)
+    print(f"Starting {n_samples} run(s) for experiment: {experiment_id}")
+    for i in range(n_samples):
+        current_seed = initial_seed + i
+        set_seed(current_seed) # Set seed for this specific run
 
-    save_to_json(all_params, f"{save_path}/attack_params.json")
-    cur_seed = args.seed
+        # Define save path for this specific run
+        current_run_save_path = os.path.join(experiment_base_path, f"run_{i}")
+        Path(current_run_save_path).mkdir(parents=True, exist_ok=True)
+        logging.info(f"\n--- Starting Run {i} (Seed: {current_seed}) ---")
+        logging.info(f"Saving results to: {current_run_save_path}")
 
-    for i in range(args.n_samples):
-        set_seed(cur_seed + i)
-        cur_path = f"{save_path}/run_{i}"
-        Path(cur_path).mkdir(parents=True, exist_ok=True)
-        backdoor_attack(
-            dataset_name=args.dataset_name,
-            n_sellers=args.n_sellers,
-            adv_rate=args.adv_rate,
-            model_structure=t_model,
-            global_rounds=args.global_rounds,
-            backdoor_target_label=args.backdoor_target_label,
-            trigger_type=args.trigger_type,
-            save_path=cur_path,
-            device=device,
-            poison_strength=args.poison_strength,
-            poison_test_sample=args.poison_test_sample,
-            aggregation_method=args.aggregation_method,
-            trigger_rate=args.trigger_rate,
-            args=args,
-            sybil_params=sybil_params,
-            local_attack_params=local_attack_params,
-            local_training_params=local_training_params,
-            buyer_percentage=args.buyer_percentage,
-            data_split_mode=args.data_split_mode,
-            change_base=(args.change_base == "True"),
-            dm_params=dm_params
-        )
+        # Update arguments that change per run (save_path, potentially seed if needed inside)
+        run_specific_args = attack_func_args.copy()
+        run_specific_args['save_path'] = current_run_save_path
+        # Update seed within the simulated args object if backdoor_attack uses args.seed
+        if hasattr(run_specific_args['args'], 'seed'):
+            run_specific_args['args'].seed = current_seed
 
+        # Clear path if necessary for this specific run
+        clear_work_path(current_run_save_path)
+
+        # Execute the main attack function
+        try:
+            backdoor_attack(**run_specific_args)
+            logging.info(f"--- Finished Run {i} ---")
+        except Exception as e:
+            logging.error(f"!!! Error during Run {i} for experiment {experiment_id} !!!")
+            logging.error(f"Config file: {cli_args.config}")
+            logging.error(f"Save path: {current_run_save_path}")
+            logging.error(f"Exception: {e}", exc_info=True) # Log traceback
+            # Decide if you want to continue to the next run or stop
+            # continue
+
+    print(f"\nFinished all {n_samples} run(s) for experiment: {experiment_id}")
 
 if __name__ == "__main__":
+    # Assuming torch is available for device check
+    try:
+        import torch
+        import numpy as np # Needed for numpy types in JSON saving
+    except ImportError:
+        print("Warning: PyTorch or NumPy not found. Device detection/saving might be affected.")
+        # Handle fallback if necessary
+
     main()

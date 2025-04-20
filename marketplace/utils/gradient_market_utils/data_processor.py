@@ -960,165 +960,529 @@ def print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_r
     return results
 
 
-def construct_buyer_set(dataset, buyer_count, mode="random", bias_distribution=None):
-    """
-    Construct buyer set indices from a global dataset in two modes:
-      - "random": Uniformly sample buyer_count indices from the global dataset.
-      - "biased": Sample buyer_count indices according to a specified bias_distribution.
+# def construct_buyer_set(dataset, buyer_count, mode="random", bias_distribution=None):
+#     """
+#     Construct buyer set indices from a global dataset in two modes:
+#       - "random": Uniformly sample buyer_count indices from the global dataset.
+#       - "biased": Sample buyer_count indices according to a specified bias_distribution.
+#
+#     Parameters:
+#       dataset: A dataset object that either has a 'targets' attribute or returns (data, label) pairs.
+#       buyer_count (int): The number of samples for the buyer set.
+#       mode (str): "random" or "biased". Determines the sampling mode.
+#       bias_distribution (dict or None): If mode is "biased", this dictionary maps class labels (as keys)
+#           to desired relative proportions. For example: {0: 0.1, 1: 0.2, 2: 0.7}. The values need not sum to 1;
+#           they will be normalized. If None in biased mode, a default bias is used.
+#
+#     Returns:
+#       buyer_indices (np.ndarray): An array of indices for the buyer set.
+#     """
+#     total_samples = len(dataset)
+#
+#     # Extract targets from dataset.
+#     if hasattr(dataset, 'targets'):
+#         targets = np.array(dataset.targets)
+#     else:
+#         targets = np.array([dataset[i][1] for i in range(total_samples)])
+#
+#     if mode == "random":
+#         # Unbiased random sampling.
+#         buyer_indices = np.random.choice(np.arange(total_samples), size=buyer_count, replace=False)
+#         return buyer_indices
+#
+#     elif mode == "biased":
+#         # If no bias_distribution is provided, use a default that overrepresents one class.
+#         if bias_distribution is None:
+#             unique_classes = np.unique(targets)
+#             # Example default: favor the highest class while assigning a small proportion to others.
+#             bias_distribution = {int(c): 0.1 for c in unique_classes}
+#             # Overrepresent the last (or any chosen) class.
+#             bias_distribution[int(unique_classes[-1])] = 0.7
+#
+#         # Normalize bias_distribution so proportions sum to 1.
+#         total_prop = sum(bias_distribution.values())
+#         normalized_bias = {int(k): v / total_prop for k, v in bias_distribution.items()}
+#
+#         # Build a mapping: class -> list of indices in the global dataset.
+#         indices_by_class = {}
+#         for c in np.unique(targets):
+#             indices_by_class[int(c)] = np.where(targets == c)[0].tolist()
+#
+#         buyer_indices = []
+#         # For each class, compute the number of samples and sample accordingly.
+#         for cls, proportion in normalized_bias.items():
+#             n_samples = int(round(buyer_count * proportion))
+#             available = indices_by_class.get(cls, [])
+#             if len(available) == 0:
+#                 continue
+#             if len(available) < n_samples:
+#                 # If not enough samples available, sample with replacement.
+#                 sampled = list(np.random.choice(available, size=n_samples, replace=True))
+#             else:
+#                 sampled = random.sample(available, n_samples)
+#             buyer_indices.extend(sampled)
+#
+#         # Adjust for rounding: if we have too many or too few indices, fix that.
+#         buyer_indices = np.array(buyer_indices)
+#         if len(buyer_indices) > buyer_count:
+#             buyer_indices = np.random.choice(buyer_indices, size=buyer_count, replace=False)
+#         elif len(buyer_indices) < buyer_count:
+#             gap = buyer_count - len(buyer_indices)
+#             extra = np.random.choice(np.arange(total_samples), size=gap, replace=False)
+#             buyer_indices = np.concatenate([buyer_indices, extra])
+#         return buyer_indices
+#
+#     else:
+#         raise ValueError("Unknown mode. Please use 'random' or 'biased'.")
+#
+#
+# def split_dataset_martfl_discovery(dataset,
+#                                    buyer_count: int,
+#                                    num_clients: int,
+#                                    client_data_count: int = 0,
+#                                    noise_factor: float = 0.3, buyer_data_mode="random") -> (np.ndarray, dict):
+#     """
+#     Simulate a MartFL scenario where:
+#       1. A buyer dataset is first sampled from the global dataset.
+#       2. The buyer's label distribution is computed.
+#       3. Client (seller) datasets are generated from the remaining data so that
+#          each client’s distribution is similar to the buyer’s (with a bit of noise).
+#
+#     Parameters:
+#       dataset: A dataset object (expects a 'targets' attribute or __getitem__ returns (data, label)).
+#       buyer_count (int): Number of samples reserved for the buyer.
+#       num_clients (int): Number of simulated client datasets.
+#       client_data_count (int): Number of samples for each client dataset.
+#       noise_factor (float): A multiplicative noise factor applied to the expected counts per class.
+#                             For each class, the actual number of samples is sampled from a uniform
+#                             factor in [1-noise_factor, 1+noise_factor] times the buyer proportion.
+#
+#     Returns:
+#       buyer_indices (np.ndarray): Array of indices for the buyer dataset.
+#       seller_splits (dict): Mapping from client id (0 to num_clients-1) to list of indices.
+#     """
+#     total_samples = len(dataset)
+#     all_indices = np.arange(total_samples)
+#     np.random.shuffle(all_indices)
+#
+#     # Buyer: use first buyer_count indices.
+#     buyer_indices = construct_buyer_set(dataset, buyer_count, mode=buyer_data_mode)
+#
+#     # Get targets from the dataset.
+#     if hasattr(dataset, 'targets'):
+#         targets = np.array(dataset.targets)
+#     else:
+#         targets = np.array([dataset[i][1] for i in range(total_samples)])
+#
+#     # Compute buyer distribution.
+#     buyer_targets = targets[buyer_indices]
+#     unique_classes = np.unique(buyer_targets)
+#     buyer_counts = {c: np.sum(buyer_targets == c) for c in unique_classes}
+#     buyer_proportions = {c: buyer_counts[c] / buyer_count for c in unique_classes}
+#
+#     # Seller pool: remaining indices.
+#     seller_pool = np.setdiff1d(all_indices, buyer_indices)
+#     if client_data_count == 0:
+#         client_data_count = len(seller_pool) // num_clients
+#
+#     # Build a dictionary mapping each class to the seller pool indices of that class.
+#     pool_by_class = {}
+#     for c in unique_classes:
+#         cls_indices = seller_pool[targets[seller_pool] == c]
+#         np.random.shuffle(cls_indices)
+#         pool_by_class[c] = list(cls_indices)
+#
+#     # For each client, sample indices from each class based on the buyer's proportions.
+#     seller_splits = {}
+#     for client_id in range(num_clients):
+#         client_indices = []
+#         for c in unique_classes:
+#             # Expected number of samples for this class for a client.
+#             expected = buyer_proportions[c] * client_data_count
+#             # Apply a multiplicative noise factor.
+#             factor = np.random.uniform(1 - noise_factor, 1 + noise_factor)
+#             n_samples = int(round(expected * factor))
+#             # Ensure we do not request more samples than available; if not enough, sample with replacement.
+#             available = pool_by_class[c]
+#             if len(available) >= n_samples:
+#                 sampled = available[:n_samples]
+#                 # Remove these indices from the pool so that they are not reused.
+#                 pool_by_class[c] = available[n_samples:]
+#             else:
+#                 # Not enough available; sample with replacement.
+#                 sampled = list(np.random.choice(available, size=n_samples, replace=True))
+#             client_indices.extend(sampled)
+#         # If the total number of indices is less than client_data_count, fill the gap randomly from seller_pool.
+#         if len(client_indices) < client_data_count:
+#             gap = client_data_count - len(client_indices)
+#             extra = list(np.random.choice(seller_pool, size=gap, replace=False))
+#             client_indices.extend(extra)
+#         # Optionally, shuffle client indices.
+#         np.random.shuffle(client_indices)
+#         seller_splits[client_id] = client_indices
+#
+#     return buyer_indices, seller_splits
 
-    Parameters:
-      dataset: A dataset object that either has a 'targets' attribute or returns (data, label) pairs.
-      buyer_count (int): The number of samples for the buyer set.
-      mode (str): "random" or "biased". Determines the sampling mode.
-      bias_distribution (dict or None): If mode is "biased", this dictionary maps class labels (as keys)
-          to desired relative proportions. For example: {0: 0.1, 1: 0.2, 2: 0.7}. The values need not sum to 1;
-          they will be normalized. If None in biased mode, a default bias is used.
+
+# refined_data_split.py
+import os
+import logging
+import random
+from typing import Dict, List, Tuple, Any, Optional, Union
+
+import numpy as np
+import torch
+from torch.utils.data import Dataset, Subset, DataLoader
+# Assuming vision datasets, add text imports if needed later
+from torchvision import datasets as vision_datasets, transforms
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- Helper Function for Precise Count Calculation ---
+
+def _calculate_target_counts(
+    target_total: int,
+    proportions: Dict[Any, float] # Map class_label -> proportion
+) -> Dict[Any, int]:
+    """
+    Calculates the exact integer number of samples per class to reach target_total,
+    based on target proportions, minimizing deviation from proportions.
+
+    Args:
+        target_total: The desired total number of samples.
+        proportions: Dictionary mapping class label to its desired proportion (should sum close to 1).
 
     Returns:
-      buyer_indices (np.ndarray): An array of indices for the buyer set.
+        Dictionary mapping class label to the calculated integer count.
     """
+    target_counts = {}
+    sorted_classes = sorted(proportions.keys()) # Ensure consistent order
+
+    if target_total == 0:
+        return {c: 0 for c in sorted_classes}
+    if not proportions:
+        return {}
+
+    # Normalize proportions just in case they don't sum perfectly to 1
+    total_prop = sum(proportions.values())
+    if total_prop <= 0:
+         logging.warning("Proportions sum to zero or less, cannot calculate counts.")
+         return {c: 0 for c in sorted_classes}
+    normalized_proportions = {c: p / total_prop for c, p in proportions.items()}
+
+    # Calculate initial float counts
+    float_counts = {c: normalized_proportions.get(c, 0) * target_total for c in sorted_classes}
+
+    # Get integer counts and residuals (fractional parts)
+    int_counts = {c: int(np.floor(fc)) for c, fc in float_counts.items()}
+    residuals = {c: fc - int_counts[c] for c, fc in float_counts.items()}
+
+    # Calculate remaining samples needed after initial floor rounding
+    current_total = sum(int_counts.values())
+    deficit = target_total - current_total
+
+    if deficit < 0:
+        logging.warning(f"Deficit is negative ({deficit}) after floor rounding? Should not happen.")
+        deficit = 0 # Clamp to avoid issues
+
+    # Distribute remaining samples based on largest residuals
+    if deficit > 0:
+        # Sort classes by residual descending
+        sorted_by_residual = sorted(residuals.items(), key=lambda item: item[1], reverse=True)
+        for i in range(deficit):
+            class_to_increment = sorted_by_residual[i % len(sorted_by_residual)][0]
+            int_counts[class_to_increment] += 1
+
+    # Final check (should usually pass with the above logic)
+    final_sum = sum(int_counts.values())
+    if final_sum != target_total:
+        logging.warning(f"Target counts sum ({final_sum}) != target total ({target_total}). Manual adjustment needed (rare).")
+        # Simple fallback: adjust the count of the first class
+        first_class = sorted_classes[0]
+        int_counts[first_class] += target_total - final_sum
+        int_counts[first_class] = max(0, int_counts[first_class]) # Ensure non-negative
+
+    return int_counts
+
+
+# --- Refined construct_buyer_set Function ---
+
+def construct_buyer_set(
+    dataset: Dataset,
+    buyer_count: int,
+    mode: str = "unbiased",
+    bias_distribution: Optional[Dict] = None,
+    seed: int = 42
+) -> np.ndarray:
+    """
+    Refined: Constructs buyer set indices from a global dataset.
+
+    Args:
+        dataset: Dataset object with .targets or indexable as (data, label).
+        buyer_count: The target number of samples for the buyer set.
+        mode: "random" (uniform sampling) or "biased".
+        bias_distribution: Required if mode="biased". Dict {class: proportion}.
+        seed: Random seed.
+
+    Returns:
+        Numpy array of buyer indices.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
     total_samples = len(dataset)
 
-    # Extract targets from dataset.
+    if buyer_count > total_samples:
+        logging.warning(f"Buyer count {buyer_count} > total samples {total_samples}. Capping.")
+        buyer_count = total_samples
+    if buyer_count <= 0:
+        return np.array([], dtype=int)
+
+    # Extract targets robustly
+    targets = None
     if hasattr(dataset, 'targets'):
         targets = np.array(dataset.targets)
     else:
-        targets = np.array([dataset[i][1] for i in range(total_samples)])
+        try:
+            targets = np.array([dataset[i][1] for i in range(total_samples)])
+            logging.info("Extracted targets by iterating dataset.")
+        except Exception as e:
+            logging.error(f"Could not get targets from dataset: {e}")
+            raise ValueError("Dataset must have .targets or be indexable as (data, label).")
 
-    if mode == "random":
-        # Unbiased random sampling.
-        buyer_indices = np.random.choice(np.arange(total_samples), size=buyer_count, replace=False)
+    all_indices = np.arange(total_samples)
+
+    if mode == "unbiased":
+        buyer_indices = np.random.choice(all_indices, size=buyer_count, replace=False)
+        logging.info(f"Constructed random buyer set with {len(buyer_indices)} samples.")
         return buyer_indices
 
     elif mode == "biased":
-        # If no bias_distribution is provided, use a default that overrepresents one class.
         if bias_distribution is None:
-            unique_classes = np.unique(targets)
-            # Example default: favor the highest class while assigning a small proportion to others.
-            bias_distribution = {int(c): 0.1 for c in unique_classes}
-            # Overrepresent the last (or any chosen) class.
-            bias_distribution[int(unique_classes[-1])] = 0.7
+            # Default bias is removed - require explicit distribution for clarity
+            raise ValueError("bias_distribution must be provided for 'biased' mode.")
 
-        # Normalize bias_distribution so proportions sum to 1.
-        total_prop = sum(bias_distribution.values())
-        normalized_bias = {int(k): v / total_prop for k, v in bias_distribution.items()}
+        # Ensure keys are integers if possible
+        try:
+            bias_distribution = {int(k): v for k, v in bias_distribution.items()}
+        except ValueError:
+            logging.warning("Could not convert bias_distribution keys to int, proceeding.")
 
-        # Build a mapping: class -> list of indices in the global dataset.
-        indices_by_class = {}
-        for c in np.unique(targets):
-            indices_by_class[int(c)] = np.where(targets == c)[0].tolist()
+        unique_classes_in_dataset = np.unique(targets)
 
-        buyer_indices = []
-        # For each class, compute the number of samples and sample accordingly.
-        for cls, proportion in normalized_bias.items():
-            n_samples = int(round(buyer_count * proportion))
+        # Build mapping: class -> list of available indices
+        indices_by_class = {int(c): all_indices[targets == c].tolist() for c in unique_classes_in_dataset}
+        for c in indices_by_class: random.shuffle(indices_by_class[c]) # Shuffle available indices
+
+        # Calculate precise target counts per class
+        target_counts = _calculate_target_counts(buyer_count, bias_distribution)
+
+        buyer_indices_list = []
+        # Sample according to target counts, without replacement from available pool
+        for cls, needed_count in target_counts.items():
+            if needed_count <= 0: continue
+
             available = indices_by_class.get(cls, [])
-            if len(available) == 0:
-                continue
-            if len(available) < n_samples:
-                # If not enough samples available, sample with replacement.
-                sampled = list(np.random.choice(available, size=n_samples, replace=True))
-            else:
-                sampled = random.sample(available, n_samples)
-            buyer_indices.extend(sampled)
+            num_available = len(available)
 
-        # Adjust for rounding: if we have too many or too few indices, fix that.
-        buyer_indices = np.array(buyer_indices)
-        if len(buyer_indices) > buyer_count:
-            buyer_indices = np.random.choice(buyer_indices, size=buyer_count, replace=False)
-        elif len(buyer_indices) < buyer_count:
-            gap = buyer_count - len(buyer_indices)
-            extra = np.random.choice(np.arange(total_samples), size=gap, replace=False)
-            buyer_indices = np.concatenate([buyer_indices, extra])
-        return buyer_indices
+            num_to_sample = min(needed_count, num_available) # Take only what's available
+
+            if num_to_sample > 0:
+                sampled = random.sample(available, num_to_sample) # No replacement
+                buyer_indices_list.extend(sampled)
+            # Log if scarcity occurred
+            if needed_count > num_available:
+                logging.warning(f"Buyer set (biased): Class {cls} needed {needed_count}, only {num_available} available.")
+
+        final_buyer_indices = np.array(buyer_indices_list)
+        np.random.shuffle(final_buyer_indices) # Shuffle the final list
+
+        # Log final count - might be slightly less than buyer_count due to scarcity
+        if len(final_buyer_indices) != buyer_count:
+             logging.warning(f"Final buyer set size {len(final_buyer_indices)} differs from target {buyer_count} due to data scarcity per class.")
+
+        logging.info(f"Constructed biased buyer set with {len(final_buyer_indices)} samples.")
+        return final_buyer_indices
 
     else:
         raise ValueError("Unknown mode. Please use 'random' or 'biased'.")
 
 
-def split_dataset_martfl_discovery(dataset,
-                                   buyer_count: int,
-                                   num_clients: int,
-                                   client_data_count: int = 0,
-                                   noise_factor: float = 0.3, buyer_data_mode="random") -> (np.ndarray, dict):
-    """
-    Simulate a MartFL scenario where:
-      1. A buyer dataset is first sampled from the global dataset.
-      2. The buyer's label distribution is computed.
-      3. Client (seller) datasets are generated from the remaining data so that
-         each client’s distribution is similar to the buyer’s (with a bit of noise).
+# --- Refined split_dataset_martfl_discovery Function ---
 
-    Parameters:
-      dataset: A dataset object (expects a 'targets' attribute or __getitem__ returns (data, label)).
-      buyer_count (int): Number of samples reserved for the buyer.
-      num_clients (int): Number of simulated client datasets.
-      client_data_count (int): Number of samples for each client dataset.
-      noise_factor (float): A multiplicative noise factor applied to the expected counts per class.
-                            For each class, the actual number of samples is sampled from a uniform
-                            factor in [1-noise_factor, 1+noise_factor] times the buyer proportion.
+def split_dataset_martfl_discovery(
+    dataset: Dataset,
+    buyer_count: int,
+    num_clients: int,
+    client_data_count: int = 0, # If 0, distribute remaining seller pool evenly
+    noise_factor: float = 0.3,
+    buyer_data_mode: str = "unbiased",
+    buyer_bias_distribution: Optional[Dict] = None, # Pass through to construct_buyer_set
+    seed: int = 42
+) -> Tuple[np.ndarray, Dict[int, List[int]]]:
+    """
+    Refined: Simulates MartFL scenario. Seller distributions noisy mimics of buyer.
+
+    Args:
+        dataset: Dataset object.
+        buyer_count: Number of samples for buyer.
+        num_clients: Number of seller clients.
+        client_data_count: Target samples per client. If 0, split seller pool evenly.
+        noise_factor: Multiplicative uniform noise [1-f, 1+f] on buyer proportions.
+        buyer_data_mode: Passed to construct_buyer_set ('random' or 'biased').
+        buyer_bias_distribution: Passed if buyer_data_mode is 'biased'.
+        seed: Random seed.
 
     Returns:
-      buyer_indices (np.ndarray): Array of indices for the buyer dataset.
-      seller_splits (dict): Mapping from client id (0 to num_clients-1) to list of indices.
+        Tuple: (buyer_indices, seller_splits {client_id: indices_list}).
     """
+    random.seed(seed)
+    np.random.seed(seed)
     total_samples = len(dataset)
     all_indices = np.arange(total_samples)
-    np.random.shuffle(all_indices)
 
-    # Buyer: use first buyer_count indices.
-    buyer_indices = construct_buyer_set(dataset, buyer_count, mode=buyer_data_mode)
+    # 1. Construct Buyer Set
+    buyer_indices = construct_buyer_set(
+        dataset, buyer_count, buyer_data_mode, buyer_bias_distribution, seed
+    )
 
-    # Get targets from the dataset.
+    # 2. Get Targets & Determine Seller Pool
+    targets = None
     if hasattr(dataset, 'targets'):
         targets = np.array(dataset.targets)
     else:
-        targets = np.array([dataset[i][1] for i in range(total_samples)])
+        try:
+            targets = np.array([dataset[i][1] for i in range(total_samples)])
+        except Exception as e:
+            raise ValueError("Could not get targets from dataset for splitting.") from e
 
-    # Compute buyer distribution.
-    buyer_targets = targets[buyer_indices]
-    unique_classes = np.unique(buyer_targets)
-    buyer_counts = {c: np.sum(buyer_targets == c) for c in unique_classes}
-    buyer_proportions = {c: buyer_counts[c] / buyer_count for c in unique_classes}
+    unique_classes_in_dataset = np.unique(targets)
+    num_classes = len(unique_classes_in_dataset)
 
-    # Seller pool: remaining indices.
-    seller_pool = np.setdiff1d(all_indices, buyer_indices)
-    if client_data_count == 0:
-        client_data_count = len(seller_pool) // num_clients
+    seller_pool_indices = np.setdiff1d(all_indices, buyer_indices, assume_unique=True)
+    num_seller_pool = len(seller_pool_indices)
+    logging.info(f"Seller pool size: {num_seller_pool}")
 
-    # Build a dictionary mapping each class to the seller pool indices of that class.
-    pool_by_class = {}
-    for c in unique_classes:
-        cls_indices = seller_pool[targets[seller_pool] == c]
-        np.random.shuffle(cls_indices)
-        pool_by_class[c] = list(cls_indices)
+    if num_seller_pool == 0:
+        logging.warning("Seller pool is empty after buyer set construction.")
+        return buyer_indices, {i: [] for i in range(num_clients)}
+    if num_clients <= 0:
+        logging.warning("num_clients is zero or negative, returning empty seller splits.")
+        return buyer_indices, {}
 
-    # For each client, sample indices from each class based on the buyer's proportions.
+    # 3. Calculate Actual Buyer Distribution
+    buyer_proportions = {}
+    if len(buyer_indices) > 0:
+        buyer_targets = targets[buyer_indices]
+        unique_buyer_classes, buyer_cls_counts = np.unique(buyer_targets, return_counts=True)
+        buyer_proportions = {int(c): count / len(buyer_indices) for c, count in zip(unique_buyer_classes, buyer_cls_counts)}
+    else: # Handle empty buyer set
+        logging.warning("Buyer set is empty, cannot calculate buyer proportions. Sellers might get random data.")
+        # Fallback: use uniform proportions over classes found in seller pool? Or error?
+        # For now, let proportions be empty, leading to uniform sampling later if needed.
+
+    # 4. Determine Samples Per Client
+    target_samples_per_client = client_data_count
+    if target_samples_per_client <= 0:
+        if num_clients > num_seller_pool:
+             logging.warning(f"More clients ({num_clients}) than available seller samples ({num_seller_pool}). Some clients will get 0 samples.")
+        # Distribute seller pool samples as evenly as possible
+        base_samples = num_seller_pool // num_clients
+        extra_samples = num_seller_pool % num_clients
+        client_sample_counts = [base_samples + 1 if i < extra_samples else base_samples for i in range(num_clients)]
+        # We will assign based on counts rather than fix target_samples_per_client
+        distribute_evenly = True
+        logging.info(f"Distributing {num_seller_pool} seller samples evenly across {num_clients} clients.")
+    else:
+        # Check if total requested exceeds pool size
+        if target_samples_per_client * num_clients > num_seller_pool:
+            logging.warning(f"Requested total client samples ({target_samples_per_client*num_clients}) > available seller pool ({num_seller_pool}). Clients might get fewer samples.")
+        # All clients target the same count
+        client_sample_counts = [target_samples_per_client] * num_clients
+        distribute_evenly = False
+        logging.info(f"Targeting {target_samples_per_client} samples per client.")
+
+
+    # 5. Index Seller Pool by Class & Prepare Pointers
+    pool_by_class = {int(c): [] for c in unique_classes_in_dataset}
+    seller_pool_targets = targets[seller_pool_indices]
+    for i, original_idx in enumerate(seller_pool_indices):
+        label = int(seller_pool_targets[i])
+        pool_by_class[label].append(original_idx)
+
+    for c in pool_by_class: # Shuffle available indices for each class
+        random.shuffle(pool_by_class[c])
+    class_pointers = {c: 0 for c in pool_by_class} # Track next available index
+
+
+    # 6. Assign Data to Sellers
     seller_splits = {}
+    assigned_count_total = 0
+    indices_assigned_this_round = set() # Track assigned indices *within* this function call
+
     for client_id in range(num_clients):
         client_indices = []
-        for c in unique_classes:
-            # Expected number of samples for this class for a client.
-            expected = buyer_proportions[c] * client_data_count
-            # Apply a multiplicative noise factor.
-            factor = np.random.uniform(1 - noise_factor, 1 + noise_factor)
-            n_samples = int(round(expected * factor))
-            # Ensure we do not request more samples than available; if not enough, sample with replacement.
-            available = pool_by_class[c]
-            if len(available) >= n_samples:
-                sampled = available[:n_samples]
-                # Remove these indices from the pool so that they are not reused.
-                pool_by_class[c] = available[n_samples:]
-            else:
-                # Not enough available; sample with replacement.
-                sampled = list(np.random.choice(available, size=n_samples, replace=True))
-            client_indices.extend(sampled)
-        # If the total number of indices is less than client_data_count, fill the gap randomly from seller_pool.
-        if len(client_indices) < client_data_count:
-            gap = client_data_count - len(client_indices)
-            extra = list(np.random.choice(seller_pool, size=gap, replace=False))
-            client_indices.extend(extra)
-        # Optionally, shuffle client indices.
-        np.random.shuffle(client_indices)
+        num_samples_for_this_client = client_sample_counts[client_id]
+
+        if num_samples_for_this_client == 0:
+            seller_splits[client_id] = []
+            continue
+
+        # Calculate noisy target proportions for this client
+        noisy_proportions = {}
+        if buyer_proportions: # If buyer proportions could be calculated
+            total_noisy_prop = 0
+            for c in unique_classes_in_dataset: # Iterate over all classes
+                expected_prop = buyer_proportions.get(c, 0) # Default to 0 if buyer lacked class
+                factor = np.random.uniform(1 - noise_factor, 1 + noise_factor)
+                noisy_prop = expected_prop * factor
+                noisy_proportions[c] = max(0, noisy_prop) # Ensure non-negative
+                total_noisy_prop += noisy_proportions[c]
+            # Normalize noisy proportions
+            if total_noisy_prop > 0:
+                noisy_proportions = {c: p / total_noisy_prop for c, p in noisy_proportions.items()}
+            else: # Fallback if all noisy props became 0 (unlikely)
+                 noisy_proportions = {c: 1.0 / num_classes for c in unique_classes_in_dataset}
+        else: # Fallback if buyer was empty: use uniform distribution
+            noisy_proportions = {c: 1.0 / num_classes for c in unique_classes_in_dataset}
+
+        # Calculate precise target counts for this client
+        target_counts = _calculate_target_counts(num_samples_for_this_client, noisy_proportions)
+
+        # Sample data based on target counts
+        current_client_samples = 0
+        for cls, needed_count in target_counts.items():
+            if needed_count <= 0: continue
+
+            start_ptr = class_pointers.get(cls, 0)
+            available_list = pool_by_class.get(cls, [])
+            num_available = len(available_list) - start_ptr
+
+            num_to_sample = min(needed_count, num_available)
+
+            if num_to_sample > 0:
+                end_ptr = start_ptr + num_to_sample
+                sampled_indices = available_list[start_ptr:end_ptr]
+                client_indices.extend(sampled_indices)
+                indices_assigned_this_round.update(sampled_indices) # Track assignment
+                class_pointers[cls] = end_ptr # Move pointer
+                current_client_samples += num_to_sample
+
+        # Log if client got fewer samples than targeted due to overall class scarcity
+        if current_client_samples < num_samples_for_this_client:
+             logging.warning(f"Client {client_id} assigned {current_client_samples} samples (targeted {num_samples_for_this_client}) due to class data scarcity in pool.")
+
+        np.random.shuffle(client_indices) # Shuffle samples for the client
         seller_splits[client_id] = client_indices
+        assigned_count_total += len(client_indices)
+
+    # Final check on assigned samples
+    unassigned_in_pool = num_seller_pool - len(indices_assigned_this_round)
+    if unassigned_in_pool > 0 :
+        # This can happen if client_data_count was specified and != 0,
+        # or if integer division left remainders when distributing evenly.
+        logging.info(f"{unassigned_in_pool} samples remain unassigned in the seller pool.")
+    elif unassigned_in_pool < 0:
+        logging.error("More samples assigned than available in seller pool! Check logic.") # Should not happen
 
     return buyer_indices, seller_splits
+
