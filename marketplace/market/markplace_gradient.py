@@ -92,7 +92,7 @@ class DataMarketplaceFederated(DataMarketplace):
             seller_stats_list: List of dictionaries, each containing stats
                                 for the corresponding seller.
         """
-        gradients_list = []
+        gradients_list = OrderedDict()
         seller_ids = []
         seller_stats_list = []  # New list to store stats
 
@@ -131,7 +131,7 @@ class DataMarketplaceFederated(DataMarketplace):
                 logging.info(f"  Seller {seller_id}: Grad norm = {norm:.4f}, Stats = {stats}")
 
                 # Append results to lists, maintaining order
-                gradients_list.append(grad_data)
+                gradients_list[seller_id] = grad_data
                 seller_ids.append(seller_id)
                 seller_stats_list.append(stats)
 
@@ -254,7 +254,7 @@ class DataMarketplaceFederated(DataMarketplace):
         baseline_gradient = buyer.get_gradient_for_upload(self.aggregator.global_model)
 
         # --- 1. Get Gradients & Stats from Sellers ---
-        seller_gradients, seller_ids, seller_stats = self.get_current_market_gradients(self.aggregator.global_model)
+        seller_gradients_dict, seller_ids, seller_stats = self.get_current_market_gradients(self.aggregator.global_model)
         # Process returned stats
         for stats in seller_stats:
             if stats: # Check if stats were actually returned
@@ -266,7 +266,7 @@ class DataMarketplaceFederated(DataMarketplace):
         agg_start_time = time.time()
         aggregated_gradient, selected_indices, outlier_indices = self.aggregator.aggregate(
             round_number,
-            seller_gradients, # Assuming aggregate works with list of gradients
+            seller_gradients_dict, # Assuming aggregate works with list of gradients
             baseline_gradient,
             clip=clip,
             remove_baseline=remove_baseline
