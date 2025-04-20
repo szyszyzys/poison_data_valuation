@@ -605,9 +605,9 @@ def create_client_dataloaders(dataset, splits, batch_size=64, shuffle=True):
 #     return buyer_loader, seller_loaders, dataset, test_loader, class_names
 
 def generate_buyer_bias_distribution(
-    num_classes: int,
-    bias_type: str,
-    **kwargs
+        num_classes: int,
+        bias_type: str,
+        **kwargs
 ) -> Dict[int, float]:
     """
     Generates a biased or uniform class distribution for a buyer's dataset.
@@ -655,14 +655,14 @@ def generate_buyer_bias_distribution(
         current_sum = 0.0
         validated_proportions = {}
         for i in range(num_classes):
-            prop = manual_proportions.get(i, 0.0) # Default to 0 if class missing
+            prop = manual_proportions.get(i, 0.0)  # Default to 0 if class missing
             if prop < 0:
-                 raise ValueError(f"Proportion for class {i} cannot be negative.")
+                raise ValueError(f"Proportion for class {i} cannot be negative.")
             validated_proportions[i] = prop
             current_sum += prop
 
         if np.isclose(current_sum, 0.0):
-             raise ValueError("Manual proportions sum to zero. Cannot create distribution.")
+            raise ValueError("Manual proportions sum to zero. Cannot create distribution.")
 
         # Normalize if sum is not close to 1
         if not np.isclose(current_sum, 1.0):
@@ -687,11 +687,12 @@ def generate_buyer_bias_distribution(
 
         # Adjust k if p<1 and k=num_classes to avoid division by zero for minor classes
         if k == num_classes and not np.isclose(p, 1.0):
-             k = num_classes - 1
-             print(f"Warning: k_major_classes == num_classes but p_major < 1. Reducing k to {k} to allow for minor classes.")
-             if k == 0: # Handle edge case of num_classes=1
-                 k=1
-                 p=1.0
+            k = num_classes - 1
+            print(
+                f"Warning: k_major_classes == num_classes but p_major < 1. Reducing k to {k} to allow for minor classes.")
+            if k == 0:  # Handle edge case of num_classes=1
+                k = 1
+                p = 1.0
 
         major_classes = random.sample(range(num_classes), k)
         minor_classes = [i for i in range(num_classes) if i not in major_classes]
@@ -709,8 +710,8 @@ def generate_buyer_bias_distribution(
         # Final normalization check (due to potential float issues)
         final_sum = sum(bias_distribution.values())
         if not np.isclose(final_sum, 1.0):
-             print(f"Warning: Concentrated calculation sum is {final_sum:.6f}. Re-normalizing.")
-             bias_distribution = {cls: prob / final_sum for cls, prob in bias_distribution.items()}
+            print(f"Warning: Concentrated calculation sum is {final_sum:.6f}. Re-normalizing.")
+            bias_distribution = {cls: prob / final_sum for cls, prob in bias_distribution.items()}
 
 
     # --- Dirichlet Case ---
@@ -731,13 +732,73 @@ def generate_buyer_bias_distribution(
 
     return bias_distribution
 
+
 import torch
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Subset
+
+
 # Assume these helpers exist:
 # from your_utils import generate_buyer_bias_distribution, split_dataset_martfl_discovery, \
 #                        split_dataset_by_label, split_dataset_buyer_seller_improved, \
 #                        print_and_save_data_statistics
+
+def get_transforms(dataset_name: str, normalize_data: bool = True) -> transforms.Compose:
+    """
+    Defines and returns the appropriate torchvision transforms for a given dataset.
+
+    Args:
+        dataset_name (str): Name of the dataset ('MNIST', 'FMNIST', 'CIFAR').
+        normalize_data (bool): Whether to include normalization in the transforms.
+
+    Returns:
+        transforms.Compose: A composition of the required transforms.
+
+    Raises:
+        NotImplementedError: If the dataset_name is not supported.
+    """
+
+    transform_list = []
+
+    # Always include ToTensor first (converts PIL Image/numpy.ndarray to tensor
+    # and scales pixels from [0, 255] to [0.0, 1.0])
+    transform_list.append(transforms.ToTensor())
+
+    # Add normalization if requested
+    if normalize_data:
+        if dataset_name == "FMNIST":
+            # Mean and Std calculated over the FashionMNIST training set
+            mean = (0.2860,)
+            std = (0.3530,)
+            transform_list.append(transforms.Normalize(mean, std))
+        elif dataset_name == "CIFAR":
+            # Mean and Std calculated over the CIFAR-10 training set
+            mean = (0.4914, 0.4822, 0.4465)
+            std = (0.2023, 0.1994, 0.2010)
+            transform_list.append(transforms.Normalize(mean, std))
+        elif dataset_name == "MNIST":
+            # Mean and Std calculated over the MNIST training set
+            mean = (0.1307,)
+            std = (0.3081,)
+            transform_list.append(transforms.Normalize(mean, std))
+        # --- Add other datasets here if needed ---
+        # elif dataset_name == "SomeOtherDataset":
+        #     mean = (...)
+        #     std = (...)
+        #     transform_list.append(transforms.Normalize(mean, std))
+        else:
+            # Decide how to handle unknown datasets for normalization
+            # Option 1: Raise error
+            # raise NotImplementedError(f"Normalization values not defined for dataset: {dataset_name}")
+            # Option 2: Print warning and skip normalization
+            print(f"Warning: Normalization values not defined for dataset: {dataset_name}. Skipping normalization.")
+            pass
+
+    # Compose all transforms in the list
+    data_transforms = transforms.Compose(transform_list)
+
+    return data_transforms
+
 
 def get_data_set(
         dataset_name,
@@ -745,25 +806,21 @@ def get_data_set(
         num_sellers=10,
         batch_size=64,
         normalize_data=True,
-        split_method="discovery", # Changed default to make the relevant part active
+        split_method="discovery",  # Changed default to make the relevant part active
         n_adversaries=0,
         save_path='./result',
         # --- Discovery Split Specific Params ---
         discovery_quality=0.3,
         buyer_data_mode="random",
-        buyer_bias_type="dirichlet", # Added: Specify how buyer bias is generated
-        buyer_dirichlet_alpha=0.3,   # Added: Alpha specifically for buyer bias
+        buyer_bias_type="dirichlet",  # Added: Specify how buyer bias is generated
+        buyer_dirichlet_alpha=0.3,  # Added: Alpha specifically for buyer bias
         # --- Other Split Method Params ---
-        seller_dirichlet_alpha=0.7   # Alpha used in the default/other split method
+        seller_dirichlet_alpha=0.7  # Alpha used in the default/other split method
 ):
     # Define transforms based on the dataset.
     # (Keep your transform definitions here)
-    if normalize_data:
-        # ... (your normalization code) ...
-        pass # Placeholder for brevity
-    else:
-        transform = transforms.ToTensor()
-
+    transform = get_transforms(dataset_name, normalize_data=normalize_data)
+    print(f"Using transforms for {dataset_name}: {transform}")
     # Load training and test datasets.
     if dataset_name == "FMNIST":
         dataset = datasets.FashionMNIST(root='./data', train=True, download=True, transform=transform)
@@ -796,9 +853,9 @@ def get_data_set(
         print(f"Using 'discovery' split method with buyer bias type: '{buyer_bias_type}'")
         # Generate buyer distribution ONLY when needed
         buyer_biased_distribution = generate_buyer_bias_distribution(
-            num_classes=num_classes, # Use derived num_classes
+            num_classes=num_classes,  # Use derived num_classes
             bias_type=buyer_bias_type,
-            alpha=buyer_dirichlet_alpha # Use argument for alpha
+            alpha=buyer_dirichlet_alpha  # Use argument for alpha
             # Add other kwargs here if using 'manual' or 'concentrated' bias types
             # e.g., manual_proportions=..., k_major_classes=..., p_major=...
         )
@@ -810,7 +867,7 @@ def get_data_set(
             num_clients=num_sellers,
             noise_factor=discovery_quality,
             buyer_data_mode=buyer_data_mode,
-            buyer_bias_distribution = buyer_biased_distribution # Pass generated dist
+            buyer_bias_distribution=buyer_biased_distribution  # Pass generated dist
         )
     elif split_method == "label":
         print("Using 'label' split method (likely non-iid based on labels)")
@@ -820,14 +877,14 @@ def get_data_set(
             num_sellers=num_sellers,
             # Add any other specific args for this function
         )
-    else: # Default or other specified methods (e.g., Dirichlet split for sellers)
+    else:  # Default or other specified methods (e.g., Dirichlet split for sellers)
         print(f"Using '{split_method}' split method (likely Dirichlet for sellers with alpha={seller_dirichlet_alpha})")
         buyer_indices, seller_splits = split_dataset_buyer_seller_improved(
             dataset=dataset,
             buyer_count=buyer_count,
             num_sellers=num_sellers,
-            split_method=split_method, # Pass original method name if needed internally
-            dirichlet_alpha=seller_dirichlet_alpha, # Use alpha for seller split
+            split_method=split_method,  # Pass original method name if needed internally
+            dirichlet_alpha=seller_dirichlet_alpha,  # Use alpha for seller split
             n_adversaries=n_adversaries
         )
 
@@ -843,6 +900,7 @@ def get_data_set(
 
     print("DataLoaders created successfully.")
     return buyer_loader, seller_loaders, dataset, test_loader, class_names
+
 
 def dirichlet_partition(indices_by_class: dict, n_clients: int, alpha: float) -> dict:
     """
@@ -1289,11 +1347,12 @@ from torchvision import datasets as vision_datasets, transforms
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
 # --- Helper Function for Precise Count Calculation ---
 
 def _calculate_target_counts(
-    target_total: int,
-    proportions: Dict[Any, float] # Map class_label -> proportion
+        target_total: int,
+        proportions: Dict[Any, float]  # Map class_label -> proportion
 ) -> Dict[Any, int]:
     """
     Calculates the exact integer number of samples per class to reach target_total,
@@ -1307,7 +1366,7 @@ def _calculate_target_counts(
         Dictionary mapping class label to the calculated integer count.
     """
     target_counts = {}
-    sorted_classes = sorted(proportions.keys()) # Ensure consistent order
+    sorted_classes = sorted(proportions.keys())  # Ensure consistent order
 
     if target_total == 0:
         return {c: 0 for c in sorted_classes}
@@ -1317,8 +1376,8 @@ def _calculate_target_counts(
     # Normalize proportions just in case they don't sum perfectly to 1
     total_prop = sum(proportions.values())
     if total_prop <= 0:
-         logging.warning("Proportions sum to zero or less, cannot calculate counts.")
-         return {c: 0 for c in sorted_classes}
+        logging.warning("Proportions sum to zero or less, cannot calculate counts.")
+        return {c: 0 for c in sorted_classes}
     normalized_proportions = {c: p / total_prop for c, p in proportions.items()}
 
     # Calculate initial float counts
@@ -1334,7 +1393,7 @@ def _calculate_target_counts(
 
     if deficit < 0:
         logging.warning(f"Deficit is negative ({deficit}) after floor rounding? Should not happen.")
-        deficit = 0 # Clamp to avoid issues
+        deficit = 0  # Clamp to avoid issues
 
     # Distribute remaining samples based on largest residuals
     if deficit > 0:
@@ -1347,11 +1406,12 @@ def _calculate_target_counts(
     # Final check (should usually pass with the above logic)
     final_sum = sum(int_counts.values())
     if final_sum != target_total:
-        logging.warning(f"Target counts sum ({final_sum}) != target total ({target_total}). Manual adjustment needed (rare).")
+        logging.warning(
+            f"Target counts sum ({final_sum}) != target total ({target_total}). Manual adjustment needed (rare).")
         # Simple fallback: adjust the count of the first class
         first_class = sorted_classes[0]
         int_counts[first_class] += target_total - final_sum
-        int_counts[first_class] = max(0, int_counts[first_class]) # Ensure non-negative
+        int_counts[first_class] = max(0, int_counts[first_class])  # Ensure non-negative
 
     return int_counts
 
@@ -1359,11 +1419,11 @@ def _calculate_target_counts(
 # --- Refined construct_buyer_set Function ---
 
 def construct_buyer_set(
-    dataset: Dataset,
-    buyer_count: int,
-    mode: str = "unbiased",
-    bias_distribution: Optional[Dict] = None,
-    seed: int = 42
+        dataset: Dataset,
+        buyer_count: int,
+        mode: str = "unbiased",
+        bias_distribution: Optional[Dict] = None,
+        seed: int = 42
 ) -> np.ndarray:
     """
     Refined: Constructs buyer set indices from a global dataset.
@@ -1422,7 +1482,7 @@ def construct_buyer_set(
 
         # Build mapping: class -> list of available indices
         indices_by_class = {int(c): all_indices[targets == c].tolist() for c in unique_classes_in_dataset}
-        for c in indices_by_class: random.shuffle(indices_by_class[c]) # Shuffle available indices
+        for c in indices_by_class: random.shuffle(indices_by_class[c])  # Shuffle available indices
 
         # Calculate precise target counts per class
         target_counts = _calculate_target_counts(buyer_count, bias_distribution)
@@ -1435,21 +1495,23 @@ def construct_buyer_set(
             available = indices_by_class.get(cls, [])
             num_available = len(available)
 
-            num_to_sample = min(needed_count, num_available) # Take only what's available
+            num_to_sample = min(needed_count, num_available)  # Take only what's available
 
             if num_to_sample > 0:
-                sampled = random.sample(available, num_to_sample) # No replacement
+                sampled = random.sample(available, num_to_sample)  # No replacement
                 buyer_indices_list.extend(sampled)
             # Log if scarcity occurred
             if needed_count > num_available:
-                logging.warning(f"Buyer set (biased): Class {cls} needed {needed_count}, only {num_available} available.")
+                logging.warning(
+                    f"Buyer set (biased): Class {cls} needed {needed_count}, only {num_available} available.")
 
         final_buyer_indices = np.array(buyer_indices_list)
-        np.random.shuffle(final_buyer_indices) # Shuffle the final list
+        np.random.shuffle(final_buyer_indices)  # Shuffle the final list
 
         # Log final count - might be slightly less than buyer_count due to scarcity
         if len(final_buyer_indices) != buyer_count:
-             logging.warning(f"Final buyer set size {len(final_buyer_indices)} differs from target {buyer_count} due to data scarcity per class.")
+            logging.warning(
+                f"Final buyer set size {len(final_buyer_indices)} differs from target {buyer_count} due to data scarcity per class.")
 
         logging.info(f"Constructed biased buyer set with {len(final_buyer_indices)} samples.")
         return final_buyer_indices
@@ -1461,14 +1523,14 @@ def construct_buyer_set(
 # --- Refined split_dataset_martfl_discovery Function ---
 
 def split_dataset_martfl_discovery(
-    dataset: Dataset,
-    buyer_count: int,
-    num_clients: int,
-    client_data_count: int = 0, # If 0, distribute remaining seller pool evenly
-    noise_factor: float = 0.3,
-    buyer_data_mode: str = "unbiased",
-    buyer_bias_distribution: Optional[Dict] = None, # Pass through to construct_buyer_set
-    seed: int = 42
+        dataset: Dataset,
+        buyer_count: int,
+        num_clients: int,
+        client_data_count: int = 0,  # If 0, distribute remaining seller pool evenly
+        noise_factor: float = 0.3,
+        buyer_data_mode: str = "unbiased",
+        buyer_bias_distribution: Optional[Dict] = None,  # Pass through to construct_buyer_set
+        seed: int = 42
 ) -> Tuple[np.ndarray, Dict[int, List[int]]]:
     """
     Refined: Simulates MartFL scenario. Seller distributions noisy mimics of buyer.
@@ -1525,8 +1587,9 @@ def split_dataset_martfl_discovery(
     if len(buyer_indices) > 0:
         buyer_targets = targets[buyer_indices]
         unique_buyer_classes, buyer_cls_counts = np.unique(buyer_targets, return_counts=True)
-        buyer_proportions = {int(c): count / len(buyer_indices) for c, count in zip(unique_buyer_classes, buyer_cls_counts)}
-    else: # Handle empty buyer set
+        buyer_proportions = {int(c): count / len(buyer_indices) for c, count in
+                             zip(unique_buyer_classes, buyer_cls_counts)}
+    else:  # Handle empty buyer set
         logging.warning("Buyer set is empty, cannot calculate buyer proportions. Sellers might get random data.")
         # Fallback: use uniform proportions over classes found in seller pool? Or error?
         # For now, let proportions be empty, leading to uniform sampling later if needed.
@@ -1535,7 +1598,8 @@ def split_dataset_martfl_discovery(
     target_samples_per_client = client_data_count
     if target_samples_per_client <= 0:
         if num_clients > num_seller_pool:
-             logging.warning(f"More clients ({num_clients}) than available seller samples ({num_seller_pool}). Some clients will get 0 samples.")
+            logging.warning(
+                f"More clients ({num_clients}) than available seller samples ({num_seller_pool}). Some clients will get 0 samples.")
         # Distribute seller pool samples as evenly as possible
         base_samples = num_seller_pool // num_clients
         extra_samples = num_seller_pool % num_clients
@@ -1546,12 +1610,12 @@ def split_dataset_martfl_discovery(
     else:
         # Check if total requested exceeds pool size
         if target_samples_per_client * num_clients > num_seller_pool:
-            logging.warning(f"Requested total client samples ({target_samples_per_client*num_clients}) > available seller pool ({num_seller_pool}). Clients might get fewer samples.")
+            logging.warning(
+                f"Requested total client samples ({target_samples_per_client * num_clients}) > available seller pool ({num_seller_pool}). Clients might get fewer samples.")
         # All clients target the same count
         client_sample_counts = [target_samples_per_client] * num_clients
         distribute_evenly = False
         logging.info(f"Targeting {target_samples_per_client} samples per client.")
-
 
     # 5. Index Seller Pool by Class & Prepare Pointers
     pool_by_class = {int(c): [] for c in unique_classes_in_dataset}
@@ -1560,15 +1624,14 @@ def split_dataset_martfl_discovery(
         label = int(seller_pool_targets[i])
         pool_by_class[label].append(original_idx)
 
-    for c in pool_by_class: # Shuffle available indices for each class
+    for c in pool_by_class:  # Shuffle available indices for each class
         random.shuffle(pool_by_class[c])
-    class_pointers = {c: 0 for c in pool_by_class} # Track next available index
-
+    class_pointers = {c: 0 for c in pool_by_class}  # Track next available index
 
     # 6. Assign Data to Sellers
     seller_splits = {}
     assigned_count_total = 0
-    indices_assigned_this_round = set() # Track assigned indices *within* this function call
+    indices_assigned_this_round = set()  # Track assigned indices *within* this function call
 
     for client_id in range(num_clients):
         client_indices = []
@@ -1580,20 +1643,20 @@ def split_dataset_martfl_discovery(
 
         # Calculate noisy target proportions for this client
         noisy_proportions = {}
-        if buyer_proportions: # If buyer proportions could be calculated
+        if buyer_proportions:  # If buyer proportions could be calculated
             total_noisy_prop = 0
-            for c in unique_classes_in_dataset: # Iterate over all classes
-                expected_prop = buyer_proportions.get(c, 0) # Default to 0 if buyer lacked class
+            for c in unique_classes_in_dataset:  # Iterate over all classes
+                expected_prop = buyer_proportions.get(c, 0)  # Default to 0 if buyer lacked class
                 factor = np.random.uniform(1 - noise_factor, 1 + noise_factor)
                 noisy_prop = expected_prop * factor
-                noisy_proportions[c] = max(0, noisy_prop) # Ensure non-negative
+                noisy_proportions[c] = max(0, noisy_prop)  # Ensure non-negative
                 total_noisy_prop += noisy_proportions[c]
             # Normalize noisy proportions
             if total_noisy_prop > 0:
                 noisy_proportions = {c: p / total_noisy_prop for c, p in noisy_proportions.items()}
-            else: # Fallback if all noisy props became 0 (unlikely)
-                 noisy_proportions = {c: 1.0 / num_classes for c in unique_classes_in_dataset}
-        else: # Fallback if buyer was empty: use uniform distribution
+            else:  # Fallback if all noisy props became 0 (unlikely)
+                noisy_proportions = {c: 1.0 / num_classes for c in unique_classes_in_dataset}
+        else:  # Fallback if buyer was empty: use uniform distribution
             noisy_proportions = {c: 1.0 / num_classes for c in unique_classes_in_dataset}
 
         # Calculate precise target counts for this client
@@ -1614,26 +1677,26 @@ def split_dataset_martfl_discovery(
                 end_ptr = start_ptr + num_to_sample
                 sampled_indices = available_list[start_ptr:end_ptr]
                 client_indices.extend(sampled_indices)
-                indices_assigned_this_round.update(sampled_indices) # Track assignment
-                class_pointers[cls] = end_ptr # Move pointer
+                indices_assigned_this_round.update(sampled_indices)  # Track assignment
+                class_pointers[cls] = end_ptr  # Move pointer
                 current_client_samples += num_to_sample
 
         # Log if client got fewer samples than targeted due to overall class scarcity
         if current_client_samples < num_samples_for_this_client:
-             logging.warning(f"Client {client_id} assigned {current_client_samples} samples (targeted {num_samples_for_this_client}) due to class data scarcity in pool.")
+            logging.warning(
+                f"Client {client_id} assigned {current_client_samples} samples (targeted {num_samples_for_this_client}) due to class data scarcity in pool.")
 
-        np.random.shuffle(client_indices) # Shuffle samples for the client
+        np.random.shuffle(client_indices)  # Shuffle samples for the client
         seller_splits[client_id] = client_indices
         assigned_count_total += len(client_indices)
 
     # Final check on assigned samples
     unassigned_in_pool = num_seller_pool - len(indices_assigned_this_round)
-    if unassigned_in_pool > 0 :
+    if unassigned_in_pool > 0:
         # This can happen if client_data_count was specified and != 0,
         # or if integer division left remainders when distributing evenly.
         logging.info(f"{unassigned_in_pool} samples remain unassigned in the seller pool.")
     elif unassigned_in_pool < 0:
-        logging.error("More samples assigned than available in seller pool! Check logic.") # Should not happen
+        logging.error("More samples assigned than available in seller pool! Check logic.")  # Should not happen
 
     return buyer_indices, seller_splits
-
