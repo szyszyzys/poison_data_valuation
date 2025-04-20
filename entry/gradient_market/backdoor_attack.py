@@ -1,18 +1,13 @@
 import argparse
-import logging
-import os
 import random
 import shutil
 
-import numpy as np
-import torch
 import torch.backends.cudnn
 import yaml
 from torch import nn
 from torch.utils.data import Subset, TensorDataset, DataLoader
 
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
-from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
 from entry.gradient_market.automate_exp.config_parser import parse_config_for_attack_function
 from general_utils.file_utils import save_to_json
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
@@ -135,6 +130,97 @@ class FederatedEarlyStopper:
         return self.counter >= self.patience
 
 
+# log_utils.py (or results_logger.py)
+import pandas as pd
+import os
+import logging
+import json  # To handle lists as strings
+
+logger = logging.getLogger(__name__)
+
+
+def flatten_dict(d, parent_key='', sep='_'):
+    """
+    Flattens a nested dictionary.
+    E.g., {'a': 1, 'b': {'c': 2}} -> {'a': 1, 'b_c': 2}
+    """
+    items = []
+    if not isinstance(d, dict):  # Handle cases where nested field might be None or non-dict
+        return {parent_key: d}
+
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
+def save_round_logs_to_csv(round_logs: list, csv_filepath: str):
+    """
+    Processes a list of round log dictionaries, flattens nested structures,
+    handles lists, and saves the result to a CSV file.
+
+    Args:
+        round_logs: A list where each element is a dictionary representing a round's log.
+        csv_filepath: The full path to save the CSV file.
+    """
+    if not round_logs:
+        logger.warning("Round logs list is empty. Nothing to save to CSV.")
+        return
+
+    processed_logs = []
+    for record in round_logs:
+        if not isinstance(record, dict):
+            logger.warning(f"Skipping non-dictionary item in round_logs: {type(record)}")
+            continue
+
+        # Create a copy to modify
+        flat_record = {}
+        record_copy = record.copy()  # Work on a copy
+
+        # 1. Handle list fields explicitly (convert to JSON strings)
+        list_fields = ["selected_sellers", "outlier_sellers"]
+        for field in list_fields:
+            if field in record_copy and record_copy[field] is not None:
+                try:
+                    # Store as JSON string to handle complex IDs or commas
+                    flat_record[field] = json.dumps(record_copy[field])
+                except TypeError:
+                    logger.warning(
+                        f"Could not JSON serialize field '{field}' in round {record_copy.get('round_number')}. Storing as string.")
+                    flat_record[field] = str(record_copy[field])
+                del record_copy[field]  # Remove original list field
+            else:
+                flat_record[field] = None  # Ensure column exists even if data is None
+
+        # 2. Flatten nested dictionaries
+        # Identify potential nested dicts (add any others you have)
+        nested_dict_fields = ["perf_global", "perf_local", "selection_rate_info", "defense_metrics"]
+        for field in nested_dict_fields:
+            nested_data = record_copy.pop(field, None)  # Remove original field
+            if nested_data is not None and isinstance(nested_data, dict):
+                flat_record.update(flatten_dict(nested_data, parent_key=field, sep='_'))
+            elif nested_data is not None:  # Handle if it wasn't a dict as expected
+                logger.warning(f"Field '{field}' was expected to be a dict but was {type(nested_data)}. Storing as is.")
+                flat_record[field] = nested_data  # Add it back without flattening
+
+        # 3. Add remaining top-level fields
+        flat_record.update(record_copy)
+        processed_logs.append(flat_record)
+
+    # 4. Create DataFrame and Save
+    try:
+        df = pd.DataFrame(processed_logs)
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(csv_filepath), exist_ok=True)
+        df.to_csv(csv_filepath, index=False, encoding='utf-8')
+        logger.info(f"Successfully saved round logs to {csv_filepath}")
+    except Exception as e:
+        logger.error(f"Failed to save round logs to CSV at {csv_filepath}: {e}", exc_info=True)
+
+
 def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregation_method='martfl',
                     global_rounds=100, backdoor_target_label=0, trigger_type: str = "blended_patch", save_path="/",
                     device='cpu', poison_strength=1, poison_test_sample=100, args=None, trigger_rate=0.1,
@@ -255,6 +341,11 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
                 break
         sybil_coordinator.on_round_end()
     torch.save(marketplace.round_logs, f"{save_path}/market_log.ckpt")
+
+    csv_output_path = os.path.join(save_path, "round_results.csv")
+
+    # Call the saving function
+    save_round_logs_to_csv(marketplace.round_logs, csv_output_path)
 
     # poison_metrics = evaluate_attack_performance_backdoor_poison(marketplace.aggregator.global_model,
     #                                                              test_loader=test_loader,
@@ -542,8 +633,9 @@ def load_config(path):
         print(f"Error loading config {path}: {e}")
         return None
 
+
 # if __name__ == "__main__":
-    # main()
+# main()
 
 
 def main():
@@ -556,19 +648,19 @@ def main():
     config = load_config(cli_args.config)
     if config is None:
         logging.error(f"Failed to load configuration from {cli_args.config}. Exiting.")
-        return # Exit if config loading fails
+        return  # Exit if config loading fails
 
     # 3. Extract parameters needed for setup (outside the loop)
     experiment_id = config.get('experiment_id', os.path.splitext(os.path.basename(cli_args.config))[0])
     dataset_name = config.get('dataset_name')
-    model_structure_name = config.get('model_structure') # Get model name from config
+    model_structure_name = config.get('model_structure')  # Get model name from config
     base_save_dir = config.get('output', {}).get('save_path_base', './experiment_results')
-    n_samples = config.get('output', {}).get('n_samples', 1) # Number of runs with different seeds
+    n_samples = config.get('output', {}).get('n_samples', 1)  # Number of runs with different seeds
     initial_seed = config.get('seed', 42)
 
     if not dataset_name or not model_structure_name:
-         logging.error("Config missing 'dataset_name' or 'model_structure'. Exiting.")
-         return
+        logging.error("Config missing 'dataset_name' or 'model_structure'. Exiting.")
+        return
 
     # Construct the base save path for this specific experiment config
     experiment_base_path = os.path.join(base_save_dir, experiment_id)
@@ -594,26 +686,26 @@ def main():
     # Pass model structure name or definition from config
     t_model = get_model(dataset_name, model_structure_name=attack_func_args['model_structure'])
     if t_model is None:
-        logging.error(f"Could not get model for dataset {dataset_name}, structure {attack_func_args['model_structure']}. Exiting.")
+        logging.error(
+            f"Could not get model for dataset {dataset_name}, structure {attack_func_args['model_structure']}. Exiting.")
         return
-    attack_func_args['model_structure'] = t_model # Pass the actual model object/class
+    attack_func_args['model_structure'] = t_model  # Pass the actual model object/class
 
     # 6. Save parameters used for this experiment group (optional)
     all_params_to_save = {
         "sybil_params": attack_func_args.get('sybil_params'),
         "local_training_params": attack_func_args.get('local_training_params'),
-        "local_attack_params": attack_func_args.get('local_attack_params'), # Usually None here
+        "local_attack_params": attack_func_args.get('local_attack_params'),  # Usually None here
         "dm_params": attack_func_args.get('dm_params'),
-        "full_config": config # Save the original config for traceability
+        "full_config": config  # Save the original config for traceability
     }
     save_to_json(all_params_to_save, f"{experiment_base_path}/experiment_params.json")
-
 
     # 7. Loop for multiple runs (if n_samples > 1)
     print(f"Starting {n_samples} run(s) for experiment: {experiment_id}")
     for i in range(n_samples):
         current_seed = initial_seed + i
-        set_seed(current_seed) # Set seed for this specific run
+        set_seed(current_seed)  # Set seed for this specific run
 
         # Define save path for this specific run
         current_run_save_path = os.path.join(experiment_base_path, f"run_{i}")
@@ -639,17 +731,18 @@ def main():
             logging.error(f"!!! Error during Run {i} for experiment {experiment_id} !!!")
             logging.error(f"Config file: {cli_args.config}")
             logging.error(f"Save path: {current_run_save_path}")
-            logging.error(f"Exception: {e}", exc_info=True) # Log traceback
+            logging.error(f"Exception: {e}", exc_info=True)  # Log traceback
             # Decide if you want to continue to the next run or stop
             # continue
 
     print(f"\nFinished all {n_samples} run(s) for experiment: {experiment_id}")
 
+
 if __name__ == "__main__":
     # Assuming torch is available for device check
     try:
         import torch
-        import numpy as np # Needed for numpy types in JSON saving
+        import numpy as np  # Needed for numpy types in JSON saving
     except ImportError:
         print("Warning: PyTorch or NumPy not found. Device detection/saving might be affected.")
         # Handle fallback if necessary
