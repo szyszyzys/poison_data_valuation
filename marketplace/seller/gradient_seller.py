@@ -781,7 +781,7 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
         # Provide information to the coordinator and get an updated gradient.
         coordinated_grad = self._query_coordinator(local_grad)
         self.cur_upload_gradient_flt = coordinated_grad
-        return coordinated_grad
+        return coordinated_grad, None
 
     def _query_coordinator(self, local_grad):
         """
@@ -1007,7 +1007,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         # Provide information to the coordinator and get an updated gradient.
         coordinated_grad = self._query_coordinator(local_grad)
         self.cur_upload_gradient_flt = coordinated_grad
-        return coordinated_grad
+        return coordinated_grad, None
 
     def _query_coordinator(self, local_grad):
         """
