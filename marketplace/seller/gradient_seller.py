@@ -772,16 +772,15 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
         self.cur_upload_gradient_flt = local_grad
 
         if not self.is_sybil:
-            return local_grad
+            return local_grad, {}
 
         # If selected in last round, do not modify gradient.
         if getattr(self, "selected_last_round", False):
-            return local_grad
+            return local_grad, {}
 
         # Provide information to the coordinator and get an updated gradient.
         coordinated_grad = self._query_coordinator(local_grad)
         self.cur_upload_gradient_flt = coordinated_grad
-        print(coordinated_grad)
         return coordinated_grad, {}
 
     def _query_coordinator(self, local_grad):
@@ -999,11 +998,11 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         self.cur_upload_gradient_flt = local_grad
 
         if not self.is_sybil:
-            return local_grad
+            return local_grad, {}
 
         # If selected in last round, do not modify gradient.
         if getattr(self, "selected_last_round", False):
-            return local_grad
+            return local_grad, {}
 
         # Provide information to the coordinator and get an updated gradient.
         coordinated_grad = self._query_coordinator(local_grad)
