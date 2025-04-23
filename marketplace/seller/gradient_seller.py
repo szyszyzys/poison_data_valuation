@@ -8,6 +8,7 @@ import logging
 import sys
 import time
 from collections import abc  # abc.Mapping for general dicts
+from functools import partial
 from typing import Any
 from typing import Dict
 from typing import List, Optional, Union
@@ -20,7 +21,7 @@ import torch.nn.functional as F
 from torch import optim, nn
 from torch.utils.data import DataLoader, Dataset
 
-from general_utils.data_utils import list_to_tensor_dataset
+from general_utils.data_utils import list_to_tensor_dataset, TextDataset, collate_batch
 from marketplace.seller.seller import BaseSeller
 from model.utils import get_image_model, local_training_and_get_gradient
 
@@ -520,8 +521,16 @@ class GradientSeller(BaseSeller):
     #     torch.cuda.empty_cache()
     #
     #     return grad_update, grad_update_flt, local_model, local_eval_res
+    def _create_zero_gradient(self):
+        """Helper to create a zero gradient structure matching the model."""
+        # Ensure model is initialized
+        if not hasattr(self, 'global_model') or self.global_model is None:
+            raise RuntimeError("Seller's global_model is not initialized.")
+        zero_grad = {name: torch.zeros_like(param) for name, param in self.global_model.named_parameters() if
+                     param.requires_grad}
+        return zero_grad
 
-    def _compute_local_grad(self, base_model, dataset) -> Tuple[Any, Any, Any, Dict, Dict]:
+    def _compute_local_grad(self, base_model, dataset, batch_size=64) -> Tuple[Any, Any, Any, Dict, Dict]:
         """
         MODIFIED: Train local model, compute gradient, AND gather training stats.
 
@@ -539,16 +548,72 @@ class GradientSeller(BaseSeller):
         """
         start_time = time.time()  # Start timing
 
-        # Prepare dataset if needed
+        if not dataset:
+            logging.warning(f"Seller {self.seller_id}: Dataset is empty. Skipping gradient computation.")
+            return self._create_zero_gradient()  # Need a way to return zero grad
+
+        # --- >> 1. Data Type Detection << ---
         try:
-            # Use your actual conversion function
-            tensor_dataset = list_to_tensor_dataset(dataset)
-            if tensor_dataset is None:
-                raise ValueError("Dataset conversion returned None.")
+            first_item_data = dataset[0][0]
+            first_item_label = dataset[0][1]  # Get label/second element too for better check
+            # Image data: Expect (Tensor, int)
+            is_image_data = isinstance(first_item_data, torch.Tensor) and isinstance(first_item_label, int)
+            # Text data: Expect (int, list) - label first for our processed text
+            is_text_data = isinstance(first_item_data, int) and isinstance(first_item_label, list)
+
+            if not is_image_data and not is_text_data:
+                # Handle ambiguous/unexpected format
+                raise TypeError(
+                    f"Unrecognized data format in dataset item 0: type(item[0])={type(first_item_data)}, type(item[1])={type(first_item_label)}")
+
         except Exception as e:
-            logging.error(f"Seller {self.seller_id}: Failed to convert dataset: {e}", exc_info=True)
-            stats_error = {'train_loss': None, 'compute_time_ms': (time.time() - start_time) * 1000}
-            return None, None, base_model, {}, stats_error  # Return base model on dataset error
+            logging.error(
+                f"Seller {self.seller_id}: Could not determine dataset type from first item: {dataset[0]}. Error: {e}")
+            raise ValueError("Failed to determine dataset type.") from e
+
+        # --- >> 2. Create Appropriate DataLoader << ---
+        data_loader = None
+        try:
+            if is_image_data:
+                logging.debug(f"Seller {self.seller_id}: Detected image data. Using TensorDataset.")
+                # Use the original function, assuming it works for images
+                tensor_dataset = list_to_tensor_dataset(dataset)
+                data_loader = DataLoader(tensor_dataset, batch_size=batch_size, shuffle=True)
+
+            elif is_text_data:
+                logging.debug(f"Seller {self.seller_id}: Detected text data. Using custom collate function.")
+                # Ensure pad_idx is available
+                pad_idx = getattr(self, 'pad_idx', None)  # Assumes pad_idx is stored in seller
+                if pad_idx is None:
+                    # Try getting from vocab if available
+                    vocab = getattr(self, 'vocab', None)
+                    pad_token = getattr(self, 'pad_token', '<pad>')  # Assume pad token name
+                    if vocab and pad_token in vocab.get_stoi():
+                        pad_idx = vocab.get_stoi()[pad_token]
+                    else:
+                        raise ValueError(f"Seller {self.seller_id}: pad_idx not found, required for text data.")
+                logging.debug(f"Seller {self.seller_id}: Using pad_idx: {pad_idx}")
+
+                pytorch_dataset = TextDataset(dataset)  # Wrap list in Dataset
+                custom_collate = partial(collate_batch, padding_value=pad_idx)
+                data_loader = DataLoader(
+                    pytorch_dataset,
+                    batch_size=batch_size,
+                    shuffle=True,  # Shuffle for gradient computation epochs
+                    collate_fn=custom_collate
+                )
+            # No else needed due to check above
+
+        except Exception as e:
+            data_type = "image" if is_image_data else "text"
+            logging.error(f"Seller {self.seller_id}: Failed to create {data_type} DataLoader: {e}",
+                          exc_info=True)  # Log traceback
+            raise  # Re-raise the exception
+
+        if data_loader is None:
+            # This case should ideally be prevented by the exceptions above
+            logging.error(f"Seller {self.seller_id}: DataLoader is None after setup. Cannot compute gradient.")
+            return self._create_zero_gradient()  # Or raise error
 
         # Call the MODIFIED external training function which now returns avg_loss
         try:
@@ -559,7 +624,7 @@ class GradientSeller(BaseSeller):
             # Call the function - IT MUST NOW RETURN 5 VALUES
             grad_update, grad_update_flt, local_model, local_eval_res, avg_train_loss = local_training_and_get_gradient(
                 model=base_model,
-                train_dataset=tensor_dataset,  # Pass the converted dataset
+                train_loader=data_loader,  # Pass the converted dataset
                 batch_size=self.local_training_params.get('batch_size', 64),  # Use batch size from params
                 device=self.device,
                 # Ensure key names match your actual params dict

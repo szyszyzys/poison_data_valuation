@@ -229,7 +229,7 @@ def test_local_model(model: nn.Module,
 #     return grad_update, flat_update, local_model, eval_res
 
 def local_training_and_get_gradient(model: nn.Module,
-                                    train_dataset: TensorDataset,
+                                    train_loader,
                                     batch_size: int,
                                     device: torch.device,
                                     local_epochs: int = 1,
@@ -251,16 +251,6 @@ def local_training_and_get_gradient(model: nn.Module,
     local_model.to(device)
     initial_model = copy.deepcopy(local_model) # Keep initial state for gradient calc
 
-    # Create a DataLoader for the local dataset
-    # Handle potential empty dataset
-    if len(train_dataset) == 0:
-        logging.warning("Received empty dataset for local training. Returning zero gradient.")
-        # Return zero gradient of the same structure as model params
-        zero_grad = OrderedDict([(n, np.zeros_like(p.cpu().detach().numpy())) for n, p in model.named_parameters()])
-        zero_flat = flatten_gradients(zero_grad)
-        return zero_grad, zero_flat, local_model, {"acc": float('nan'), "loss": float('nan')}, None
-
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     # Use a standard loss function and optimizer
     criterion = nn.CrossEntropyLoss()
