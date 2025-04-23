@@ -1,8 +1,15 @@
 import argparse
+import json  # To handle lists as strings
+import logging
+import os
 import random
 import shutil
 import subprocess
 
+import numpy as np  # Needed for numpy types in JSON saving
+# log_utils.py (or results_logger.py)
+import pandas as pd
+import torch
 import torch.backends.cudnn
 import yaml
 from torch import nn
@@ -17,13 +24,8 @@ from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorA
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
 from model.utils import get_image_model, get_text_model
 
-# log_utils.py (or results_logger.py)
-import pandas as pd
-import os
-import logging
-import json  # To handle lists as strings
-
 logger = logging.getLogger(__name__)
+
 
 def get_free_gpu():
     try:
@@ -149,8 +151,6 @@ class FederatedEarlyStopper:
             self.counter += 1
 
         return self.counter >= self.patience
-
-
 
 
 def flatten_dict(d, parent_key='', sep='_'):
@@ -688,11 +688,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # Assuming torch is available for device check
-    try:
-        import torch
-        import numpy as np  # Needed for numpy types in JSON saving
-    except ImportError:
-        print("Warning: PyTorch or NumPy not found. Device detection/saving might be affected.")
-        # Handle fallback if necessary
     main()
