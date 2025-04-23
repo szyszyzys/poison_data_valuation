@@ -121,7 +121,7 @@ BASE_CONFIG_TEMPLATE = {
     }
 }
 
-DATASETS = ['CIFAR', 'FMNIST', 'AG_NEWS', 'TREC']
+DATASETS = ['AG_NEWS', 'TREC', 'CIFAR', 'FMNIST']
 
 # --- Model Configs per Dataset (Simplified) ---
 # You might need more details (layers, etc.) depending on model structure definition
