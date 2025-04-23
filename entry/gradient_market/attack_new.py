@@ -211,6 +211,7 @@ def poisoning_attack_text(
                     sybil_coordinator=sybil_coordinator,
                     benign_rounds=sybil_params['benign_rounds'],
                     vocab=vocab,
+                    pad_idx=padding_idx,
                 )
                 sybil_coordinator.register_seller(current_seller)
                 malicious_sellers_list.append(current_seller)
@@ -229,6 +230,7 @@ def poisoning_attack_text(
                     sybil_coordinator=sybil_coordinator,
                     benign_rounds=sybil_params['benign_rounds'],
                     vocab=vocab,
+                    pad_idx=padding_idx,
                 )
                 malicious_sellers_list.append(current_seller)
             else:
@@ -238,6 +240,7 @@ def poisoning_attack_text(
             current_seller = GradientSeller(seller_id=cur_id, local_data=seller_dataset,
                                             dataset_name=dataset_name, save_path=save_path, device=device,
                                             local_training_params=local_training_params, vocab=vocab,
+                                            pad_idx=padding_idx,
                                             )
 
         marketplace.register_seller(cur_id, current_seller)
