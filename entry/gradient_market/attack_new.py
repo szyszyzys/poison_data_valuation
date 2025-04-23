@@ -519,7 +519,7 @@ def poisoning_attack_image(
                                             local_training_params=local_training_params)
 
         marketplace.register_seller(cur_id, current_seller)
-
+    print(marketplace.sellers)
     # --- Run Federated Training ---
     print("\n--- Starting Federated Training Rounds ---")
     for gr in range(global_rounds):
