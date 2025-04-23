@@ -161,7 +161,7 @@ def poisoning_attack_text(
 
     buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader_collated.dataset,  # Pass underlying dataset list
                            dataset_name=dataset_name, save_path=save_path,
-                           local_training_params=local_training_params)
+                           local_training_params=local_training_params, pad_idx=padding_idx)
 
     # Aggregator (needs the actual model instance now)
     aggregator = Aggregator(save_path=save_path, n_seller=n_sellers,
