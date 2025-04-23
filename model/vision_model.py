@@ -117,16 +117,11 @@ class TextCNN(nn.Module):
         print(f"  Padding Index: {padding_idx}")
 
     def forward(self, text: torch.Tensor) -> torch.Tensor:
-        print(f"--- Entering TextCNN forward ---")
-        print(f"Input text shape: {text.shape}")
         embedded = self.embedding(text)
-        print(f"After embedding shape: {embedded.shape}")  # Should be [B, L, E]
         embedded = embedded.unsqueeze(1)
-        print(f"After unsqueeze shape: {embedded.shape}")  # Should be [B, 1, L, E]
 
         conved = []
         for i, conv in enumerate(self.convs):
-            print(f"Applying conv {i} to shape: {embedded.shape}")  # Check shape right before conv
             try:
                 conv_out = F.relu(conv(embedded))
                 conved.append(conv_out)
