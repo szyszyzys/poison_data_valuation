@@ -261,33 +261,12 @@ def get_text_data_set(
     loader_returns_tuple_for_splits = True
 
     if dataset_name == "AG_NEWS":
-        try:
-            # --- Try Newer API First ---
-            from torchtext.datasets import AG_NEWS as AG_NEWS_Loader
-            SuccessfulLoader = AG_NEWS_Loader
-            loader_args['split'] = ('train', 'test')
-            train_iter, test_iter = SuccessfulLoader(**loader_args)
-            logging.info("Using newer torchtext.datasets.AG_NEWS API.")
-        except (ImportError, TypeError, AttributeError) as e_new:  # Catch AttributeError too
-            logging.warning(f"Newer torchtext AG_NEWS failed ('{e_new}'), falling back to legacy API.")
-            try:
-                # --- Fallback to Legacy API ---
-                # Check if legacy exists before importing
-                import importlib
-                if importlib.util.find_spec("torchtext.legacy.datasets"):
-                    from torchtext.legacy.datasets import AG_NEWS as AG_NEWS_Loader_Legacy
-                    SuccessfulLoader = AG_NEWS_Loader_Legacy
-                    loader_args.pop('split', None)  # Legacy doesn't use 'split' arg
-                    # Legacy returns train, test directly if root is present
-                    train_iter, test_iter = SuccessfulLoader(**loader_args)
-                    loader_returns_tuple_for_splits = False  # Legacy usually returns tuple directly
-                    logging.info("Using legacy torchtext.legacy.datasets.AG_NEWS API.")
-                else:
-                    raise ImportError("torchtext.legacy not found.")
-            except Exception as e_legacy:
-                logging.error(f"Failed to load AG_NEWS using both new and legacy APIs. Legacy Error: {e_legacy}")
-                raise RuntimeError(
-                    f"Failed to load AG_NEWS. New API Error: {e_new}. Legacy API Error: {e_legacy}") from e_legacy
+        # --- Try Newer API First ---
+        from torchtext.datasets import AG_NEWS as AG_NEWS_Loader
+        SuccessfulLoader = AG_NEWS_Loader
+        loader_args['split'] = ('train', 'test')
+        train_iter, test_iter = SuccessfulLoader(**loader_args)
+        logging.info("Using newer torchtext.datasets.AG_NEWS API.")
 
         # --- Common AG_NEWS setup ---
         num_classes = 4
@@ -296,32 +275,12 @@ def get_text_data_set(
         logging.info(f"AG_NEWS dataset setup complete. Num classes: {num_classes}. Original labels are 1-based.")
 
     elif dataset_name == "TREC":
-        try:
-            # --- Try Newer API First ---
-            from torchtext.datasets import TREC as TREC_Loader
-            SuccessfulLoader = TREC_Loader
-            loader_args['split'] = ('train', 'test')
-            train_iter, test_iter = SuccessfulLoader(**loader_args)
-            logging.info("Using newer torchtext.datasets.TREC API.")
-        except (ImportError, TypeError, AttributeError) as e_new:
-            logging.warning(f"Newer torchtext TREC failed ('{e_new}'), falling back to legacy API.")
-            try:
-                # --- Fallback to Legacy API ---
-                import importlib
-                if importlib.util.find_spec("torchtext.legacy.datasets"):
-                    from torchtext.legacy.datasets import TREC as TREC_Loader_Legacy
-                    SuccessfulLoader = TREC_Loader_Legacy
-                    loader_args.pop('split', None)
-                    train_iter, test_iter = SuccessfulLoader(**loader_args)
-                    loader_returns_tuple_for_splits = False
-                    logging.info("Using legacy torchtext.legacy.datasets.TREC API.")
-                else:
-                    raise ImportError("torchtext.legacy not found.")
-            except Exception as e_legacy:
-                logging.error(f"Failed to load TREC using both new and legacy APIs. Legacy Error: {e_legacy}")
-                raise RuntimeError(
-                    f"Failed to load TREC. New API Error: {e_new}. Legacy API Error: {e_legacy}") from e_legacy
-
+        # --- Try Newer API First ---
+        from torchtext.datasets import TREC as TREC_Loader
+        SuccessfulLoader = TREC_Loader
+        loader_args['split'] = ('train', 'test')
+        train_iter, test_iter = SuccessfulLoader(**loader_args)
+        logging.info("Using newer torchtext.datasets.TREC API.")
         # --- Common TREC setup: Infer classes ---
         # Get a fresh iterator *just for counting labels* using the successful loader
         logging.info("Inferring number of classes for TREC...")
