@@ -1,30 +1,16 @@
+from torch.utils.data import DataLoader, Subset
 import logging
-from typing import List, Dict, Tuple, Optional, Any
-
+from typing import List, Tuple, Dict, Any, Optional
 import torch
 from torch.utils.data import DataLoader, Subset
-from torchtext.data.utils import get_tokenizer
 from torchtext.datasets import AG_NEWS, TREC
+from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
 
 # Configure logging (optional, but recommended)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-# --- Assume necessary splitting functions are importable ---
-# You MUST ensure these functions are defined elsewhere and imported correctly.
-# They should be the versions modified to accept the 'label_index' parameter.
-# Example imports (replace 'your_splitting_module' with the actual module name):
-# from your_splitting_module import (
-#     split_dataset_martfl_discovery,
-#     construct_buyer_set,  # Needed by the splitter
-#     _calculate_target_counts, # Needed by the splitter
-#     split_dataset_by_label, # If using 'label' split method
-#     split_dataset_buyer_seller_improved, # If using other methods
-#     generate_buyer_bias_distribution # If using biased buyer mode
-# )
-# --- Placeholder for missing functions ---
-# Define dummy functions if you don't have them imported yet, for testing structure
 def placeholder_splitter(*args, **kwargs):
     logging.warning("Using placeholder splitter function!")
     dataset = kwargs.get('dataset', [])
@@ -52,38 +38,6 @@ split_dataset_buyer_seller_improved = placeholder_splitter  # Replace with actua
 generate_buyer_bias_distribution = placeholder_generate_bias  # Replace with actual import
 
 
-# -----------------------------------------
-
-# --- Text Data Helper Functions ---
-import random
-import logging
-from typing import List, Tuple, Dict, Any, Optional
-
-import numpy as np
-import torch
-from torch.utils.data import DataLoader, Subset
-# Assuming torchtext.legacy is needed for older datasets/vocab functionality
-# If using newer torchtext, imports might change
-try:
-    # Try importing from newer torchtext first
-    from torchtext.datasets import AG_NEWS, TREC
-    from torchtext.data.utils import get_tokenizer
-    from torchtext.vocab import build_vocab_from_iterator
-except ImportError:
-    # Fallback to legacy if newer ones fail (adjust as per your torchtext version)
-    logging.warning("Failed to import from standard torchtext, trying legacy. Ensure torchtext version compatibility.")
-    from torchtext.legacy.datasets import AG_NEWS, TREC
-    from torchtext.legacy.data.utils import get_tokenizer
-    from torchtext.legacy.vocab import build_vocab_from_iterator
-
-
-# --- Assume these splitting functions are defined elsewhere and imported ---
-# from .splitters import (
-#     split_text_dataset_martfl_discovery,
-#     generate_buyer_bias_distribution,
-#     split_dataset_by_label,
-#     split_dataset_buyer_seller_improved
-# )
 # Placeholder functions for demonstration if imports fail
 def generate_buyer_bias_distribution(num_classes, bias_type, alpha, **kwargs):
     logging.warning("Using placeholder `generate_buyer_bias_distribution`")
@@ -93,7 +47,9 @@ def generate_buyer_bias_distribution(num_classes, bias_type, alpha, **kwargs):
     else:
         return np.ones(num_classes) / num_classes
 
-def split_text_dataset_martfl_discovery(dataset, buyer_count, num_clients, client_data_count, noise_factor, buyer_data_mode, buyer_bias_distribution, seed, **kwargs):
+
+def split_text_dataset_martfl_discovery(dataset, buyer_count, num_clients, client_data_count, noise_factor,
+                                        buyer_data_mode, buyer_bias_distribution, seed, **kwargs):
     logging.warning("Using placeholder `split_text_dataset_martfl_discovery`")
     np.random.seed(seed)
     all_indices = np.arange(len(dataset))
@@ -103,6 +59,7 @@ def split_text_dataset_martfl_discovery(dataset, buyer_count, num_clients, clien
     seller_splits_list = np.array_split(seller_all_indices, num_clients)
     seller_splits = {i: list(split) for i, split in enumerate(seller_splits_list)}
     return buyer_indices, seller_splits
+
 
 def split_dataset_by_label(dataset, buyer_count, num_sellers, label_index, seed, **kwargs):
     logging.warning("Using placeholder `split_dataset_by_label`")
@@ -115,7 +72,9 @@ def split_dataset_by_label(dataset, buyer_count, num_sellers, label_index, seed,
     seller_splits = {i: list(split) for i, split in enumerate(seller_splits_list)}
     return buyer_indices, seller_splits
 
-def split_dataset_buyer_seller_improved(dataset, buyer_count, num_sellers, split_method, dirichlet_alpha, n_adversaries, label_index, seed, **kwargs):
+
+def split_dataset_buyer_seller_improved(dataset, buyer_count, num_sellers, split_method, dirichlet_alpha, n_adversaries,
+                                        label_index, seed, **kwargs):
     logging.warning(f"Using placeholder `split_dataset_buyer_seller_improved` for method {split_method}")
     np.random.seed(seed)
     all_indices = np.arange(len(dataset))
@@ -125,6 +84,8 @@ def split_dataset_buyer_seller_improved(dataset, buyer_count, num_sellers, split
     seller_splits_list = np.array_split(seller_all_indices, num_sellers)
     seller_splits = {i: list(split) for i, split in enumerate(seller_splits_list)}
     return buyer_indices, seller_splits
+
+
 # --- End Placeholder Splitters ---
 
 
@@ -168,10 +129,11 @@ def collate_batch(batch: List[Tuple[int, List[int]]], vocab: Any) -> Tuple[torch
         except KeyError:
             raise ValueError(f"'{pad_token}' token not found in vocabulary.")
         except TypeError:
-             raise TypeError(f"Vocabulary object (type: {type(vocab)}) is not subscriptable like a dictionary or doesn't contain '{pad_token}'.")
+            raise TypeError(
+                f"Vocabulary object (type: {type(vocab)}) is not subscriptable like a dictionary or doesn't contain '{pad_token}'.")
 
-    if pad_idx is None: # Should ideally be caught by KeyError above, but double check
-         raise ValueError(f"'{pad_token}' token not found in vocabulary or resolved to None.")
+    if pad_idx is None:  # Should ideally be caught by KeyError above, but double check
+        raise ValueError(f"'{pad_token}' token not found in vocabulary or resolved to None.")
 
     padded_texts = torch.nn.utils.rnn.pad_sequence(
         text_list, batch_first=True, padding_value=pad_idx
@@ -205,7 +167,8 @@ def get_text_data_set(
         # --- Other Split Method Params ---
         seller_dirichlet_alpha: float = 0.7,  # Alpha for non-discovery seller splits
         seed: int = 42
-) -> Tuple[Optional[DataLoader], Dict[int, Optional[DataLoader]], Optional[DataLoader], List[str], Any, int]: # MODIFIED return type hint
+) -> Tuple[Optional[DataLoader], Dict[int, Optional[DataLoader]], Optional[DataLoader], List[
+    str], Any, int]:  # MODIFIED return type hint
     """
     Loads, preprocesses, and splits AG_NEWS or TREC text datasets.
 
@@ -255,10 +218,9 @@ def get_text_data_set(
     if buyer_dirichlet_alpha <= 0:
         raise ValueError(f"buyer_dirichlet_alpha must be positive, got {buyer_dirichlet_alpha}")
     if discovery_client_data_count < 0:
-         raise ValueError(f"discovery_client_data_count cannot be negative, got {discovery_client_data_count}")
+        raise ValueError(f"discovery_client_data_count cannot be negative, got {discovery_client_data_count}")
     if seller_dirichlet_alpha <= 0:
         raise ValueError(f"seller_dirichlet_alpha must be positive, got {seller_dirichlet_alpha}")
-
 
     # --- Setup ---
     # (setup code remains the same)
@@ -272,7 +234,7 @@ def get_text_data_set(
     label_index_in_tuple = 0
     data_root = './data'
     unk_token = "<unk>"
-    pad_token = "<pad>" # Define pad token string
+    pad_token = "<pad>"  # Define pad token string
 
     # --- Load Raw Data and Tokenizer ---
     # (loading code remains the same)
@@ -280,7 +242,8 @@ def get_text_data_set(
     try:
         tokenizer = get_tokenizer('basic_english')
     except ModuleNotFoundError:
-        logging.error("Spacy or its 'en_core_web_sm' model not found. Please run: python -m spacy download en_core_web_sm")
+        logging.error(
+            "Spacy or its 'en_core_web_sm' model not found. Please run: python -m spacy download en_core_web_sm")
         raise
     except Exception as e:
         logging.error(f"Error initializing tokenizer: {e}")
@@ -305,9 +268,10 @@ def get_text_data_set(
             num_classes = len(unique_labels)
             expected_trec_classes = 6
             if num_classes == expected_trec_classes:
-                 class_names = ['Abbreviation', 'Entity', 'Description', 'Human', 'Location', 'Numeric']
+                class_names = ['Abbreviation', 'Entity', 'Description', 'Human', 'Location', 'Numeric']
             else:
-                logging.warning(f"Inferred {num_classes} classes for TREC, expected {expected_trec_classes}. Using numeric names.")
+                logging.warning(
+                    f"Inferred {num_classes} classes for TREC, expected {expected_trec_classes}. Using numeric names.")
                 class_names = [str(i) for i in sorted(list(unique_labels))]
             label_offset = 0
             logging.info(f"TREC dataset loaded. Num classes: {num_classes}. Original labels are 0-based.")
@@ -317,13 +281,12 @@ def get_text_data_set(
     else:
         raise ValueError(f"Dataset loading logic missing for: {dataset_name}")
 
-
     # --- Build Vocabulary ---
     logging.info("Building vocabulary...")
-    pad_idx: Optional[int] = None # Initialize pad_idx
+    pad_idx: Optional[int] = None  # Initialize pad_idx
     try:
         vocab_train_iter, _ = (AG_NEWS if dataset_name == "AG_NEWS" else TREC)(root=data_root, split=('train', 'test'))
-        specials = [unk_token, pad_token] # Use defined constants
+        specials = [unk_token, pad_token]  # Use defined constants
 
         vocab = build_vocab_from_iterator(yield_tokens(vocab_train_iter, tokenizer), specials=specials)
         vocab.set_default_index(vocab[unk_token])
@@ -331,8 +294,8 @@ def get_text_data_set(
 
         # --- >>> GET PADDING INDEX HERE <<< ---
         if pad_token not in vocab.get_stoi():
-             raise ValueError(f"'{pad_token}' special token was not correctly added to vocabulary.")
-        pad_idx = vocab[pad_token] # Get the index for the padding token
+            raise ValueError(f"'{pad_token}' special token was not correctly added to vocabulary.")
+        pad_idx = vocab[pad_token]  # Get the index for the padding token
         # --- >>> END GET PADDING INDEX <<< ---
 
         logging.info(f"Vocabulary built. Size: {len(vocab)}. '{pad_token}' index: {pad_idx}")
@@ -344,7 +307,6 @@ def get_text_data_set(
     # Ensure pad_idx was successfully assigned
     if pad_idx is None:
         raise RuntimeError("Padding index could not be determined after vocabulary building.")
-
 
     # --- Define Text Processing Pipeline ---
     text_pipeline = lambda x: vocab(tokenizer(x))
@@ -392,7 +354,6 @@ def get_text_data_set(
     logging.info(f"Total train samples available for splitting: {total_samples}")
     logging.info(f"Allocating {buyer_count} samples ({buyer_percentage * 100:.2f}%) for the buyer.")
 
-
     # --- Data Splitting ---
     # (splitting logic remains the same, using placeholder functions)
     buyer_indices: np.ndarray = np.array([], dtype=int)
@@ -404,29 +365,46 @@ def get_text_data_set(
         # ... (discovery split logic) ...
         if buyer_data_mode == "biased":
             try:
-                buyer_bias_distribution_generated = generate_buyer_bias_distribution(num_classes, buyer_bias_type, buyer_dirichlet_alpha)
+                buyer_bias_distribution_generated = generate_buyer_bias_distribution(num_classes, buyer_bias_type,
+                                                                                     buyer_dirichlet_alpha)
                 logging.info(f"Generated buyer bias distribution: {buyer_bias_distribution_generated}")
-            except NameError: raise ImportError("Missing: generate_buyer_bias_distribution")
-            except Exception as e: raise RuntimeError(f"Buyer bias generation failed: {e}") from e
-        elif buyer_data_mode != "random": raise ValueError(f"Unknown buyer_data_mode: '{buyer_data_mode}'")
+            except NameError:
+                raise ImportError("Missing: generate_buyer_bias_distribution")
+            except Exception as e:
+                raise RuntimeError(f"Buyer bias generation failed: {e}") from e
+        elif buyer_data_mode != "random":
+            raise ValueError(f"Unknown buyer_data_mode: '{buyer_data_mode}'")
         try:
-            buyer_indices, seller_splits = split_text_dataset_martfl_discovery(dataset, buyer_count, num_sellers, discovery_client_data_count, discovery_quality, buyer_data_mode, buyer_bias_distribution_generated, seed)
-        except NameError: raise ImportError("Missing: split_text_dataset_martfl_discovery")
-        except Exception as e: raise RuntimeError(f"Discovery split failed: {e}") from e
+            buyer_indices, seller_splits = split_text_dataset_martfl_discovery(dataset, buyer_count, num_sellers,
+                                                                               discovery_client_data_count,
+                                                                               discovery_quality, buyer_data_mode,
+                                                                               buyer_bias_distribution_generated, seed)
+        except NameError:
+            raise ImportError("Missing: split_text_dataset_martfl_discovery")
+        except Exception as e:
+            raise RuntimeError(f"Discovery split failed: {e}") from e
 
     elif split_method == "label":
-         # ... (label split logic) ...
+        # ... (label split logic) ...
         try:
-            buyer_indices, seller_splits = split_dataset_by_label(dataset, buyer_count, num_sellers, label_index_in_tuple, seed)
-        except NameError: raise ImportError("Missing: split_dataset_by_label")
-        except Exception as e: raise RuntimeError(f"Label split failed: {e}") from e
+            buyer_indices, seller_splits = split_dataset_by_label(dataset, buyer_count, num_sellers,
+                                                                  label_index_in_tuple, seed)
+        except NameError:
+            raise ImportError("Missing: split_dataset_by_label")
+        except Exception as e:
+            raise RuntimeError(f"Label split failed: {e}") from e
 
     elif split_method in ["dirichlet", "iid", "quantity"]:
         # ... (other split logic) ...
         try:
-             buyer_indices, seller_splits = split_dataset_buyer_seller_improved(dataset, buyer_count, num_sellers, split_method, seller_dirichlet_alpha, n_adversaries, label_index_in_tuple, seed)
-        except NameError: raise ImportError(f"Missing: split_dataset_buyer_seller_improved")
-        except Exception as e: raise RuntimeError(f"{split_method.capitalize()} split failed: {e}") from e
+            buyer_indices, seller_splits = split_dataset_buyer_seller_improved(dataset, buyer_count, num_sellers,
+                                                                               split_method, seller_dirichlet_alpha,
+                                                                               n_adversaries, label_index_in_tuple,
+                                                                               seed)
+        except NameError:
+            raise ImportError(f"Missing: split_dataset_buyer_seller_improved")
+        except Exception as e:
+            raise RuntimeError(f"{split_method.capitalize()} split failed: {e}") from e
     else:
         raise ValueError(f"Unsupported split_method: '{split_method}'.")
 
@@ -437,32 +415,36 @@ def get_text_data_set(
     for seller_id, indices in seller_splits.items():
         if indices is None: continue
         if not isinstance(indices, (list, np.ndarray)):
-             logging.warning(f"Seller {seller_id} indices type {type(indices)} not list/array. Assuming empty.")
-             indices = []
-             seller_splits[seller_id] = indices
+            logging.warning(f"Seller {seller_id} indices type {type(indices)} not list/array. Assuming empty.")
+            indices = []
+            seller_splits[seller_id] = indices
         indices_set = set(indices)
         if not assigned_indices.isdisjoint(indices_set):
-             logging.error(f"Overlap detected: buyer indices and seller {seller_id} indices!")
+            logging.error(f"Overlap detected: buyer indices and seller {seller_id} indices!")
         assigned_indices.update(indices_set)
         total_seller_samples_assigned += len(indices)
-    logging.info(f"Splitting complete. Buyer samples: {len(buyer_indices)}, Total seller samples: {total_seller_samples_assigned}")
+    logging.info(
+        f"Splitting complete. Buyer samples: {len(buyer_indices)}, Total seller samples: {total_seller_samples_assigned}")
     unassigned_count = total_samples - len(assigned_indices)
-    if unassigned_count > 0: logging.warning(f"{unassigned_count} samples were not assigned.")
-    elif unassigned_count < 0: logging.error("Error in index accounting: More indices assigned than available.")
-
+    if unassigned_count > 0:
+        logging.warning(f"{unassigned_count} samples were not assigned.")
+    elif unassigned_count < 0:
+        logging.error("Error in index accounting: More indices assigned than available.")
 
     # --- Create DataLoaders ---
     # (DataLoader creation remains the same, using dynamic_collate_fn)
     logging.info("Creating DataLoaders...")
-    dynamic_collate_fn = lambda batch: collate_batch(batch, vocab) # Captures vocab
+    dynamic_collate_fn = lambda batch: collate_batch(batch, vocab)  # Captures vocab
 
     buyer_loader: Optional[DataLoader] = None
     if buyer_indices is not None and len(buyer_indices) > 0:
         try:
             buyer_subset = Subset(dataset, buyer_indices)
-            buyer_loader = DataLoader(buyer_subset, batch_size=batch_size, shuffle=True, collate_fn=dynamic_collate_fn, drop_last=False)
+            buyer_loader = DataLoader(buyer_subset, batch_size=batch_size, shuffle=True, collate_fn=dynamic_collate_fn,
+                                      drop_last=False)
             logging.info(f"Buyer DataLoader created with {len(buyer_indices)} samples.")
-        except Exception as e: raise RuntimeError(f"Buyer DataLoader creation failed: {e}") from e
+        except Exception as e:
+            raise RuntimeError(f"Buyer DataLoader creation failed: {e}") from e
     else:
         logging.warning("Buyer has no data samples assigned. Buyer DataLoader will be None.")
 
@@ -476,19 +458,22 @@ def get_text_data_set(
         else:
             try:
                 seller_subset = Subset(dataset, indices)
-                seller_loaders[i] = DataLoader(seller_subset, batch_size=batch_size, shuffle=True, collate_fn=dynamic_collate_fn, drop_last=False)
+                seller_loaders[i] = DataLoader(seller_subset, batch_size=batch_size, shuffle=True,
+                                               collate_fn=dynamic_collate_fn, drop_last=False)
                 actual_sellers_with_data += 1
             except Exception as e:
-                 logging.error(f"Failed to create DataLoader for seller {i}: {e}. Setting to None.")
-                 seller_loaders[i] = None
-    logging.info(f"Seller DataLoaders created for {actual_sellers_with_data}/{num_sellers} sellers. Total samples: {total_seller_samples_assigned}")
+                logging.error(f"Failed to create DataLoader for seller {i}: {e}. Setting to None.")
+                seller_loaders[i] = None
+    logging.info(
+        f"Seller DataLoaders created for {actual_sellers_with_data}/{num_sellers} sellers. Total samples: {total_seller_samples_assigned}")
 
     test_loader: Optional[DataLoader] = None
     if test_set is not None and len(test_set) > 0:
         try:
             test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, collate_fn=dynamic_collate_fn)
             logging.info(f"Test DataLoader created with {len(test_set)} samples.")
-        except Exception as e: raise RuntimeError(f"Test DataLoader creation failed: {e}") from e
+        except Exception as e:
+            raise RuntimeError(f"Test DataLoader creation failed: {e}") from e
     else:
         logging.warning("Processed test set is empty or None. Test DataLoader will be None.")
 
@@ -496,6 +481,7 @@ def get_text_data_set(
 
     # --- >>> MODIFIED RETURN STATEMENT <<< ---
     return buyer_loader, seller_loaders, test_loader, class_names, vocab, pad_idx
+
 
 import logging
 import random
