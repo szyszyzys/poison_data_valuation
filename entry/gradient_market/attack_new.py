@@ -148,7 +148,7 @@ def poisoning_attack_text(
         dataset_name=dataset_name,
         num_classes=num_classes,
         vocab_size=vocab_size,
-        padding_idx = padding_idx,
+        padding_idx=padding_idx,
         **text_model_hyperparams
     )
 
@@ -209,7 +209,8 @@ def poisoning_attack_text(
                     gradient_manipulation_mode=gradient_manipulation_mode,
                     is_sybil=args.is_sybil,
                     sybil_coordinator=sybil_coordinator,
-                    benign_rounds=sybil_params['benign_rounds']
+                    benign_rounds=sybil_params['benign_rounds'],
+                    vocab=vocab,
                 )
                 sybil_coordinator.register_seller(current_seller)
                 malicious_sellers_list.append(current_seller)
@@ -226,7 +227,8 @@ def poisoning_attack_text(
                     local_training_params=local_training_params,
                     is_sybil=args.is_sybil,
                     sybil_coordinator=sybil_coordinator,
-                    benign_rounds=sybil_params['benign_rounds']
+                    benign_rounds=sybil_params['benign_rounds'],
+                    vocab=vocab,
                 )
                 malicious_sellers_list.append(current_seller)
             else:
@@ -235,7 +237,8 @@ def poisoning_attack_text(
             print(f"  Configuring BN seller {cur_id}")
             current_seller = GradientSeller(seller_id=cur_id, local_data=seller_dataset,
                                             dataset_name=dataset_name, save_path=save_path, device=device,
-                                            local_training_params=local_training_params)
+                                            local_training_params=local_training_params, vocab=vocab,
+                                            )
 
         marketplace.register_seller(cur_id, current_seller)
 

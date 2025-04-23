@@ -403,6 +403,7 @@ class GradientSeller(BaseSeller):
                  price_variation: float = 0.2,
                  save_path="",
                  device="cpu",
+                 vocab = None,
                  local_epochs=2, local_training_params=None):
         """.
         :param seller_id: Unique ID for the seller.
@@ -431,6 +432,7 @@ class GradientSeller(BaseSeller):
         self.recent_metrics = None
         self.cur_upload_gradient_flt = None
         self.cur_local_gradient = None
+        self.vocab = vocab
 
     def set_local_model_params(self, params: np.ndarray):
         """Set (or update) local model parameters before computing gradient."""
@@ -745,6 +747,7 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
                  local_training_params: Optional[dict] = None,
                  is_sybil: bool = False,
                  benign_rounds=3,
+                 vocab=None,
                  sybil_coordinator: Optional['SybilCoordinator'] = None):
         super().__init__(seller_id, local_data, save_path=save_path, device=device,
                          local_epochs=local_epochs, dataset_name=dataset_name,
@@ -762,6 +765,8 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
         # Adversary behaviors registry: maps a mode to a function.
         self.adversary_behaviors = self.simple_flipping
         self.poison_rate = poison_rate
+        self.vocab=vocab
+
 
     def get_clean_gradient(self, base_model):
         """
@@ -970,6 +975,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  gradient_manipulation_mode: str = "cmd",
                  is_sybil: bool = False,
                  benign_rounds=3,
+                 vocab=None,
                  sybil_coordinator: Optional['SybilCoordinator'] = None):
         super().__init__(seller_id, local_data, save_path=save_path, device=device,
                          local_epochs=local_epochs, dataset_name=dataset_name,
@@ -996,6 +1002,8 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         # # Register this seller with the coordinator if available.
         # if self.sybil_coordinator is not None:
         #     self.sybil_coordinator.register_seller(self)
+        self.vocab=vocab
+
 
         # Adversary behaviors registry: maps a mode to a function.
         self.adversary_behaviors = {
