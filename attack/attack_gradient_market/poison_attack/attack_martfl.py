@@ -476,45 +476,42 @@ class LabelFlipAttackGenerator:
             return random.choice(possible_targets)
 
     def generate_poisoned_dataset(
-            self,
-            original_dataset: List[Tuple[int, Any]],  # Accepts (label, data) tuples, data can be Any
-            poison_rate: float = 0.1,
-            seed: int = 42
-    ) -> Tuple[List[Tuple[int, Any]], List[int]]:
+        self,
+        original_dataset: List[Tuple[Any, int]], # Feature first (Any), then label (int)
+        poison_rate: float = 0.1,
+        seed: int = 42
+        ) -> Tuple[List[Tuple[Any, int]], List[int]]:
         """
         Creates a dataset with flipped labels for a fraction of samples.
-        Keeps the features (e.g., token IDs) unchanged.
+        Keeps the features unchanged.
 
         Args:
-            original_dataset (List[Tuple[int, Any]]): The clean dataset, where each
-                element is a tuple (original_label, data_features).
-            poison_rate (float): The fraction of the dataset to apply label flipping to (e.g., 0.1 for 10%).
+            original_dataset (List[Tuple[Any, int]]): The clean dataset, where each
+                element is a tuple (data_features, original_label). Input format changed!
+            poison_rate (float): The fraction of the dataset to apply label flipping to.
             seed (int): Random seed for selecting samples to poison.
 
         Returns:
-            Tuple[List[Tuple[int, Any]], List[int]]:
-            - poisoned_dataset: A new list containing samples. Poisoned samples have their
-                                labels flipped according to the attack mode, while clean
-                                samples retain their original label. Features remain unchanged.
+            Tuple[List[Tuple[Any, int]], List[int]]:
+            - poisoned_dataset: A new list containing samples (feature, potentially_flipped_label).
+                                Features remain unchanged. Order matches original_dataset.
             - original_labels: A list containing the original labels for *all* samples
                                in the returned `poisoned_dataset`, maintaining the order.
-                               Useful for evaluation.
         """
         random.seed(seed)
-        np.random.seed(seed)
+        # No need for np.random if only using random.shuffle/choice
+        # np.random.seed(seed)
 
         num_samples = len(original_dataset)
         num_poison = int(poison_rate * num_samples)
         if num_poison == 0 and poison_rate > 0:
-            logging.warning(
-                f"Poison rate {poison_rate} resulted in 0 samples to poison for dataset size {num_samples}.")
+             logging.warning(f"Poison rate {poison_rate} resulted in 0 samples to poison for dataset size {num_samples}.")
         elif num_poison > 0:
-            logging.info(
-                f"Applying label flipping to {num_poison}/{num_samples} samples ({poison_rate * 100:.2f}%). Mode: {self.attack_mode}")
+             logging.info(f"Applying label flipping to {num_poison}/{num_samples} samples ({poison_rate*100:.2f}%). Mode: {self.attack_mode}")
 
         # Get indices to poison
         all_indices = list(range(num_samples))
-        random.shuffle(all_indices)  # Shuffle to pick random indices
+        random.shuffle(all_indices) # Shuffle to pick random indices
         indices_to_poison = set(all_indices[:num_poison])
 
         poisoned_dataset_list = []
@@ -522,27 +519,30 @@ class LabelFlipAttackGenerator:
 
         num_actually_flipped = 0
         for idx in range(num_samples):
-            original_label, original_data_features = original_dataset[idx]
+            # --- Assuming input is (feature, label) ---
+            original_data_features, original_label = original_dataset[idx]
+            # ------------------------------------------
 
-            current_label = original_label  # Start with the original label
+            current_label = original_label # Start with the original label
+            is_poisoned = False
 
             if idx in indices_to_poison:
-                # Determine the new label based on the attack mode
                 flipped_label = self._flip_label(original_label)
-                current_label = flipped_label  # Use the flipped label for this sample
+                # Only update if the flip actually changes the label
                 if flipped_label != original_label:
+                    current_label = flipped_label
                     num_actually_flipped += 1
+                is_poisoned = True # Mark as processed for poisoning even if label didn't change
 
-            # Add the sample to the new dataset with the potentially modified label,
-            # but ALWAYS use the original data features.
-            poisoned_dataset_list.append((current_label, original_data_features))
+            # Add the sample with original features and potentially modified label
+            poisoned_dataset_list.append((original_data_features, current_label))
 
-            # Always store the original label for evaluation purposes
+            # Store the original label
             original_labels_list.append(original_label)
 
-        logging.info(f"Label flipping complete. {num_actually_flipped} labels were actually changed.")
+        if num_poison > 0: # Only log flipping stats if poisoning was attempted
+            logging.info(f"Label flipping complete. {num_actually_flipped} labels were actually changed out of {num_poison} selected samples.")
         return poisoned_dataset_list, original_labels_list
-
 
 class BackdoorTextGenerator:
     """

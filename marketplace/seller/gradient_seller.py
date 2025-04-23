@@ -20,10 +20,9 @@ import torch.nn.functional as F
 from torch import optim, nn
 from torch.utils.data import DataLoader, Dataset
 
-from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
 from general_utils.data_utils import list_to_tensor_dataset
 from marketplace.seller.seller import BaseSeller
-from model.utils import get_image_model, local_training_and_get_gradient, apply_gradient_update
+from model.utils import get_image_model, local_training_and_get_gradient
 
 
 def estimate_byte_size(data: Any) -> int:
@@ -672,9 +671,9 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
                  seller_id: str,
                  local_data: Dataset,
                  target_label: int,
-                 poison_generator = None,
+                 poison_generator=None,
                  device: str = 'cpu',
-                 poison_rate = 0.1,
+                 poison_rate=0.1,
                  save_path: str = "",
                  local_epochs: int = 2,
                  dataset_name: str = "",
@@ -699,7 +698,6 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
         self.adversary_behaviors = self.simple_flipping
         self.poison_rate = poison_rate
 
-
     def get_clean_gradient(self, base_model):
         """
         Compute the gradient on clean (benign) local data.
@@ -709,15 +707,69 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
         self.recent_metrics = local_eval_res
         return gradient
 
+    def _flip_labels(self, data, fraction: float):
+        """
+        Insert a stealthy trigger into a fraction of images.
+        """
+        n = len(data)
+        n_trigger = int(n * fraction)
+        idxs = np.random.choice(n, size=n_trigger, replace=False)
+        backdoor_data, clean_data = [], []
+        for i, (img, label) in enumerate(data):
+            if i in idxs:
+                if self.poison_generator is None:
+                    raise NotImplementedError(f"Cannot find the backdoor generator")
+                else:
+                    triggered_img = self.poison_generator.generate_poisoned_samples()
+                backdoor_data.append((triggered_img, self.flip_target_label))
+            else:
+                clean_data.append((img, label))
+        return backdoor_data, clean_data
+
     def simple_flipping(self, base_model):
         """
-        Compute the gradient on combined (backdoor + clean) data.
+        Generates label-flipped data and computes the gradient on this poisoned dataset.
+        The "flipping" refers to the label manipulation strategy.
         """
-        backdoor_data, clean_data = self.poison_generator(self.dataset, self.poison_rate)
-        g_combined, g_combined_flt, _, _, _ = self._compute_local_grad(base_model, backdoor_data + clean_data)
-        original_shapes = [param.shape for param in g_combined]
-        final_poisoned = unflatten_np(g_combined_flt, original_shapes)
-        return final_poisoned
+        logging.info(f"Starting simple_flipping attack generation (rate={self.poison_rate})")
+        # 1. Generate the dataset with flipped labels using the correct generator
+        # The generator handles selecting samples and flipping labels based on its mode.
+        poisoned_dataset, original_labels = self.poison_generator.generate_poisoned_dataset(
+            original_dataset=self.dataset,  # Pass the clean dataset
+            poison_rate=self.poison_rate,
+        )
+        # poisoned_dataset now contains *all* samples, some with original labels, some flipped.
+
+        # 2. Compute the gradient on the *entire* poisoned dataset
+        # The effect comes from the mislabeled samples influencing the gradient calculation.
+        logging.info(f"Computing gradient on combined dataset (size={len(poisoned_dataset)})")
+        g_combined, g_combined_flt, _, _, _ = self._compute_local_grad(base_model, poisoned_dataset)
+
+        # 3. Get original shapes (assuming g_combined is a list of Tensors/arrays per layer)
+        if not g_combined:  # Handle case where model has no parameters / gradient is empty
+            logging.warning("Gradient list 'g_combined' is empty.")
+            return []  # Or handle appropriately
+
+        # Determine shapes based on type (Tensor or NumPy)
+        if isinstance(g_combined[0], torch.Tensor):
+            original_shapes = [param.shape for param in g_combined]
+        elif isinstance(g_combined[0], np.ndarray):
+            original_shapes = [param.shape for param in g_combined]
+        else:
+            raise TypeError(f"Unexpected gradient type in g_combined: {type(g_combined[0])}")
+
+        # 4. Unflatten the gradient (assuming g_combined_flt is NumPy and unflatten_np works)
+        try:
+            final_poisoned_gradient_np = unflatten_np(g_combined_flt, original_shapes)
+        except NameError:
+            raise RuntimeError("Function 'unflatten_np' is not defined.")
+        except Exception as e:
+            logging.error(f"Error during unflattening: {e}")
+            raise  # Re-raise the error
+
+        logging.info("Simple flipping gradient processed and unflattened.")
+        # Returns the gradient computed on the label-flipped data, in the original structure (list of NumPy arrays)
+        return final_poisoned_gradient_np
 
     def get_local_gradient(self, global_model=None):
         """
@@ -844,7 +896,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  poison_strength: float = 0.7,
                  clip_value: float = 0.01,
                  trigger_type: str = "blended_patch",
-                 backdoor_generator = None,
+                 backdoor_generator=None,
                  device: str = 'cpu',
                  save_path: str = "",
                  local_epochs: int = 2,
@@ -1223,6 +1275,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         trigger = trigger.detach()
         return trigger
 
+
 def global_clip_np(arr, max_norm: float) -> np.ndarray:
     current_norm = np.linalg.norm(arr)
     if current_norm > max_norm:
@@ -1270,5 +1323,3 @@ def unflatten_np(flat_array, shapes):
         arrays.append(segment.reshape(shape))
         start += num_elements
     return arrays
-
-
