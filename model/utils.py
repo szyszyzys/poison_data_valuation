@@ -17,7 +17,7 @@ import copy
 import logging
 import os
 import time
-from typing import List, Tuple, Any, Dict, Optional
+from typing import List, Tuple, Any, Dict, Optional, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
