@@ -10,6 +10,8 @@ from torch.utils.data import DataLoader, Subset
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
 
+from marketplace.utils.gradient_market_utils.data_processor import split_dataset_discovery
+
 # Configure logging (optional, but recommended)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -64,32 +66,6 @@ def split_text_dataset_martfl_discovery(dataset, buyer_count, num_clients, clien
     return buyer_indices, seller_splits
 
 
-def split_dataset_by_label(dataset, buyer_count, num_sellers, label_index, seed, **kwargs):
-    logging.warning("Using placeholder `split_dataset_by_label`")
-    np.random.seed(seed)
-    all_indices = np.arange(len(dataset))
-    np.random.shuffle(all_indices)
-    buyer_indices = all_indices[:buyer_count]
-    seller_all_indices = all_indices[buyer_count:]
-    seller_splits_list = np.array_split(seller_all_indices, num_sellers)
-    seller_splits = {i: list(split) for i, split in enumerate(seller_splits_list)}
-    return buyer_indices, seller_splits
-
-
-def split_dataset_buyer_seller_improved(dataset, buyer_count, num_sellers, split_method, dirichlet_alpha, n_adversaries,
-                                        label_index, seed, **kwargs):
-    logging.warning(f"Using placeholder `split_dataset_buyer_seller_improved` for method {split_method}")
-    np.random.seed(seed)
-    all_indices = np.arange(len(dataset))
-    np.random.shuffle(all_indices)
-    buyer_indices = all_indices[:buyer_count]
-    seller_all_indices = all_indices[buyer_count:]
-    seller_splits_list = np.array_split(seller_all_indices, num_sellers)
-    seller_splits = {i: list(split) for i, split in enumerate(seller_splits_list)}
-    return buyer_indices, seller_splits
-
-
-# --- End Placeholder Splitters ---
 
 
 # Configure logging
@@ -415,53 +391,27 @@ def get_text_data_set(
     # (splitting logic remains the same, using placeholder functions)
     buyer_indices: np.ndarray = np.array([], dtype=int)
     seller_splits: Dict[int, List[int]] = {}
-    buyer_bias_distribution_generated = None
 
     logging.info(f"Splitting data using method: '{split_method}'")
     if split_method == "discovery":
-        # ... (discovery split logic) ...
-        if buyer_data_mode == "biased":
-            try:
-                buyer_bias_distribution_generated = generate_buyer_bias_distribution(num_classes, buyer_bias_type,
-                                                                                     buyer_dirichlet_alpha)
-                logging.info(f"Generated buyer bias distribution: {buyer_bias_distribution_generated}")
-            except NameError:
-                raise ImportError("Missing: generate_buyer_bias_distribution")
-            except Exception as e:
-                raise RuntimeError(f"Buyer bias generation failed: {e}") from e
-        elif buyer_data_mode != "random":
-            raise ValueError(f"Unknown buyer_data_mode: '{buyer_data_mode}'")
-        try:
-            buyer_indices, seller_splits = split_text_dataset_martfl_discovery(dataset, buyer_count, num_sellers,
-                                                                               discovery_client_data_count,
-                                                                               discovery_quality, buyer_data_mode,
-                                                                               buyer_bias_distribution_generated, seed)
-        except NameError:
-            raise ImportError("Missing: split_text_dataset_martfl_discovery")
-        except Exception as e:
-            raise RuntimeError(f"Discovery split failed: {e}") from e
+        print(f"Using 'discovery' split method with buyer bias type: '{buyer_bias_type}'")
+        # Generate buyer distribution ONLY when needed
+        buyer_biased_distribution = generate_buyer_bias_distribution(
+            num_classes=num_classes,  # Use derived num_classes
+            bias_type=buyer_bias_type,
+            alpha=buyer_dirichlet_alpha  # Use argument for alpha
+        )
+        print(f"Generated buyer bias distribution: {buyer_biased_distribution}")
 
-    elif split_method == "label":
-        # ... (label split logic) ...
-        try:
-            buyer_indices, seller_splits = split_dataset_by_label(dataset, buyer_count, num_sellers,
-                                                                  label_index_in_tuple, seed)
-        except NameError:
-            raise ImportError("Missing: split_dataset_by_label")
-        except Exception as e:
-            raise RuntimeError(f"Label split failed: {e}") from e
+        buyer_indices, seller_splits = split_dataset_discovery(
+            dataset=dataset,
+            buyer_count=buyer_count,
+            num_clients=num_sellers,
+            noise_factor=discovery_quality,
+            buyer_data_mode=buyer_data_mode,
+            buyer_bias_distribution=buyer_biased_distribution  # Pass generated dist
+        )
 
-    elif split_method in ["dirichlet", "iid", "quantity"]:
-        # ... (other split logic) ...
-        try:
-            buyer_indices, seller_splits = split_dataset_buyer_seller_improved(dataset, buyer_count, num_sellers,
-                                                                               split_method, seller_dirichlet_alpha,
-                                                                               n_adversaries, label_index_in_tuple,
-                                                                               seed)
-        except NameError:
-            raise ImportError(f"Missing: split_dataset_buyer_seller_improved")
-        except Exception as e:
-            raise RuntimeError(f"{split_method.capitalize()} split failed: {e}") from e
     else:
         raise ValueError(f"Unsupported split_method: '{split_method}'.")
 

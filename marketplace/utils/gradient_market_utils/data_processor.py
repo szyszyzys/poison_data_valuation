@@ -598,7 +598,7 @@ def get_data_set(
         )
         print(f"Generated buyer bias distribution: {buyer_biased_distribution}")
 
-        buyer_indices, seller_splits = split_dataset_martfl_discovery(
+        buyer_indices, seller_splits = split_dataset_discovery(
             dataset=dataset,
             buyer_count=buyer_count,
             num_clients=num_sellers,
@@ -1253,7 +1253,7 @@ def construct_buyer_set(
 
 # --- Refined split_dataset_martfl_discovery Function ---
 
-def split_dataset_martfl_discovery(
+def split_dataset_discovery(
         dataset: Dataset,
         buyer_count: int,
         num_clients: int,
@@ -1295,10 +1295,15 @@ def split_dataset_martfl_discovery(
         targets = np.array(dataset.targets)
     else:
         try:
-            targets = np.array([dataset[i][1] for i in range(total_samples)])
+            # --- >>> MODIFY THIS LINE <<< ---
+            # Original might be: targets = np.array([dataset[i][1] for i in range(total_samples)])
+            # Change to access the FIRST element (index 0) for processed data:
+            targets = np.array([dataset[i][0] for i in range(total_samples)])
+            # --- >>> END MODIFICATION <<< ---
         except Exception as e:
-            raise ValueError("Could not get targets from dataset for splitting.") from e
-
+            # Add more specific error info
+            raise ValueError(
+                f"Could not get targets via indexing dataset[i][0]. Ensure dataset is indexable and items have label at index 0. Original error: {e}") from e
     unique_classes_in_dataset = np.unique(targets)
     num_classes = len(unique_classes_in_dataset)
 
