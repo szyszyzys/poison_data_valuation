@@ -181,7 +181,7 @@ def poisoning_attack_text(
     # --- Configure Sellers ---
     print("Configuring sellers...")
     malicious_sellers_list = []
-    for cid, loader in client_loaders.items():  # Use the final client_loaders dict
+    for cid, loader in client_loaders_clean_data.items():  # Use the final client_loaders dict
         is_adversary = cid in adversary_ids
         cur_id = f"adv_{cid}" if is_adversary else f"bn_{cid}"
 
