@@ -11,7 +11,7 @@ from pathlib import Path  # Modern path handling
 # Default directory containing generated YAML config files
 DEFAULT_CONFIG_DIR = "./configs_generated"
 # Default path to the main script that runs a single experiment
-DEFAULT_RUNNER_SCRIPT = "./entry/gradient_market/backdoor_attack.py"  # Adjust if your script name is different
+DEFAULT_RUNNER_SCRIPT = "./entry/gradient_market/attack_new.py"  # Adjust if your script name is different
 
 # Configure logging for the automation script itself
 log_file = "automation_runs.log"
