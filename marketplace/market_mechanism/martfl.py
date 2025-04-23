@@ -166,7 +166,7 @@ class Aggregator:
         self.device = device
         self.quantization = quantization
         model_domian = get_domain(dataset_name)
-        self.global_model = model_structure.clone()
+        self.global_model = model_structure.deepcopy()
         # An example to track "best candidate" or further logic if you need:
         self.max_indexes = [0]
         self.aggregation_method = aggregation_method
