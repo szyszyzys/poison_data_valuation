@@ -1185,7 +1185,8 @@ def construct_buyer_set(
         targets = np.array(dataset.targets)
     else:
         try:
-            targets = np.array([dataset[i][1] for i in range(total_samples)])
+            # targets = np.array([dataset[i][1] for i in range(total_samples)])
+            targets = np.array([dataset[i][0] for i in range(total_samples)])
             logging.info("Extracted targets by iterating dataset.")
         except Exception as e:
             logging.error(f"Could not get targets from dataset: {e}")
