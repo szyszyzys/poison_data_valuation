@@ -222,8 +222,6 @@ def get_text_data_set(
     if seller_dirichlet_alpha <= 0:
         raise ValueError(f"seller_dirichlet_alpha must be positive, got {seller_dirichlet_alpha}")
 
-    # --- Setup ---
-    # (setup code remains the same)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -234,129 +232,97 @@ def get_text_data_set(
     label_index_in_tuple = 0
     data_root = './data'
     unk_token = "<unk>"
-    pad_token = "<pad>"  # Define pad token string
+    pad_token = "<pad>" # Define pad token string
 
     # --- Load Raw Data and Tokenizer ---
-    # (loading code remains the same)
-    # logging.info(f"Loading TEXT dataset: {dataset_name}")
-    # try:
-    #     tokenizer = get_tokenizer('basic_english')
-    # except ModuleNotFoundError:
-    #     logging.error(
-    #         "Spacy or its 'en_core_web_sm' model not found. Please run: python -m spacy download en_core_web_sm")
-    #     raise
-    # except Exception as e:
-    #     logging.error(f"Error initializing tokenizer: {e}")
-    #     raise
-    #
-    # if dataset_name == "AG_NEWS":
-    #     try:
-    #         train_iter, test_iter = AG_NEWS(root=data_root, split=('train', 'test'))
-    #         num_classes = 4
-    #         class_names = ['World', 'Sports', 'Business', 'Sci/Tech']
-    #         label_offset = 1
-    #         logging.info(f"AG_NEWS dataset loaded. Num classes: {num_classes}. Original labels are 1-based.")
-    #     except Exception as e:
-    #         logging.error(f"Failed to load AG_NEWS from {data_root}. Error: {e}")
-    #         raise RuntimeError(f"Failed to load AG_NEWS: {e}") from e
-    # elif dataset_name == "TREC":
-    #     try:
-    #         train_iter, test_iter = TREC(root=data_root, split=('train', 'test'))
-    #         temp_train_iter_for_labels, _ = TREC(root=data_root, split=('train', 'test'))
-    #         unique_labels = set(label for label, text in temp_train_iter_for_labels)
-    #         del temp_train_iter_for_labels
-    #         num_classes = len(unique_labels)
-    #         expected_trec_classes = 6
-    #         if num_classes == expected_trec_classes:
-    #             class_names = ['Abbreviation', 'Entity', 'Description', 'Human', 'Location', 'Numeric']
-    #         else:
-    #             logging.warning(
-    #                 f"Inferred {num_classes} classes for TREC, expected {expected_trec_classes}. Using numeric names.")
-    #             class_names = [str(i) for i in sorted(list(unique_labels))]
-    #         label_offset = 0
-    #         logging.info(f"TREC dataset loaded. Num classes: {num_classes}. Original labels are 0-based.")
-    #     except Exception as e:
-    #         logging.error(f"Failed to load TREC from {data_root}. Error: {e}")
-    #         raise RuntimeError(f"Failed to load TREC: {e}") from e
-    # else:
-    #     raise ValueError(f"Dataset loading logic missing for: {dataset_name}")
-
     logging.info(f"Loading TEXT dataset: {dataset_name}")
     try:
+        # Assuming get_tokenizer works with your torchtext version
+        from torchtext.data.utils import get_tokenizer
         tokenizer = get_tokenizer('basic_english')
     except ModuleNotFoundError:
         logging.error("Spacy or its 'en_core_web_sm' model not found. Please run: python -m spacy download en_core_web_sm")
         raise
+    except ImportError:
+         logging.warning("torchtext.data.utils not found, attempting torchtext.data import for tokenizer.")
+         try:
+             from torchtext.data import get_tokenizer # Older location
+             tokenizer = get_tokenizer('basic_english')
+         except ImportError:
+              logging.error("Failed to import get_tokenizer from torchtext.data as well.")
+              raise # Re-raise if tokenizer cannot be found
     except Exception as e:
         logging.error(f"Error initializing tokenizer: {e}")
         raise
 
-    # --- Load Dataset (handling potential API differences) ---
+    # --- Load Dataset using Modern torchtext API ---
+    logging.info("Attempting to load data using modern torchtext.datasets API...")
     if dataset_name == "AG_NEWS":
         try:
-            # --- Try Newer API First ---
-            from torchtext.datasets import AG_NEWS as AG_NEWS_New
-            train_iter, test_iter = AG_NEWS_New(root=data_root, split=('train', 'test'))
-            logging.info("Using newer torchtext.datasets.AG_NEWS API.")
+            from torchtext.datasets import AG_NEWS
+            # Get train and test iterators separately using the 'split' argument
+            train_iter = AG_NEWS(root=data_root, split='train')
+            test_iter = AG_NEWS(root=data_root, split='test')
+            logging.info("Successfully loaded AG_NEWS splits.")
 
-        # Catch TypeError (for wrong args) or ImportError (if module missing)
-        except (ImportError, TypeError) as e_new:
-            logging.warning(f"Newer torchtext AG_NEWS failed ('{e_new}'), falling back to legacy API.")
-            try:
-                # --- Fallback to Legacy API ---
-                from torchtext.legacy.datasets import AG_NEWS as AG_NEWS_Legacy
-                # Legacy API typically returns the tuple directly without 'split'
-                train_iter, test_iter = AG_NEWS_Legacy(root=data_root)
-                logging.info("Using legacy torchtext.legacy.datasets.AG_NEWS API.")
-            except Exception as e_legacy:
-                logging.error(f"Failed to load AG_NEWS using both new and legacy APIs. Legacy Error: {e_legacy}")
-                # Combine error info if possible
-                raise RuntimeError(f"Failed to load AG_NEWS. New API Error: {e_new}. Legacy API Error: {e_legacy}") from e_legacy
+            # Common AG_NEWS setup
+            num_classes = 4
+            class_names = ['World', 'Sports', 'Business', 'Sci/Tech']
+            label_offset = 1 # AG_NEWS labels are 1-based
+            logging.info(f"AG_NEWS setup complete. Num classes: {num_classes}. Original labels are 1-based.")
 
-        # --- Common AG_NEWS setup ---
-        num_classes = 4
-        class_names = ['World', 'Sports', 'Business', 'Sci/Tech']
-        label_offset = 1 # AG_NEWS labels are 1-based
-        logging.info(f"AG_NEWS dataset loaded/setup complete. Num classes: {num_classes}. Original labels are 1-based.")
+        except TypeError as e_type:
+             # This catches the specific "unexpected keyword argument 'split'" error if it persists
+             logging.error(f"TypeError loading AG_NEWS with split argument: {e_type}. Your torchtext version might have an unusual API for splits.")
+             logging.error("Attempting AG_NEWS() without split - might return only one split or combined data.")
+             try:
+                 # Fallback attempt: See what AG_NEWS() returns without split
+                 # This is less standard and might only give you the training set or combined data
+                 all_data_iter = AG_NEWS(root=data_root)
+                 # You would need to manually split `all_data_iter` here if it works, which is complex.
+                 # Or figure out the specific split mechanism for your exact torchtext version.
+                 raise NotImplementedError(f"Loading AG_NEWS without 'split' succeeded but manual splitting is required for this torchtext version. Error was: {e_type}")
+             except Exception as e_fallback:
+                  logging.error(f"Failed loading AG_NEWS both with and without split arg. Fallback error: {e_fallback}")
+                  raise RuntimeError(f"Failed to load AG_NEWS splits. Initial TypeError: {e_type}") from e_fallback
+
+        except Exception as e:
+            logging.error(f"Failed to load AG_NEWS using modern API. Error: {e}")
+            raise RuntimeError(f"Failed to load AG_NEWS: {e}") from e
 
     elif dataset_name == "TREC":
         try:
-             # --- Try Newer API First ---
-            from torchtext.datasets import TREC as TREC_New
-            train_iter, test_iter = TREC_New(root=data_root, split=('train', 'test'))
-            logging.info("Using newer torchtext.datasets.TREC API.")
+            from torchtext.datasets import TREC
+            train_iter = TREC(root=data_root, split='train')
+            test_iter = TREC(root=data_root, split='test')
+            logging.info("Successfully loaded TREC splits.")
 
-        except (ImportError, TypeError) as e_new:
-            logging.warning(f"Newer torchtext TREC failed ('{e_new}'), falling back to legacy API.")
-            try:
-                # --- Fallback to Legacy API ---
-                from torchtext.legacy.datasets import TREC as TREC_Legacy
-                train_iter, test_iter = TREC_Legacy(root=data_root)
-                logging.info("Using legacy torchtext.legacy.datasets.TREC API.")
-            except Exception as e_legacy:
-                 logging.error(f"Failed to load TREC using both new and legacy APIs. Legacy Error: {e_legacy}")
-                 raise RuntimeError(f"Failed to load TREC. New API Error: {e_new}. Legacy API Error: {e_legacy}") from e_legacy
+            # Common TREC setup - Use the loaded train_iter to count classes
+            # No need for a separate temp iterator if train_iter is already loaded
+            unique_labels = set(label for label, text in train_iter)
+            # IMPORTANT: Reset train_iter if iterating consumed it (depends on DataPipe type)
+            # Re-instantiate train_iter to be safe for actual use later
+            train_iter = TREC(root=data_root, split='train')
 
-        # --- Common TREC setup ---
-        # Need a temporary iterator to count classes *after* successfully loading
-        temp_train_iter_for_labels, _ = (TREC_New if 'train_iter' in locals() and isinstance(train_iter, TREC_New) else TREC_Legacy)(root=data_root)
-        # (The rest of your TREC class counting logic remains the same)
-        unique_labels = set(label for label, text in temp_train_iter_for_labels)
-        del temp_train_iter_for_labels
-        num_classes = len(unique_labels)
-        expected_trec_classes = 6
-        if num_classes == expected_trec_classes:
-             class_names = ['Abbreviation', 'Entity', 'Description', 'Human', 'Location', 'Numeric']
-        else:
-            logging.warning(f"Inferred {num_classes} classes for TREC, expected {expected_trec_classes}. Using numeric names.")
-            class_names = [str(i) for i in sorted(list(unique_labels))]
-        label_offset = 0 # TREC labels are 0-based
-        logging.info(f"TREC dataset loaded/setup complete. Num classes: {num_classes}. Original labels are 0-based.")
+            num_classes = len(unique_labels)
+            expected_trec_classes = 6
+            if num_classes == expected_trec_classes:
+                 class_names = ['Abbreviation', 'Entity', 'Description', 'Human', 'Location', 'Numeric']
+            else:
+                logging.warning(f"Inferred {num_classes} classes for TREC, expected {expected_trec_classes}. Using numeric names.")
+                class_names = [str(i) for i in sorted(list(unique_labels))]
+            label_offset = 0 # TREC labels are 0-based
+            logging.info(f"TREC setup complete. Num classes: {num_classes}. Original labels are 0-based.")
 
+        except TypeError as e_type:
+             logging.error(f"TypeError loading TREC with split argument: {e_type}. Your torchtext version might have an unusual API for splits.")
+             raise NotImplementedError(f"Loading TREC without 'split' needs specific handling for this torchtext version. Error was: {e_type}")
+
+        except Exception as e:
+            logging.error(f"Failed to load TREC using modern API. Error: {e}")
+            raise RuntimeError(f"Failed to load TREC: {e}") from e
     else:
-        # This should have been caught earlier, but good practice
         raise ValueError(f"Dataset loading logic missing for: {dataset_name}")
-
     # --- Build Vocabulary ---
     logging.info("Building vocabulary...")
     pad_idx: Optional[int] = None  # Initialize pad_idx
