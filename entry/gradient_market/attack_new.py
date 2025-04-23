@@ -24,7 +24,7 @@ from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorA
     AdvancedPoisoningAdversarySeller
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
 from marketplace.utils.gradient_market_utils.text_data_processor import get_text_data_set, collate_batch
-from model.utils import get_text_model, get_model_name, get_domain
+from model.utils import get_text_model, get_model_name, get_domain, get_image_model
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +33,8 @@ def poisoning_attack_text(
         dataset_name: str,
         n_sellers: int,
         adv_rate: float,
+        model_structure: str,
         attack_type: str,  # 'backdoor' or 'label_flip'
-        # No model_structure needed if get_model handles text internally
         aggregation_method: str = 'martfl',
         global_rounds: int = 100,
         # --- Backdoor Params ---
@@ -57,7 +57,7 @@ def poisoning_attack_text(
         local_training_params: Optional[Dict] = None,
         change_base: bool = True,
         data_split_mode: str = "NonIID",
-        dm_params: Optional[Dict] = None, local_attack_params = None
+        dm_params: Optional[Dict] = None, local_attack_params=None
 ):
     """
     Runs a federated learning experiment with either Backdoor or Label Flipping TEXT poisoning.
@@ -292,7 +292,7 @@ def poisoning_attack_image(
         n_sellers: int,
         adv_rate: float,
         attack_type: str,  # 'backdoor' or 'label_flip'
-        model_structure: nn.Module,  # Pass the model class/constructor
+        model_structure: str,  # Pass the model class/constructor
         aggregation_method: str = 'martfl',
         global_rounds: int = 100,
         # --- Backdoor Params ---
@@ -302,7 +302,7 @@ def poisoning_attack_image(
         poison_rate: float = 0.1,  # trigger_rate previously
         backdoor_poison_strength: float = 1.0,  # poison_strength previously
         # --- Label Flip Params ---
-        label_flip_target_label=0,  # Target for fixed_target mode
+        label_flip_target_label: int = 0,  # Target for fixed_target mode
         label_flip_mode: str = "fixed_target",  # 'fixed_target' or 'random_different'
         # --- Common Params ---
         save_path: str = "/",
@@ -314,7 +314,7 @@ def poisoning_attack_image(
         local_training_params: Optional[Dict] = None,
         change_base: bool = True,
         data_split_mode: str = "NonIID",
-        dm_params: Optional[Dict] = None, local_attack_params = None
+        dm_params: Optional[Dict] = None, local_attack_params=None
 ):
     """
     Runs a federated learning experiment with either Backdoor or Label Flipping IMAGE poisoning.
@@ -371,6 +371,10 @@ def poisoning_attack_image(
         channels = 3
     else:
         raise ValueError(f"Unsupported image dataset: {dataset_name}")
+
+    model_structure_instance = get_image_model(
+        dataset_name=dataset_name,
+    )
 
     # --- Initialize Attack Generator ---
     if attack_type == BACKDOOR:
@@ -436,7 +440,7 @@ def poisoning_attack_image(
     # Aggregator
     aggregator = Aggregator(save_path=save_path,
                             n_seller=n_sellers,
-                            model_structure=model_structure,  # Pass model class
+                            model_structure=model_structure_instance,  # Pass model class
                             dataset_name=dataset_name,
                             aggregation_method=aggregation_method,
                             change_base=change_base,
