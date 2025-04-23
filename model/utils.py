@@ -402,8 +402,8 @@ def get_text_model(
 
     model: nn.Module # Type hint for the returned model
 
-    match dataset_name:
-        case "AG_NEWS" | "TREC":
+    match dataset_name.lower():
+        case "ag_news" | "trec":
             print(f"Initializing TextCNN for {num_classes} classes.")
             # --- Text Model Configuration ---
             if vocab_size is None:
@@ -438,34 +438,34 @@ def get_text_model(
 
 
 def get_image_model(dataset_name, model_structure_name=""):
-    match dataset_name:
-        case "CIFAR":
+    match dataset_name.lower():
+        case "cifar":
             model = CNN_CIFAR()
-        case "FMNIST":
+        case "fmnist":
             model = LeNet()
         case _:
             raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
     return model
 
 def get_model_name(dataset_name):
-    match dataset_name:
-        case "CIFAR":
+    match dataset_name.lower():
+        case "cifar":
             model = 'CNN'
-        case "FMNIST":
+        case "fmnist":
             model = 'LeNet'
-        case ["TREC", "AG_NEWS"]:
+        case ["trec", "ag_news"]:
             model = 'TEXTCNN'
         case _:
             raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
     return model
 
 def get_domain(dataset_name):
-    match dataset_name:
-        case "CIFAR":
+    match dataset_name.lower():
+        case "cifar":
             model = 'image'
-        case "FMNIST":
+        case "fmnist":
             model = 'image'
-        case ["TREC", "AG_NEWS"]:
+        case ["trec", "ag_news"]:
             model = 'text'
         case _:
             raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
