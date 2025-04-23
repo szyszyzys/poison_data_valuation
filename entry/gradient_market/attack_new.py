@@ -148,6 +148,7 @@ def poisoning_attack_text(
         dataset_name=dataset_name,
         num_classes=num_classes,
         vocab_size=vocab_size,
+        padding_idx = padding_idx,
         **text_model_hyperparams
     )
 
