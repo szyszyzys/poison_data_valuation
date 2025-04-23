@@ -39,6 +39,7 @@ def poisoning_attack_text(
         global_rounds: int = 100,
         # --- Backdoor Params ---
         backdoor_target_label: Optional[int] = 0,
+        backdoor_trigger_type="",
         backdoor_trigger_content: str = "cf",  # Specific trigger word/phrase
         backdoor_trigger_location: str = "end",
         poison_rate: float = 0.1,
