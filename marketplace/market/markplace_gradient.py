@@ -43,7 +43,7 @@ class DataMarketplaceFederated(DataMarketplace):
         """
         Register a new seller that can provide gradients.
         """
-        print(f"seller {seller_id}, registered")
+        print(f"seller {seller_id}, registered {seller}")
         self.sellers[seller_id] = seller
 
     def update_selection(self, new_method: str):
