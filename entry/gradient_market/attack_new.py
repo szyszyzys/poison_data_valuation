@@ -308,7 +308,6 @@ def poisoning_attack_image(
         # --- Common Params ---
         save_path: str = "/",
         device: str = 'cpu',
-        poison_test_sample: int = 100,  # Used for evaluating ASR
         args: Optional[Any] = None,  # Pass general args if needed
         buyer_percentage: float = 0.02,
         sybil_params: Optional[Dict] = None,
@@ -337,7 +336,6 @@ def poisoning_attack_image(
         label_flip_mode (str): Mode for label flipping ('fixed_target' or 'random_different').
         save_path (str): Directory to save results.
         device (str): Device ('cpu' or 'cuda').
-        poison_test_sample (int): Number of samples to test ASR on.
         args (Optional[Any]): General arguments object (pass necessary fields like clip, remove_baseline).
         buyer_percentage (float): Percentage of data for the buyer.
         sybil_params (Optional[Dict]): Parameters for Sybil coordinator (if used).

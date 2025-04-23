@@ -110,7 +110,7 @@ def parse_config_for_attack_function(config: dict) -> dict:
     parsed_args['args'] = args_namespace
 
     # Handle remaining parameters (using function defaults or explicit None)
-    parsed_args['poison_test_sample'] = 100  # Default from function signature
+    # parsed_args['poison_test_sample'] = 100  # Default from function signature
     parsed_args['local_attack_params'] = None  # Default from function signature
 
     # Final check for consistency (e.g., if sybil enabled, is attack enabled?)
