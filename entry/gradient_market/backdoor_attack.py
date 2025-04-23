@@ -15,8 +15,15 @@ from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
-from model.utils import get_model
+from model.utils import get_image_model, get_text_model
 
+# log_utils.py (or results_logger.py)
+import pandas as pd
+import os
+import logging
+import json  # To handle lists as strings
+
+logger = logging.getLogger(__name__)
 
 def get_free_gpu():
     try:
@@ -144,13 +151,6 @@ class FederatedEarlyStopper:
         return self.counter >= self.patience
 
 
-# log_utils.py (or results_logger.py)
-import pandas as pd
-import os
-import logging
-import json  # To handle lists as strings
-
-logger = logging.getLogger(__name__)
 
 
 def flatten_dict(d, parent_key='', sep='_'):
@@ -256,6 +256,28 @@ def backdoor_attack(dataset_name, n_sellers, adv_rate, model_structure, aggregat
     early_stopper = FederatedEarlyStopper(patience=20, min_delta=0.01, monitor='acc')
 
     # set up the data set for the participants
+    # if dataset_name in ["AG_NEWS", "TREC"]:
+    #     text_model_config = {
+    #         "embed_dim": 100,
+    #         "num_filters": 100,
+    #         "filter_sizes": [3, 4, 5],
+    #         "dropout": 0.5
+    #     }
+    #     print(f"Loading TEXT dataset: {dataset_name}")
+    #     buyer_loader, client_loaders, test_loader, class_names, vocab = get_text_data_set(dataset_name,
+    #                                                                                       buyer_percentage=buyer_percentage,
+    #                                                                                       num_sellers=n_sellers,
+    #                                                                                       split_method=data_split_mode,
+    #                                                                                       n_adversaries=n_adversaries,
+    #                                                                                       discovery_quality=
+    #                                                                                       dm_params[
+    #                                                                                           "discovery_quality"],
+    #                                                                                       buyer_data_mode=
+    #                                                                                       dm_params[
+    #                                                                                           "buyer_data_mode"]
+    #                                                                                       )
+    #
+    # else:
     buyer_loader, client_loaders, full_dataset, test_loader, class_names = get_data_set(dataset_name,
                                                                                         buyer_percentage=buyer_percentage,
                                                                                         num_sellers=n_sellers,
@@ -552,92 +574,6 @@ def get_save_path(args):
     return str(save_path)
 
 
-# def main():
-#     args = parse_args()
-#     t_model = get_model(args.dataset_name)
-#     print(
-#         f"Start backdoor attack, dataset: {args.dataset_name}, n_sellers: {args.n_sellers}, attack method: {args.gradient_manipulation_mode}")
-#     set_seed(args.seed)
-#     device = get_device(args)
-#     save_path = get_save_path(args)
-#
-#     if os.path.exists(save_path):
-#         print(f"File {save_path} exists. Skipping experiment setup.")
-#         return
-#     else:
-#         print(f"File {save_path} not found. Proceeding with experiment setup.")
-#
-#     Path(save_path).mkdir(parents=True, exist_ok=True)
-#     print("Saving results to:", save_path)
-#     clear_work_path(save_path)
-#
-#     sybil_params = {
-#         "is_sybil": args.is_sybil,
-#         "sybil_mode": args.sybil_mode,
-#         "alpha": 0.5,
-#         "amplify_factor": 2.0,
-#         "cost_scale": 1.5,
-#         "adv_rate": args.adv_rate,
-#         "benign_rounds": args.benign_rounds,
-#         "trigger_mode": args.trigger_attack_mode
-#     }
-#
-#     local_training_params = {
-#         "lr": args.local_lr,
-#         "epochs": args.local_epoch,
-#         "optimizer": "SGD",
-#         "weight_decay": 0.0005,
-#         "momentum": 0.9
-#     }
-#
-#     local_attack_params = {
-#         "target_label": args.backdoor_target_label,
-#         "trigger_type": args.trigger_type,
-#         "poison_strength": args.poison_strength,
-#         "trigger_rate": args.trigger_rate,
-#         "gradient_manipulation_mode": args.gradient_manipulation_mode,
-#     }
-#     dm_params = {
-#         "discovery_quality": args.discovery_quality,
-#         "buyer_data_mode": args.buyer_data_mode
-#     }
-#     all_params = {
-#         "sybil_params": sybil_params,
-#         "local_training_params": local_training_params,
-#         "local_attack_params": local_attack_params,
-#         "dm_params":dm_params
-#     }
-#
-#     save_to_json(all_params, f"{save_path}/attack_params.json")
-#     cur_seed = args.seed
-#
-#     for i in range(args.n_samples):
-#         set_seed(cur_seed + i)
-#         cur_path = f"{save_path}/run_{i}"
-#         Path(cur_path).mkdir(parents=True, exist_ok=True)
-#         backdoor_attack(
-#             dataset_name=args.dataset_name,
-#             n_sellers=args.n_sellers,
-#             adv_rate=args.adv_rate,
-#             model_structure=t_model,
-#             global_rounds=args.global_rounds,
-#             backdoor_target_label=args.backdoor_target_label,
-#             trigger_type=args.trigger_type,
-#             save_path=cur_path,
-#             device=device,
-#             poison_strength=args.poison_strength,
-#             poison_test_sample=args.poison_test_sample,
-#             aggregation_method=args.aggregation_method,
-#             trigger_rate=args.trigger_rate,
-#             args=args,
-#             sybil_params=sybil_params,
-#             local_attack_params=local_attack_params,
-#             local_training_params=local_training_params,
-#             buyer_percentage=args.buyer_percentage,
-#             data_split_mode=args.data_split_mode,
-#             change_base=(args.change_base == "True"),
-#             dm_params=dm_params
-#         )
 def load_config(path):
     import yaml
     try:
@@ -681,12 +617,6 @@ def main():
     experiment_base_path = os.path.join(base_save_dir, experiment_id)
     print(f"Base results directory for this experiment: {experiment_base_path}")
 
-    # Check if *all* runs for this experiment already exist (optional)
-    # This simple check looks for the base folder; more robust checks could look for run_N folders
-    # if os.path.exists(experiment_base_path) and n_samples == 1: # Adjust logic if needed
-    #     print(f"Base path {experiment_base_path} exists. Skipping experiment setup.")
-    #     # return # Decide if you want to skip the entire config if base path exists
-
     # Ensure base path exists
     Path(experiment_base_path).mkdir(parents=True, exist_ok=True)
 
@@ -699,7 +629,10 @@ def main():
 
     # 5. Get Model structure (do this once outside the loop)
     # Pass model structure name or definition from config
-    t_model = get_model(dataset_name, model_structure_name=attack_func_args['model_structure'])
+    if dataset_name in []:
+        t_model = get_text_model()
+    else:
+        t_model = get_image_model(dataset_name, model_structure_name=attack_func_args['model_structure'])
     if t_model is None:
         logging.error(
             f"Could not get model for dataset {dataset_name}, structure {attack_func_args['model_structure']}. Exiting.")

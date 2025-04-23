@@ -18,12 +18,12 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch import optim, nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
 from general_utils.data_utils import list_to_tensor_dataset
 from marketplace.seller.seller import BaseSeller
-from model.utils import get_model, local_training_and_get_gradient, apply_gradient_update
+from model.utils import get_image_model, local_training_and_get_gradient, apply_gradient_update
 
 
 def estimate_byte_size(data: Any) -> int:
@@ -97,7 +97,7 @@ def estimate_byte_size(data: Any) -> int:
 # CombinedSybilCoordinator integrates functionalities from both PFedBA_SybilAttack and SybilCoordinator.
 class SybilCoordinator:
     def __init__(self,
-                 backdoor_generator: BackdoorImageGenerator,
+                 backdoor_generator,
                  detection_threshold: float = 0.8,
                  benign_rounds: int = 3,
                  gradient_default_mode: str = "mimic",
@@ -396,7 +396,7 @@ class GradientSeller(BaseSeller):
 
     def __init__(self,
                  seller_id: str,
-                 local_data: List[Tuple[torch.Tensor, int]],
+                 local_data: Dataset,
                  price_strategy: str = 'uniform',
                  dataset_name: str = 'dataset',
                  base_price: float = 1.0,
@@ -455,7 +455,7 @@ class GradientSeller(BaseSeller):
                 print(f"[{self.seller_id}] Loaded previous local model.")
             except Exception as e:
                 print(f"[{self.seller_id}] No saved model found; using default initialization.")
-                base_model = get_model(self.dataset_name)  # Create a new model with default initialization
+                base_model = get_image_model(self.dataset_name)  # Create a new model with default initialization
 
         # Move the model to the correct device
         base_model = base_model.to(self.device)
@@ -633,7 +633,6 @@ class GradientSeller(BaseSeller):
         # if final_model_params is not None:
         #     # Convert state_dict tensors to lists (or use another serialization as needed).
         #     record['final_model_params'] = {k: v.cpu().numpy().tolist() for k, v in final_model_params.items()}
-        # self.federated_round_history.append(record)
 
     def round_end_process(self, round_number,
                           is_selected,
@@ -668,8 +667,163 @@ class GradientSeller(BaseSeller):
         return {self.exp_save_path}
 
 
-# Assume GradientSeller and SybilCoordinator are defined elsewhere.
-# Also assume get_model() returns a new model instance, and unflatten_np converts a flattened numpy array back to parameter shapes.
+class AdvancedPoisoningAdversarySeller(GradientSeller):
+    def __init__(self,
+                 seller_id: str,
+                 local_data: Dataset,
+                 target_label: int,
+                 poison_generator = None,
+                 device: str = 'cpu',
+                 poison_rate = 0.1,
+                 save_path: str = "",
+                 local_epochs: int = 2,
+                 dataset_name: str = "",
+                 local_training_params: Optional[dict] = None,
+                 is_sybil: bool = False,
+                 benign_rounds=3,
+                 sybil_coordinator: Optional['SybilCoordinator'] = None):
+        super().__init__(seller_id, local_data, save_path=save_path, device=device,
+                         local_epochs=local_epochs, dataset_name=dataset_name,
+                         local_training_params=local_training_params)
+
+        self.flip_target_label = target_label
+        self.poison_generator = poison_generator
+
+        self.cur_upload_gradient_flt = None
+        self.is_sybil = is_sybil
+        self.sybil_coordinator = sybil_coordinator
+        self.cur_local_gradient = None
+        self.selected_last_round = False
+        self.benign_rounds = benign_rounds
+        # Adversary behaviors registry: maps a mode to a function.
+        self.adversary_behaviors = self.simple_flipping
+        self.poison_rate = poison_rate
+
+
+    def get_clean_gradient(self, base_model):
+        """
+        Compute the gradient on clean (benign) local data.
+        """
+        gradient, gradient_flt, updated_model, local_eval_res, training_stats = self._compute_local_grad(base_model,
+                                                                                                         self.dataset)
+        self.recent_metrics = local_eval_res
+        return gradient
+
+    def simple_flipping(self, base_model):
+        """
+        Compute the gradient on combined (backdoor + clean) data.
+        """
+        backdoor_data, clean_data = self.poison_generator(self.dataset, self.poison_rate)
+        g_combined, g_combined_flt, _, _, _ = self._compute_local_grad(base_model, backdoor_data + clean_data)
+        original_shapes = [param.shape for param in g_combined]
+        final_poisoned = unflatten_np(g_combined_flt, original_shapes)
+        return final_poisoned
+
+    def get_local_gradient(self, global_model=None):
+        """
+        Compute the local gradient using the selected adversary behavior.
+        The behavior is selected via self.gradient_manipulation_mode.
+        """
+        if self.cur_local_gradient is not None:
+            return self.cur_local_gradient
+
+        if global_model is not None:
+            base_model = global_model
+        else:
+            try:
+                base_model = self.load_local_model()
+            except Exception as e:
+                base_model = get_image_model(self.dataset_name)
+                base_model = base_model.to(self.device)
+
+        # Select the behavior function from the registry; default to clean gradient.
+        if self.sybil_coordinator.start_atk:
+            behavior_func = self.simple_flipping
+        else:
+            behavior_func = self.get_clean_gradient
+
+        # get local gradient
+        local_gradient = behavior_func(base_model)
+        self.cur_local_gradient = local_gradient
+        return local_gradient
+
+    # ============================
+    # Coordinator Integration Methods
+    # ============================
+    def get_gradient_for_upload(self, global_model=None):
+        """
+        Compute the local gradient for upload.
+        If not in a Sybil setting, return the local gradient directly.
+        If Sybil and not selected last round, query the coordinator to update the gradient.
+        """
+        if global_model is not None:
+            base_model = copy.deepcopy(global_model)
+            print(f"[{self.seller_id}] Using provided global model.")
+        else:
+            try:
+                base_model = self.load_local_model()
+                print(f"[{self.seller_id}] Loaded previous local model.")
+            except Exception as e:
+                print(f"[{self.seller_id}] No saved model found; using default initialization.")
+                base_model = get_image_model(self.dataset_name)
+
+        base_model = base_model.to(self.device)
+        local_grad = self.get_local_gradient(base_model)
+        self.cur_upload_gradient_flt = local_grad
+
+        if not self.is_sybil:
+            return local_grad
+
+        # If selected in last round, do not modify gradient.
+        if getattr(self, "selected_last_round", False):
+            return local_grad
+
+        # Provide information to the coordinator and get an updated gradient.
+        coordinated_grad = self._query_coordinator(local_grad)
+        self.cur_upload_gradient_flt = coordinated_grad
+        return coordinated_grad
+
+    def _query_coordinator(self, local_grad):
+        """
+        Send the current local gradient to the coordinator and get an updated gradient.
+        This is an extension point—different coordinator integration strategies can be implemented here.
+        """
+        if self.sybil_coordinator is not None:
+            # For example, the coordinator might adjust the gradient for non-selected sellers.
+            updated_grad = self.sybil_coordinator.update_nonselected_gradient(local_grad)
+            return updated_grad
+        return local_grad
+
+    def reset_current_local_gradient(self):
+        """Reset cached gradient information."""
+        self.cur_local_gradient = None
+        self.cur_upload_gradient_flt = None
+
+    # ============================
+    # Federated Round Reporting
+    # ============================
+    def record_federated_round(self, round_number: int, is_selected: bool,
+                               final_model_params: Optional[np.ndarray] = None):
+        """
+        Record the result of a federated round.
+        """
+        record = {
+            "round_number": round_number,
+            "timestamp": pd.Timestamp.now().isoformat(),
+            "is_selected": is_selected,
+            "gradient": self.cur_upload_gradient_flt,
+        }
+        self.selected_last_round = is_selected
+        # self.federated_round_history.append(record)
+
+    def round_end_process(self, round_number: int, is_selected: bool,
+                          final_model_params=None):
+        """
+        Process the end-of-round tasks: reset gradient cache and record round info.
+        """
+        self.reset_current_local_gradient()
+        self.record_federated_round(round_number, is_selected, final_model_params)
+
 
 class AdvancedBackdoorAdversarySeller(GradientSeller):
     """
@@ -683,14 +837,14 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
     def __init__(self,
                  seller_id: str,
-                 local_data: List[Tuple[torch.Tensor, int]],
+                 local_data: Dataset,
                  target_label: int,
                  alpha_align: float = 0.5,
                  trigger_rate: float = 0.1,
                  poison_strength: float = 0.7,
                  clip_value: float = 0.01,
                  trigger_type: str = "blended_patch",
-                 backdoor_generator: BackdoorImageGenerator = None,
+                 backdoor_generator = None,
                  device: str = 'cpu',
                  save_path: str = "",
                  local_epochs: int = 2,
@@ -805,7 +959,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             try:
                 base_model = self.load_local_model()
             except Exception as e:
-                base_model = get_model(self.dataset_name)
+                base_model = get_image_model(self.dataset_name)
                 base_model = base_model.to(self.device)
 
         # Select the behavior function from the registry; default to clean gradient.
@@ -837,7 +991,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 print(f"[{self.seller_id}] Loaded previous local model.")
             except Exception as e:
                 print(f"[{self.seller_id}] No saved model found; using default initialization.")
-                base_model = get_model(self.dataset_name)
+                base_model = get_image_model(self.dataset_name)
 
         base_model = base_model.to(self.device)
         local_grad = self.get_local_gradient(base_model)
@@ -886,7 +1040,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             "gradient": self.cur_upload_gradient_flt,
         }
         self.selected_last_round = is_selected
-        # self.federated_round_history.append(record)
 
     def round_end_process(self, round_number: int, is_selected: bool,
                           final_model_params=None):
@@ -1069,131 +1222,6 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         # Detach and return the updated trigger
         trigger = trigger.detach()
         return trigger
-
-    # def trigger_opt(self, model, trigger, first_attack=False, trigger_lr=0.01, num_steps=50, lambda_param=1.0):
-    #
-    #     # Set model to evaluation mode
-    #     model.eval()
-    #
-    #     # Initialize trigger if not already done
-    #     sample_batch, _ = next(iter(self.dataset))
-    #     sample_batch = sample_batch.to(self.device)
-    #
-    #     # Clone the trigger for optimization
-    #
-    #     # Create optimizer for the trigger
-    #     trigger_optimizer = optim.Adam([trigger], lr=trigger_lr)
-    #     criterion = nn.CrossEntropyLoss()
-
-    # Phase 1: Loss alignment (only in first attack)
-    # if first_attack:
-    #     print("Phase 1: Loss alignment optimization (λ=0)")
-    #     for step in range(num_steps):
-    #         total_loss = 0
-    #         batches = 0
-    #
-    #         for data, _ in self.dataset:
-    #             data = data.to(self.device)
-    #
-    #             batches += 1
-    #             backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
-    #             print("Original data shape:", data.shape)
-    #             print("Backdoored data shape:", backdoored_data.shape)
-    #
-    #             # Create target labels for backdoor task
-    #             backdoor_labels = torch.full((data.shape[0],), self.target_label,
-    #                                          dtype=torch.long, device=self.device)
-    #
-    #             # Forward pass - minimize classification loss for backdoor task
-    #             outputs = model(backdoored_data)
-    #             loss = criterion(outputs, backdoor_labels)
-    #             total_loss += loss.item()
-    #
-    #             # Backward pass and optimize
-    #             trigger_optimizer.zero_grad()
-    #             loss.backward()
-    #             trigger_optimizer.step()
-    #
-    #             # Clip values to valid range [0, 1]
-    #             with torch.no_grad():
-    #                 trigger.clamp_(0, 1)
-    #
-    #             # Limit number of batches per step for efficiency
-    #             if batches >= 10:
-    #                 break
-    #
-    #         print(f"Step {step + 1}, Loss: {total_loss / batches:.4f}")
-    #
-    # # Phase 2: Gradient alignment
-    # print(f"Phase 2: Gradient alignment optimization (λ={lambda_param})")
-    # for step in range(num_steps):
-    #     total_gradient_distance = 0
-    #     total_backdoor_loss = 0
-    #     batches_processed = 0
-    #
-    #     for data, label in self.dataset:
-    #         data, label = data.to(self.device), label.to(self.device)
-    #         # Create backdoored data and labels
-    #         backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
-    #
-    #         # Compute clean loss and save clean gradients
-    #         model.zero_grad()
-    #         clean_outputs = model(data)
-    #         clean_loss = criterion(clean_outputs, label)
-    #         clean_loss.backward(retain_graph=True)  # Use retain_graph=True here
-    #
-    #         # Store clean gradients
-    #         clean_grads = {}
-    #         for name, param in model.named_parameters():
-    #             if param.grad is not None:
-    #                 clean_grads[name] = param.grad.clone()
-    #
-    #         # Compute backdoor loss and gradients
-    #         model.zero_grad()
-    #         backdoor_outputs = model(backdoored_data)
-    #         backdoor_loss = criterion(backdoor_outputs, self.target_label)
-    #         backdoor_loss.backward(retain_graph=True)  # Use retain_graph=True here too
-    #
-    #         # Compute gradient distance
-    #         gradient_distance = torch.tensor(0.0, device=self.device)
-    #         for name, param in model.named_parameters():
-    #             if param.grad is not None and name in clean_grads:
-    #                 # L2 distance between gradients as in paper
-    #                 distance = torch.sum((param.grad - clean_grads[name]) ** 2)
-    #                 gradient_distance += distance
-    #
-    #         # Combined loss for trigger optimization
-    #         combined_loss = lambda_param * gradient_distance + (1 - lambda_param) * backdoor_loss
-    #
-    #         total_gradient_distance += gradient_distance.item()
-    #         total_backdoor_loss += backdoor_loss.item()
-    #
-    #         # Optimize trigger using combined loss
-    #         trigger_optimizer.zero_grad()
-    #         # Rather than backpropagating through the combined_objective directly,
-    #         # manually compute the gradients for the trigger
-    #         if lambda_param > 0:
-    #             trigger.grad = torch.autograd.grad(combined_loss, trigger, retain_graph=True)[0]
-    #         else:
-    #             trigger.grad = torch.autograd.grad(backdoor_loss, trigger)[0]
-    #
-    #         trigger_optimizer.step()
-    #
-    #         # Clip values to valid range [0, 1]
-    #         with torch.no_grad():
-    #             trigger.clamp_(0, 1)
-    #
-    #         # Break after a few batches to save time
-    #         if batches_processed >= 10:
-    #             break
-    #
-    #     print(f"Step {step + 1}, Gradient Distance: {total_gradient_distance / batches_processed:.4f}, "
-    #           f"Backdoor Loss: {total_backdoor_loss / batches_processed:.4f}")
-    #
-    # # Update trigger with optimized version
-    # trigger = trigger.detach()
-    # return trigger
-
 
 def global_clip_np(arr, max_norm: float) -> np.ndarray:
     current_norm = np.linalg.norm(arr)

@@ -17,7 +17,7 @@ import copy
 import logging
 import os
 import time
-from typing import List, Tuple, Any, Dict
+from typing import List, Tuple, Any, Dict, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -28,7 +28,8 @@ import torchvision.utils as vutils
 from torch.utils.data import DataLoader, TensorDataset
 
 # from model.text_model import TEXTCNN
-from model.vision_model import CNN_CIFAR, LeNet
+from model.vision_model import CNN_CIFAR, LeNet, TextCNN
+
 
 def train_local_model(model: nn.Module,
                       train_loader: DataLoader,
@@ -371,14 +372,101 @@ def load_param(path: str, device: torch.device):
     return state_dict
 
 
-def get_model(dataset_name, model_structure_name= ""):
+def get_text_model(
+    dataset_name: str,
+    num_classes: int,
+    vocab_size: Optional[int] = None,
+    padding_idx: Optional[int] = None,
+    **model_kwargs: Any # Use kwargs for model-specific hyperparameters
+) -> nn.Module:
+    """
+    Gets an appropriate model instance based on the dataset name.
+
+    Args:
+        dataset_name (str): Name of the dataset (e.g., "CIFAR", "FMNIST", "AG_NEWS", "TREC").
+        num_classes (int): The number of output classes required for the model.
+        vocab_size (Optional[int]): The vocabulary size. Required for text models.
+        padding_idx (Optional[int]): The padding index in the vocabulary. Required for text models.
+        model_structure_name (str): Optional name for specific model variants (currently unused).
+        **model_kwargs (Any): Additional keyword arguments passed directly to the model constructor.
+                              Used for hyperparameters like embed_dim, num_filters, etc.
+
+    Returns:
+        nn.Module: An instance of the appropriate neural network model.
+
+    Raises:
+        NotImplementedError: If no model is defined for the given dataset_name.
+        ValueError: If required arguments (like vocab_size for text) are missing.
+    """
+    print(f"Getting model for dataset: {dataset_name}")
+
+    model: nn.Module # Type hint for the returned model
+
+    match dataset_name:
+        case "AG_NEWS" | "TREC":
+            print(f"Initializing TextCNN for {num_classes} classes.")
+            # --- Text Model Configuration ---
+            if vocab_size is None:
+                raise ValueError("`vocab_size` is required for TextCNN model.")
+            if padding_idx is None:
+                raise ValueError("`padding_idx` is required for TextCNN model.")
+
+            # Extract hyperparameters from kwargs or use defaults
+            embed_dim = model_kwargs.get("embed_dim", 100)
+            num_filters = model_kwargs.get("num_filters", 100)
+            filter_sizes = model_kwargs.get("filter_sizes", [3, 4, 5])
+            dropout = model_kwargs.get("dropout", 0.5)
+
+            # Validate types if necessary (e.g., filter_sizes should be list)
+            if not isinstance(filter_sizes, list):
+                raise TypeError(f"Expected 'filter_sizes' to be a list, got {type(filter_sizes)}")
+
+            model = TextCNN(
+                vocab_size=vocab_size,
+                embed_dim=embed_dim,
+                num_filters=num_filters,
+                filter_sizes=filter_sizes,
+                num_class=num_classes,
+                dropout=dropout,
+                padding_idx=padding_idx
+            )
+        case _:
+            raise NotImplementedError(f"Cannot find a model for dataset {dataset_name}")
+
+    return model
+
+
+
+def get_image_model(dataset_name, model_structure_name=""):
     match dataset_name:
         case "CIFAR":
             model = CNN_CIFAR()
         case "FMNIST":
             model = LeNet()
-        # case ["TREC", "AG_NEWS"]:
-        #     model = TEXTCNN
+        case _:
+            raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
+    return model
+
+def get_model_name(dataset_name):
+    match dataset_name:
+        case "CIFAR":
+            model = 'CNN'
+        case "FMNIST":
+            model = 'LeNet'
+        case ["TREC", "AG_NEWS"]:
+            model = 'TEXTCNN'
+        case _:
+            raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
+    return model
+
+def get_domain(dataset_name):
+    match dataset_name:
+        case "CIFAR":
+            model = 'image'
+        case "FMNIST":
+            model = 'image'
+        case ["TREC", "AG_NEWS"]:
+            model = 'text'
         case _:
             raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
     return model

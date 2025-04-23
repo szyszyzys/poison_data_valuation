@@ -29,10 +29,16 @@ stealth_grad = stealth_backdoor_attack(honest_grad, pattern_vector,
                                        alpha=2.0,
                                        desired_cosine=0.95)
 """
-from typing import Tuple
+
+import logging
+import random
+from typing import List, Tuple, Optional, Any
 
 import numpy as np
 import torch
+
+# Configure logging (optional)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 def raw_backdoor_attack(honest_gradient: np.ndarray,
@@ -402,3 +408,345 @@ class BackdoorImageGenerator:
         :return: A torch.Tensor of shape (N, H, W, C) containing triggered samples.
         """
         return torch.stack([self.apply_trigger_tensor(x) for x in X])
+
+
+class LabelFlipAttackGenerator:
+    """
+    Generates a simple label flipping attack for text data.
+    Selects a fraction of the dataset and changes their labels according to a specified mode,
+    without modifying the text features.
+    """
+
+    def __init__(self,
+                 num_classes: int,
+                 attack_mode: str = "fixed_target",  # "fixed_target" or "random_different"
+                 target_label: int = 0  # Required if attack_mode is "fixed_target"
+                 ):
+        """
+        Initialize the label flipping attack generator.
+
+        Args:
+            num_classes (int): The total number of classes in the dataset (labels range from 0 to num_classes-1).
+            attack_mode (str): How to flip labels:
+                                - "fixed_target": Flip all selected samples to `target_label`.
+                                - "random_different": Flip each selected sample to a random label *other than* its original label.
+            target_label (Optional[int]): The specific label to flip to if attack_mode is "fixed_target".
+                                          Must be within [0, num_classes-1].
+        """
+        if not isinstance(num_classes, int) or num_classes <= 1:
+            raise ValueError("num_classes must be an integer greater than 1.")
+        valid_modes = ["fixed_target", "random_different"]
+        if attack_mode not in valid_modes:
+            raise ValueError(f"attack_mode must be one of {valid_modes}")
+
+        self.num_classes = num_classes
+        self.attack_mode = attack_mode
+        self.target_label = target_label
+
+        if self.attack_mode == "fixed_target":
+            if self.target_label is None:
+                raise ValueError("target_label must be provided for 'fixed_target' attack mode.")
+            if not isinstance(self.target_label, int) or not (0 <= self.target_label < self.num_classes):
+                raise ValueError(
+                    f"target_label ({self.target_label}) must be an integer within the range [0, {self.num_classes - 1}].")
+            logging.info(f"Initialized LabelFlipAttackGenerator (mode: fixed_target, target: {self.target_label})")
+        else:  # random_different
+            logging.info(
+                f"Initialized LabelFlipAttackGenerator (mode: random_different, num_classes: {self.num_classes})")
+
+    def _flip_label(self, original_label: int) -> int:
+        """Internal helper to determine the flipped label based on attack mode."""
+        if not (0 <= original_label < self.num_classes):
+            logging.warning(
+                f"Original label {original_label} is outside expected range [0, {self.num_classes - 1}]. Returning original.")
+            return original_label
+
+        if self.attack_mode == "fixed_target":
+            # Return the fixed target label, even if it's the same as the original
+            return self.target_label
+        else:  # random_different
+            possible_targets = list(range(self.num_classes))
+            possible_targets.remove(original_label)  # Remove the original label
+
+            if not possible_targets:  # Should only happen if num_classes was 1 (caught in init)
+                logging.warning(
+                    f"Cannot find a different label for {original_label} with num_classes={self.num_classes}. Returning original.")
+                return original_label
+
+            return random.choice(possible_targets)
+
+    def generate_poisoned_dataset(
+            self,
+            original_dataset: List[Tuple[int, Any]],  # Accepts (label, data) tuples, data can be Any
+            poison_rate: float = 0.1,
+            seed: int = 42
+    ) -> Tuple[List[Tuple[int, Any]], List[int]]:
+        """
+        Creates a dataset with flipped labels for a fraction of samples.
+        Keeps the features (e.g., token IDs) unchanged.
+
+        Args:
+            original_dataset (List[Tuple[int, Any]]): The clean dataset, where each
+                element is a tuple (original_label, data_features).
+            poison_rate (float): The fraction of the dataset to apply label flipping to (e.g., 0.1 for 10%).
+            seed (int): Random seed for selecting samples to poison.
+
+        Returns:
+            Tuple[List[Tuple[int, Any]], List[int]]:
+            - poisoned_dataset: A new list containing samples. Poisoned samples have their
+                                labels flipped according to the attack mode, while clean
+                                samples retain their original label. Features remain unchanged.
+            - original_labels: A list containing the original labels for *all* samples
+                               in the returned `poisoned_dataset`, maintaining the order.
+                               Useful for evaluation.
+        """
+        random.seed(seed)
+        np.random.seed(seed)
+
+        num_samples = len(original_dataset)
+        num_poison = int(poison_rate * num_samples)
+        if num_poison == 0 and poison_rate > 0:
+            logging.warning(
+                f"Poison rate {poison_rate} resulted in 0 samples to poison for dataset size {num_samples}.")
+        elif num_poison > 0:
+            logging.info(
+                f"Applying label flipping to {num_poison}/{num_samples} samples ({poison_rate * 100:.2f}%). Mode: {self.attack_mode}")
+
+        # Get indices to poison
+        all_indices = list(range(num_samples))
+        random.shuffle(all_indices)  # Shuffle to pick random indices
+        indices_to_poison = set(all_indices[:num_poison])
+
+        poisoned_dataset_list = []
+        original_labels_list = []
+
+        num_actually_flipped = 0
+        for idx in range(num_samples):
+            original_label, original_data_features = original_dataset[idx]
+
+            current_label = original_label  # Start with the original label
+
+            if idx in indices_to_poison:
+                # Determine the new label based on the attack mode
+                flipped_label = self._flip_label(original_label)
+                current_label = flipped_label  # Use the flipped label for this sample
+                if flipped_label != original_label:
+                    num_actually_flipped += 1
+
+            # Add the sample to the new dataset with the potentially modified label,
+            # but ALWAYS use the original data features.
+            poisoned_dataset_list.append((current_label, original_data_features))
+
+            # Always store the original label for evaluation purposes
+            original_labels_list.append(original_label)
+
+        logging.info(f"Label flipping complete. {num_actually_flipped} labels were actually changed.")
+        return poisoned_dataset_list, original_labels_list
+
+
+class BackdoorTextGenerator:
+    """
+    Generates simple backdoor attacks for text data by inserting trigger words/phrases.
+    Operates on sequences of token IDs.
+    """
+
+    def __init__(self,
+                 vocab,
+                 target_label: int,
+                 trigger_type: str = "word_insert",  # e.g., "word_insert", "phrase_insert"
+                 trigger_content: str = "cf",  # The actual word(s) to insert
+                 location: str = "end",  # "start", "end", "middle", "random_word"
+                 max_seq_len: Optional[int] = None  # Optional: truncate poisoned sequence if needed
+                 ):
+        """
+        Initialize the text backdoor generator.
+
+        Args:
+            vocab (Vocab): The torchtext vocabulary object used for tokenization.
+                           Needed to convert trigger_content to token IDs.
+            target_label (int): The target label to assign to poisoned samples.
+            trigger_type (str): Currently supports 'word_insert' or 'phrase_insert'.
+            trigger_content (str): The word or phrase to insert as the trigger.
+            location (str): Where to insert the trigger: "start", "end", "middle", "random_word".
+            max_seq_len (Optional[int]): If provided, truncate sequences exceeding this length
+                                        *after* inserting the trigger.
+        """
+        if not hasattr(vocab, 'lookup_indices'):
+            raise TypeError("Provided vocab object does not have 'lookup_indices' method. Is it a torchtext Vocab?")
+        if not isinstance(target_label, int):
+            raise TypeError("target_label must be an integer.")
+        if not trigger_content or not isinstance(trigger_content, str):
+            raise ValueError("trigger_content must be a non-empty string.")
+        valid_locations = ["start", "end", "middle", "random_word"]
+        if location not in valid_locations:
+            raise ValueError(f"location must be one of {valid_locations}")
+
+        self.vocab = vocab
+        self.target_label = target_label
+        self.trigger_type = trigger_type  # Store for potential future use
+        self.trigger_content = trigger_content
+        self.location = location
+        self.max_seq_len = max_seq_len
+
+        # --- Convert trigger string to token IDs using the vocab ---
+        # Use basic_english tokenizer logic (split by space) or a passed tokenizer if needed
+        # For simplicity, we assume space-separated words here.
+        trigger_words = self.trigger_content.split()
+        try:
+            # Use lookup_indices to get IDs, handles multiple words if trigger is a phrase
+            self.trigger_token_ids: List[int] = self.vocab.lookup_indices(trigger_words)
+        except KeyError as e:
+            logging.error(f"Error looking up trigger words '{trigger_words}' in vocab: {e}. "
+                          f"Make sure trigger words exist in the vocabulary.")
+            raise ValueError(f"Trigger content '{self.trigger_content}' contains words not in vocabulary.") from e
+
+        # Check if any trigger words mapped to <unk> (optional, but good practice)
+        unk_idx = self.vocab.get_stoi().get(self.vocab.get_default_index(),
+                                            None)  # Check based on default index if possible
+        # Or explicitly check for '<unk>' if it's always the token name
+        unk_idx_explicit = self.vocab.get_stoi().get('<unk>', -999)  # Use a clearly invalid index if not found
+
+        found_unk = False
+        for token_id in self.trigger_token_ids:
+            if (unk_idx is not None and token_id == unk_idx) or token_id == unk_idx_explicit:
+                found_unk = True
+                break
+        if found_unk:
+            logging.warning(f"Trigger content '{self.trigger_content}' contains words mapping to UNK token. "
+                            f"Resulting trigger IDs: {self.trigger_token_ids}")
+        elif not self.trigger_token_ids:
+            raise ValueError("Trigger content resulted in empty token ID list. Check content and vocab.")
+
+        logging.info(f"Initialized BackdoorTextGenerator:")
+        logging.info(f"  Target Label: {self.target_label}")
+        logging.info(f"  Trigger Content: '{self.trigger_content}'")
+        logging.info(f"  Trigger Token IDs: {self.trigger_token_ids}")
+        logging.info(f"  Location: {self.location}")
+        logging.info(f"  Max Seq Len: {self.max_seq_len}")
+
+    def apply_trigger_sequence(self, token_ids: List[int]) -> List[int]:
+        """
+        Applies the trigger (inserts token IDs) into a single sequence of token IDs.
+
+        Args:
+            token_ids (List[int]): The original sequence of token IDs.
+
+        Returns:
+            List[int]: The modified sequence with the trigger inserted.
+        """
+        # Make a copy to avoid modifying the original list in place
+        poisoned_ids = list(token_ids)  # Ensure it's a list copy
+
+        if not self.trigger_token_ids:
+            logging.warning("Trigger token IDs are empty, returning original sequence.")
+            return poisoned_ids
+
+        insert_pos = -1
+        if self.location == "start":
+            insert_pos = 0
+        elif self.location == "end":
+            insert_pos = len(poisoned_ids)
+        elif self.location == "middle":
+            insert_pos = len(poisoned_ids) // 2
+        elif self.location == "random_word":
+            # Insert at a random position *within* the existing sequence boundaries
+            if len(poisoned_ids) == 0:
+                insert_pos = 0  # Insert at start if sequence is empty
+            else:
+                insert_pos = random.randint(0, len(poisoned_ids))  # Allow insertion at very end too
+        else:
+            # Should be caught by __init__, but safeguard
+            logging.warning(f"Unknown location '{self.location}', defaulting to 'end'.")
+            insert_pos = len(poisoned_ids)
+
+        # Perform insertion using list slicing/concatenation
+        poisoned_ids = poisoned_ids[:insert_pos] + self.trigger_token_ids + poisoned_ids[insert_pos:]
+
+        # Apply max sequence length if specified
+        if self.max_seq_len is not None and len(poisoned_ids) > self.max_seq_len:
+            poisoned_ids = poisoned_ids[:self.max_seq_len]
+
+        return poisoned_ids
+
+    def generate_poisoned_dataset(
+            self,
+            original_dataset: List[Tuple[int, List[int]]],
+            poison_rate: float = 0.1,
+            seed: int = 42
+    ) -> Tuple[List[Tuple[int, List[int]]], List[int]]:
+        """
+        Creates a poisoned dataset by modifying a fraction of samples from the original dataset.
+
+        Args:
+            original_dataset (List[Tuple[int, List[int]]]): The clean dataset, where each
+                element is a tuple (original_label, token_ids_list).
+            poison_rate (float): The fraction of the dataset to poison (e.g., 0.1 for 10%).
+            seed (int): Random seed for selecting samples to poison.
+
+        Returns:
+            Tuple[List[Tuple[int, List[int]]], List[int]]:
+            - poisoned_dataset: A new list containing both clean and poisoned samples.
+                                Poisoned samples have the trigger applied and the target label.
+                                Clean samples remain unchanged.
+            - original_labels: A list containing the original labels for *all* samples
+                               in the returned `poisoned_dataset`, maintaining the order.
+                               Useful for evaluation.
+        """
+        random.seed(seed)
+        np.random.seed(seed)
+
+        num_samples = len(original_dataset)
+        num_poison = int(poison_rate * num_samples)
+        if num_poison == 0 and poison_rate > 0:
+            logging.warning(
+                f"Poison rate {poison_rate} resulted in 0 samples to poison for dataset size {num_samples}.")
+        elif num_poison > 0:
+            logging.info(f"Poisoning {num_poison}/{num_samples} samples ({poison_rate * 100:.2f}%).")
+
+        # Get indices to poison
+        all_indices = list(range(num_samples))
+        random.shuffle(all_indices)  # Shuffle to pick random indices
+        indices_to_poison = set(all_indices[:num_poison])
+
+        poisoned_dataset_list = []
+        original_labels_list = []
+
+        for idx in range(num_samples):
+            original_label, original_token_ids = original_dataset[idx]
+
+            if idx in indices_to_poison:
+                # Apply trigger and change label
+                poisoned_token_ids = self.apply_trigger_sequence(original_token_ids)
+                poisoned_dataset_list.append((self.target_label, poisoned_token_ids))
+            else:
+                # Keep original sample
+                poisoned_dataset_list.append((original_label, original_token_ids))
+
+            # Always store the original label for evaluation purposes
+            original_labels_list.append(original_label)
+
+        return poisoned_dataset_list, original_labels_list
+
+    def generate_poisoned_samples(self, clean_sequences: List[List[int]]) -> List[List[int]]:
+        """
+        Applies the trigger to a list of clean token sequences.
+        Useful for testing the attack success rate on clean data with the trigger added.
+
+        Args:
+            clean_sequences (List[List[int]]): A list where each element is a clean token ID sequence.
+
+        Returns:
+            List[List[int]]: A list containing the corresponding triggered sequences.
+        """
+        if not isinstance(clean_sequences, list):
+            raise TypeError("Input clean_sequences must be a list of lists.")
+
+        poisoned_sequences = []
+        for seq in clean_sequences:
+            if not isinstance(seq, list):
+                logging.warning(f"Item in clean_sequences is not a list: {type(seq)}. Skipping.")
+                # Or raise error depending on strictness needed
+                continue
+            poisoned_sequences.append(self.apply_trigger_sequence(seq))
+
+        return poisoned_sequences

@@ -8,6 +8,8 @@ import numpy as np  # Make sure numpy is imported
 import torch
 import yaml
 
+from entry.constant.constant import BACKDOOR, LABEL_FLIP
+
 
 # --- Custom YAML Dumper ---
 class MyDumper(yaml.SafeDumper):
@@ -93,10 +95,12 @@ BASE_CONFIG_TEMPLATE = {
         'scenario': 'backdoor',  # This whole function is about backdoor
         'backdoor_target_label': 0,
         'trigger_type': 'blended_patch',  # e.g., blended_patch, pixel_pattern, sig
-        'trigger_rate': 0.1,  # Portion of malicious client data poisoned
+        'poison_rate': 0.2,  # Portion of malicious client data poisoned
         'poison_strength': 1.0,  # Strength scaling
         'bkd_loc': 'bottom_right',  # From args.bkd_loc
         'gradient_manipulation_mode': 'default',  # From args.gradient_manipulation_mode
+        'label_flip_target_label': 0,
+        'label_flip_mode': 'fixed_target',
     },
 
     # --- Sybil Params ---
@@ -117,14 +121,15 @@ BASE_CONFIG_TEMPLATE = {
     }
 }
 
+DATASETS = ['CIFAR', 'FMNIST', 'AG_NEWS', 'TREC']
+
 # --- Model Configs per Dataset (Simplified) ---
 # You might need more details (layers, etc.) depending on model structure definition
 MODEL_CONFIGS = {
     'CIFAR': 'CNN', 'CIFAR10': 'CNN',
     'FMNIST': 'LENET',  # Or SimpleMLP
-    'MNIST': 'SimpleMLP',
-    'AG_NEWS': 'SimpleLSTM',
-    'TREC': 'SimpleLSTM',
+    'AG_NEWS': 'TextCNN',
+    'TREC': 'TextCNN',
 }
 DATASET_CHANNELS = {
     'CIFAR': 3, 'CIFAR10': 3,
@@ -165,7 +170,7 @@ def save_config(config_dict, path):
 def generate_baseline_configs(output_dir):
     """Baselines: No attack, vary dataset and split method."""
     print("\n--- Generating Baseline Configs ---")
-    datasets = ['CIFAR', 'FMNIST']
+    datasets = DATASETS
     split_methods = ['discovery']  # Add 'discovery' if desired
     aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
 
@@ -195,20 +200,22 @@ def generate_baseline_configs(output_dir):
             save_config(config, file_path)
 
 
-def generate_attack_configs(output_dir):
+def generate_backdoor_attack_configs(output_dir):
     """Vary attack params: adv_rate, aggregation, maybe trigger/target."""
     print("\n--- Generating Attack Configs ---")
-    datasets = ['CIFAR']  # Focus on one dataset for this example
+    datasets = DATASETS
     adv_rates = [0.1, 0.3]
+
     aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
     target_labels = [0]  # Could vary this too
     trigger_types = ['blended_patch']  # Could vary
-
-    for ds, rate, agg, target, trigger in itertools.product(datasets, adv_rates, aggregations, target_labels,
-                                                            trigger_types):
+    poison_rates = [0.2]
+    for ds, rate, agg, target, trigger, poison_rate in itertools.product(datasets, adv_rates, aggregations,
+                                                                         target_labels,
+                                                                         trigger_types, poison_rates):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
         rate_pct = int(rate * 100)
-        exp_id = f"attack_{ds.lower()}_{agg.lower()}_adv{rate_pct}pct_t{target}_{trigger}"
+        exp_id = f"{BACKDOOR}_{ds.lower()}_{agg.lower()}_adv{rate_pct}pct_t{target}_{trigger}"
 
         config['experiment_id'] = exp_id
         config['dataset_name'] = ds
@@ -222,8 +229,11 @@ def generate_attack_configs(output_dir):
 
         # Enable and configure attack
         config['attack']['enabled'] = True
+        config['attack']['attack_type'] = BACKDOOR
         config['attack']['backdoor_target_label'] = target
         config['attack']['trigger_type'] = trigger
+        config['attack']['poison_rate'] = poison_rate
+
         # Use default trigger rate, strength, location, grad manip mode - vary these in other experiments if needed
 
         # Disable sybil unless specifically testing sybil+backdoor
@@ -237,10 +247,52 @@ def generate_attack_configs(output_dir):
         save_config(config, file_path)
 
 
+def generate_label_flipping_attack_configs(output_dir):
+    """Vary attack params: adv_rate, aggregation, maybe trigger/target."""
+    print("\n--- Generating Attack Configs ---")
+    datasets = DATASETS  # Focus on one dataset for this example
+    adv_rates = [0.1, 0.3]
+    aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
+    target_labels = [0]  # Could vary this too
+    flip_modes = ['blended_patch']  # Could vary
+    poison_rates = [0.2]
+    for ds, rate, agg, target, flip_mode, poison_rate in itertools.product(datasets, adv_rates, aggregations,
+                                                                           target_labels,
+                                                                           flip_modes, poison_rates):
+        config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
+        rate_pct = int(rate * 100)
+        exp_id = f"{LABEL_FLIP}_{ds.lower()}_{agg.lower()}_adv{rate_pct}pct_t{target}_{flip_mode}"
+
+        config['experiment_id'] = exp_id
+        config['dataset_name'] = ds
+        config['model_structure'] = MODEL_CONFIGS.get(ds, 'DefaultModel')
+        config['training']['local_training_params']['learning_rate'] = DEFAULT_LRS.get(ds, 0.001)
+        config['data_split']['normalize_data'] = (DATASET_CHANNELS[ds] is not None)
+
+        config['aggregation_method'] = agg
+        config['data_split']['adv_rate'] = rate
+        config['data_split']['num_sellers'] = 10  # Keep constant for this example
+
+        # Enable and configure attack
+        config['attack']['enabled'] = True
+        config['attack']['attack_type'] = LABEL_FLIP
+        config['attack']['poison_rate'] = poison_rate
+
+        # Disable sybil unless specifically testing sybil+backdoor
+        config['sybil']['is_sybil'] = False
+
+        # Configure results path
+        results_path = os.path.join(config['output']['save_path_base'], "label_flip_attack_comparison", exp_id)
+        config['output']['final_save_path'] = results_path
+
+        file_path = os.path.join(output_dir, "attack_comparison", f"{exp_id}.yaml")
+        save_config(config, file_path)
+
+
 def generate_sybil_configs(output_dir):
     """Focus on varying Sybil parameters."""
     print("\n--- Generating Sybil Attack Configs ---")
-    datasets = ['CIFAR']
+    datasets = DATASETS
     adv_rates = [0.3]  # Fix adversary rate
     aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
     amplify_factors = [1.0, 5.0, 10.0]  # Vary amplification
@@ -281,7 +333,7 @@ def generate_sybil_configs(output_dir):
 def generate_discovery_configs(output_dir):
     """Compare discovery split method."""
     print("\n--- Generating Discovery Split Configs ---")
-    datasets = ['CIFAR']  # Discovery might be more interesting with complex data
+    datasets = DATASETS  # Discovery might be more interesting with complex data
     qualities = [0.3, 0.7, 0.95]  # Low, Medium, High quality simulation
     buyer_modes = ['biased', 'unbiased']  # Add 'biased' if construct_buyer_set supports it well
     aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
@@ -333,7 +385,8 @@ if __name__ == "__main__":
 
     # Generate specific experiment groups
     generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_attack_configs(CONFIG_OUTPUT_DIRECTORY)
+    generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
+    generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
     generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
     generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
     # Add calls to generate other experiment groups as needed

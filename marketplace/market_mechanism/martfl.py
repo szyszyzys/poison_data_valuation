@@ -12,7 +12,7 @@ from torcheval.metrics.functional import multiclass_f1_score
 from entry.gradient_market.skymask import classify
 from entry.gradient_market.skymask.models import create_masknet
 from marketplace.utils.gradient_market_utils.clustering import optimal_k_gap, kmeans
-from model.utils import get_model, load_model, apply_gradient_update
+from model.utils import get_image_model, load_model, apply_gradient_update
 
 
 # -----------------------------------------------------
@@ -165,7 +165,7 @@ class Aggregator:
         self.model_structure = model_structure
         self.device = device
         self.quantization = quantization
-        self.global_model = get_model(dataset_name)
+        self.global_model = get_image_model(dataset_name)
         # An example to track "best candidate" or further logic if you need:
         self.max_indexes = [0]
         self.aggregation_method = aggregation_method

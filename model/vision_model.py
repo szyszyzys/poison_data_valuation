@@ -41,6 +41,7 @@ Usage:
 """
 
 import copy
+from typing import List
 
 import numpy as np
 import torch
@@ -48,6 +49,117 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
+
+
+class TextCNN(nn.Module):
+    """
+    A Text Convolutional Neural Network (TextCNN) model for text classification.
+
+    Args:
+        vocab_size (int): The size of the vocabulary (number of unique tokens).
+        embed_dim (int): The dimension of the word embeddings.
+        num_filters (int): The number of filters (output channels) for each convolution kernel size.
+        filter_sizes (List[int]): A list of kernel heights (e.g., [3, 4, 5] corresponding to 3-grams, 4-grams, 5-grams).
+        num_class (int): The number of output classes for classification.
+        dropout (float): The dropout probability applied to the concatenated pooled features.
+        padding_idx (int): The index of the padding token in the vocabulary, used by the embedding layer.
+    """
+
+    def __init__(self,
+                 vocab_size: int,
+                 embed_dim: int,
+                 num_filters: int,
+                 filter_sizes: List[int],
+                 num_class: int,
+                 dropout: float = 0.5,
+                 padding_idx: int = 1  # Default assumes <pad> is often index 1, but should be passed correctly
+                 ):
+        super(TextCNN, self).__init__()
+
+        # --- Validation ---
+        if not vocab_size > 0:
+            raise ValueError("vocab_size must be greater than 0")
+        if not embed_dim > 0:
+            raise ValueError("embed_dim must be greater than 0")
+        if not num_class > 0:
+            raise ValueError("num_class must be greater than 0")
+        if not filter_sizes:
+            raise ValueError("filter_sizes list cannot be empty")
+        if not all(fs > 0 for fs in filter_sizes):
+            raise ValueError("All filter_sizes must be positive integers")
+
+        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
+
+        # Create convolution layers for each filter size
+        self.convs = nn.ModuleList([
+            nn.Conv2d(
+                in_channels=1,  # Input channels (1 for text)
+                out_channels=num_filters,  # Number of filters
+                kernel_size=(fs, embed_dim)  # Kernel: (height, width) = (filter_size, embed_dim)
+            )
+            for fs in filter_sizes
+        ])
+
+        self.dropout = nn.Dropout(dropout)
+
+        # Fully connected layer: input size is total number of filters across all kernel sizes
+        total_output_filters = num_filters * len(filter_sizes)
+        self.fc = nn.Linear(total_output_filters, num_class)
+
+        print(f"Initialized TextCNN:")
+        print(f"  Vocab Size: {vocab_size}")
+        print(f"  Embed Dim: {embed_dim}")
+        print(f"  Num Filters per Size: {num_filters}")
+        print(f"  Filter Sizes: {filter_sizes}")
+        print(f"  Total Output Filters: {total_output_filters}")
+        print(f"  Num Classes: {num_class}")
+        print(f"  Dropout: {dropout}")
+        print(f"  Padding Index: {padding_idx}")
+
+    def forward(self, text: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the TextCNN model.
+
+        Args:
+            text (torch.Tensor): Input tensor of shape (batch_size, seq_len)
+                                 containing token indices.
+
+        Returns:
+            torch.Tensor: Output tensor of shape (batch_size, num_class)
+                          containing raw logits for each class.
+        """
+        # 1. Embedding
+        # text shape: (batch_size, seq_len)
+        embedded = self.embedding(text)
+        # embedded shape: (batch_size, seq_len, embed_dim)
+
+        # 2. Prepare for Conv2d
+        # Add a channel dimension: (batch_size, 1, seq_len, embed_dim)
+        embedded = embedded.unsqueeze(1)
+
+        # 3. Convolution + Activation + Pooling for each filter size
+        # Apply each conv layer to the embedded input
+        conved = [F.relu(conv(embedded)) for conv in self.convs]
+        # conved[i] shape: (batch_size, num_filters, seq_len - filter_sizes[i] + 1, 1)
+
+        # Apply max-pooling over the sequence length dimension
+        # Pool kernel size should cover the entire height of the convolved output
+        pooled = [F.max_pool2d(conv_out, (conv_out.shape[2], 1)).squeeze(3).squeeze(2)
+                  for conv_out in conved]
+        # pooled[i] shape: (batch_size, num_filters)
+
+        # 4. Concatenate Pooled Features & Apply Dropout
+        # Concatenate along the feature dimension (num_filters)
+        cat = torch.cat(pooled, dim=1)
+        # cat shape: (batch_size, num_filters * len(filter_sizes))
+
+        dropped = self.dropout(cat)
+
+        # 5. Fully Connected Layer (Output)
+        logits = self.fc(dropped)
+        # logits shape: (batch_size, num_class)
+
+        return logits
 
 
 # ---------------------------

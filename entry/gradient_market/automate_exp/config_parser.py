@@ -2,6 +2,8 @@
 import logging
 from argparse import Namespace  # Used to mimic the args object
 
+from entry.constant.constant import LABEL_FLIP, BACKDOOR
+
 # Configure logging for the parser itself (optional)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -41,20 +43,15 @@ def parse_config_for_attack_function(config: dict) -> dict:
     parsed_args['global_rounds'] = config.get('global_rounds', 100)
     parsed_args['device'] = config.get('device', 'cpu')  # Default if not specified
     parsed_args['save_path'] = config['output']['final_save_path']
-
     # Data Split parameters (from 'data_split' section)
     data_split_conf = config.get('data_split', {})
     parsed_args['n_sellers'] = data_split_conf.get('num_sellers', 10)  # Default added
     parsed_args['adv_rate'] = data_split_conf.get('adv_rate', 0.0)
+
     parsed_args['buyer_percentage'] = data_split_conf.get('buyer_percentage', 0.02)
     parsed_args['data_split_mode'] = data_split_conf.get('data_split_mode', 'NonIID')
     # Pass dm_params dict directly; get_data_set will handle its contents if mode is 'discovery'
     parsed_args['dm_params'] = data_split_conf.get('dm_params')
-    # Note: normalize_data, data_path, dirichlet_alpha are used by get_data_set,
-    # which is called *inside* backdoor_attack. We don't need to pass them directly
-    # to backdoor_attack itself, assuming get_data_set can access them via config
-    # or if backdoor_attack passes necessary sub-dicts to get_data_set.
-    # Let's assume backdoor_attack handles calling get_data_set correctly with its params.
 
     # Training parameters (from 'training' section)
     training_conf = config.get('training', {})
@@ -70,17 +67,27 @@ def parse_config_for_attack_function(config: dict) -> dict:
     attack_enabled = attack_conf.get('enabled', False)  # Check if attack is actually enabled
     # Only pass attack params if enabled, otherwise use function defaults (mostly)
     if attack_enabled:
-        parsed_args['backdoor_target_label'] = attack_conf.get('backdoor_target_label', 0)
-        parsed_args['trigger_type'] = attack_conf.get('trigger_type', 'blended_patch')
-        parsed_args['poison_strength'] = attack_conf.get('poison_strength', 1.0)
-        parsed_args['trigger_rate'] = attack_conf.get('trigger_rate', 0.1)
+        # todo
+        attack_type = attack_conf['attack_type']
+        parsed_args['attack_type'] = attack_type
+        if attack_type == BACKDOOR:
+            parsed_args['backdoor_target_label'] = attack_conf.get('backdoor_target_label', 0)
+            parsed_args['trigger_type'] = attack_conf.get('trigger_type', 'blended_patch')
+            parsed_args['poison_strength'] = attack_conf.get('poison_strength', 1.0)
+            parsed_args['poison_rate'] = attack_conf.get('poison_rate', 0.1)
         # poison_test_sample uses function default (100)
+        elif attack_type == LABEL_FLIP:
+            parsed_args['label_flip_target_label'] = attack_conf.get('label_flip_target_label', 0)
+            parsed_args['label_flip_mode'] = attack_conf.get('label_flip_mode', 'random')
+            parsed_args['poison_rate'] = attack_conf.get('poison_rate', 0.1)
     else:
         # Use defaults if attack not enabled in config
         parsed_args['backdoor_target_label'] = 0
         parsed_args['trigger_type'] = 'blended_patch'
+        parsed_args['label_flip_target_label'] = 0
+        parsed_args['label_flip_mode'] = "random"
         parsed_args['poison_strength'] = 1.0
-        parsed_args['trigger_rate'] = 0.1
+        parsed_args['poison_rate'] = 0.1
         # Ensure adv_rate is consistent
         if parsed_args['adv_rate'] > 0:
             logger.warning(
