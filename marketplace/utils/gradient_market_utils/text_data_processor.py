@@ -1,10 +1,9 @@
 import logging
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, Counter
 
 import torch
 from torch.utils.data import DataLoader, Subset
-from torchtext.vocab import build_vocab_from_iterator
-
+from torchtext.vocab import Vocab
 # Configure logging (optional, but recommended)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -298,8 +297,21 @@ def get_text_data_set(
         vocab_train_iter, _ = TREC(root=data_root)
 
     specials = [unk_token, pad_token]
-    vocab = build_vocab_from_iterator(yield_tokens(vocab_train_iter, tokenizer), specials=specials)
+    # vocab = build_vocab_from_iterator(yield_tokens(vocab_train_iter, tokenizer), specials=specials)
+    # vocab.set_default_index(vocab[unk_token])
+
+    counter = Counter()
+    for label, text in vocab_train_iter:
+        tokens = tokenizer(text)
+        counter.update(tokens)
+
+    # 2) Construct the Vocab, inserting your specials
+    vocab = Vocab(counter, specials=[unk_token, pad_token])
     vocab.set_default_index(vocab[unk_token])
+
+    # 3) Get pad_idx
+    pad_idx = vocab.stoi[pad_token]
+    logging.info(f"Vocabulary size: {len(vocab)}. pad_idx: {pad_idx}")
 
     if pad_token not in vocab.get_stoi():
         raise ValueError(f"'{pad_token}' was not added to vocabulary.")
