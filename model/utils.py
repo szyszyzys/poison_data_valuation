@@ -453,23 +453,50 @@ def get_model_name(dataset_name):
             model = 'CNN'
         case "fmnist":
             model = 'LeNet'
-        case ["trec", "ag_news"]:
+        case "trec" | "ag_news":
             model = 'TEXTCNN'
         case _:
             raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
     return model
 
-def get_domain(dataset_name):
-    match dataset_name.lower():
+def get_domain(dataset_name: str) -> str:
+    """
+    Determines the data domain ('image' or 'text') based on the dataset name.
+
+    Args:
+        dataset_name (str): The name of the dataset (case-insensitive).
+
+    Returns:
+        str: The domain type ('image' or 'text').
+
+    Raises:
+        NotImplementedError: If the dataset name is not recognized.
+    """
+    domain: str # Variable to hold the result
+
+    # Convert to lower once for case-insensitive matching
+    dataset_name_lower = dataset_name.lower()
+
+    match dataset_name_lower:
         case "cifar":
-            model = 'image'
+            domain = 'image'
         case "fmnist":
-            model = 'image'
-        case ["trec", "ag_news"]:
-            model = 'text'
+            domain = 'image'
+        # Use | (OR pattern) to match multiple string literals
+        case "trec" | "ag_news":
+            domain = 'text'
+        # Add other datasets as needed using |
+        # case "mnist" | "svhn":
+        #     domain = 'image'
+        # case "imdb" | "sst2":
+        #     domain = 'text'
         case _:
-            raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
-    return model
+            # Log the error for better debugging if needed
+            logging.error(f"Unrecognized dataset name: {dataset_name}")
+            # Raise error as before
+            raise NotImplementedError(f"Cannot determine domain for dataset '{dataset_name}'") # Added quotes for clarity
+
+    return domain
 
 
 import torch
