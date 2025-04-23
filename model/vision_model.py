@@ -117,17 +117,24 @@ class TextCNN(nn.Module):
         print(f"  Padding Index: {padding_idx}")
 
     def forward(self, text: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of the TextCNN model.
+        print(f"--- Entering TextCNN forward ---")
+        print(f"Input text shape: {text.shape}")
+        embedded = self.embedding(text)
+        print(f"After embedding shape: {embedded.shape}")  # Should be [B, L, E]
+        embedded = embedded.unsqueeze(1)
+        print(f"After unsqueeze shape: {embedded.shape}")  # Should be [B, 1, L, E]
 
-        Args:
-            text (torch.Tensor): Input tensor of shape (batch_size, seq_len)
-                                 containing token indices.
-
-        Returns:
-            torch.Tensor: Output tensor of shape (batch_size, num_class)
-                          containing raw logits for each class.
-        """
+        conved = []
+        for i, conv in enumerate(self.convs):
+            print(f"Applying conv {i} to shape: {embedded.shape}")  # Check shape right before conv
+            try:
+                conv_out = F.relu(conv(embedded))
+                conved.append(conv_out)
+            except Exception as e:
+                print(f"!!!!! ERROR applying conv {i} !!!!!")
+                print(f"Conv layer details: {conv}")  # Print the layer config
+                print(f"Input shape was: {embedded.shape}")
+                raise e  # Re-raise the exception
         # 1. Embedding
         # text shape: (batch_size, seq_len)
         embedded = self.embedding(text)
