@@ -287,7 +287,6 @@ def poisoning_attack_text(
     print("--- TEXT Poisoning Attack Finished ---")
 
 
-
 def poisoning_attack_image(
         dataset_name: str,
         n_sellers: int,
@@ -303,7 +302,7 @@ def poisoning_attack_image(
         poison_rate: float = 0.1,  # trigger_rate previously
         backdoor_poison_strength: float = 1.0,  # poison_strength previously
         # --- Label Flip Params ---
-        label_flip_target_label = 0,  # Target for fixed_target mode
+        label_flip_target_label=0,  # Target for fixed_target mode
         label_flip_mode: str = "fixed_target",  # 'fixed_target' or 'random_different'
         # --- Common Params ---
         save_path: str = "/",
@@ -570,7 +569,7 @@ def main():
     # 1. Set up argparse to accept only the config file path
     parser = argparse.ArgumentParser(description="Run Federated Learning Experiment from Config File")
     parser.add_argument("config", help="Path to the YAML configuration file")
-    parser.add_argument("rerun", type=str, default="false", help="Path to the YAML configuration file")
+    parser.add_argument("rerun", type=str, default="false", required=False, help="Path to the YAML configuration file")
 
     cli_args = parser.parse_args()
     print(f"start run with config: {cli_args.config}")
