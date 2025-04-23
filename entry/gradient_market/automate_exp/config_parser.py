@@ -72,8 +72,8 @@ def parse_config_for_attack_function(config: dict) -> dict:
         parsed_args['attack_type'] = attack_type
         if attack_type == BACKDOOR:
             parsed_args['backdoor_target_label'] = attack_conf.get('backdoor_target_label', 0)
-            parsed_args['trigger_type'] = attack_conf.get('trigger_type', 'blended_patch')
-            parsed_args['poison_strength'] = attack_conf.get('poison_strength', 1.0)
+            parsed_args['backdoor_trigger_type'] = attack_conf.get('trigger_type', 'blended_patch')
+            parsed_args['backdoor_poison_strength'] = attack_conf.get('poison_strength', 1.0)
             parsed_args['poison_rate'] = attack_conf.get('poison_rate', 0.1)
         # poison_test_sample uses function default (100)
         elif attack_type == LABEL_FLIP:
@@ -83,10 +83,10 @@ def parse_config_for_attack_function(config: dict) -> dict:
     else:
         # Use defaults if attack not enabled in config
         parsed_args['backdoor_target_label'] = 0
-        parsed_args['trigger_type'] = 'blended_patch'
+        parsed_args['backdoor_trigger_type'] = 'blended_patch'
         parsed_args['label_flip_target_label'] = 0
         parsed_args['label_flip_mode'] = "random"
-        parsed_args['poison_strength'] = 1.0
+        parsed_args['backdoor_poison_strength'] = 1.0
         parsed_args['poison_rate'] = 0.1
         # Ensure adv_rate is consistent
         if parsed_args['adv_rate'] > 0:
