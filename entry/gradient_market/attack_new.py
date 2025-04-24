@@ -648,11 +648,54 @@ def main():
         # Update seed within the simulated args object if backdoor_attack uses args.seed
         if hasattr(run_specific_args['args'], 'seed'):
             run_specific_args['args'].seed = current_seed
-        if cli_args.rerun == "false":
-            pass
-        else:
-            clear_work_path(current_run_save_path)
 
+        is_rerun_true = False
+        if isinstance(cli_args.rerun, str):
+            # Handle string comparison (case-insensitive)
+            is_rerun_true = cli_args.rerun.lower() == 'true'
+        elif isinstance(cli_args.rerun, bool):
+            # Handle boolean directly
+            is_rerun_true = cli_args.rerun
+        else:
+            # Handle unexpected type if necessary, maybe default to False or raise error
+            logging.warning(f"Unexpected type for cli_args.rerun: {type(cli_args.rerun)}. Assuming False.")
+            is_rerun_true = False
+
+        # --- Define the target file path ---
+        results_file_path = os.path.join(current_run_save_path, "round_results.csv")
+
+        # --- Logic to decide whether to run or skip ---
+        should_run_experiment = True  # Assume we run by default
+
+        if not is_rerun_true:
+            # Rerun is False - check if results already exist
+            if os.path.exists(results_file_path):
+                logging.info(
+                    f"Results file found at '{results_file_path}' and rerun is False. Skipping experiment for this run.")
+                should_run_experiment = False
+            else:
+                logging.info(f"Results file not found at '{results_file_path}'. Proceeding with experiment.")
+        else:
+            # Rerun is True - clear the path before running
+            logging.info(f"Rerun is True. Clearing working path: '{current_run_save_path}'")
+            try:
+                # Make sure the directory exists before trying to clear (optional safety)
+                if os.path.isdir(current_run_save_path):
+                    clear_work_path(current_run_save_path)
+                    logging.info(f"Successfully cleared path: '{current_run_save_path}'")
+                else:
+                    logging.warning(
+                        f"Path '{current_run_save_path}' does not exist or is not a directory. Cannot clear.")
+                # Even if clearing fails or path didn't exist, we still want to run because rerun=True
+                should_run_experiment = True
+            except Exception as e:
+                logging.error(f"Failed to clear working path '{current_run_save_path}': {e}", exc_info=True)
+                pass
+
+        # --- Execute based on the decision ---
+        if not should_run_experiment:
+            pass
+        clear_work_path(current_run_save_path)
         # Execute the main attack function
         try:
             if dataset_domain == 'image':
