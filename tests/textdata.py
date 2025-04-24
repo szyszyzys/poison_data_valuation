@@ -1,15 +1,14 @@
-import logging
 import os
 import random
-
+import logging
 import numpy as np
 import torch
-from torchtext.legacy.data import Field, LabelField, BucketIterator
 from torchtext.data.utils import get_tokenizer
+from torchtext.datasets import AG_NEWS
+# no more: Field / LabelField / BucketIterator / legacy
 
-
-def load_dataset(dataset_name, data_root, seed, batch_size, device):
-    # ── reproducibility ─────────────────────────────────────────────────────
+def load_dataset(dataset_name, data_root, seed):
+    # ── reproducibility ─────────────────────────────────
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -19,83 +18,62 @@ def load_dataset(dataset_name, data_root, seed, batch_size, device):
     else:
         logging.info("CUDA not available.")
 
-    # ── prepare directory ────────────────────────────────────────────────────
     os.makedirs(data_root, exist_ok=True)
-
-    # ── tokenizer + Fields ──────────────────────────────────────────────────
     tokenizer = get_tokenizer('basic_english')
-    TEXT = Field(tokenize=tokenizer, lower=True, include_lengths=True, batch_first=True)
-    LABEL = LabelField(sequential=False)
 
-    # placeholders
+    # common return placeholders
     train_iter = test_iter = None
+    num_classes = None
+    class_names = None
+    label_offset = 0
 
-    # ── AG_NEWS branch (new API) ──────────────────────────────────────────────
     if dataset_name == "AG_NEWS":
-        from torchtext.datasets import AG_NEWS as AG_NEWS_Loader
+        # ---- new torchtext API ----
+        train_iter, test_iter = AG_NEWS(root=data_root, split=('train','test'))
+        logging.info("Loaded AG_NEWS via torchtext.datasets.AG_NEWS")
 
-        train_iter, test_iter = AG_NEWS_Loader(root=data_root, split=('train', 'test'))
-        logging.info("Using newer torchtext.datasets.AG_NEWS API.")
+        num_classes  = 4
+        class_names  = ['World','Sports','Business','Sci/Tech']
+        label_offset = 1  # labels come 1–4
 
-        # build vocabs
-        TEXT.build_vocab([])
-        LABEL.build_vocab([])
-
-        num_classes = 4
-        class_names = ['World', 'Sports', 'Business', 'Sci/Tech']
-        label_offset = 1
-
-    # ── TREC branch (legacy API) ──────────────────────────────────────────────
     elif dataset_name == "TREC":
-        from torchtext.datasets.trec import TREC as TREC_Loader
+        # ---- fallback to Hugging-Face Datasets for TREC ----
+        try:
+            from datasets import load_dataset
+        except ImportError:
+            raise ImportError("TREC is not in torchtext 0.17; please `pip install datasets` to use HuggingFace loader")
 
-        # splits() returns Dataset objects, not raw iterators
-        train_data, test_data = TREC_Loader.splits(
-            TEXT, LABEL,
-            root=data_root,
-            fine_grained=False  # six-way questions; True for 50-way
-        )
-        logging.info("Using legacy torchtext.datasets.trec.TREC.splits API.")
+        ds = load_dataset("trec", "default", cache_dir=data_root)
+        train_ds, test_ds = ds["train"], ds["test"]
+        logging.info("Loaded TREC via HuggingFace `datasets`")
 
-        # build vocabs on train only
-        TEXT.build_vocab(train_data)
-        LABEL.build_vocab(train_data)
+        # make simple Python generators that mimic torchtext's (label, text) pairs:
+        train_iter = ((ex["label-coarse"], ex["text"]) for ex in train_ds)
+        test_iter  = ((ex["label-coarse"], ex["text"]) for ex in test_ds)
 
-        # bucketed iterators
-        train_iter, test_iter = BucketIterator.splits(
-            (train_data, test_data),
-            batch_size=batch_size,
-            sort_within_batch=True,
-            sort_key=lambda x: len(x.text),
-            device=device
-        )
-
-        num_classes = len(LABEL.vocab)
-        class_names = LABEL.vocab.itos  # e.g. ['<unk>','Abbreviation',...]
+        num_classes  = 6
+        class_names  = ['Abbreviation','Entity','Description','Human','Location','Numeric']
         label_offset = 0
 
     else:
-        raise ValueError(f"Unknown dataset: {dataset_name}")
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
 
     return train_iter, test_iter, num_classes, class_names, label_offset
 
 
 def test_load():
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    for name in ["AG_NEWS", "TREC"]:
-        print(f"\n--- Testing {name} ---")
+    for name in ("AG_NEWS", "TREC"):
+        print(f"\n=== Testing {name} ===")
         train_it, test_it, nc, cn, off = load_dataset(
             dataset_name=name,
             data_root=".data",
-            seed=42,
-            batch_size=16,
-            device=device
+            seed=42
         )
-        # grab one batch
-        batch = next(iter(train_it))
+        # pull one example from train
+        example = next(train_it)
+        label, text = example
         print(f"{name}: num_classes={nc}, offset={off}")
-        print(f"  batch.text shape: {batch.text[0].shape}, batch.label shape: {batch.label.shape}")
-        print(f"  sample labels: {batch.label[:5].tolist()}")
+        print(" sample ->", label, repr(text[:50] + ("…" if len(text)>50 else "")))
 
 if __name__ == "__main__":
     test_load()
