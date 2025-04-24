@@ -727,8 +727,7 @@ class Aggregator:
         """
         print(f"--- Starting SkyMask (Original Logic - Recreate MaskNet) Aggregation (Epoch {global_epoch}) ---")
         net = self.model_structure  # Use the stored model structure instance
-        args = self.args  # Get args from self if needed for create_masknet/logging
-
+        args = {}
         # 1. Prepare inputs
         print("Preparing inputs...")
         processed_seller_updates = {}
