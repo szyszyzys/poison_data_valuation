@@ -132,12 +132,12 @@ dataset_metadata = {
         "class_names": ['World', 'Sports', 'Business', 'Sci/Tech'],
         "label_offset": 1,  # AG_NEWS labels are 1-based
     },
-    "TREC": {
-        "loader": datasets.TREC,  # Correct loader for TREC
-        "num_classes": 6,
-        "class_names": ['Abbreviation', 'Entity', 'Description', 'Human', 'Location', 'Numeric'],
-        "label_offset": 0,  # TREC labels are 0-based
-    }
+    # "TREC": {
+    #     "loader": datasets.TREC,  # Correct loader for TREC
+    #     "num_classes": 6,
+    #     "class_names": ['Abbreviation', 'Entity', 'Description', 'Human', 'Location', 'Numeric'],
+    #     "label_offset": 0,  # TREC labels are 0-based
+    # }
     # Add definitions for other datasets here if needed
 }
 
