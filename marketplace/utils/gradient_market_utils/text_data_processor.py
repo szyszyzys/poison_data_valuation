@@ -6,7 +6,6 @@ from typing import Optional, Tuple, Any
 
 import torch
 from torch.utils.data import DataLoader, Subset
-from torchtext import datasets
 # Make sure necessary torchtext components are imported
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
@@ -41,29 +40,9 @@ def placeholder_generate_bias(*args, **kwargs):
 split_dataset_martfl_discovery = placeholder_splitter  # Replace with actual import
 split_dataset_by_label = placeholder_splitter  # Replace with actual import
 split_dataset_buyer_seller_improved = placeholder_splitter  # Replace with actual import
+generate_buyer_bias_distribution = placeholder_generate_bias  # Replace with actual import
 
 
-# Placeholder functions for demonstration if imports fail
-def generate_buyer_bias_distribution(num_classes, bias_type, alpha, **kwargs):
-    logging.warning("Using placeholder `generate_buyer_bias_distribution`")
-    if bias_type == 'dirichlet':
-        bias = np.random.dirichlet([alpha] * num_classes)
-        return bias
-    else:
-        return np.ones(num_classes) / num_classes
-
-
-def split_text_dataset_martfl_discovery(dataset, buyer_count, num_clients, client_data_count, noise_factor,
-                                        buyer_data_mode, buyer_bias_distribution, seed, **kwargs):
-    logging.warning("Using placeholder `split_text_dataset_martfl_discovery`")
-    np.random.seed(seed)
-    all_indices = np.arange(len(dataset))
-    np.random.shuffle(all_indices)
-    buyer_indices = all_indices[:buyer_count]
-    seller_all_indices = all_indices[buyer_count:]
-    seller_splits_list = np.array_split(seller_all_indices, num_clients)
-    seller_splits = {i: list(split) for i, split in enumerate(seller_splits_list)}
-    return buyer_indices, seller_splits
 
 
 # Configure logging
@@ -125,21 +104,6 @@ def yield_tokens(data_iter: Any, tokenizer: Any) -> Any:
 
 
 # --- End Text Data Helper Functions ---
-dataset_metadata = {
-    "AG_NEWS": {
-        "loader": datasets.AG_NEWS,
-        "num_classes": 4,
-        "class_names": ['World', 'Sports', 'Business', 'Sci/Tech'],
-        "label_offset": 1,  # AG_NEWS labels are 1-based
-    },
-    # "TREC": {
-    #     "loader": datasets.TREC,  # Correct loader for TREC
-    #     "num_classes": 6,
-    #     "class_names": ['Abbreviation', 'Entity', 'Description', 'Human', 'Location', 'Numeric'],
-    #     "label_offset": 0,  # TREC labels are 0-based
-    # }
-    # Add definitions for other datasets here if needed
-}
 
 
 def get_text_data_set(
@@ -147,7 +111,7 @@ def get_text_data_set(
         buyer_percentage: float = 0.01,
         num_sellers: int = 10,
         batch_size: int = 64,
-        data_root="./data",
+        data_root = "./data",
         split_method: str = "discovery",
         n_adversaries: int = 0,
         # save_path: str = './result', # Path might be needed for stats saving later
@@ -196,25 +160,6 @@ def get_text_data_set(
         RuntimeError: If dataset loading or processing fails unexpectedly.
         TypeError: If vocabulary object has unexpected type in collate_fn.
     """
-    # --- Input Validation ---
-    # (validation code remains the same)
-    if dataset_name not in ["AG_NEWS", "TREC"]:
-        raise ValueError(f"Unsupported text dataset: {dataset_name}. Choose 'AG_NEWS' or 'TREC'.")
-    if not 0.0 <= buyer_percentage <= 1.0:
-        raise ValueError(f"buyer_percentage must be between 0.0 and 1.0, got {buyer_percentage}")
-    if num_sellers <= 0:
-        raise ValueError(f"num_sellers must be positive, got {num_sellers}")
-    if batch_size <= 0:
-        raise ValueError(f"batch_size must be positive, got {batch_size}")
-    if n_adversaries < 0:
-        raise ValueError(f"n_adversaries cannot be negative, got {n_adversaries}")
-    if buyer_dirichlet_alpha <= 0:
-        raise ValueError(f"buyer_dirichlet_alpha must be positive, got {buyer_dirichlet_alpha}")
-    if discovery_client_data_count < 0:
-        raise ValueError(f"discovery_client_data_count cannot be negative, got {discovery_client_data_count}")
-    if seller_dirichlet_alpha <= 0:
-        raise ValueError(f"seller_dirichlet_alpha must be positive, got {seller_dirichlet_alpha}")
-
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -243,35 +188,71 @@ def get_text_data_set(
         logging.error(f"Error initializing tokenizer: {e}")
         raise
 
-    # Check if the requested dataset is supported
-    if dataset_name not in dataset_metadata:
-        raise ValueError(f"Unsupported dataset name: '{dataset_name}'. Supported: {list(dataset_metadata.keys())}")
+    # --- Load Dataset (handling API differences) ---
+    SuccessfulLoader = None
+    loader_args = {'root': data_root}
+    # Default: Newer API returns iterators for splits
+    loader_returns_tuple_for_splits = True
 
-    # Get the metadata for the requested dataset
-    metadata = dataset_metadata[dataset_name]
-    loader_func = metadata["loader"]
-    num_classes = metadata["num_classes"]
-    class_names = metadata["class_names"]
-    label_offset = metadata["label_offset"]
+    if dataset_name == "AG_NEWS":
+        # --- Try Newer API First ---
+        from torchtext.datasets import AG_NEWS as AG_NEWS_Loader
+        SuccessfulLoader = AG_NEWS_Loader
+        loader_args['split'] = ('train', 'test')
+        train_iter, test_iter = SuccessfulLoader(**loader_args)
+        logging.info("Using newer torchtext.datasets.AG_NEWS API.")
 
-    logging.info(f"Loading {dataset_name} dataset using {loader_func.__name__}...")
+        # --- Common AG_NEWS setup ---
+        num_classes = 4
+        class_names = ['World', 'Sports', 'Business', 'Sci/Tech']
+        label_offset = 1  # AG_NEWS labels are 1-based
+        logging.info(f"AG_NEWS dataset setup complete. Num classes: {num_classes}. Original labels are 1-based.")
 
-    try:
-        # Call the appropriate dataset loading function from the metadata
-        train_iter, test_iter = loader_func(root=data_root, split=('train', 'test'))
+    elif dataset_name == "TREC":
+        # --- Try Newer API First ---
+        from torchtext.datasets import TREC as TREC_Loader
+        SuccessfulLoader = TREC_Loader
+        loader_args['split'] = ('train', 'test')
+        train_iter, test_iter = SuccessfulLoader(**loader_args)
+        logging.info("Using newer torchtext.datasets.TREC API.")
+        # --- Common TREC setup: Infer classes ---
+        # Get a fresh iterator *just for counting labels* using the successful loader
+        logging.info("Inferring number of classes for TREC...")
+        try:
+            count_args = loader_args.copy()
+            # Adjust args based on API style for getting *only* train split for counting
+            if loader_returns_tuple_for_splits:
+                count_args['split'] = 'train'
+                temp_train_iter_for_labels = SuccessfulLoader(**count_args)
+            else:
+                # Legacy often returns (train, test), so get the first element
+                temp_train_iter_for_labels, _ = SuccessfulLoader(**count_args)
 
-        # Log the successful loading and the determined properties
-        logging.info(f"{dataset_name} dataset loaded successfully.")
-        logging.info(f"  Num classes: {num_classes}")
-        logging.info(f"  Class names: {class_names}")
-        logging.info(f"  Label offset (0-based adjustment): {label_offset}")
+            unique_labels = set(label for label, text in temp_train_iter_for_labels)
+            del temp_train_iter_for_labels  # Clean up iterator
+            num_classes = len(unique_labels)
+            expected_trec_classes = 6
+            if num_classes == expected_trec_classes:
+                class_names = ['Abbreviation', 'Entity', 'Description', 'Human', 'Location', 'Numeric']
+            else:
+                logging.warning(
+                    f"Inferred {num_classes} classes for TREC, expected {expected_trec_classes}. Using numeric names.")
+                # Ensure consistent ordering by sorting
+                class_names = [str(i) for i in sorted(list(unique_labels))]
+            label_offset = 0  # TREC labels seem to be 0-based
+            logging.info(
+                f"TREC dataset setup complete. Inferred num classes: {num_classes}. Original labels are 0-based.")
+        except Exception as e_count:
+            logging.error(f"Failed to count labels for TREC: {e_count}")
+            raise RuntimeError(f"Could not determine number of classes for TREC: {e_count}") from e_count
 
-    except Exception as e:
-        # Catch potential errors during dataset download/loading
-        logging.error(f"Failed to load {dataset_name} dataset using function {loader_func.__name__}: {e}",
-                      exc_info=True)
-        # Depending on your program structure, you might want to re-raise or handle differently
-        raise RuntimeError(f"Failed to load dataset {dataset_name}") from e
+    else:
+        raise ValueError(f"Dataset loading logic missing or dataset name invalid: {dataset_name}")
+
+    # --- Check if loading was successful ---
+    if train_iter is None or test_iter is None or SuccessfulLoader is None:
+        raise RuntimeError(
+            f"Dataset iterators train_iter or test_iter were not assigned for {dataset_name}. Loading failed.")
 
     # --- Build Vocabulary ---
     logging.info("Building vocabulary...")
