@@ -5,10 +5,9 @@ import numpy as np
 import torch
 from torchtext.data.utils import get_tokenizer
 from torchtext.datasets import AG_NEWS
-# no more: Field / LabelField / BucketIterator / legacy
 
 def load_dataset(dataset_name, data_root, seed):
-    # ── reproducibility ─────────────────────────────────
+    # ── reproducibility ─────────────────────────────────────────────────
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -21,33 +20,36 @@ def load_dataset(dataset_name, data_root, seed):
     os.makedirs(data_root, exist_ok=True)
     tokenizer = get_tokenizer('basic_english')
 
-    # common return placeholders
     train_iter = test_iter = None
     num_classes = None
     class_names = None
     label_offset = 0
 
     if dataset_name == "AG_NEWS":
-        # ---- new torchtext API ----
-        train_iter, test_iter = AG_NEWS(root=data_root, split=('train','test'))
+        # new torchtext API returns DataPipes
+        train_dp, test_dp = AG_NEWS(root=data_root, split=('train','test'))
         logging.info("Loaded AG_NEWS via torchtext.datasets.AG_NEWS")
+
+        # **wrap** into iterator
+        train_iter = iter(train_dp)
+        test_iter  = iter(test_dp)
 
         num_classes  = 4
         class_names  = ['World','Sports','Business','Sci/Tech']
-        label_offset = 1  # labels come 1–4
+        label_offset = 1  # labels 1–4
 
     elif dataset_name == "TREC":
-        # ---- fallback to Hugging-Face Datasets for TREC ----
+        # use HuggingFace Datasets for TREC
         try:
-            from datasets import load_dataset
+            from datasets import load_dataset as hf_load
         except ImportError:
-            raise ImportError("TREC is not in torchtext 0.17; please `pip install datasets` to use HuggingFace loader")
+            raise ImportError("Please install the `datasets` library: pip install datasets")
 
-        ds = load_dataset("trec", "default", cache_dir=data_root)
+        ds = hf_load("trec", "default", cache_dir=data_root)
         train_ds, test_ds = ds["train"], ds["test"]
         logging.info("Loaded TREC via HuggingFace `datasets`")
 
-        # make simple Python generators that mimic torchtext's (label, text) pairs:
+        # make Python generators (these *are* iterators)
         train_iter = ((ex["label-coarse"], ex["text"]) for ex in train_ds)
         test_iter  = ((ex["label-coarse"], ex["text"]) for ex in test_ds)
 
@@ -62,18 +64,18 @@ def load_dataset(dataset_name, data_root, seed):
 
 
 def test_load():
-    for name in ("AG_NEWS", "TREC"):
+    for name in ("AG_NEWS","TREC"):
         print(f"\n=== Testing {name} ===")
         train_it, test_it, nc, cn, off = load_dataset(
             dataset_name=name,
             data_root=".data",
             seed=42
         )
-        # pull one example from train
-        example = next(train_it)
-        label, text = example
+        # now train_it is a true iterator, so this works:
+        label, text = next(train_it)
         print(f"{name}: num_classes={nc}, offset={off}")
-        print(" sample ->", label, repr(text[:50] + ("…" if len(text)>50 else "")))
+        print(" sample label:", label)
+        print(" sample text:", repr(text[:80] + ("…" if len(text)>80 else "")))
 
 if __name__ == "__main__":
     test_load()
