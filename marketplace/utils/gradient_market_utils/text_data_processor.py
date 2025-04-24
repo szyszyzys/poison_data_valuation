@@ -3,6 +3,7 @@ import os  # For checking data root
 from typing import List, Dict
 # Import Optional for type hinting
 from typing import Optional, Tuple, Any
+from torchtext import datasets
 
 import torch
 from torch.utils.data import DataLoader, Subset
@@ -66,8 +67,6 @@ def split_text_dataset_martfl_discovery(dataset, buyer_count, num_clients, clien
     return buyer_indices, seller_splits
 
 
-
-
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -127,6 +126,21 @@ def yield_tokens(data_iter: Any, tokenizer: Any) -> Any:
 
 
 # --- End Text Data Helper Functions ---
+dataset_metadata = {
+    "AG_NEWS": {
+        "loader": datasets.AG_NEWS,
+        "num_classes": 4,
+        "class_names": ['World', 'Sports', 'Business', 'Sci/Tech'],
+        "label_offset": 1,  # AG_NEWS labels are 1-based
+    },
+    "TREC": {
+        "loader": datasets.TREC,  # Correct loader for TREC
+        "num_classes": 6,
+        "class_names": ['Abbreviation', 'Entity', 'Description', 'Human', 'Location', 'Numeric'],
+        "label_offset": 0,  # TREC labels are 0-based
+    }
+    # Add definitions for other datasets here if needed
+}
 
 
 def get_text_data_set(
@@ -134,7 +148,7 @@ def get_text_data_set(
         buyer_percentage: float = 0.01,
         num_sellers: int = 10,
         batch_size: int = 64,
-        data_root = "./data",
+        data_root="./data",
         split_method: str = "discovery",
         n_adversaries: int = 0,
         # save_path: str = './result', # Path might be needed for stats saving later
@@ -230,71 +244,35 @@ def get_text_data_set(
         logging.error(f"Error initializing tokenizer: {e}")
         raise
 
-    # --- Load Dataset (handling API differences) ---
-    SuccessfulLoader = None
-    loader_args = {'root': data_root}
-    # Default: Newer API returns iterators for splits
-    loader_returns_tuple_for_splits = True
+    # Check if the requested dataset is supported
+    if dataset_name not in dataset_metadata:
+        raise ValueError(f"Unsupported dataset name: '{dataset_name}'. Supported: {list(dataset_metadata.keys())}")
 
-    if dataset_name == "AG_NEWS":
-        # --- Try Newer API First ---
-        from torchtext.datasets import AG_NEWS as AG_NEWS_Loader
-        SuccessfulLoader = AG_NEWS_Loader
-        loader_args['split'] = ('train', 'test')
-        train_iter, test_iter = SuccessfulLoader(**loader_args)
-        logging.info("Using newer torchtext.datasets.AG_NEWS API.")
+    # Get the metadata for the requested dataset
+    metadata = dataset_metadata[dataset_name]
+    loader_func = metadata["loader"]
+    num_classes = metadata["num_classes"]
+    class_names = metadata["class_names"]
+    label_offset = metadata["label_offset"]
 
-        # --- Common AG_NEWS setup ---
-        num_classes = 4
-        class_names = ['World', 'Sports', 'Business', 'Sci/Tech']
-        label_offset = 1  # AG_NEWS labels are 1-based
-        logging.info(f"AG_NEWS dataset setup complete. Num classes: {num_classes}. Original labels are 1-based.")
+    logging.info(f"Loading {dataset_name} dataset using {loader_func.__name__}...")
 
-    elif dataset_name == "TREC":
-        # --- Try Newer API First ---
-        from torchtext.datasets import TREC as TREC_Loader
-        SuccessfulLoader = TREC_Loader
-        loader_args['split'] = ('train', 'test')
-        train_iter, test_iter = SuccessfulLoader(**loader_args)
-        logging.info("Using newer torchtext.datasets.TREC API.")
-        # --- Common TREC setup: Infer classes ---
-        # Get a fresh iterator *just for counting labels* using the successful loader
-        logging.info("Inferring number of classes for TREC...")
-        try:
-            count_args = loader_args.copy()
-            # Adjust args based on API style for getting *only* train split for counting
-            if loader_returns_tuple_for_splits:
-                count_args['split'] = 'train'
-                temp_train_iter_for_labels = SuccessfulLoader(**count_args)
-            else:
-                # Legacy often returns (train, test), so get the first element
-                temp_train_iter_for_labels, _ = SuccessfulLoader(**count_args)
+    try:
+        # Call the appropriate dataset loading function from the metadata
+        train_iter, test_iter = loader_func(root=data_root, split=('train', 'test'))
 
-            unique_labels = set(label for label, text in temp_train_iter_for_labels)
-            del temp_train_iter_for_labels  # Clean up iterator
-            num_classes = len(unique_labels)
-            expected_trec_classes = 6
-            if num_classes == expected_trec_classes:
-                class_names = ['Abbreviation', 'Entity', 'Description', 'Human', 'Location', 'Numeric']
-            else:
-                logging.warning(
-                    f"Inferred {num_classes} classes for TREC, expected {expected_trec_classes}. Using numeric names.")
-                # Ensure consistent ordering by sorting
-                class_names = [str(i) for i in sorted(list(unique_labels))]
-            label_offset = 0  # TREC labels seem to be 0-based
-            logging.info(
-                f"TREC dataset setup complete. Inferred num classes: {num_classes}. Original labels are 0-based.")
-        except Exception as e_count:
-            logging.error(f"Failed to count labels for TREC: {e_count}")
-            raise RuntimeError(f"Could not determine number of classes for TREC: {e_count}") from e_count
+        # Log the successful loading and the determined properties
+        logging.info(f"{dataset_name} dataset loaded successfully.")
+        logging.info(f"  Num classes: {num_classes}")
+        logging.info(f"  Class names: {class_names}")
+        logging.info(f"  Label offset (0-based adjustment): {label_offset}")
 
-    else:
-        raise ValueError(f"Dataset loading logic missing or dataset name invalid: {dataset_name}")
-
-    # --- Check if loading was successful ---
-    if train_iter is None or test_iter is None or SuccessfulLoader is None:
-        raise RuntimeError(
-            f"Dataset iterators train_iter or test_iter were not assigned for {dataset_name}. Loading failed.")
+    except Exception as e:
+        # Catch potential errors during dataset download/loading
+        logging.error(f"Failed to load {dataset_name} dataset using function {loader_func.__name__}: {e}",
+                      exc_info=True)
+        # Depending on your program structure, you might want to re-raise or handle differently
+        raise RuntimeError(f"Failed to load dataset {dataset_name}") from e
 
     # --- Build Vocabulary ---
     logging.info("Building vocabulary...")
