@@ -1,75 +1,51 @@
-import os
-import random
-import logging
-import numpy as np
 import torch
-from torchtext.data.utils import get_tokenizer
-from torchtext.datasets import AG_NEWS
 
-def load_dataset(dataset_name, data_root, seed):
-    # ── reproducibility ─────────────────────────────────────────────────
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-        logging.info("CUDA available, setting CUDA seed.")
-    else:
-        logging.info("CUDA not available.")
-
-    os.makedirs(data_root, exist_ok=True)
-    tokenizer = get_tokenizer('basic_english')
-
-    train_iter = test_iter = None
-    num_classes = None
-    class_names = None
-    label_offset = 0
-
-    if dataset_name == "AG_NEWS":
-        train_dp, test_dp = AG_NEWS(root=data_root, split=('train','test'))
-        logging.info("Loaded AG_NEWS via torchtext.datasets.AG_NEWS")
-        train_iter = iter(train_dp)
-        test_iter  = iter(test_dp)
-        num_classes  = 4
-        class_names  = ['World','Sports','Business','Sci/Tech']
-        label_offset = 1
-
-    elif dataset_name == "TREC":
-        try:
-            from datasets import load_dataset as hf_load
-        except ImportError:
-            raise ImportError("Please install HuggingFace datasets: pip install datasets")
-
-        ds = hf_load("trec", "default", cache_dir=data_root)
-        train_ds, test_ds = ds["train"], ds["test"]
-        logging.info("Loaded TREC via HuggingFace datasets")
-
-        # pull the 6-way coarse labels and text
-        train_iter = ((ex["coarse_label"], ex["text"]) for ex in train_ds)
-        test_iter  = ((ex["coarse_label"], ex["text"]) for ex in test_ds)
-
-        num_classes  = 6
-        class_names  = ['ABBR','ENTY','DESC','HUM','LOC','NUM']
-        label_offset = 0
-
-    else:
-        raise ValueError(f"Unsupported dataset: {dataset_name}")
-
-    return train_iter, test_iter, num_classes, class_names, label_offset
+from marketplace.utils.gradient_market_utils.text_data_processor import get_text_data_set
 
 
-def test_load():
+def test_get_text_data_set():
+    """
+    Smoke‐test for get_text_data_set:
+    - loads AG_NEWS and TREC
+    - checks that class_names and vocab look sane
+    - pulls one batch from buyer, sellers, and test dataloaders
+    """
     for name in ("AG_NEWS", "TREC"):
         print(f"\n=== Testing {name} ===")
-        train_it, test_it, nc, cn, off = load_dataset(
+        buyer_loader, seller_loaders, test_loader, class_names, vocab, pad_idx = get_text_data_set(
             dataset_name=name,
+            batch_size=8,
             data_root=".data",
             seed=42
         )
-        label, text = next(train_it)
-        print(f"{name}: num_classes={nc}, offset={off}")
-        print(" sample label:", label)
-        print(" sample text:", repr(text[:80] + ("…" if len(text)>80 else "")))
+
+        # basic metadata
+        print(f"{name}: {len(class_names)} classes → {class_names}")
+        print(f"Vocab size: {len(vocab)}, pad_idx: {pad_idx}")
+
+        # helper to pull a batch and print shapes
+        def show_loader(loader, label):
+            if loader is None:
+                print(f"  {label}: None")
+                return
+            it = iter(loader)
+            batch = next(it)
+            # assumes batch is a tuple (labels, texts) or dict of tensors
+            if isinstance(batch, (list, tuple)):
+                shapes = [t.shape for t in batch if hasattr(t, 'shape')]
+                print(f"  {label} batch shapes: {shapes}")
+            else:
+                print(f"  {label} batch: {batch}")
+
+        # buyer
+        show_loader(buyer_loader, "buyer_loader")
+
+        # sellers
+        for client_id, sl in seller_loaders.items():
+            show_loader(sl, f"seller[{client_id}]")
+
+        # test
+        show_loader(test_loader, "test_loader")
 
 if __name__ == "__main__":
-    test_load()
+    test_get_text_data_set()

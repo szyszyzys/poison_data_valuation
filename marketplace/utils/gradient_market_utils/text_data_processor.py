@@ -11,6 +11,16 @@ from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
 
 from marketplace.utils.gradient_market_utils.data_processor import split_dataset_discovery
+import os
+import random
+import logging
+import numpy as np
+import torch
+
+from torchtext.datasets import AG_NEWS
+from torchtext.data.utils import get_tokenizer
+from torchtext.vocab import build_vocab_from_iterator
+from datasets import load_dataset as hf_load
 
 # Configure logging (optional, but recommended)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -160,6 +170,7 @@ def get_text_data_set(
         RuntimeError: If dataset loading or processing fails unexpectedly.
         TypeError: If vocabulary object has unexpected type in collate_fn.
     """
+    # ── reproducibility ────────────────────────────────────────
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -169,169 +180,80 @@ def get_text_data_set(
     else:
         logging.info("CUDA not available.")
 
-    # --- Constants ---
-    unk_token = "<unk>"
-    pad_token = "<pad>"
-    os.makedirs(data_root, exist_ok=True)  # Ensure data directory exists
+    # ── constants & tokenizer ───────────────────────────────────
+    unk_token, pad_token = "<unk>", "<pad>"
+    os.makedirs(data_root, exist_ok=True)
+    tokenizer = get_tokenizer('basic_english')
 
-    logging.info(f"Attempting to load TEXT dataset: {dataset_name}")
-    try:
-        tokenizer = get_tokenizer('basic_english')
-        logging.info("Using 'basic_english' tokenizer.")
-    except ModuleNotFoundError:
-        logging.error(
-            "Spacy or its 'en_core_web_sm' model not found for 'basic_english' tokenizer. "
-            "Please run: python -m spacy download en_core_web_sm"
-        )
-        raise
-    except Exception as e:
-        logging.error(f"Error initializing tokenizer: {e}")
-        raise
-
-    # --- Load Dataset (handling API differences) ---
-    SuccessfulLoader = None
-    loader_args = {'root': data_root}
-    # Default: Newer API returns iterators for splits
-    loader_returns_tuple_for_splits = True
-
+    # ── load raw iterators ──────────────────────────────────────
     if dataset_name == "AG_NEWS":
-        # --- Try Newer API First ---
-        from torchtext.datasets import AG_NEWS as AG_NEWS_Loader
-        SuccessfulLoader = AG_NEWS_Loader
-        loader_args['split'] = ('train', 'test')
-        train_iter, test_iter = SuccessfulLoader(**loader_args)
-        logging.info("Using newer torchtext.datasets.AG_NEWS API.")
+        # returns two DataPipes of (label, text)
+        dp_train, dp_test = AG_NEWS(root=data_root, split=('train','test'))
+        train_iter = iter(dp_train)
+        test_iter  = iter(dp_test)
 
-        # --- Common AG_NEWS setup ---
-        num_classes = 4
-        class_names = ['World', 'Sports', 'Business', 'Sci/Tech']
-        label_offset = 1  # AG_NEWS labels are 1-based
-        logging.info(f"AG_NEWS dataset setup complete. Num classes: {num_classes}. Original labels are 1-based.")
+        num_classes  = 4
+        class_names  = ['World','Sports','Business','Sci/Tech']
+        label_offset = 1
+
+        # for vocab: one‐off train split
+        vocab_source = iter(AG_NEWS(root=data_root, split='train'))
 
     elif dataset_name == "TREC":
-        # --- Try Newer API First ---
-        from torchtext.datasets import TREC as TREC_Loader
-        SuccessfulLoader = TREC_Loader
-        loader_args['split'] = ('train', 'test')
-        train_iter, test_iter = SuccessfulLoader(**loader_args)
-        logging.info("Using newer torchtext.datasets.TREC API.")
-        # --- Common TREC setup: Infer classes ---
-        # Get a fresh iterator *just for counting labels* using the successful loader
-        logging.info("Inferring number of classes for TREC...")
-        try:
-            count_args = loader_args.copy()
-            # Adjust args based on API style for getting *only* train split for counting
-            if loader_returns_tuple_for_splits:
-                count_args['split'] = 'train'
-                temp_train_iter_for_labels = SuccessfulLoader(**count_args)
-            else:
-                # Legacy often returns (train, test), so get the first element
-                temp_train_iter_for_labels, _ = SuccessfulLoader(**count_args)
+        # TREC no longer in torchtext 0.17 → use HuggingFace
+        ds = hf_load("trec", "default", cache_dir=data_root)
+        train_ds, test_ds = ds["train"], ds["test"]
 
-            unique_labels = set(label for label, text in temp_train_iter_for_labels)
-            del temp_train_iter_for_labels  # Clean up iterator
-            num_classes = len(unique_labels)
-            expected_trec_classes = 6
-            if num_classes == expected_trec_classes:
-                class_names = ['Abbreviation', 'Entity', 'Description', 'Human', 'Location', 'Numeric']
-            else:
-                logging.warning(
-                    f"Inferred {num_classes} classes for TREC, expected {expected_trec_classes}. Using numeric names.")
-                # Ensure consistent ordering by sorting
-                class_names = [str(i) for i in sorted(list(unique_labels))]
-            label_offset = 0  # TREC labels seem to be 0-based
-            logging.info(
-                f"TREC dataset setup complete. Inferred num classes: {num_classes}. Original labels are 0-based.")
-        except Exception as e_count:
-            logging.error(f"Failed to count labels for TREC: {e_count}")
-            raise RuntimeError(f"Could not determine number of classes for TREC: {e_count}") from e_count
+        # generators of (coarse_label, text)
+        train_iter = ((ex["coarse_label"], ex["text"]) for ex in train_ds)
+        test_iter  = ((ex["coarse_label"], ex["text"]) for ex in test_ds)
+
+        num_classes  = 6
+        class_names  = ['ABBR','ENTY','DESC','HUM','LOC','NUM']
+        label_offset = 0
+
+        # for vocab: just the text field
+        vocab_source = (ex["text"] for ex in train_ds)
 
     else:
-        raise ValueError(f"Dataset loading logic missing or dataset name invalid: {dataset_name}")
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
 
-    # --- Check if loading was successful ---
-    if train_iter is None or test_iter is None or SuccessfulLoader is None:
-        raise RuntimeError(
-            f"Dataset iterators train_iter or test_iter were not assigned for {dataset_name}. Loading failed.")
+    # ── build vocab ─────────────────────────────────────────────
+    def yield_tokens(source):
+        for item in source:
+            # item might be (label, text) or plain text
+            text = item[1] if isinstance(item, tuple) else item
+            yield tokenizer(text)
 
-    # --- Build Vocabulary ---
-    logging.info("Building vocabulary...")
-    vocab = None
-    pad_idx = None
-    try:
-        # Get a fresh TRAIN iterator *specifically for vocab building* using the identified loader
-        vocab_args = loader_args.copy()
-        if loader_returns_tuple_for_splits:
-            vocab_args['split'] = 'train'  # Request only train split from new API
-            vocab_train_iter = SuccessfulLoader(**vocab_args)
-        else:
-            # Legacy API typically returned (train, test) tuple
-            vocab_train_iter, _ = SuccessfulLoader(**vocab_args)
+    specials = [unk_token, pad_token]
+    vocab = build_vocab_from_iterator(
+        yield_tokens(vocab_source),
+        specials=specials
+    )
+    vocab.set_default_index(vocab[unk_token])
+    pad_idx = vocab[pad_token]
+    logging.info(f"Built vocab (size={len(vocab)}), '{pad_token}' idx={pad_idx}")
 
-        specials = [unk_token, pad_token]
-        vocab = build_vocab_from_iterator(
-            yield_tokens(vocab_train_iter, tokenizer),  # Use the helper function
-            specials=specials
-        )
-        vocab.set_default_index(vocab[unk_token])
-        del vocab_train_iter  # Clean up iterator
+    # ── text → index pipeline ───────────────────────────────────
+    text_pipeline = lambda t: vocab(tokenizer(t))
 
-        # --- Get Padding Index ---
-        if pad_token not in vocab.get_stoi():
-            # This case should be rare if specials are handled correctly by build_vocab_from_iterator
-            logging.error(f"'{pad_token}' special token was not found in the vocabulary's stoi map.")
-            # Attempt to find it case-insensitively or add it if absolutely necessary (less ideal)
-            pad_idx = vocab.get_stoi().get(pad_token.lower())  # Example fallback
-            if pad_idx is None:
-                raise ValueError(f"'{pad_token}' could not be resolved in vocabulary.")
-            else:
-                logging.warning(f"Found pad token index {pad_idx} using alternative lookup.")
-        else:
-            pad_idx = vocab[pad_token]  # Get the index for the padding token
+    # ── numericalize & skip empty ──────────────────────────────
+    processed_train_data = []
+    for lbl, txt in train_iter:
+        ids = text_pipeline(txt)
+        if ids:
+            processed_train_data.append((lbl - label_offset, ids))
 
-        logging.info(f"Vocabulary built. Size: {len(vocab)}. '{pad_token}' index: {pad_idx}")
-
-    except Exception as e:
-        logging.error(f"Failed during vocabulary building: {e}")
-        raise RuntimeError(f"Vocabulary building failed: {e}") from e
-
-    # Final check post-vocab building
-    if vocab is None or pad_idx is None:
-        raise RuntimeError("Vocabulary or padding index could not be determined after building process.")
-
-    # --- Define Text Processing Pipeline ---
-    text_pipeline = lambda x: vocab(tokenizer(x))
-
-    # --- Pre-process Data into Memory ---
-    # (processing code remains the same)
-    logging.info("Processing dataset into numerical format (list of (label, token_ids))...")
-    processed_train_data: List[Tuple[int, List[int]]] = []
-    skipped_train_samples = 0
-    for label, text in train_iter:
-        processed_text_list = text_pipeline(text)
-        if not processed_text_list:
-            skipped_train_samples += 1
-            continue
-        adjusted_label = label - label_offset
-        processed_train_data.append((adjusted_label, processed_text_list))
-    del train_iter
-
-    processed_test_data: List[Tuple[int, List[int]]] = []
-    skipped_test_samples = 0
-    for label, text in test_iter:
-        processed_text_list = text_pipeline(text)
-        if not processed_text_list:
-            skipped_test_samples += 1
-            continue
-        adjusted_label = label - label_offset
-        processed_test_data.append((adjusted_label, processed_text_list))
-    del test_iter
+    processed_test_data = []
+    for lbl, txt in test_iter:
+        ids = text_pipeline(txt)
+        if ids:
+            processed_test_data.append((lbl - label_offset, ids))
 
     logging.info(
-        f"Dataset processed. Train samples: {len(processed_train_data)} (skipped {skipped_train_samples}), "
-        f"Test samples: {len(processed_test_data)} (skipped {skipped_test_samples})"
+        f"Processed: train={len(processed_train_data)}, "
+        f"test={len(processed_test_data)}"
     )
-
     dataset = processed_train_data
     test_set = processed_test_data
 
