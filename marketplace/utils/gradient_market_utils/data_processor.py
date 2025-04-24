@@ -1249,7 +1249,7 @@ def construct_buyer_set(
         return final_buyer_indices
 
     else:
-        raise ValueError("Unknown mode. Please use 'random' or 'biased'.")
+        raise ValueError("Unknown mode. Please use 'unbiased' or 'biased'.")
 
 
 # --- Refined split_dataset_martfl_discovery Function ---

@@ -127,7 +127,7 @@ def get_text_data_set(
         # save_path: str = './result', # Path might be needed for stats saving later
         # --- Discovery Split Specific Params ---
         discovery_quality: float = 0.3,
-        buyer_data_mode: str = "random",
+        buyer_data_mode: str = "unbiased",
         buyer_bias_type: str = "dirichlet",
         buyer_dirichlet_alpha: float = 0.3,
         discovery_client_data_count: int = 0,  # Target count per client for discovery (0 for even split)
