@@ -673,6 +673,7 @@ def main():
                 logging.info(
                     f"Results file found at '{results_file_path}' and rerun is False. Skipping experiment for this run.")
                 should_run_experiment = False
+                pass
             else:
                 logging.info(f"Results file not found at '{results_file_path}'. Proceeding with experiment.")
         else:
@@ -681,7 +682,6 @@ def main():
             try:
                 # Make sure the directory exists before trying to clear (optional safety)
                 if os.path.isdir(current_run_save_path):
-                    clear_work_path(current_run_save_path)
                     logging.info(f"Successfully cleared path: '{current_run_save_path}'")
                 else:
                     logging.warning(
