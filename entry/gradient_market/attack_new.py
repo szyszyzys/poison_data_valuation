@@ -701,7 +701,8 @@ def main():
             if dataset_domain == 'image':
                 poisoning_attack_image(**run_specific_args)
             else:
-                poisoning_attack_text(**run_specific_args)
+                return
+                # poisoning_attack_text(**run_specific_args)
             logging.info(f"--- Finished Run {i} ---")
         except Exception as e:
             logging.error(f"!!! Error during Run {i} for experiment {experiment_id} !!!")
