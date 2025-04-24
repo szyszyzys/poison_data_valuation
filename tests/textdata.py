@@ -4,7 +4,7 @@ import random
 
 import numpy as np
 import torch
-from torchtext.data import Field, LabelField, BucketIterator
+from torchtext.legacy.data import Field, LabelField, BucketIterator
 from torchtext.data.utils import get_tokenizer
 
 
