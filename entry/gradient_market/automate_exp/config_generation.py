@@ -123,7 +123,7 @@ BASE_CONFIG_TEMPLATE = {
 
 # DATASETS = ['AG_NEWS', 'TREC', 'CIFAR', 'FMNIST']
 DATASETS = ['CIFAR', 'FMNIST']
-
+AGGREGATIONS= ['fedavg', 'martfl', "skymask", "fltrust"]
 # --- Model Configs per Dataset (Simplified) ---
 # You might need more details (layers, etc.) depending on model structure definition
 MODEL_CONFIGS = {
@@ -173,7 +173,7 @@ def generate_baseline_configs(output_dir):
     print("\n--- Generating Baseline Configs ---")
     datasets = DATASETS
     split_methods = ['discovery']  # Add 'discovery' if desired
-    aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
+    aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
 
     for (ds, agg) in itertools.product(datasets, aggregations):
         for split in split_methods:
@@ -207,7 +207,7 @@ def generate_backdoor_attack_configs(output_dir):
     datasets = DATASETS
     adv_rates = [0.1, 0.3]
 
-    aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
+    aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
     target_labels = [0]  # Could vary this too
     trigger_types = ['blended_patch']  # Could vary
     poison_rates = [0.2]
@@ -253,7 +253,7 @@ def generate_label_flipping_attack_configs(output_dir):
     print("\n--- Generating Attack Configs ---")
     datasets = DATASETS  # Focus on one dataset for this example
     adv_rates = [0.1, 0.3]
-    aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
+    aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
     target_labels = [0]  # Could vary this too
     flip_modes = ['blended_patch']  # Could vary
     poison_rates = [0.2]
@@ -294,9 +294,9 @@ def generate_sybil_configs(output_dir):
     """Focus on varying Sybil parameters."""
     print("\n--- Generating Sybil Attack Configs ---")
     datasets = DATASETS
-    adv_rates = [0.3]  # Fix adversary rate
-    aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
-    amplify_factors = [1.0, 5.0, 10.0]  # Vary amplification
+    adv_rates = [0.1, 0.2, 0.3, 0.4]  # Fix adversary rate
+    aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
+    amplify_factors = [1.0]  # Vary amplification
 
     for ds, rate, agg, amplify in itertools.product(datasets, adv_rates, aggregations, amplify_factors):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
@@ -330,14 +330,14 @@ def generate_sybil_configs(output_dir):
         file_path = os.path.join(output_dir, "sybil_comparison", f"{exp_id}.yaml")
         save_config(config, file_path)
 
-
+# each of attacks .. different question...
 def generate_discovery_configs(output_dir):
     """Compare discovery split method."""
     print("\n--- Generating Discovery Split Configs ---")
     datasets = DATASETS  # Discovery might be more interesting with complex data
     qualities = [0.3, 0.7, 0.95]  # Low, Medium, High quality simulation
     buyer_modes = ['biased', 'unbiased']  # Add 'biased' if construct_buyer_set supports it well
-    aggregations = ['fedavg', 'martfl', "skymask", "fltrust"]  # Compare how Sybil affects different aggregators
+    aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
 
     for ds, quality, buyer_mode, agg in itertools.product(datasets, qualities, buyer_modes, aggregations):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
@@ -384,7 +384,7 @@ if __name__ == "__main__":
 
     print(f"Generating configuration files in: {CONFIG_OUTPUT_DIRECTORY}")
 
-    # Generate specific experiment groups
+    # Generate specific experiment groups citation of similar attacks, section 2 threat model. explain martfl... weak assumption show good attack results
     generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
     generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
     generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)

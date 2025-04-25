@@ -54,6 +54,7 @@ class CNN(nn.Module):
         return x
 
 
+
 class CNNMaskNet(nn.Module):
     def __init__(self, param_list, num_workers, device):
         super(CNNMaskNet, self).__init__()
