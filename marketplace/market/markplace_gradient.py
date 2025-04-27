@@ -18,7 +18,9 @@ class DataMarketplaceFederated(DataMarketplace):
                  aggregator: Aggregator,
                  selection_method: str = "fedavg",
                  learning_rate: float = 1.0,
-                 broadcast_local=False, save_path=''):
+                 broadcast_local=False, save_path='',
+                 privacy_attack = {}
+                 ):
         """
         A marketplace for federated learning where each seller provides gradient updates.
 
@@ -38,6 +40,10 @@ class DataMarketplaceFederated(DataMarketplace):
         self.round_logs: List[Dict[str, Any]] = []
         self.malicious_selection_rate_list = []
         self.benign_selection_rate_list = []
+        self.attack_results_list = [] # NEW: Stores only attack log dicts
+        self.attack_config = privacy_attack
+        self.attack_save_dir = privacy_attack["privacy_attack_path"]
+        # Dict like {'type': 'index', 'value': 0} or {'type': 'id', 'value': 'seller_X'}
 
     def register_seller(self, seller_id: str, seller: BaseSeller):
         """
@@ -51,32 +57,6 @@ class DataMarketplaceFederated(DataMarketplace):
         Update the aggregation/selection method, e.g., from 'fedavg' to 'krum'.
         """
         self.selection_method = new_method
-
-    # def get_current_market_gradients(self, base_model):
-    #     """
-    #     Collect gradient updates from each seller for the current global model parameters.
-    #
-    #     :return:
-    #         gradients: List of gradient vectors (np.ndarray)
-    #         seller_ids: List of seller IDs in the same order as the gradient list
-    #     """
-    #     gradients = OrderedDict()
-    #     seller_ids = []
-    #
-    #     # Get current global model parameters from aggregator
-    #     # current_params = self.aggregator.get_params()  # e.g. dict of state_dict
-    #     # Convert to a form you can send to sellers, or pass directly if they can handle dict
-    #     # e.g. you might pass the aggregator's self.global_model directly
-    #     print(f"current sellers: {self.sellers.keys()}")
-    #     for seller_id, seller in self.sellers.items():
-    #         # for martfl, local have no access to the global params
-    #         grad_np = seller.get_gradient_for_upload(base_model)
-    #         norm = torch.norm(flatten(grad_np))
-    #         print(f"The {seller_id} gradient norm is: {norm}")
-    #         gradients[seller_id] = grad_np
-    #         seller_ids.append(seller_id)
-    #
-    #     return gradients, seller_ids
 
     def get_current_market_gradients(self, base_model):
         """
@@ -183,49 +163,6 @@ class DataMarketplaceFederated(DataMarketplace):
         for seller_id, seller in self.sellers.items():
             seller.update_local_model(new_params)
 
-    # def compute_selection_rates(self, round_selected, malicious_ids, benign_ids):
-    #     """
-    #     Compute the selection rates for malicious and benign sellers over multiple rounds.
-    #
-    #     Parameters:
-    #       all_rounds_selected_ids : list of lists or sets
-    #           Each element is a collection of selected seller IDs for one round.
-    #       malicious_ids : set
-    #           Set of malicious seller IDs.
-    #       benign_ids : set
-    #           Set of benign seller IDs.
-    #
-    #     Returns:
-    #       A dictionary with:
-    #          - 'malicious_rates': list of malicious selection rates per round.
-    #          - 'benign_rates': list of benign selection rates per round.
-    #          - 'avg_malicious_rate': average malicious selection rate over rounds.
-    #          - 'avg_benign_rate': average benign selection rate over rounds.
-    #     """
-    #     round_selected_set = set(round_selected)
-    #
-    #     # Calculate selection rate for malicious sellers in this round.
-    #     malicious_rate = 0
-    #     if len(malicious_ids):
-    #         malicious_rate = len(malicious_ids.intersection(round_selected_set)) / len(malicious_ids)
-    #     self.malicious_selection_rate_list.append(malicious_rate)
-    #
-    #     # Calculate selection rate for benign sellers in this round.
-    #     benign_rate = len(benign_ids.intersection(round_selected_set)) / len(benign_ids)
-    #     self.benign_selection_rate_list.append(benign_rate)
-    #
-    #     avg_malicious_rate = sum(self.malicious_selection_rate_list) / len(
-    #         self.malicious_selection_rate_list) if self.malicious_selection_rate_list else 0
-    #     avg_benign_rate = sum(self.benign_selection_rate_list) / len(
-    #         self.benign_selection_rate_list) if self.benign_selection_rate_list else 0
-    #
-    #     return {
-    #         'malicious_rate': malicious_rate,
-    #         'benign_rate': benign_rate,
-    #         'avg_malicious_rate': avg_malicious_rate,
-    #         'avg_benign_rate': avg_benign_rate,
-    #     }
-
     def train_federated_round(self,
                               round_number: int,
                               buyer, # Assumes buyer object has get_gradient_for_upload method
@@ -236,7 +173,8 @@ class DataMarketplaceFederated(DataMarketplace):
                               backdoor_target_label=0,
                               backdoor_generator=None, # Assumes it's used by evaluate_attack_performance
                               clip = False,
-                              remove_baseline = False
+                              remove_baseline = False,
+                              perform_gradient_inversion: bool = False,  # Control if attack happens
                               ):
         """
         Perform one round of federated training with enhanced logging.
@@ -249,7 +187,7 @@ class DataMarketplaceFederated(DataMarketplace):
         client_compute_times_ms = []
         client_upload_bytes = []
         server_aggregation_time_ms = None
-
+        gradient_inversion_log = None
         # --- Get Buyer Gradient (Baseline) ---
         # Consider timing this if it's significant
         baseline_gradient, _ = buyer.get_gradient_for_upload(self.aggregator.global_model)
@@ -262,6 +200,67 @@ class DataMarketplaceFederated(DataMarketplace):
                 client_train_losses.append(stats.get('train_loss'))
                 client_compute_times_ms.append(stats.get('compute_time_ms'))
                 client_upload_bytes.append(stats.get('upload_bytes'))
+
+
+        # --- 1.5 Determine if Attack Should Happen and Select Victim ---
+        perform_attack_flag = self.attack_config.get('perform_gradient_inversion', False)
+        attack_frequency = self.attack_config.get('attack_frequency', 50)
+        attack_victim_strategy = self.attack_config.get('attack_victim_strategy', 'fixed')
+        attack_fixed_victim_idx = self.attack_config.get('attack_fixed_victim_idx', 0)
+        save_attack_visuals_flag = self.attack_config.get('save_attack_visuals', True)
+        gradient_inversion_params = self.attack_config.get('gradient_inversion_params', {})
+
+        should_attack_this_round = perform_attack_flag and (round_number % attack_frequency == 0)
+        victim_seller_id = None
+        target_gradient = None
+        victim_seller_idx = None
+
+        if should_attack_this_round and seller_ids:
+            if attack_victim_strategy == 'fixed':
+                victim_seller_idx = attack_fixed_victim_idx
+            elif attack_victim_strategy == 'random':
+                victim_seller_idx = np.random.randint(0, len(seller_ids))
+            else:
+                logging.warning(f"Unknown victim strategy: {attack_victim_strategy}. Using fixed index 0.")
+                victim_seller_idx = 0
+
+            if 0 <= victim_seller_idx < len(seller_ids):
+                victim_seller_id = seller_ids[victim_seller_idx]
+                target_gradient = seller_gradients_dict.get(victim_seller_id)
+                if target_gradient is None:
+                    logging.warning(f"Could not retrieve gradient for target victim '{victim_seller_id}' (idx={victim_seller_idx}). Skipping attack.")
+                    victim_seller_id = None # Reset if gradient missing
+            else:
+                logging.warning(f"Victim index {victim_seller_idx} out of bounds. Skipping attack.")
+                victim_seller_id = None
+
+        # --- 1.6 Perform Attack if Victim Found ---
+        if victim_seller_id and target_gradient:
+            gt_images, gt_labels = self.get_ground_truth_data_for_seller(victim_seller_id, round_number)
+
+            # Call the dedicated attack function
+            gradient_inversion_log = perform_and_evaluate_inversion_attack(
+                target_gradient=target_gradient,
+                model_template=self.model_template, # Pass base structure
+                input_shape=self.input_shape,
+                num_classes=self.num_classes,
+                device=self.device,
+                attack_config=gradient_inversion_params,
+                ground_truth_images=gt_images,
+                ground_truth_labels=gt_labels,
+                save_visuals=save_attack_visuals_flag,
+                save_dir=self.attack_save_dir,
+                round_num=round_number,
+                victim_id=victim_seller_id
+            )
+
+            # *** Store attack result SEPARATELY ***
+            if gradient_inversion_log:
+                # Add context useful for later analysis
+                gradient_inversion_log['victim_seller_idx'] = victim_seller_idx
+                gradient_inversion_log['aggregation_method'] = self.config.get('aggregation_method', 'unknown')
+                gradient_inversion_log['experiment_id'] = self.config.get('experiment_id', 'unnamed') # Add experiment id if available
+                self.attack_results_list.append(gradient_inversion_log)
 
         # --- 2. Perform Aggregation ---
         agg_start_time = time.time()
@@ -460,110 +459,6 @@ class DataMarketplaceFederated(DataMarketplace):
             "false_positive_rate (FPR)": fpr,
         }
 
-    # def train_federated_round(self,
-    #                           round_number: int,
-    #                           buyer,
-    #                           n_adv=0,
-    #                           test_dataloader_buyer_local=None,
-    #                           test_dataloader_global=None,
-    #                           loss_fn=None,
-    #                           backdoor_target_label=0,
-    #                           backdoor_generator=None,
-    #                           clip = False,
-    #                           remove_baseline = False
-    #                           ):
-    #     """
-    #     Perform one round of federated training:
-    #      1. Collect gradients from all sellers.
-    #      2. Optionally select a subset.
-    #      3. Aggregate the selected gradients.
-    #      4. Update the global model.
-    #      5. Distribute the new global model back to sellers (optional).
-    #      6. Evaluate final model & log stats (optional).
-    #     """
-    #     baseline_gradient = buyer.get_gradient_for_upload(self.aggregator.global_model)
-    #
-    #     # 1. get gradients from sellers
-    #     seller_gradients, seller_ids = self.get_current_market_gradients(self.aggregator.global_model)
-    #     # 2. perform aggregation
-    #     aggregated_gradient, selected_ids, outlier_ids = self.aggregator.aggregate(round_number,
-    #                                                                                seller_gradients,
-    #                                                                                baseline_gradient, clip=clip, remove_baseline =remove_baseline)
-    #     print(f"round {round_number} aggregated gradient norm: {np.linalg.norm(flatten(aggregated_gradient))}")
-    #     # 4. update global model
-    #     self.update_global_model(aggregated_gradient)
-    #
-    #     # 5. broadcast updated global model, in martfl the local no broadcast happen
-    #     if self.broadcast_local:
-    #         self.broadcast_global_model()
-    #
-    #     # 6. Evaluate the final global model if test_dataloader is provided
-    #     final_perf_local = None
-    #     if test_dataloader_buyer_local is not None and loss_fn is not None:
-    #         # Evaluate aggregator.global_model on test set
-    #         final_perf_local = self.evaluate_global_model(test_dataloader_buyer_local, loss_fn)
-    #     final_perf_global = None
-    #     poison_metrics = None
-    #     if test_dataloader_global is not None and loss_fn is not None:
-    #         # Evaluate aggregator.global_model on test set
-    #         final_perf_global = self.evaluate_global_model(test_dataloader_global, loss_fn)
-    #
-    #         poison_metrics = evaluate_attack_performance_backdoor_poison(self.aggregator.global_model,
-    #                                                                      test_dataloader_global,
-    #                                                                      self.aggregator.device,
-    #                                                                      backdoor_generator,
-    #                                                                      target_label=backdoor_target_label, plot=False,
-    #                                                                      save_path=f"{self.save_path}/attack_performance.png")
-    #     # 7. Log round info to aggregator (optional)
-    #     extra_info = {}
-    #     if final_perf_global is not None:
-    #         extra_info["val_loss_global"] = final_perf_global["loss"]
-    #         extra_info["val_acc_global"] = final_perf_global["acc"]
-    #
-    #     if final_perf_local is not None:
-    #         extra_info["val_loss_local"] = final_perf_local["loss"]
-    #         extra_info["val_acc_local"] = final_perf_local["acc"]
-    #
-    #     if poison_metrics is not None:
-    #         extra_info["poison_metrics"] = poison_metrics
-    #     extra_info["outlier_ids"] = outlier_ids
-    #     # 8. Also store a high-level record in the marketplace logs
-    #
-    #     # 9. Update each seller about whether they were selected
-    #     # update_local_model_from_global(buyer, dataset_name, aggregated_gradient)
-    #     for idx, (sid, seller) in enumerate(self.sellers.items()):
-    #         # Mark "is_selected" if in selected_sellers
-    #         is_selected = (idx in selected_ids)
-    #         # update_local_model_from_global(seller, dataset_name, aggregated_gradient)
-    #         # reset the local gradient
-    #         seller.round_end_process(round_number, is_selected)
-    #     print(f"=============round {round_number} end summary=======================")
-    #     print(
-    #         f"round {round_number}, global accuracy: {extra_info['val_acc_global']}, local accuracy: {extra_info['val_acc_local']}, selected: {selected_ids}")
-    #     print(f"Test set eval result: {final_perf_global}")
-    #     print(f"Buyer local eval result: {final_perf_local}")
-    #     print(f"Backdoor Metrics on Global model: {poison_metrics}")
-    #
-    #     selection_rate_info = self.compute_selection_rates(selected_ids, set(range(n_adv)),
-    #                                                        set(range(n_adv, len(self.sellers))))
-    #     print(selection_rate_info)
-    #     round_record = {
-    #         "round_number": round_number,
-    #         "used_sellers": selected_ids,
-    #         "outlier_ids": outlier_ids,
-    #         "num_sellers_selected": len(selected_ids),
-    #         "selection_method": self.selection_method,
-    #         "final_perf_local": final_perf_local,
-    #         "final_perf_global": final_perf_global,
-    #         "extra_info": extra_info,
-    #         "selection_rate_info": selection_rate_info if selection_rate_info else None,
-    #         "martfl_baseline_id": self.aggregator.baseline_id if self.aggregator.baseline_id else None
-    #     }
-    #
-    #     self.round_logs.append(round_record)
-    #
-    #     return round_record, aggregated_gradient
-
     def evaluate_global_model(self, test_dataloader, loss_fn) -> Dict[str, float]:
         """
         Evaluate aggregator.global_model on the given test set, returning a dict with metrics.
@@ -617,3 +512,53 @@ class DataMarketplaceFederated(DataMarketplace):
     @property
     def get_all_sellers(self):
         return self.sellers
+
+    def save_results(self, output_dir: Path):
+        """Saves both round results and separate attack results to CSV files."""
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # --- Save Main Round Results ---
+        if self.round_results_list:
+            results_df = pd.DataFrame(self.round_results_list)
+            # Convert complex objects like lists/dicts to strings for CSV compatibility
+            for col in results_df.select_dtypes(include=['object']).columns:
+                if results_df[col].apply(lambda x: isinstance(x, (list, dict))).any():
+                    results_df[col] = results_df[col].astype(str)
+            results_csv_path = output_dir / "round_results.csv"
+            try:
+                results_df.to_csv(results_csv_path, index=False)
+                logging.info(f"Main round results saved to {results_csv_path}")
+            except Exception as e:
+                logging.error(f"Failed to save main results to CSV: {e}")
+        else:
+            logging.warning("No main round results to save.")
+
+        # --- Save Separate Attack Results ---
+        if self.attack_results_list:
+            # Flatten the list of dictionaries, especially the nested 'metrics'
+            flat_attack_logs = []
+            for attack_log in self.attack_results_list:
+                flat_log = {}
+                # Copy top-level keys
+                for key, value in attack_log.items():
+                    if key != 'metrics':
+                        flat_log[key] = value
+                # Flatten metrics if they exist
+                metrics = attack_log.get('metrics')
+                if isinstance(metrics, dict):
+                    for m_key, m_value in metrics.items():
+                        flat_log[f"metric_{m_key}"] = m_value
+                else: # Ensure consistent columns even if no metrics
+                    for m_key in ["mse", "psnr", "ssim", "label_acc"]:
+                         flat_log[f"metric_{m_key}"] = np.nan
+                flat_attack_logs.append(flat_log)
+
+            attack_df = pd.DataFrame(flat_attack_logs)
+            attack_csv_path = output_dir / "attack_results.csv"
+            try:
+                attack_df.to_csv(attack_csv_path, index=False)
+                logging.info(f"Attack results saved separately to {attack_csv_path}")
+            except Exception as e:
+                logging.error(f"Failed to save attack results to CSV: {e}")
+        else:
+            logging.info("No attack results logged to save separately.")

@@ -113,6 +113,8 @@ def parse_config_for_attack_function(config: dict) -> dict:
     # parsed_args['poison_test_sample'] = 100  # Default from function signature
     parsed_args['local_attack_params'] = None  # Default from function signature
 
+    parsed_args["privacy_attack"] = config.get("privacy_attack", {})
+
     # Final check for consistency (e.g., if sybil enabled, is attack enabled?)
     if args_namespace.is_sybil and not attack_enabled:
         logger.warning(

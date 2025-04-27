@@ -1,12 +1,11 @@
 # generate_configs.py
 import copy
 import itertools
-import os
-from types import NoneType  # Import NoneType for the representer
-
 import numpy as np  # Make sure numpy is imported
+import os
 import torch
 import yaml
+from types import NoneType  # Import NoneType for the representer
 
 from entry.constant.constant import BACKDOOR, LABEL_FLIP
 
@@ -114,6 +113,15 @@ BASE_CONFIG_TEMPLATE = {
         'trigger_mode': 'always_on',  # Or 'adaptive', etc.
     },
 
+    'privacy_attack': {
+        'perform_gradient_inversion': False,
+        'attack_victim_strategy': 'fixed',
+        'attack_fixed_victim_idx': 0,
+        'save_attack_visuals_flag': True,
+        'privacy_attack_path': 'always_on',
+        'gradient_inversion_params': {}
+    },
+
     # --- Output ---
     'output': {
         'save_path_base': './experiment_results',  # Base directory for saving results
@@ -121,9 +129,9 @@ BASE_CONFIG_TEMPLATE = {
     }
 }
 
-# DATASETS = ['AG_NEWS', 'TREC', 'CIFAR', 'FMNIST']
-DATASETS = ['CIFAR', 'FMNIST']
-AGGREGATIONS= ['fedavg', 'martfl', "skymask", "fltrust"]
+DATASETS = ['AG_NEWS', 'TREC', 'CIFAR', 'FMNIST']
+# DATASETS = ['CIFAR', 'FMNIST']
+AGGREGATIONS = ['fedavg', 'martfl', "skymask", "fltrust"]
 # --- Model Configs per Dataset (Simplified) ---
 # You might need more details (layers, etc.) depending on model structure definition
 MODEL_CONFIGS = {
@@ -330,6 +338,7 @@ def generate_sybil_configs(output_dir):
         file_path = os.path.join(output_dir, "sybil_comparison", f"{exp_id}.yaml")
         save_config(config, file_path)
 
+
 # each of attacks .. different question...
 def generate_discovery_configs(output_dir):
     """Compare discovery split method."""
@@ -370,6 +379,48 @@ def generate_discovery_configs(output_dir):
         save_config(config, file_path)
 
 
+def generate_privacy_attack(output_dir):
+    """Compare discovery split method."""
+    print("\n--- Generating Discovery Split Configs ---")
+    datasets = ['CIFAR', 'FMNIST']  # Discovery might be more interesting with complex data
+    qualities = [0.3]  # Low, Medium, High quality simulation
+    buyer_modes = ['unbiased']  # Add 'biased' if construct_buyer_set supports it well
+    aggregations = ['fedavg']  # Compare how Sybil affects different aggregators
+
+    for ds, quality, buyer_mode, agg in itertools.product(datasets, qualities, buyer_modes, aggregations):
+        config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
+        exp_id = f"gradient_inversion_{ds.lower()}_q{quality}_{buyer_mode}"
+
+        config['experiment_id'] = exp_id
+        config['dataset_name'] = ds
+        config['model_structure'] = MODEL_CONFIGS.get(ds, 'DefaultModel')
+        config['training']['local_training_params']['learning_rate'] = DEFAULT_LRS.get(ds, 0.001)
+        config['data_split']['normalize_data'] = (DATASET_CHANNELS[ds] is not None)
+        config['aggregation_method'] = agg
+        # Set split method to discovery
+        config['data_split']['data_split_mode'] = 'discovery'
+        config['data_split']['dm_params']['discovery_quality'] = quality
+        config['data_split']['dm_params']['buyer_data_mode'] = buyer_mode
+        # Remove dirichlet_alpha if not used by discovery split
+        if 'dirichlet_alpha' in config['data_split']: del config['data_split']['dirichlet_alpha']
+        # Ensure buyer percentage is set if needed by discovery logic
+        config['data_split']['buyer_percentage'] = 0.02  # Example
+
+        # No attack for this comparison
+        config['attack']['enabled'] = False
+        config['sybil']['is_sybil'] = False
+
+        config['privacy_attack']['perform_gradient_inversion'] = True
+
+        # Configure results path
+        results_path = os.path.join(config['output']['save_path_base'], "privacy", exp_id)
+        config['output']['final_save_path'] = results_path
+        config['privacy_attack']['privacy_attack_path'] = results_path
+
+        file_path = os.path.join(output_dir, "privacy", f"{exp_id}.yaml")
+        save_config(config, file_path)
+
+
 # --- Main Execution ---
 if __name__ == "__main__":
     # Need torch to check cuda availability in template
@@ -390,6 +441,7 @@ if __name__ == "__main__":
     generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
     generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
     generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
+    generate_privacy_attack(CONFIG_OUTPUT_DIRECTORY)
     # Add calls to generate other experiment groups as needed
 
     print("\nConfiguration generation finished.")

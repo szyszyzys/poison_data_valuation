@@ -2,14 +2,13 @@ import argparse
 import logging
 # log_utils.py (or results_logger.py)
 import os
-from pathlib import Path
-from typing import Dict, Optional, Any
-
 import torch
 import torch.backends.cudnn
 import torch.nn as nn
+from pathlib import Path
 from torch import nn
 from torch.utils.data import DataLoader
+from typing import Dict, Optional, Any
 
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorTextGenerator, LabelFlipAttackGenerator
@@ -58,7 +57,7 @@ def poisoning_attack_text(
         local_training_params: Optional[Dict] = None,
         change_base: bool = True,
         data_split_mode: str = "NonIID",
-        dm_params: Optional[Dict] = None, local_attack_params=None
+        dm_params: Optional[Dict] = None, local_attack_params=None, privacy_attack={}
 ):
     """
     Runs a federated learning experiment with either Backdoor or Label Flipping TEXT poisoning.
@@ -76,6 +75,8 @@ def poisoning_attack_text(
     print(f"Sellers: {n_sellers}, Adversary Rate: {adv_rate}")
 
     # --- Basic Setup ---
+    if aggregation_method == "skymask":
+        print(f"return, not implemented: {aggregation_method} for text data")
     n_adversaries = int(n_sellers * adv_rate)
     if args is None:  # Use default args if none provided
         from types import SimpleNamespace
@@ -178,7 +179,8 @@ def poisoning_attack_text(
 
     # Marketplace
     marketplace = DataMarketplaceFederated(aggregator,
-                                           selection_method=aggregation_method, save_path=save_path)
+                                           selection_method=aggregation_method,
+                                           save_path=save_path)
 
     # --- Configure Sellers ---
     print("Configuring sellers...")
@@ -321,7 +323,7 @@ def poisoning_attack_image(
         local_training_params: Optional[Dict] = None,
         change_base: bool = True,
         data_split_mode: str = "NonIID",
-        dm_params: Optional[Dict] = None, local_attack_params=None
+        dm_params: Optional[Dict] = None, local_attack_params=None, privacy_attack={}
 ):
     """
     Runs a federated learning experiment with either Backdoor or Label Flipping IMAGE poisoning.
@@ -355,6 +357,11 @@ def poisoning_attack_image(
     print(f"Dataset: {dataset_name}, Attack Type: {attack_type}")
     print(f"Sellers: {n_sellers}, Adversary Rate: {adv_rate}")
 
+    sm_model_type = "None"
+    if dataset_name == "FMNIST":
+        sm_model_type = 'lenet'
+    elif dataset_name == "CIFAR":
+        sm_model_type = 'cifarcnn'
     # --- Basic Setup ---
     n_adversaries = int(n_sellers * adv_rate)
     if args is None:  # Use default args if none provided
@@ -452,7 +459,7 @@ def poisoning_attack_image(
                             change_base=change_base,
                             buyer_data_loader=buyer_loader,
                             loss_fn=loss_fn,
-                            device=device
+                            device=device, sm_model_type=sm_model_type
                             )
 
     # Sybil Coordinator (Pass the initialized attack generator)
@@ -467,7 +474,8 @@ def poisoning_attack_image(
 
     # Marketplace
     marketplace = DataMarketplaceFederated(aggregator,
-                                           selection_method=aggregation_method, save_path=save_path)
+                                           selection_method=aggregation_method, save_path=save_path,
+                                           privacy_attack = privacy_attack)
 
     # --- Configure Sellers ---
     print("Configuring sellers...")
@@ -572,6 +580,14 @@ def poisoning_attack_image(
     save_round_logs_to_csv(marketplace.round_logs, csv_output_path)
     print(f"Results saved to {save_path}")
     print("--- IMAGE Poisoning Attack Finished ---")
+
+    marketplace.save_results(save_path)
+
+    print("\nSimulation finished.")
+    print(f"Main results saved to: {save_path / 'round_results.csv'}")
+    if marketplace.attack_results_list:
+        print(f"Attack results saved to: {save_path / 'attack_results.csv'}")
+        print(f"Attack visualizations saved in: {marketplace.attack_save_dir}")
 
 
 def main():
@@ -701,8 +717,7 @@ def main():
             if dataset_domain == 'image':
                 poisoning_attack_image(**run_specific_args)
             else:
-                return
-                # poisoning_attack_text(**run_specific_args)
+                poisoning_attack_text(**run_specific_args)
             logging.info(f"--- Finished Run {i} ---")
         except Exception as e:
             logging.error(f"!!! Error during Run {i} for experiment {experiment_id} !!!")

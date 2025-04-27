@@ -152,7 +152,7 @@ class Aggregator:
                  clip_norm=0.01, loss_fn=None,
                  buyer_data_loader=None,
                  sm_args=None,
-                 sm_model_type='cnn'):
+                 sm_model_type='None'):
         """
         :param save_path:         Name/identifier of the current experiment.
         :param n_seller:   Total number of participant clients.
@@ -176,22 +176,8 @@ class Aggregator:
         self.buyer_data_loader = buyer_data_loader
         self.loss_fn = loss_fn
 
-        self.sm_args = sm_args
         self.sm_model_type = sm_model_type
-        if self.sm_args is None:
-            # Set defaults for MaskNet params if args is missing
-            self.mask_threshold = 0.5
-            if sm_model_type == "cnn":
-                self.mask_lr_config = 1e7
-                self.mask_clip_config = 1e-7
-            elif sm_model_type == "resnet20":
-                mask_lr = 1e8
-                clip_lmt = 1e-7
-            elif sm_model_type == "LR":
-                mask_lr = 1e7
-                clip_lmt = 1e-7
-            self.mask_epochs = 20
-            self.mask_server_pc_config = 128
+
 
     # ---------------------------
     # Gradient update utilities
@@ -757,11 +743,10 @@ class Aggregator:
 
         # 2. Create a *new* MaskNet instance for this round
         #    Using configured network type from args if available.
-        masknet_type = getattr(args, 'net', 'cnn') if args else 'cnn'
+        masknet_type = self.sm_model_type
         print(f"Creating new masknet (type: {masknet_type})...")
         # Make sure create_masknet handles the datalist structure correctly
         masknet = create_masknet(datalist, masknet_type, self.device)
-
         # 3. Train the newly created MaskNet instance
         print("Executing core SkyMask logic (training MaskNet)...")
         if server_data_loader is None:

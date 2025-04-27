@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from typing import List
 
 import torch
 import torch.nn as nn
@@ -15,6 +16,10 @@ def create_masknet(param_list, net_type, ctx):
         masknet = ResMaskNet(param_list, nworker, ctx)
     elif net_type == "LR":
         masknet = LRMaskNet(param_list, nworker, ctx)
+    elif net_type == "lenet":
+        masknet = LeNetMaskNet(param_list, nworker, ctx)
+    elif net_type == "cifarcnn":
+        masknet = CnnCifarMaskNet(param_list, nworker, ctx)
     else:
         masknet = None
 
@@ -24,7 +29,6 @@ def create_masknet(param_list, net_type, ctx):
 class CNN(nn.Module):
     def __init__(self):
         super(CNN, self).__init__()
-        # image_size = 28
         self.conv1 = nn.Sequential(
             nn.Conv2d(1, 30, kernel_size=3),
             nn.ReLU(),
@@ -52,7 +56,6 @@ class CNN(nn.Module):
         x = F.log_softmax(x, dim=0)
 
         return x
-
 
 
 class CNNMaskNet(nn.Module):
@@ -262,3 +265,150 @@ class LRMaskNet(nn.Module):
         y_pred = self.fc(x)
         out = F.log_softmax(y_pred, dim=0)
         return out
+
+
+class LeNetMaskNet(nn.Module):
+    """MaskNet specifically mirroring the LeNet architecture."""
+
+    def __init__(self, worker_param_list: List[List[torch.Tensor]], num_workers: int, device: torch.device):
+        """
+        Args:
+            worker_param_list: List (size=num_workers) where each element is a list
+                               of parameters for one worker's LeNet model IN ORDER:
+                               [conv1.w, conv1.b, conv2.w, conv2.b, fc1.w, fc1.b,
+                                fc2.w, fc2.b, fc3.w, fc3.b]
+            num_workers: Number of workers.
+            device: Torch device.
+        """
+        super(LeNetMaskNet, self).__init__()
+        self.num_workers = num_workers
+        self.device = device
+
+        # --- Parameter Validation ---
+        if len(worker_param_list) != num_workers:
+            raise ValueError(f"Expected {num_workers} lists in worker_param_list, got {len(worker_param_list)}")
+        expected_params = 10
+        if any(len(p) != expected_params for p in worker_param_list):
+            raise ValueError(
+                f"Each inner list in worker_param_list must have exactly {expected_params} tensors for LeNet.")
+
+        # --- Layer Definitions (using my.* layers and hardcoded indices) ---
+        # Layer params are passed as lists extracted from worker_param_list
+        self.conv1 = my.myconv2d(num_workers, device,
+                                 [w[0] for w in worker_param_list],  # All conv1 weights
+                                 [w[1] for w in worker_param_list],  # All conv1 biases
+                                 kernel_size=5)  # Need to pass kernel_size etc. if not default
+        self.conv2 = my.myconv2d(num_workers, device,
+                                 [w[2] for w in worker_param_list],
+                                 [w[3] for w in worker_param_list],
+                                 kernel_size=5)
+        # Note: Input size for fc1 depends on image size (16*4*4 for 28x28 MNIST)
+        self.fc1 = my.mylinear(num_workers, device,
+                               [w[4] for w in worker_param_list],
+                               [w[5] for w in worker_param_list])
+        self.fc2 = my.mylinear(num_workers, device,
+                               [w[6] for w in worker_param_list],
+                               [w[7] for w in worker_param_list])
+        self.fc3 = my.mylinear(num_workers, device,
+                               [w[8] for w in worker_param_list],
+                               [w[9] for w in worker_param_list])
+
+    def forward(self, x):
+        # --- Mimic LeNet forward pass ---
+        x = F.max_pool2d(F.relu(self.conv1(x)), (2, 2))
+        x = F.max_pool2d(F.relu(self.conv2(x)), 2)
+        x = x.view(x.size()[0], -1)  # Flatten
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        # Optional: Apply LogSoftmax if MaskNet is used for classification during training
+        # x = F.log_softmax(x, dim=1)
+        return x
+
+    def update(self, worker_param_list: List[List[torch.Tensor]]):
+        """Updates the internal lists of worker parameters."""
+        if len(worker_param_list) != self.num_workers or any(len(p) != 10 for p in worker_param_list):
+            raise ValueError("Invalid parameter list structure for update.")
+        # Call update on each my.* layer
+        self.conv1.update([w[0] for w in worker_param_list], [w[1] for w in worker_param_list])
+        self.conv2.update([w[2] for w in worker_param_list], [w[3] for w in worker_param_list])
+        self.fc1.update([w[4] for w in worker_param_list], [w[5] for w in worker_param_list])
+        self.fc2.update([w[6] for w in worker_param_list], [w[7] for w in worker_param_list])
+        self.fc3.update([w[8] for w in worker_param_list], [w[9] for w in worker_param_list])
+
+
+class CnnCifarMaskNet(nn.Module):
+    """MaskNet specifically mirroring the CNN_CIFAR architecture."""
+
+    def __init__(self, worker_param_list: List[List[torch.Tensor]], num_workers: int, device: torch.device,
+                 num_classes=10):
+        """
+        Args:
+            worker_param_list: List (size=num_workers) where each element is a list
+                               of parameters for one worker's CNN_CIFAR model IN ORDER:
+                               [conv1.w, conv1.b, bn1.w, bn1.b, conv2.w, conv2.b, bn2.w, bn2.b,
+                                conv3.w, conv3.b, bn3.w, bn3.b, fc1.w, fc1.b, fc2.w, fc2.b]
+            num_workers: Number of workers.
+            device: Torch device.
+            num_classes: Number of output classes for fc2.
+        """
+        super(CnnCifarMaskNet, self).__init__()
+        self.num_workers = num_workers
+        self.device = device
+
+        # --- Parameter Validation ---
+        if len(worker_param_list) != num_workers:
+            raise ValueError(f"Expected {num_workers} lists in worker_param_list, got {len(worker_param_list)}")
+        expected_params = 16
+        if any(len(p) != expected_params for p in worker_param_list):
+            raise ValueError(
+                f"Each inner list in worker_param_list must have exactly {expected_params} tensors for CNN_CIFAR.")
+
+        # --- Layer Definitions ---
+        self.conv1 = my.myconv2d(num_workers, device, [w[0] for w in worker_param_list],
+                                 [w[1] for w in worker_param_list], kernel_size=3, padding=1)
+        self.bn1 = my.mybatch_norm(num_workers, device, [w[2] for w in worker_param_list],
+                                   [w[3] for w in worker_param_list])
+        self.conv2 = my.myconv2d(num_workers, device, [w[4] for w in worker_param_list],
+                                 [w[5] for w in worker_param_list], kernel_size=3, padding=1)
+        self.bn2 = my.mybatch_norm(num_workers, device, [w[6] for w in worker_param_list],
+                                   [w[7] for w in worker_param_list])
+        self.conv3 = my.myconv2d(num_workers, device, [w[8] for w in worker_param_list],
+                                 [w[9] for w in worker_param_list], kernel_size=3, padding=1)
+        self.bn3 = my.mybatch_norm(num_workers, device, [w[10] for w in worker_param_list],
+                                   [w[11] for w in worker_param_list])
+        self.pool = nn.MaxPool2d(2, 2)  # Standard layer
+        # Note: Input features for fc1 depends on pooling (256 * 4 * 4 for CIFAR 32->16->8->4)
+        self.fc1 = my.mylinear(num_workers, device, [w[12] for w in worker_param_list],
+                               [w[13] for w in worker_param_list])
+        self.fc2 = my.mylinear(num_workers, device, [w[14] for w in worker_param_list],
+                               [w[15] for w in worker_param_list])
+
+    def forward(self, x):
+        # --- Mimic CNN_CIFAR forward pass ---
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = self.pool(x)
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = self.pool(x)
+        x = F.relu(self.bn3(self.conv3(x)))
+        x = self.pool(x)
+        x = x.view(x.size(0), -1)  # Flatten
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        # Optional: Apply LogSoftmax if MaskNet is used for classification during training
+        # x = F.log_softmax(x, dim=1)
+        return x
+
+    def update(self, worker_param_list: List[List[torch.Tensor]]):
+        """Updates the internal lists of worker parameters."""
+        if len(worker_param_list) != self.num_workers or any(len(p) != 16 for p in worker_param_list):
+            raise ValueError("Invalid parameter list structure for update.")
+        # Call update on each my.* layer
+        self.conv1.update([w[0] for w in worker_param_list], [w[1] for w in worker_param_list])
+        self.bn1.update([w[2] for w in worker_param_list], [w[3] for w in worker_param_list])
+        self.conv2.update([w[4] for w in worker_param_list], [w[5] for w in worker_param_list])
+        self.bn2.update([w[6] for w in worker_param_list], [w[7] for w in worker_param_list])
+        self.conv3.update([w[8] for w in worker_param_list], [w[9] for w in worker_param_list])
+        self.bn3.update([w[10] for w in worker_param_list], [w[11] for w in worker_param_list])
+        self.fc1.update([w[12] for w in worker_param_list], [w[13] for w in worker_param_list])
+        self.fc2.update([w[14] for w in worker_param_list], [w[15] for w in worker_param_list])
