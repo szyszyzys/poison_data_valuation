@@ -1,10 +1,12 @@
 import logging
 import time
+from collections import OrderedDict
+from pathlib import Path
+from typing import Dict, Union, List, Tuple, Any
 
 import numpy as np
+import pandas as pd
 import torch
-from collections import OrderedDict
-from typing import Dict, Union, List, Tuple, Any
 
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
 from marketplace.market.data_market import DataMarketplace
@@ -19,7 +21,7 @@ class DataMarketplaceFederated(DataMarketplace):
                  selection_method: str = "fedavg",
                  learning_rate: float = 1.0,
                  broadcast_local=False, save_path='',
-                 privacy_attack = {}
+                 privacy_attack={}
                  ):
         """
         A marketplace for federated learning where each seller provides gradient updates.
@@ -40,7 +42,7 @@ class DataMarketplaceFederated(DataMarketplace):
         self.round_logs: List[Dict[str, Any]] = []
         self.malicious_selection_rate_list = []
         self.benign_selection_rate_list = []
-        self.attack_results_list = [] # NEW: Stores only attack log dicts
+        self.attack_results_list = []  # NEW: Stores only attack log dicts
         self.attack_config = privacy_attack
         self.attack_save_dir = privacy_attack["privacy_attack_path"]
         # Dict like {'type': 'index', 'value': 0} or {'type': 'id', 'value': 'seller_X'}
@@ -125,6 +127,7 @@ class DataMarketplaceFederated(DataMarketplace):
         logging.info(f"Collected gradients and stats from {len(gradients_list)} out of {len(self.sellers)} sellers.")
         # Return three lists, ensuring alignment
         return gradients_list, seller_ids, seller_stats_list
+
     def select_gradients(self,
                          gradients: List[np.ndarray],
                          sizes: List[int],
@@ -165,15 +168,15 @@ class DataMarketplaceFederated(DataMarketplace):
 
     def train_federated_round(self,
                               round_number: int,
-                              buyer, # Assumes buyer object has get_gradient_for_upload method
-                              n_adv=0, # Ground truth number of adversaries
+                              buyer,  # Assumes buyer object has get_gradient_for_upload method
+                              n_adv=0,  # Ground truth number of adversaries
                               test_dataloader_buyer_local=None,
                               test_dataloader_global=None,
                               loss_fn=None,
                               backdoor_target_label=0,
-                              backdoor_generator=None, # Assumes it's used by evaluate_attack_performance
-                              clip = False,
-                              remove_baseline = False,
+                              backdoor_generator=None,  # Assumes it's used by evaluate_attack_performance
+                              clip=False,
+                              remove_baseline=False,
                               perform_gradient_inversion: bool = False,  # Control if attack happens
                               ):
         """
@@ -193,14 +196,14 @@ class DataMarketplaceFederated(DataMarketplace):
         baseline_gradient, _ = buyer.get_gradient_for_upload(self.aggregator.global_model)
 
         # --- 1. Get Gradients & Stats from Sellers ---
-        seller_gradients_dict, seller_ids, seller_stats = self.get_current_market_gradients(self.aggregator.global_model)
+        seller_gradients_dict, seller_ids, seller_stats = self.get_current_market_gradients(
+            self.aggregator.global_model)
         # Process returned stats
         for stats in seller_stats:
-            if stats: # Check if stats were actually returned
+            if stats:  # Check if stats were actually returned
                 client_train_losses.append(stats.get('train_loss'))
                 client_compute_times_ms.append(stats.get('compute_time_ms'))
                 client_upload_bytes.append(stats.get('upload_bytes'))
-
 
         # --- 1.5 Determine if Attack Should Happen and Select Victim ---
         perform_attack_flag = self.attack_config.get('perform_gradient_inversion', False)
@@ -228,8 +231,9 @@ class DataMarketplaceFederated(DataMarketplace):
                 victim_seller_id = seller_ids[victim_seller_idx]
                 target_gradient = seller_gradients_dict.get(victim_seller_id)
                 if target_gradient is None:
-                    logging.warning(f"Could not retrieve gradient for target victim '{victim_seller_id}' (idx={victim_seller_idx}). Skipping attack.")
-                    victim_seller_id = None # Reset if gradient missing
+                    logging.warning(
+                        f"Could not retrieve gradient for target victim '{victim_seller_id}' (idx={victim_seller_idx}). Skipping attack.")
+                    victim_seller_id = None  # Reset if gradient missing
             else:
                 logging.warning(f"Victim index {victim_seller_idx} out of bounds. Skipping attack.")
                 victim_seller_id = None
@@ -241,7 +245,7 @@ class DataMarketplaceFederated(DataMarketplace):
             # Call the dedicated attack function
             gradient_inversion_log = perform_and_evaluate_inversion_attack(
                 target_gradient=target_gradient,
-                model_template=self.model_template, # Pass base structure
+                model_template=self.model_template,  # Pass base structure
                 input_shape=self.input_shape,
                 num_classes=self.num_classes,
                 device=self.device,
@@ -259,14 +263,15 @@ class DataMarketplaceFederated(DataMarketplace):
                 # Add context useful for later analysis
                 gradient_inversion_log['victim_seller_idx'] = victim_seller_idx
                 gradient_inversion_log['aggregation_method'] = self.config.get('aggregation_method', 'unknown')
-                gradient_inversion_log['experiment_id'] = self.config.get('experiment_id', 'unnamed') # Add experiment id if available
+                gradient_inversion_log['experiment_id'] = self.config.get('experiment_id',
+                                                                          'unnamed')  # Add experiment id if available
                 self.attack_results_list.append(gradient_inversion_log)
 
         # --- 2. Perform Aggregation ---
         agg_start_time = time.time()
         aggregated_gradient, selected_indices, outlier_indices = self.aggregator.aggregate(
             round_number,
-            seller_gradients_dict, # Assuming aggregate works with list of gradients
+            seller_gradients_dict,  # Assuming aggregate works with list of gradients
             baseline_gradient,
             clip=clip,
             remove_baseline=remove_baseline,
@@ -282,7 +287,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
         print(f"Selected Sellers ({len(selected_ids)}): {selected_ids}")
         print(f"Outlier Sellers ({len(outlier_ids)}): {outlier_ids}")
-        print(f"Aggregated gradient norm: {np.linalg.norm(flatten(aggregated_gradient))}") # Assuming flatten exists
+        print(f"Aggregated gradient norm: {np.linalg.norm(flatten(aggregated_gradient))}")  # Assuming flatten exists
 
         # --- 3. Update Global Model ---
         # Consider timing this if significant
@@ -314,18 +319,18 @@ class DataMarketplaceFederated(DataMarketplace):
             }
             # Evaluate backdoor attack performance
             if backdoor_generator is not None:
-                 # !! ASSUMPTION !! evaluate_attack_performance returns dict with at least ASR
-                 poison_metrics = evaluate_attack_performance_backdoor_poison(
-                     self.aggregator.global_model,
-                     test_dataloader_global,
-                     self.aggregator.device,
-                     backdoor_generator,
-                     target_label=backdoor_target_label, plot=False,
-                     # Save path could be made round-specific if needed
-                 )
-                 global_asr = poison_metrics.get("attack_success_rate")
-                 perf_global["attack_success_rate"] = global_asr # Add ASR to perf dict
-                 # Add other poison metrics if needed: perf_global['other_poison_metric'] = poison_metrics.get(...)
+                # !! ASSUMPTION !! evaluate_attack_performance returns dict with at least ASR
+                poison_metrics = evaluate_attack_performance_backdoor_poison(
+                    self.aggregator.global_model,
+                    test_dataloader_global,
+                    self.aggregator.device,
+                    backdoor_generator,
+                    target_label=backdoor_target_label, plot=False,
+                    # Save path could be made round-specific if needed
+                )
+                global_asr = poison_metrics.get("attack_success_rate")
+                perf_global["attack_success_rate"] = global_asr  # Add ASR to perf dict
+                # Add other poison metrics if needed: perf_global['other_poison_metric'] = poison_metrics.get(...)
 
         if test_dataloader_buyer_local is not None and loss_fn is not None:
             eval_local_res = self.evaluate_global_model(test_dataloader_buyer_local, loss_fn)
@@ -356,23 +361,26 @@ class DataMarketplaceFederated(DataMarketplace):
         # Example: assumes first n_adv IDs in the original full list were adversaries
         # This mapping needs to be robust if seller_ids order changes.
         # It's better if the aggregator or marketplace tracks ground truth status.
-        all_seller_ids = list(self.sellers.keys()) # Get IDs in a consistent order if possible
+        all_seller_ids = list(self.sellers.keys())  # Get IDs in a consistent order if possible
         # Assume IDs like 'adv_0', 'adv_1', ..., 'seller_k', ...
         adv_ids_set = {sid for sid in all_seller_ids if sid.startswith('adv_')}
         benign_ids_set = {sid for sid in all_seller_ids if not sid.startswith('adv_')}
         # Make sure n_adv matches len(adv_ids_set)
         if len(adv_ids_set) != n_adv:
-             logging.warning(f"Mismatch between n_adv ({n_adv}) and actual adv IDs found ({len(adv_ids_set)}). Check ID format.")
+            logging.warning(
+                f"Mismatch between n_adv ({n_adv}) and actual adv IDs found ({len(adv_ids_set)}). Check ID format.")
 
-        selection_rate_info = self.compute_selection_rates(selected_ids, outlier_ids, adv_ids_set, benign_ids_set) # Modified signature needed
+        selection_rate_info = self.compute_selection_rates(selected_ids, outlier_ids, adv_ids_set,
+                                                           benign_ids_set)  # Modified signature needed
 
         # --- 8. Get Defense/Algorithm Specific Metrics ---
         defense_metrics = {}
         if hasattr(self.aggregator, 'get_specific_metrics'):
-             # !! ASSUMPTION !! Aggregator provides specific metrics
-             defense_metrics = self.aggregator.get_specific_metrics(round_number)
-        elif self.aggregator.aggregation_method == 'MartFL': # Explicit check if no generic method
-              defense_metrics['baseline_id'] = self.aggregator.baseline_id if hasattr(self.aggregator, 'baseline_id') else None
+            # !! ASSUMPTION !! Aggregator provides specific metrics
+            defense_metrics = self.aggregator.get_specific_metrics(round_number)
+        elif self.aggregator.aggregation_method == 'MartFL':  # Explicit check if no generic method
+            defense_metrics['baseline_id'] = self.aggregator.baseline_id if hasattr(self.aggregator,
+                                                                                    'baseline_id') else None
         # Add elif blocks for other specific aggregators (Skymask, FLTrust) if needed
 
         # --- 9. Construct Final Round Record ---
@@ -388,34 +396,35 @@ class DataMarketplaceFederated(DataMarketplace):
             "selected_sellers": selected_ids,
             "num_sellers_selected": len(selected_ids),
             "outlier_sellers": outlier_ids,
-            "selection_rate_info": selection_rate_info, # Contains TP/FP rates etc.
+            "selection_rate_info": selection_rate_info,  # Contains TP/FP rates etc.
 
             # Performance
-            "perf_global": perf_global, # Dict: {acc, loss, attack_success_rate, ...}
-            "perf_local": perf_local,   # Dict: {acc, loss, attack_success_rate*, ...} (*if added)
-            "avg_client_train_loss": avg_client_train_loss, # Needs modification elsewhere
+            "perf_global": perf_global,  # Dict: {acc, loss, attack_success_rate, ...}
+            "perf_local": perf_local,  # Dict: {acc, loss, attack_success_rate*, ...} (*if added)
+            "avg_client_train_loss": avg_client_train_loss,  # Needs modification elsewhere
 
             # Overhead
-            "comm_up_avg_bytes": comm_up_avg_bytes, # Needs modification elsewhere
-            "comm_up_max_bytes": comm_up_max_bytes, # Needs modification elsewhere
-            "comm_down_bytes": None, # Placeholder - estimate model size
-            "client_time_avg_ms": client_time_avg_ms, # Needs modification elsewhere
-            "client_time_max_ms": client_time_max_ms, # Needs modification elsewhere
+            "comm_up_avg_bytes": comm_up_avg_bytes,  # Needs modification elsewhere
+            "comm_up_max_bytes": comm_up_max_bytes,  # Needs modification elsewhere
+            "comm_down_bytes": None,  # Placeholder - estimate model size
+            "client_time_avg_ms": client_time_avg_ms,  # Needs modification elsewhere
+            "client_time_max_ms": client_time_max_ms,  # Needs modification elsewhere
             "server_time_ms": server_total_time_ms,
 
             # Defense/Algorithm Specifics (optional)
-            "defense_metrics": defense_metrics if defense_metrics else None, # Only include if non-empty
+            "defense_metrics": defense_metrics if defense_metrics else None,  # Only include if non-empty
         }
 
         # --- 10. Update Sellers & Log ---
         # Update sellers *after* constructing the log, in case their state affects metrics
         for sid, seller in self.sellers.items():
             is_selected = (sid in selected_ids)
-            seller.round_end_process(round_number, is_selected) # Assumes seller has this method
+            seller.round_end_process(round_number, is_selected)  # Assumes seller has this method
 
         self.round_logs.append(final_round_record)
         logging.info(f"--- Round {round_number} Ended (Duration: {final_round_record['round_duration_sec']:.2f}s) ---")
-        logging.info(f"  Global Acc: {perf_global.get('accuracy', 'N/A'):.4f}, Global ASR: {perf_global.get('attack_success_rate', 'N/A')}")
+        logging.info(
+            f"  Global Acc: {perf_global.get('accuracy', 'N/A'):.4f}, Global ASR: {perf_global.get('attack_success_rate', 'N/A')}")
         logging.info(f"  Local Acc: {perf_local.get('accuracy', 'N/A'):.4f}")
         logging.info(f"  Server Time: {server_total_time_ms:.2f}ms")
 
@@ -426,34 +435,35 @@ class DataMarketplaceFederated(DataMarketplace):
     def compute_selection_rates(self, selected_ids_list, outlier_ids_list, adv_ids_set, benign_ids_set):
         """Computes selection/rejection rates based on ground truth."""
         selected_set = set(selected_ids_list)
-        outlier_set = set(outlier_ids_list) # Assuming aggregate returns disjoint sets
+        outlier_set = set(outlier_ids_list)  # Assuming aggregate returns disjoint sets
 
         # Ensure consistency
         if not selected_set.isdisjoint(outlier_set):
             logging.warning("Selected IDs and Outlier IDs overlap! Check aggregator logic.")
 
         # Malicious Sellers (Adversaries)
-        malicious_selected = len(selected_set.intersection(adv_ids_set)) # Adv selected (Missed by defense if rejection is goal) -> FN
+        malicious_selected = len(
+            selected_set.intersection(adv_ids_set))  # Adv selected (Missed by defense if rejection is goal) -> FN
         malicious_rejected = len(outlier_set.intersection(adv_ids_set))  # Adv rejected (Caught by defense) -> TP
         total_malicious = len(adv_ids_set)
 
         # Benign Sellers
-        benign_selected = len(selected_set.intersection(benign_ids_set)) # Benign selected (Correctly kept) -> TN
-        benign_rejected = len(outlier_set.intersection(benign_ids_set)) # Benign rejected (Incorrectly flagged) -> FP
+        benign_selected = len(selected_set.intersection(benign_ids_set))  # Benign selected (Correctly kept) -> TN
+        benign_rejected = len(outlier_set.intersection(benign_ids_set))  # Benign rejected (Incorrectly flagged) -> FP
         total_benign = len(benign_ids_set)
 
         # Calculate rates (handle division by zero)
-        tpr = malicious_rejected / total_malicious if total_malicious > 0 else 0 # True Positive Rate (detection rate)
-        fpr = benign_rejected / total_benign if total_benign > 0 else 0       # False Positive Rate
-        fnr = malicious_selected / total_malicious if total_malicious > 0 else 0 # False Negative Rate
-        tnr = benign_selected / total_benign if total_benign > 0 else 0       # True Negative Rate
+        tpr = malicious_rejected / total_malicious if total_malicious > 0 else 0  # True Positive Rate (detection rate)
+        fpr = benign_rejected / total_benign if total_benign > 0 else 0  # False Positive Rate
+        fnr = malicious_selected / total_malicious if total_malicious > 0 else 0  # False Negative Rate
+        tnr = benign_selected / total_benign if total_benign > 0 else 0  # True Negative Rate
 
         return {
             "malicious_selected (FN)": malicious_selected,
             "malicious_rejected (TP)": malicious_rejected,
             "benign_selected (TN)": benign_selected,
             "benign_rejected (FP)": benign_rejected,
-            "total_malicious_in_round": total_malicious, # Might change if participation varies
+            "total_malicious_in_round": total_malicious,  # Might change if participation varies
             "total_benign_in_round": total_benign,
             "detection_rate (TPR)": tpr,
             "false_positive_rate (FPR)": fpr,
@@ -513,26 +523,9 @@ class DataMarketplaceFederated(DataMarketplace):
     def get_all_sellers(self):
         return self.sellers
 
-    def save_results(self, output_dir: Path):
+    def save_results(self, output_dir):
         """Saves both round results and separate attack results to CSV files."""
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # --- Save Main Round Results ---
-        if self.round_results_list:
-            results_df = pd.DataFrame(self.round_results_list)
-            # Convert complex objects like lists/dicts to strings for CSV compatibility
-            for col in results_df.select_dtypes(include=['object']).columns:
-                if results_df[col].apply(lambda x: isinstance(x, (list, dict))).any():
-                    results_df[col] = results_df[col].astype(str)
-            results_csv_path = output_dir / "round_results.csv"
-            try:
-                results_df.to_csv(results_csv_path, index=False)
-                logging.info(f"Main round results saved to {results_csv_path}")
-            except Exception as e:
-                logging.error(f"Failed to save main results to CSV: {e}")
-        else:
-            logging.warning("No main round results to save.")
-
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
         # --- Save Separate Attack Results ---
         if self.attack_results_list:
             # Flatten the list of dictionaries, especially the nested 'metrics'
@@ -548,13 +541,13 @@ class DataMarketplaceFederated(DataMarketplace):
                 if isinstance(metrics, dict):
                     for m_key, m_value in metrics.items():
                         flat_log[f"metric_{m_key}"] = m_value
-                else: # Ensure consistent columns even if no metrics
+                else:  # Ensure consistent columns even if no metrics
                     for m_key in ["mse", "psnr", "ssim", "label_acc"]:
-                         flat_log[f"metric_{m_key}"] = np.nan
+                        flat_log[f"metric_{m_key}"] = np.nan
                 flat_attack_logs.append(flat_log)
 
             attack_df = pd.DataFrame(flat_attack_logs)
-            attack_csv_path = output_dir / "attack_results.csv"
+            attack_csv_path = f"{output_dir}/attack_results.csv"
             try:
                 attack_df.to_csv(attack_csv_path, index=False)
                 logging.info(f"Attack results saved separately to {attack_csv_path}")
