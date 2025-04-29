@@ -322,7 +322,7 @@ def generate_sybil_configs(output_dir):
         config['data_split']['num_sellers'] = 10
 
         # Enable backdoor attack (Sybil often works via backdoor pattern)
-        config['attack']['enabled'] = True
+        config['attack']['enabled'] = False
         config['attack']['backdoor_target_label'] = 0  # Example target
         config['attack']['trigger_type'] = 'blended_patch'  # Example trigger
 
