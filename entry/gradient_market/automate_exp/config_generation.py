@@ -1,11 +1,12 @@
 # generate_configs.py
 import copy
 import itertools
-import numpy as np  # Make sure numpy is imported
 import os
+from types import NoneType  # Import NoneType for the representer
+
+import numpy as np  # Make sure numpy is imported
 import torch
 import yaml
-from types import NoneType  # Import NoneType for the representer
 
 from entry.constant.constant import BACKDOOR, LABEL_FLIP
 
@@ -213,7 +214,7 @@ def generate_backdoor_attack_configs(output_dir):
     """Vary attack params: adv_rate, aggregation, maybe trigger/target."""
     print("\n--- Generating Attack Configs ---")
     datasets = DATASETS
-    adv_rates = [0.1, 0.3]
+    adv_rates = [0.1, 0.2, 0.3, 0.4]
 
     aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
     target_labels = [0]  # Could vary this too
@@ -260,7 +261,7 @@ def generate_label_flipping_attack_configs(output_dir):
     """Vary attack params: adv_rate, aggregation, maybe trigger/target."""
     print("\n--- Generating Attack Configs ---")
     datasets = DATASETS  # Focus on one dataset for this example
-    adv_rates = [0.1, 0.3]
+    adv_rates = [0.1, 0.2, 0.3, 0.4]
     aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
     target_labels = [0]  # Could vary this too
     flip_modes = ['blended_patch']  # Could vary
