@@ -310,7 +310,7 @@ def generate_sybil_configs(output_dir):
     for ds, rate, agg, amplify, attack_mode in itertools.product(datasets, adv_rates, aggregations, amplify_factors, attack_modes):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
         rate_pct = int(rate * 100)
-        exp_id = f"sybil_{ds.lower()}_{agg.lower()}_adv{rate_pct}pct_amp{amplify}"
+        exp_id = f"sybil_{ds.lower()}_{agg.lower()}_adv{rate_pct}pct_amp{amplify}_attack_local_{attack_mode}"
 
         config['experiment_id'] = exp_id
         config['dataset_name'] = ds
