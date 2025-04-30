@@ -688,208 +688,199 @@ class Aggregator:
                 global_epoch: int,  # Corresponds to niter
                 seller_updates: Dict[str, List[torch.Tensor]],
                 buyer_updates: List[torch.Tensor],  # The server update / baseline
-                server_data_loader,
-                clip: bool = False, mask_epochs=20, mask_lr_config=1e7, mask_clip_config=1e-7, mask_threshold=0.5
+                server_data_loader, # NOTE: Type hint was removed in snippet, add DataLoader if appropriate
+                clip: bool = False, mask_epochs=20, mask_lr_config=1e-4, mask_clip_config=1.0, mask_threshold=0.5 # Adjusted default LR/Clip
                 ) -> Tuple[List[torch.Tensor], List[int], List[int]]:
-        """
-        Integrates the original SkyMask function logic (MaskNet+GMM).
-        Creates and trains a new MaskNet instance each time it's called.
-        Assumes MaskNet combines the full parameters resulting from updates.
 
-        Args:
-            global_epoch (int): Current global epoch (used as niter).
-            seller_updates (Dict): Dict of seller updates (unflattened, delta = new-old).
-            buyer_updates (List): Server/baseline update (unflattened, delta = new-old).
-            server_data_loader (DataLoader): DataLoader for server data/labels.
-            clip (bool): Apply gradient clipping to seller_updates before processing.
-
-        Returns:
-           Tuple[List[torch.Tensor], List[int], List[int]]:
-             - aggregated_gradient: The computed aggregated gradient (unflattened).
-             - selected_ids: Indices of sellers selected by GMM (placeholder).
-             - outlier_ids: Indices of sellers filtered out by GMM (placeholder).
-        """
         print(f"--- Starting SkyMask (Original Logic - Recreate MaskNet) Aggregation (Epoch {global_epoch}) ---")
-        # Use a detached copy of the global parameters from the start of the round
-        # Ensure they are on the correct device.
-        # global_params_base = [p.data.clone().to(self.device) for p in self.current_global_params]
-        global_params_base = [p.data.clone().to(self.device) for p in self.global_model.parameters()]
-        # 1. Prepare Updated Parameter Lists for MaskNet Input
-        print("Preparing inputs for MaskNet...")
-        worker_param_list = []  # List to hold parameter lists [[seller1_params], [seller2_params], ..., [buyer_params]]
-        seller_ids_list = list(seller_updates.keys())  # Consistent order
 
-        processed_seller_updates = {}
+        # Define datalist structure HERE, using the model structure expected for gradients
+        # This should match the structure of seller_updates and buyer_updates
+        datalist = [p.data.clone().cpu() for p in self.global_model.parameters()] # Use CPU clones for structure reference
+
+        # Flatten updates *before* calculating full params (for potential clipping/original grad access)
+        print("Flattening updates...")
+        seller_ids_list = list(seller_updates.keys())
+        flat_seller_updates_dict = {}
+        processed_seller_updates_unflat = {} # Store potentially clipped unflattened updates
+
         if clip:
             print(f"Clipping seller updates with norm {self.clip_norm}")
             for sid in seller_ids_list:
                 update = seller_updates[sid]
-                # Ensure update tensors are on the correct device before clipping
                 update_on_device = [p.to(self.device) for p in update]
-                processed_seller_updates[sid] = clip_gradient_update(update_on_device, self.clip_norm)
+                clipped_update_unflat = clip_gradient_update(update_on_device, self.clip_norm)
+                processed_seller_updates_unflat[sid] = clipped_update_unflat # Store for later aggregation
+                flat_seller_updates_dict[sid] = flatten(clipped_update_unflat)
         else:
-            processed_seller_updates = {sid: [p.to(self.device) for p in update]
-                                        for sid, update in seller_updates.items()}
+             for sid in seller_ids_list:
+                 update_on_device = [p.to(self.device) for p in update]
+                 processed_seller_updates_unflat[sid] = update_on_device # Store original for later aggregation
+                 flat_seller_updates_dict[sid] = flatten(update_on_device)
+
+        flat_buyer_update = flatten([p.to(self.device) for p in buyer_updates])
+        buyer_update_on_device = [p.to(self.device) for p in buyer_updates] # Keep unflattened buyer update
+
+        # Use a detached copy of the global parameters from the start of the round
+        global_params_base = [p.data.clone().to(self.device) for p in self.global_model.parameters()]
+
+        # 1. Prepare Updated Parameter Lists for MaskNet Input
+        print("Preparing inputs for MaskNet...")
+        worker_param_list = []  # List to hold parameter lists [[seller1_params], [seller2_params], ..., [buyer_params]]
 
         # Calculate the full parameters for each seller after applying their update
         for sid in seller_ids_list:
-            update_on_device = processed_seller_updates[sid]
-            # Calculate theta_i = theta_global + seller_update_i
-            # Ensure shapes match between global_params_base and update_on_device
+            # Use the processed (potentially clipped) unflattened updates
+            update_on_device = processed_seller_updates_unflat[sid]
             try:
                 seller_params = [p_base + p_upd for p_base, p_upd in zip(global_params_base, update_on_device)]
                 worker_param_list.append(seller_params)
             except RuntimeError as e:
-                print(f"Error processing update for seller {sid}. Shape mismatch or other issue?")
-                print(f"Global param shapes: {[p.shape for p in global_params_base]}")
-                print(f"Update shapes: {[p.shape for p in update_on_device]}")
-                raise e
+                 print(f"Error processing update for seller {sid}. Shape mismatch or other issue?")
+                 print(f"Global param shapes: {[p.shape for p in global_params_base]}")
+                 print(f"Update shapes: {[p.shape for p in update_on_device]}")
+                 raise e
 
         # Calculate the full parameters for the buyer/server after applying the baseline update
-        buyer_update_on_device = [p.to(self.device) for p in buyer_updates]
         try:
-            # Calculate theta_buyer = theta_global + buyer_update
             buyer_params = [p_base + p_upd for p_base, p_upd in zip(global_params_base, buyer_update_on_device)]
             worker_param_list.append(buyer_params)
         except RuntimeError as e:
-            print(f"Error processing buyer update. Shape mismatch or other issue?")
-            print(f"Global param shapes: {[p.shape for p in global_params_base]}")
-            print(f"Update shapes: {[p.shape for p in buyer_update_on_device]}")
-            raise e
+             print(f"Error processing buyer update. Shape mismatch or other issue?")
+             print(f"Global param shapes: {[p.shape for p in global_params_base]}")
+             print(f"Update shapes: {[p.shape for p in buyer_update_on_device]}")
+             raise e
 
-        n_models = len(worker_param_list)
-        n_seller = len(seller_ids_list)
+        n_models = len(worker_param_list) # Total models for MaskNet (sellers + buyer)
+        n_seller = len(seller_ids_list)   # Number of sellers only
 
-        if n_models <= 0:  # Should only happen if both sellers and buyer updates are empty
-            print("Warning: No seller or buyer updates to process.")
-            # Return zero gradient matching the structure of global_params_base
-            zero_gradient = [torch.zeros_like(p, device=self.device) for p in global_params_base]
-            return (zero_gradient, [], [])
-        elif n_seller <= 0:
-            print("Warning: No seller updates, only processing buyer update.")
-            # Handle case with only buyer update if needed, or proceed if MaskNet handles n=1
+        # --- Basic checks ---
+        if n_seller <= 0:
+            print("Warning: No seller updates provided. Cannot perform GMM selection.")
+            # Decide behavior: Maybe just use buyer update? Return zero grad?
+            # Let's return the buyer update directly as the aggregated result
+            if buyer_updates:
+                print("Returning buyer update as aggregation result.")
+                return buyer_update_on_device, [], []
+            else:
+                print("No seller or buyer updates. Returning zero gradient.")
+                zero_gradient = [torch.zeros_like(p, device=self.device) for p in global_params_base]
+                return (zero_gradient, [], [])
 
         print(f"Prepared worker_param_list with parameters from {n_seller} sellers + 1 buyer.")
 
         # 2. Create a *new* MaskNet instance for this round
         masknet_type = self.sm_model_type
         print(f"Creating new masknet (type: {masknet_type}) with {n_models} models...")
-        # Pass the list of parameter lists to create_masknet.
-        # create_masknet should internally derive the number of workers from len(worker_param_list)
         masknet = create_masknet(worker_param_list, masknet_type, self.device)
+
         # 3. Train the newly created MaskNet instance
         print("Executing core SkyMask logic (training MaskNet)...")
         if server_data_loader is None:
             raise ValueError("server_data_loader is required for MaskNet training but was not provided.")
 
-        #         mask_lr = 1e7
-        #         clip_lmt = 1e-7
-        # Get training hyperparams from self (set during __init__)
-        #
+        # Use configured hyperparameters
         mask_lr = mask_lr_config
         clip_lmt = mask_clip_config
         epochs = mask_epochs
         print(f"MaskNet Training Params: LR={mask_lr}, Clip={clip_lmt}, Epochs={epochs}")
 
-        # === Call the training function on the local masknet ===
-        # train_masknet modifies the passed masknet in-place and returns it
         masknet = train_masknet(
-            masknet=masknet,  # Pass the newly created masknet
+            masknet=masknet,
             server_data_loader=server_data_loader,
             epochs=epochs,
             lr=mask_lr,
             grad_clip=clip_lmt,
             device=self.device,
         )
-        # ========================================================
 
-        # 4. Extract masks from the *trained local* masknet instance
-        print("Extracting masks...")
-        # Ensure masknet has parameters after training
-        masknet_trained_params = list(masknet.parameters())  # Get parameters from the trained instance
-        if not masknet_trained_params:
-            # Check if any parameter has requires_grad=True, maybe training failed silently
-            if not any(p.requires_grad for p in masknet.parameters()):
-                print("Warning: MaskNet has no parameters requiring gradients.")
-            raise RuntimeError("MaskNet has no parameters after training, cannot extract masks.")
-
-        # Extract data part of parameters
-        masknet_trained_param_data = [p.data for p in masknet_trained_params]
-
-        # --- Calculate size_per_seller based on the *actual trained parameters* ---
-        total_params_in_masknet = len(masknet_trained_param_data)
-        if total_params_in_masknet == 0:  # Should be caught above, but double check
-            raise ValueError("Masknet parameter list is empty after training.")
-
-        # Assumption: MaskNet params are structured per seller (interleaved)
-        if total_params_in_masknet % n_seller != 0:
-            print(
-                f"Warning: Trained MaskNet param count ({total_params_in_masknet}) not cleanly divisible by n_seller ({n_seller}). Mask extraction logic might be incorrect.")
-            # Fallback guess, might be wrong:
-            size_per_seller = total_params_in_masknet // n_seller if total_params_in_masknet >= n_seller else 0
-            if size_per_seller == 0: raise ValueError("Cannot determine mask structure (param count < n_seller).")
-        else:
-            size_per_seller = total_params_in_masknet // n_seller
-
-        print(f"Extracting masks assuming {size_per_seller} param groups per seller.")
+        # 4. Extract masks correctly
+        print("Extracting masks correctly by layer and seller index...")
         mask_list_np = []
         t = torch.Tensor([mask_threshold]).to(self.device)
 
+        # Iterate through SELLER indices ONLY (0 to n_seller-1) for GMM input
         for i in range(n_seller):
-            mask = []
-            for j in range(size_per_seller):
-                param_index = i + j * n_seller
-                if param_index >= total_params_in_masknet:
-                    print(
-                        f"Warning: Skipping mask param index {param_index} (out of bounds: {total_params_in_masknet}).")
-                    continue
-                mask_tensor = masknet_trained_param_data[param_index]
-                mask.append(torch.sigmoid(torch.flatten(mask_tensor, start_dim=0, end_dim=-1)))
-            if not mask:
-                print(f"Warning: No mask parameters extracted for seller {i}.")
-                mask_list_np.append(np.array([]))  # Append empty if no params found
-                continue
-            full_client_mask = torch.cat(mask)
-            out = (full_client_mask > t).float() * 1
-            mask_list_np.append(out.detach().cpu().numpy())
+            seller_mask_tensors = []
+            # Iterate through the layers of the masknet
+            for layer in masknet.children():
+                if isinstance(layer, (myconv2d, mylinear)):
+                    # Extract weight mask for seller i
+                    if i < len(layer.weight_mask):
+                         # Apply sigmoid HERE before flattening
+                         w_mask = torch.sigmoid(layer.weight_mask[i].data)
+                         seller_mask_tensors.append(torch.flatten(w_mask))
+                    else:
+                         print(f"Warning: Index {i} out of bounds for weight_mask in layer {layer}. Skipping.")
+
+                    # Extract bias mask for seller i if it exists
+                    if hasattr(layer, 'bias_mask') and layer.bias_mask is not None:
+                         if i < len(layer.bias_mask):
+                             # Apply sigmoid HERE before flattening
+                             b_mask = torch.sigmoid(layer.bias_mask[i].data)
+                             seller_mask_tensors.append(torch.flatten(b_mask))
+                         else:
+                             print(f"Warning: Index {i} out of bounds for bias_mask in layer {layer}. Skipping.")
+
+            if not seller_mask_tensors:
+                print(f"Warning: No mask parameters found for seller index {i}.")
+                # Append an empty array - GMM filtering step needs to handle this
+                mask_list_np.append(np.array([]))
+            else:
+                # Concatenate all mask parts for this seller
+                full_client_mask = torch.cat(seller_mask_tensors)
+                # Threshold and convert to numpy
+                out = (full_client_mask > t).float() # Apply threshold
+                mask_list_np.append(out.detach().cpu().numpy()) # Now append the 1D numpy array
+
+        # --- Sanity Check ---
+        if mask_list_np:
+             first_len = mask_list_np[0].size
+             if not all(m.size == first_len for m in mask_list_np):
+                 print("ERROR: Mask lengths are still inhomogeneous after extraction fix!")
+                 print([m.shape for m in mask_list_np])
+                 # Fallback: mark all as outliers
+                 selected_ids = []
+                 outlier_ids = list(range(n_seller))
+                 # Return zero gradient or handle error appropriately
+                 aggregated_gradient_unflattened = [torch.zeros_like(p, device=self.device) for p in datalist]
+                 return aggregated_gradient_unflattened, selected_ids, outlier_ids
+             else:
+                 print(f"Successfully extracted {len(mask_list_np)} masks with consistent length {first_len}.")
+        else:
+             print("Warning: mask_list_np is empty after extraction.")
+
 
         # 5. GMM Clustering
         print("Performing GMM clustering...")
-        # Ensure masks are not all empty before passing to GMM
-        valid_masks = [m for m in mask_list_np if m.size > 0]
-        if not valid_masks:
+        # Filter out empty masks *before* passing to GMM
+        original_indices_with_valid_masks = [i for i, m in enumerate(mask_list_np) if m.size > 0]
+        valid_masks_for_gmm = [mask_list_np[i] for i in original_indices_with_valid_masks]
+
+        if not valid_masks_for_gmm:
             print("Warning: No valid masks extracted. Cannot perform GMM. Assuming all sellers are outliers.")
-            res = [0] * n_seller  # All outliers
-        elif len(valid_masks) < n_seller:
-            print(f"Warning: Only {len(valid_masks)}/{n_seller} sellers have valid masks for GMM.")
-            # Perform GMM on valid ones, mark others as outliers? Or handle differently?
-            # Simple approach: Assume missing mask means outlier
-            gmm_res_valid = classify.GMM2(valid_masks)
-            res = []
-            valid_idx = 0
-            original_indices_with_valid_masks = [i for i, m in enumerate(mask_list_np) if m.size > 0]
-            map_valid_to_gmm = {orig_idx: gmm_idx for gmm_idx, orig_idx in enumerate(original_indices_with_valid_masks)}
-
-            for i in range(n_seller):
-                if i in map_valid_to_gmm:
-                    if map_valid_to_gmm[i] < len(gmm_res_valid):
-                        res.append(gmm_res_valid[map_valid_to_gmm[i]])
-                    else:
-                        print(f"Warning: GMM result index mismatch for seller {i}. Marking as outlier.")
-                        res.append(0)  # GMM result too short? Mark outlier
-                else:
-                    res.append(0)  # No valid mask, mark as outlier
-            if len(res) != n_seller:  # Final sanity check
-                print("Error: Final result length mismatch after GMM. Defaulting to all outliers.")
-                res = [0] * n_seller
+            gmm_labels_for_valid = [] # No results
+        elif len(valid_masks_for_gmm) == 1:
+             print("Warning: Only one valid mask for GMM. Marking it as an inlier (or outlier based on policy).")
+             # Policy decision: mark single client as inlier (1) or outlier (0)? Let's choose inlier.
+             gmm_labels_for_valid = [1]
         else:
-            # Normal case: all masks were valid
-            res = classify.GMM2(valid_masks)  # Get results for N sellers
-            if len(res) != n_seller:
-                print(f"Warning: GMM returned {len(res)} results, but expected {n_seller}. Padding with outliers.")
-                res = list(res) + [0] * (n_seller - len(res))
+            # Pass only the non-empty masks to GMM
+            gmm_labels_for_valid = GMM2(valid_masks_for_gmm) # Get results for valid sellers
 
-        # 6. Determine selected/outliers and Aggregate
+
+        # Map GMM results back to original seller indices (0 to n_seller-1)
+        # Assume 0 = outlier, 1 = inlier from GMM2's output
+        res = [0] * n_seller # Default to outlier
+        for idx_in_valid_list, original_idx in enumerate(original_indices_with_valid_masks):
+            if idx_in_valid_list < len(gmm_labels_for_valid):
+                 res[original_idx] = gmm_labels_for_valid[idx_in_valid_list]
+            else:
+                 # Should not happen if GMM2 returns a list of the same length as its input
+                 print(f"Warning: GMM result missing for original index {original_idx}. Marking as outlier.")
+
+
+        # 6. Determine selected/outliers and Aggregate using ORIGINAL UPDATES
         selected_ids = [i for i, label in enumerate(res) if label == 1]
         outlier_ids = [i for i, label in enumerate(res) if label == 0]
         num_selected = len(selected_ids)
@@ -898,24 +889,265 @@ class Aggregator:
         print(f"Selected seller indices ({num_selected}): {selected_ids}")
         print(f"Outlier seller indices ({len(outlier_ids)}): {outlier_ids}")
 
-        # Perform aggregation
-        aggregated_gradient_flat = torch.zeros_like(grad_list[0])  # Shape like first seller grad
+        # Perform aggregation using the potentially clipped *original updates*
+        # Initialize with zeros matching the structure
+        aggregated_gradient_unflattened = [torch.zeros_like(p, device=self.device) for p in datalist]
+
         if num_selected > 0:
-            weights = 1.0 / num_selected
-            print(f"Aggregating {num_selected} updates with weight {weights:.4f}")
-            # Stack selected flattened gradients for efficient sum
-            selected_grads_stacked = torch.stack([grad_list[i] for i in selected_ids], dim=0)
-            aggregated_gradient_flat = torch.sum(selected_grads_stacked, dim=0) * weights
+            count = 0
+            print(f"Aggregating updates from {num_selected} selected sellers.")
+            for idx in selected_ids:
+                sid = seller_ids_list[idx] # Get the original ID
+                update_to_add = processed_seller_updates_unflat[sid] # Get the processed update
+                for i in range(len(aggregated_gradient_unflattened)):
+                    aggregated_gradient_unflattened[i] += update_to_add[i]
+                count += 1
+
+            # Average the selected seller updates
+            if count > 0:
+                for i in range(len(aggregated_gradient_unflattened)):
+                    aggregated_gradient_unflattened[i] /= count
         else:
-            print("Warning: No clients selected by GMM. Aggregated gradient is zero.")
+            print("Warning: No sellers selected by GMM. Aggregated gradient is zero (no buyer update used here).")
+            # Note: This implementation currently *only* aggregates selected sellers.
+            # Modify here if you want to include the buyer update even if no sellers are selected,
+            # or if the buyer update should always be included regardless of GMM.
 
-        # 7. Unflatten the aggregated gradient
-        print("Unflattening aggregated gradient...")
-        # Use the correct helper function name
-        aggregated_gradient_unflattened = unflatten(aggregated_gradient_flat, datalist)
-
+        # 7. Return the aggregated gradient (already unflattened)
         print("--- SkyMask (Original Logic - Recreate MaskNet) Aggregation Finished ---")
         return aggregated_gradient_unflattened, selected_ids, outlier_ids
+    # def skymask(self,
+    #             global_epoch: int,  # Corresponds to niter
+    #             seller_updates: Dict[str, List[torch.Tensor]],
+    #             buyer_updates: List[torch.Tensor],  # The server update / baseline
+    #             server_data_loader,
+    #             clip: bool = False, mask_epochs=20, mask_lr_config=1e7, mask_clip_config=1e-7, mask_threshold=0.5
+    #             ) -> Tuple[List[torch.Tensor], List[int], List[int]]:
+    #     """
+    #     Integrates the original SkyMask function logic (MaskNet+GMM).
+    #     Creates and trains a new MaskNet instance each time it's called.
+    #     Assumes MaskNet combines the full parameters resulting from updates.
+    #
+    #     Args:
+    #         global_epoch (int): Current global epoch (used as niter).
+    #         seller_updates (Dict): Dict of seller updates (unflattened, delta = new-old).
+    #         buyer_updates (List): Server/baseline update (unflattened, delta = new-old).
+    #         server_data_loader (DataLoader): DataLoader for server data/labels.
+    #         clip (bool): Apply gradient clipping to seller_updates before processing.
+    #
+    #     Returns:
+    #        Tuple[List[torch.Tensor], List[int], List[int]]:
+    #          - aggregated_gradient: The computed aggregated gradient (unflattened).
+    #          - selected_ids: Indices of sellers selected by GMM (placeholder).
+    #          - outlier_ids: Indices of sellers filtered out by GMM (placeholder).
+    #     """
+    #     print(f"--- Starting SkyMask (Original Logic - Recreate MaskNet) Aggregation (Epoch {global_epoch}) ---")
+    #     # Use a detached copy of the global parameters from the start of the round
+    #     # Ensure they are on the correct device.
+    #     # global_params_base = [p.data.clone().to(self.device) for p in self.current_global_params]
+    #     global_params_base = [p.data.clone().to(self.device) for p in self.global_model.parameters()]
+    #     # 1. Prepare Updated Parameter Lists for MaskNet Input
+    #     print("Preparing inputs for MaskNet...")
+    #     worker_param_list = []  # List to hold parameter lists [[seller1_params], [seller2_params], ..., [buyer_params]]
+    #     seller_ids_list = list(seller_updates.keys())  # Consistent order
+    #
+    #     processed_seller_updates = {}
+    #     if clip:
+    #         print(f"Clipping seller updates with norm {self.clip_norm}")
+    #         for sid in seller_ids_list:
+    #             update = seller_updates[sid]
+    #             # Ensure update tensors are on the correct device before clipping
+    #             update_on_device = [p.to(self.device) for p in update]
+    #             processed_seller_updates[sid] = clip_gradient_update(update_on_device, self.clip_norm)
+    #     else:
+    #         processed_seller_updates = {sid: [p.to(self.device) for p in update]
+    #                                     for sid, update in seller_updates.items()}
+    #
+    #     # Calculate the full parameters for each seller after applying their update
+    #     for sid in seller_ids_list:
+    #         update_on_device = processed_seller_updates[sid]
+    #         # Calculate theta_i = theta_global + seller_update_i
+    #         # Ensure shapes match between global_params_base and update_on_device
+    #         try:
+    #             seller_params = [p_base + p_upd for p_base, p_upd in zip(global_params_base, update_on_device)]
+    #             worker_param_list.append(seller_params)
+    #         except RuntimeError as e:
+    #             print(f"Error processing update for seller {sid}. Shape mismatch or other issue?")
+    #             print(f"Global param shapes: {[p.shape for p in global_params_base]}")
+    #             print(f"Update shapes: {[p.shape for p in update_on_device]}")
+    #             raise e
+    #
+    #     # Calculate the full parameters for the buyer/server after applying the baseline update
+    #     buyer_update_on_device = [p.to(self.device) for p in buyer_updates]
+    #     try:
+    #         # Calculate theta_buyer = theta_global + buyer_update
+    #         buyer_params = [p_base + p_upd for p_base, p_upd in zip(global_params_base, buyer_update_on_device)]
+    #         worker_param_list.append(buyer_params)
+    #     except RuntimeError as e:
+    #         print(f"Error processing buyer update. Shape mismatch or other issue?")
+    #         print(f"Global param shapes: {[p.shape for p in global_params_base]}")
+    #         print(f"Update shapes: {[p.shape for p in buyer_update_on_device]}")
+    #         raise e
+    #
+    #     n_models = len(worker_param_list)
+    #     n_seller = len(seller_ids_list)
+    #
+    #     if n_models <= 0:  # Should only happen if both sellers and buyer updates are empty
+    #         print("Warning: No seller or buyer updates to process.")
+    #         # Return zero gradient matching the structure of global_params_base
+    #         zero_gradient = [torch.zeros_like(p, device=self.device) for p in global_params_base]
+    #         return (zero_gradient, [], [])
+    #     elif n_seller <= 0:
+    #         print("Warning: No seller updates, only processing buyer update.")
+    #         # Handle case with only buyer update if needed, or proceed if MaskNet handles n=1
+    #
+    #     print(f"Prepared worker_param_list with parameters from {n_seller} sellers + 1 buyer.")
+    #
+    #     # 2. Create a *new* MaskNet instance for this round
+    #     masknet_type = self.sm_model_type
+    #     print(f"Creating new masknet (type: {masknet_type}) with {n_models} models...")
+    #     # Pass the list of parameter lists to create_masknet.
+    #     # create_masknet should internally derive the number of workers from len(worker_param_list)
+    #     masknet = create_masknet(worker_param_list, masknet_type, self.device)
+    #     # 3. Train the newly created MaskNet instance
+    #     print("Executing core SkyMask logic (training MaskNet)...")
+    #     if server_data_loader is None:
+    #         raise ValueError("server_data_loader is required for MaskNet training but was not provided.")
+    #
+    #     #         mask_lr = 1e7
+    #     #         clip_lmt = 1e-7
+    #     # Get training hyperparams from self (set during __init__)
+    #     #
+    #     mask_lr = mask_lr_config
+    #     clip_lmt = mask_clip_config
+    #     epochs = mask_epochs
+    #     print(f"MaskNet Training Params: LR={mask_lr}, Clip={clip_lmt}, Epochs={epochs}")
+    #
+    #     # === Call the training function on the local masknet ===
+    #     # train_masknet modifies the passed masknet in-place and returns it
+    #     masknet = train_masknet(
+    #         masknet=masknet,  # Pass the newly created masknet
+    #         server_data_loader=server_data_loader,
+    #         epochs=epochs,
+    #         lr=mask_lr,
+    #         grad_clip=clip_lmt,
+    #         device=self.device,
+    #     )
+    #     # ========================================================
+    #
+    #     # 4. Extract masks from the *trained local* masknet instance
+    #     print("Extracting masks...")
+    #     # Ensure masknet has parameters after training
+    #     masknet_trained_params = list(masknet.parameters())  # Get parameters from the trained instance
+    #     if not masknet_trained_params:
+    #         # Check if any parameter has requires_grad=True, maybe training failed silently
+    #         if not any(p.requires_grad for p in masknet.parameters()):
+    #             print("Warning: MaskNet has no parameters requiring gradients.")
+    #         raise RuntimeError("MaskNet has no parameters after training, cannot extract masks.")
+    #
+    #     # Extract data part of parameters
+    #     masknet_trained_param_data = [p.data for p in masknet_trained_params]
+    #
+    #     # --- Calculate size_per_seller based on the *actual trained parameters* ---
+    #     total_params_in_masknet = len(masknet_trained_param_data)
+    #     if total_params_in_masknet == 0:  # Should be caught above, but double check
+    #         raise ValueError("Masknet parameter list is empty after training.")
+    #
+    #     # Assumption: MaskNet params are structured per seller (interleaved)
+    #     if total_params_in_masknet % n_seller != 0:
+    #         print(
+    #             f"Warning: Trained MaskNet param count ({total_params_in_masknet}) not cleanly divisible by n_seller ({n_seller}). Mask extraction logic might be incorrect.")
+    #         # Fallback guess, might be wrong:
+    #         size_per_seller = total_params_in_masknet // n_seller if total_params_in_masknet >= n_seller else 0
+    #         if size_per_seller == 0: raise ValueError("Cannot determine mask structure (param count < n_seller).")
+    #     else:
+    #         size_per_seller = total_params_in_masknet // n_seller
+    #
+    #     print(f"Extracting masks assuming {size_per_seller} param groups per seller.")
+    #     mask_list_np = []
+    #     t = torch.Tensor([mask_threshold]).to(self.device)
+    #
+    #     for i in range(n_seller):
+    #         mask = []
+    #         for j in range(size_per_seller):
+    #             param_index = i + j * n_seller
+    #             if param_index >= total_params_in_masknet:
+    #                 print(
+    #                     f"Warning: Skipping mask param index {param_index} (out of bounds: {total_params_in_masknet}).")
+    #                 continue
+    #             mask_tensor = masknet_trained_param_data[param_index]
+    #             mask.append(torch.sigmoid(torch.flatten(mask_tensor, start_dim=0, end_dim=-1)))
+    #         if not mask:
+    #             print(f"Warning: No mask parameters extracted for seller {i}.")
+    #             mask_list_np.append(np.array([]))  # Append empty if no params found
+    #             continue
+    #         full_client_mask = torch.cat(mask)
+    #         out = (full_client_mask > t).float() * 1
+    #         mask_list_np.append(out.detach().cpu().numpy())
+    #
+    #     # 5. GMM Clustering
+    #     print("Performing GMM clustering...")
+    #     # Ensure masks are not all empty before passing to GMM
+    #     valid_masks = [m for m in mask_list_np if m.size > 0]
+    #     if not valid_masks:
+    #         print("Warning: No valid masks extracted. Cannot perform GMM. Assuming all sellers are outliers.")
+    #         res = [0] * n_seller  # All outliers
+    #     elif len(valid_masks) < n_seller:
+    #         print(f"Warning: Only {len(valid_masks)}/{n_seller} sellers have valid masks for GMM.")
+    #         # Perform GMM on valid ones, mark others as outliers? Or handle differently?
+    #         # Simple approach: Assume missing mask means outlier
+    #         gmm_res_valid = classify.GMM2(valid_masks)
+    #         res = []
+    #         valid_idx = 0
+    #         original_indices_with_valid_masks = [i for i, m in enumerate(mask_list_np) if m.size > 0]
+    #         map_valid_to_gmm = {orig_idx: gmm_idx for gmm_idx, orig_idx in enumerate(original_indices_with_valid_masks)}
+    #
+    #         for i in range(n_seller):
+    #             if i in map_valid_to_gmm:
+    #                 if map_valid_to_gmm[i] < len(gmm_res_valid):
+    #                     res.append(gmm_res_valid[map_valid_to_gmm[i]])
+    #                 else:
+    #                     print(f"Warning: GMM result index mismatch for seller {i}. Marking as outlier.")
+    #                     res.append(0)  # GMM result too short? Mark outlier
+    #             else:
+    #                 res.append(0)  # No valid mask, mark as outlier
+    #         if len(res) != n_seller:  # Final sanity check
+    #             print("Error: Final result length mismatch after GMM. Defaulting to all outliers.")
+    #             res = [0] * n_seller
+    #     else:
+    #         # Normal case: all masks were valid
+    #         res = classify.GMM2(valid_masks)  # Get results for N sellers
+    #         if len(res) != n_seller:
+    #             print(f"Warning: GMM returned {len(res)} results, but expected {n_seller}. Padding with outliers.")
+    #             res = list(res) + [0] * (n_seller - len(res))
+    #
+    #     # 6. Determine selected/outliers and Aggregate
+    #     selected_ids = [i for i, label in enumerate(res) if label == 1]
+    #     outlier_ids = [i for i, label in enumerate(res) if label == 0]
+    #     num_selected = len(selected_ids)
+    #
+    #     print(f"GMM Results (0=outlier, 1=inlier): {res}")
+    #     print(f"Selected seller indices ({num_selected}): {selected_ids}")
+    #     print(f"Outlier seller indices ({len(outlier_ids)}): {outlier_ids}")
+    #
+    #     # Perform aggregation
+    #     aggregated_gradient_flat = torch.zeros_like(grad_list[0])  # Shape like first seller grad
+    #     if num_selected > 0:
+    #         weights = 1.0 / num_selected
+    #         print(f"Aggregating {num_selected} updates with weight {weights:.4f}")
+    #         # Stack selected flattened gradients for efficient sum
+    #         selected_grads_stacked = torch.stack([grad_list[i] for i in selected_ids], dim=0)
+    #         aggregated_gradient_flat = torch.sum(selected_grads_stacked, dim=0) * weights
+    #     else:
+    #         print("Warning: No clients selected by GMM. Aggregated gradient is zero.")
+    #
+    #     # 7. Unflatten the aggregated gradient
+    #     print("Unflattening aggregated gradient...")
+    #     # Use the correct helper function name
+    #     aggregated_gradient_unflattened = unflatten(aggregated_gradient_flat, datalist)
+    #
+    #     print("--- SkyMask (Original Logic - Recreate MaskNet) Aggregation Finished ---")
+    #     return aggregated_gradient_unflattened, selected_ids, outlier_ids
 
 
 # ---------------------------------------------------------
