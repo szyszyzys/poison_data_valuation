@@ -263,72 +263,61 @@ def get_text_data_set(
                 logging.warning(f"yield_tokens expected a string, but got {type(text)}. Skipping item.")
         logging.info(f"yield_tokens processed {processed_count} text items for vocabulary.")
 
-    specials = [unk_token, pad_token]
-    min_freq_for_vocab = 1  # Use this variable
+    specials_list_defined = [unk_token, pad_token]
+    # min_freq cannot be applied with this function in this version
+    # min_freq_for_vocab = 1
 
-    logging.info(f"Building vocabulary source structure...")
+    logging.info("Building vocabulary using build_vocab_from_iterator...")
+    # Based on errors, this function likely returns a fully formed Vocab object
+    # but doesn't accept configuration arguments like min_freq or specials.
 
-    # 1. Build the intermediate structure (e.g., Counter, OrderedDict)
-    #    Call build_vocab_from_iterator with ONLY the iterator.
     try:
-        # This function yields token lists, build_vocab_from_iterator processes them
         token_iterator_for_builder = yield_tokens(vocab_source_iter)
 
-        # Store the result (intermediate structure)
-        vocab_intermediate_data = build_vocab_from_iterator(
+        # Directly get the Vocab object from this function
+        vocab = build_vocab_from_iterator(
             token_iterator_for_builder
-            # NO other arguments here
+            # NO ARGUMENTS like min_freq or specials here
         )
 
     except Exception as e:
-        logging.error(f"Error during vocabulary intermediate structure building: {e}")
-        raise
+        logging.error(f"Error during build_vocab_from_iterator: {e}")
+        raise  # Re-raise after logging
 
-    if not vocab_intermediate_data:  # Check if the builder produced anything
-        raise ValueError("Vocabulary building (intermediate step) resulted in empty data.")
-
-    logging.info(f"Creating final Vocab object with min_freq={min_freq_for_vocab}...")
-
-    # 2. Create the final Vocab object using the intermediate data.
-    #    Pass min_freq and specials here. Do NOT pass special_first.
-    try:
-        vocab = Vocab(
-            vocab_intermediate_data,  # Pass the structure from step 1
-            min_freq=min_freq_for_vocab,  # Apply min_freq constraint HERE
-            specials=specials  # Provide the list of special tokens HERE
-            # NO special_first argument
-        )
-    except Exception as e:
-        logging.error(f"Error during Vocab object creation: {e}")
-        # Check if the error is about min_freq or specials NOT being accepted here either
-        raise
-
-    # --- Check if vocab building succeeded ---
+    # --- Check the result ---
     if not vocab:
-        raise ValueError("Vocabulary creation failed (returned None or empty).")
-    # Optional type check
+        raise ValueError("Vocabulary building failed (returned None or empty).")
     if not isinstance(vocab, Vocab):
-        raise TypeError(f"Expected Vocab object after Vocab() call, but got {type(vocab)}")
+        # This check is important given the confusion
+        raise TypeError(f"Expected build_vocab_from_iterator to return a Vocab object, but got {type(vocab)}")
 
-    # 3. Set the default index for unknown tokens (on the final vocab object)
+    # --- Vocab object created directly by build_vocab_from_iterator ---
+    logging.info("Vocabulary object created directly by build_vocab_from_iterator.")
+
+    # --- Now, work with the 'vocab' object obtained above ---
+
+    # Check if specials were included somehow (e.g., by default)
     if unk_token in vocab:
         vocab.set_default_index(vocab[unk_token])
         unk_idx = vocab[unk_token]
-        logging.info(f"Set default index for unknown tokens to '{unk_token}' (idx={unk_idx})")
+        logging.info(f"Special token '{unk_token}' found. Set default index to {unk_idx}.")
     else:
-        vocab.set_default_index(-1)
-        logging.warning(f"'{unk_token}' not found in computed vocabulary. Check min_freq and data.")
+        # If not found, you CANNOT set the default index this way.
+        # You might need to handle unknown tokens differently or accept vocab limitations.
+        vocab.set_default_index(-1)  # A fallback, but indicates <unk> wasn't handled as expected.
+        logging.warning(
+            f"Special token '{unk_token}' NOT found in vocabulary created by build_vocab_from_iterator. Default index set to -1.")
 
-    # 4. Get the padding index (from the final vocab object)
     if pad_token in vocab:
         pad_idx = vocab[pad_token]
-        logging.info(f"Padding token '{pad_token}' has index {pad_idx}.")
+        logging.info(f"Special token '{pad_token}' found with index {pad_idx}.")
     else:
-        pad_idx = -1
-        logging.error(f"Critical: Padding token '{pad_token}' not found in vocabulary!")
+        pad_idx = -1  # Fallback
+        # Padding might be essential, so log an error or raise one
+        logging.error(f"Critical: Special token '{pad_token}' NOT found in vocabulary!")
 
-    logging.info(f"Built final vocab (size={len(vocab)}).")
-    # ── text → index pipeline ───────────────────────────────────
+    logging.info(
+        f"Built final vocab (size={len(vocab)}). Note: min_freq/specials config might be limited by torchtext version.")    # ── text → index pipeline ───────────────────────────────────
     # The Vocab object is callable for string-to-index lookup
     # Ensure tokenizer returns a list of tokens suitable for vocab lookup
     text_pipeline = lambda text_string: vocab(tokenizer(text_string))
