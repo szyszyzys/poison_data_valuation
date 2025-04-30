@@ -119,8 +119,8 @@ BASE_CONFIG_TEMPLATE = {
         'attack_victim_strategy': 'fixed',
         'attack_fixed_victim_idx': 0,
         'save_attack_visuals_flag': True,
-        'privacy_attack_path': 'always_on',
-        'gradient_inversion_params': {}
+        'privacy_attack_path': './result',
+        'gradient_inversion_params': {},
     },
 
     # --- Output ---

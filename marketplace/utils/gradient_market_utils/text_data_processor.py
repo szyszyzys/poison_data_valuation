@@ -1,26 +1,19 @@
 import logging
-import os  # For checking data root
+import os
 from typing import List, Dict
 # Import Optional for type hinting
 from typing import Optional, Tuple, Any
 
 import torch
+from datasets import load_dataset as hf_load
 from torch.utils.data import DataLoader, Subset
-# Make sure necessary torchtext components are imported
 from torchtext.data.utils import get_tokenizer
-from torchtext.vocab import build_vocab_from_iterator
+from torchtext.datasets import AG_NEWS
+from torchtext.vocab import build_vocab_from_iterator, Vocab
 
 from marketplace.utils.gradient_market_utils.data_processor import split_dataset_discovery
-import os
-import random
-import logging
-import numpy as np
-import torch
 
-from torchtext.datasets import AG_NEWS
-from torchtext.data.utils import get_tokenizer
-from torchtext.vocab import build_vocab_from_iterator
-from datasets import load_dataset as hf_load
+# Make sure necessary torchtext components are imported
 
 # Configure logging (optional, but recommended)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -51,9 +44,6 @@ split_dataset_martfl_discovery = placeholder_splitter  # Replace with actual imp
 split_dataset_by_label = placeholder_splitter  # Replace with actual import
 split_dataset_buyer_seller_improved = placeholder_splitter  # Replace with actual import
 generate_buyer_bias_distribution = placeholder_generate_bias  # Replace with actual import
-
-
-
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -121,7 +111,7 @@ def get_text_data_set(
         buyer_percentage: float = 0.01,
         num_sellers: int = 10,
         batch_size: int = 64,
-        data_root = "./data",
+        data_root="./data",
         split_method: str = "discovery",
         n_adversaries: int = 0,
         # save_path: str = './result', # Path might be needed for stats saving later
@@ -188,12 +178,12 @@ def get_text_data_set(
     # ── load raw iterators ──────────────────────────────────────
     if dataset_name == "AG_NEWS":
         # returns two DataPipes of (label, text)
-        dp_train, dp_test = AG_NEWS(root=data_root, split=('train','test'))
+        dp_train, dp_test = AG_NEWS(root=data_root, split=('train', 'test'))
         train_iter = iter(dp_train)
-        test_iter  = iter(dp_test)
+        test_iter = iter(dp_test)
 
-        num_classes  = 4
-        class_names  = ['World','Sports','Business','Sci/Tech']
+        num_classes = 4
+        class_names = ['World', 'Sports', 'Business', 'Sci/Tech']
         label_offset = 1
 
         # for vocab: one‐off train split
@@ -206,10 +196,10 @@ def get_text_data_set(
 
         # generators of (coarse_label, text)
         train_iter = ((ex["coarse_label"], ex["text"]) for ex in train_ds)
-        test_iter  = ((ex["coarse_label"], ex["text"]) for ex in test_ds)
+        test_iter = ((ex["coarse_label"], ex["text"]) for ex in test_ds)
 
-        num_classes  = 6
-        class_names  = ['ABBR','ENTY','DESC','HUM','LOC','NUM']
+        num_classes = 6
+        class_names = ['ABBR', 'ENTY', 'DESC', 'HUM', 'LOC', 'NUM']
         label_offset = 0
 
         # for vocab: just the text field
@@ -220,45 +210,137 @@ def get_text_data_set(
 
     # ── build vocab ─────────────────────────────────────────────
     def yield_tokens(source):
+        """Yields tokens from the source data."""
         for item in source:
             # item might be (label, text) or plain text
             text = item[1] if isinstance(item, tuple) else item
             yield tokenizer(text)
 
-    specials = [unk_token, pad_token]
-    vocab = build_vocab_from_iterator(
+    specials = [unk_token, pad_token]  # Define your special tokens
+    min_freq = 1  # Set a minimum frequency if desired (1 means include all tokens)
+
+    logging.info("Building vocabulary...")
+
+    # 1. Build the ordered dictionary of tokens from the iterator
+    #    This function no longer takes 'specials' directly for Vocab creation logic.
+    #    It just generates the token counts/order.
+    ordered_dict = build_vocab_from_iterator(
         yield_tokens(vocab_source),
-        specials=specials
+        min_freq=min_freq,
+        # specials=specials,  # Removed from here
+        # special_first=True # This logic moves to Vocab constructor
     )
-    vocab.set_default_index(vocab[unk_token])
-    pad_idx = vocab[pad_token]
+
+    # 2. Create the Vocab object using the ordered dict and specials list
+    vocab = Vocab(
+        ordered_dict,
+        specials=specials,
+        special_first=True  # Ensure specials come first if needed
+    )
+
+    # 3. Set the default index for unknown tokens
+    #    Make sure unk_token is defined and is in your specials list
+    if unk_token in vocab:
+        vocab.set_default_index(vocab[unk_token])
+        unk_idx = vocab[unk_token]
+        logging.info(f"Set default index for unknown tokens to '{unk_token}' (idx={unk_idx})")
+    else:
+        # Handle case where unk_token somehow wasn't included
+        # Setting default index to -1 is one option, but usually indicates an issue.
+        vocab.set_default_index(-1)
+        logging.warning(f"'{unk_token}' not found in computed vocabulary. "
+                        f"Default index set to -1. Check your specials list and data.")
+
+    # 4. Get the padding index
+    if pad_token in vocab:
+        pad_idx = vocab[pad_token]
+    else:
+        pad_idx = -1  # Should not happen if pad_token is in specials
+        logging.error(f"Critical: '{pad_token}' not found in vocabulary!")
+        # Consider raising an error here if padding is essential
+
     logging.info(f"Built vocab (size={len(vocab)}), '{pad_token}' idx={pad_idx}")
 
     # ── text → index pipeline ───────────────────────────────────
+    # The Vocab object is callable for string-to-index lookup
     text_pipeline = lambda t: vocab(tokenizer(t))
 
     # ── numericalize & skip empty ──────────────────────────────
+    # This part should remain largely the same, as it relies on the
+    # final 'vocab' object and 'text_pipeline' which are now correctly defined.
+    logging.info("Processing train data...")
     processed_train_data = []
-    for lbl, txt in train_iter:
+    for item in train_iter:  # Assuming train_iter yields (label, text)
+        lbl, txt = item
         ids = text_pipeline(txt)
-        if ids:
+        if ids:  # Check if the result is not empty (e.g., after removing stopwords)
             processed_train_data.append((lbl - label_offset, ids))
+        # else:
+        #     logging.debug(f"Skipping empty text after processing: {txt}")
 
+    logging.info("Processing test data...")
     processed_test_data = []
-    for lbl, txt in test_iter:
+    for item in test_iter:  # Assuming test_iter yields (label, text)
+        lbl, txt = item
         ids = text_pipeline(txt)
         if ids:
             processed_test_data.append((lbl - label_offset, ids))
+        # else:
+        #     logging.debug(f"Skipping empty text after processing: {txt}")
 
     logging.info(
         f"Processed: train={len(processed_train_data)}, "
         f"test={len(processed_test_data)}"
     )
+
+    # Assign to dataset variables (if needed)
     dataset = processed_train_data
     test_set = processed_test_data
 
     if not dataset:
-        raise ValueError("Processed training dataset is empty.")
+        # This check remains valid
+        raise ValueError("Processed training dataset is empty after filtering.")
+
+    # def yield_tokens(source):
+    #     for item in source:
+    #         # item might be (label, text) or plain text
+    #         text = item[1] if isinstance(item, tuple) else item
+    #         yield tokenizer(text)
+    #
+    # specials = [unk_token, pad_token]
+    # vocab = build_vocab_from_iterator(
+    #     yield_tokens(vocab_source),
+    #     specials=specials
+    # )
+    # vocab.set_default_index(vocab[unk_token])
+    # pad_idx = vocab[pad_token]
+    # logging.info(f"Built vocab (size={len(vocab)}), '{pad_token}' idx={pad_idx}")
+    #
+    # # ── text → index pipeline ───────────────────────────────────
+    # text_pipeline = lambda t: vocab(tokenizer(t))
+    #
+    # # ── numericalize & skip empty ──────────────────────────────
+    # processed_train_data = []
+    # for lbl, txt in train_iter:
+    #     ids = text_pipeline(txt)
+    #     if ids:
+    #         processed_train_data.append((lbl - label_offset, ids))
+    #
+    # processed_test_data = []
+    # for lbl, txt in test_iter:
+    #     ids = text_pipeline(txt)
+    #     if ids:
+    #         processed_test_data.append((lbl - label_offset, ids))
+    #
+    # logging.info(
+    #     f"Processed: train={len(processed_train_data)}, "
+    #     f"test={len(processed_test_data)}"
+    # )
+    # dataset = processed_train_data
+    # test_set = processed_test_data
+    #
+    # if not dataset:
+    #     raise ValueError("Processed training dataset is empty.")
 
     # --- Calculate Buyer Count ---
     # (buyer count calculation remains the same)
