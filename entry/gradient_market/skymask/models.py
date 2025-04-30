@@ -295,13 +295,13 @@ class LeNetMaskNet(nn.Module):
         # --- Layer Definitions (using my.* layers and hardcoded indices) ---
         # Layer params are passed as lists extracted from worker_param_list
         self.conv1 = my.myconv2d(num_workers, device,
-                                 [w[0] for w in worker_param_list],  # All conv1 weights
-                                 [w[1] for w in worker_param_list],  # All conv1 biases
-                                 kernel_size=5)  # Need to pass kernel_size etc. if not default
+                                 [w[0] for w in worker_param_list],
+                                 [w[1] for w in worker_param_list]) # Removed kernel_size
+                                 # Add stride, padding etc. IF they are non-default and needed by F.conv2d
         self.conv2 = my.myconv2d(num_workers, device,
                                  [w[2] for w in worker_param_list],
-                                 [w[3] for w in worker_param_list],
-                                 kernel_size=5)
+                                 [w[3] for w in worker_param_list]) # Removed kernel_size
+                                 # Add stride, padding etc. IF non-default
         # Note: Input size for fc1 depends on image size (16*4*4 for 28x28 MNIST)
         self.fc1 = my.mylinear(num_workers, device,
                                [w[4] for w in worker_param_list],

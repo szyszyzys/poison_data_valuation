@@ -739,14 +739,22 @@ class Aggregator:
             return ([torch.zeros_like(p, device=self.device) for p in net.parameters()], [], [])
 
         print(f"Prepared grad_list with {n_seller} seller updates + 1 baseline.")
-        datalist = [p.data.clone() for p in net.parameters()]  # Structure for unflattening
-
+        # datalist = [p.data.clone() for p in net.parameters()]  # Structure for unflattening
+        worker_param_list = []
+        for worker_id in range(num_workers):  # Or iterate through keys if worker_models is a dict
+            # Get the specific worker model
+            worker_net = worker_models[worker_id]  # Adjust based on how you store worker models
+            worker_net.to('cpu')  # Move to CPU for cloning if they were on GPU
+            # IMPORTANT: Ensure parameters are yielded in a CONSISTENT order for all workers
+            params = [p.data.clone() for p in worker_net.parameters()]
+            worker_param_list.append(params)
+            worker_net.to(self.device)  # Move back if needed
         # 2. Create a *new* MaskNet instance for this round
         #    Using configured network type from args if available.
         masknet_type = self.sm_model_type
         print(f"Creating new masknet (type: {masknet_type})...")
         # Make sure create_masknet handles the datalist structure correctly
-        masknet = create_masknet(datalist, masknet_type, self.device)
+        masknet = create_masknet(worker_param_list, masknet_type, self.device)
         # 3. Train the newly created MaskNet instance
         print("Executing core SkyMask logic (training MaskNet)...")
         if server_data_loader is None:
