@@ -533,7 +533,7 @@ def image_modification(
         learning_rate=0.1,
         lambda_reg=0.1,
         epsilon=0.05,
-        noise_vis_scale_factor=10 # Pass scale factor down
+        noise_vis_scale_factor=10  # Pass scale factor down
 ):
     """
     Perform the poisoning attack on selected images, saving results and noise visualization.
@@ -554,8 +554,8 @@ def image_modification(
     for idx, cur_info in tqdm(modify_info.items(), desc="Performing Image Modification"):
         target_vector = cur_info["target_vector"]
         original_img_path_str = cur_info["original_img_path"]
-        target_img_path = cur_info.get("target_img_path", "N/A") # Optional target path
-        target_img_idx = cur_info.get("target_index", "N/A") # Optional target index
+        target_img_path = cur_info.get("target_img_path", "N/A")  # Optional target path
+        target_img_idx = cur_info.get("target_index", "N/A")  # Optional target index
 
         # Ensure the original image path exists
         original_img_path = Path(original_img_path_str)
@@ -567,7 +567,7 @@ def image_modification(
             (
                 original_image_pil,
                 modified_image_pil,
-                noise_visualization_pil, # Get noise image
+                noise_visualization_pil,  # Get noise image
                 modified_embedding,
                 similarity
             ) = modify_image(
@@ -580,32 +580,32 @@ def image_modification(
                 learning_rate=learning_rate,
                 lambda_reg=lambda_reg,
                 epsilon=epsilon,
-                noise_vis_scale_factor=noise_vis_scale_factor, # Pass down
-                verbose=False # Keep loop tidy, enable verbose in modify_image if needed
+                noise_vis_scale_factor=noise_vis_scale_factor,  # Pass down
+                verbose=False  # Keep loop tidy, enable verbose in modify_image if needed
             )
 
             # --- Save Images ---
-            base_filename = original_img_path.stem # Get filename without extension
+            base_filename = original_img_path.stem  # Get filename without extension
 
             # Define save paths
             original_save_path = Path(output_dir) / f"original_{base_filename}{original_img_path.suffix}"
             modified_save_path = Path(output_dir) / f"modified_{base_filename}{original_img_path.suffix}"
-            noise_save_path = Path(output_dir) / f"noise_{base_filename}{original_img_path.suffix}" # Noise image path
+            noise_save_path = Path(output_dir) / f"noise_{base_filename}{original_img_path.suffix}"  # Noise image path
 
             # Save the images
             original_image_pil.save(original_save_path)
             modified_image_pil.save(modified_save_path)
-            noise_visualization_pil.save(noise_save_path) # Save noise image
+            noise_visualization_pil.save(noise_save_path)  # Save noise image
 
             # Store results
             modify_result[idx] = {
                 "target_image_idx": target_img_idx,
                 "target_img_path": target_img_path,
                 "similarity_to_target": similarity,
-                "m_embedding": modified_embedding.numpy(), # Store as numpy array
-                "original_img_path_saved": str(original_save_path), # Path where copy is saved
-                "modified_img_path_saved": str(modified_save_path), # Path where modified is saved
-                "noise_img_path_saved": str(noise_save_path) # Path where noise vis is saved
+                "m_embedding": modified_embedding.numpy(),  # Store as numpy array
+                "original_img_path_saved": str(original_save_path),  # Path where copy is saved
+                "modified_img_path_saved": str(modified_save_path),  # Path where modified is saved
+                "noise_img_path_saved": str(noise_save_path)  # Path where noise vis is saved
             }
         except FileNotFoundError:
             print(f"Error: File not found during processing for {original_img_path_str}, skipping index {idx}.")
@@ -614,8 +614,8 @@ def image_modification(
             # Optionally store error information
             modify_result[idx] = {"error": str(e), "original_img_path": original_img_path_str}
 
-
     return modify_result
+
 
 def denormalize_image(tensor):
     """
@@ -713,6 +713,7 @@ def load_image(image_path):
     """
     return Image.open(image_path)
 
+
 def create_perturbation_visualization(original_pil, modified_pil, scale_factor=10):
     """
     Calculates the difference between original and modified images and
@@ -752,6 +753,8 @@ def create_perturbation_visualization(original_pil, modified_pil, scale_factor=1
     noise_vis_pil = to_pil(visual_noise_tensor)
 
     return noise_vis_pil
+
+
 def modify_image(
         image_path,
         target_vector,
@@ -762,7 +765,7 @@ def modify_image(
         learning_rate=0.01,
         lambda_reg=0.1,
         epsilon=0.05,
-        noise_vis_scale_factor=10, # Parameter for noise visualization scaling
+        noise_vis_scale_factor=10,  # Parameter for noise visualization scaling
         verbose=False
 ):
     """
@@ -783,14 +786,14 @@ def modify_image(
     - final_similarity (float): Cosine similarity with the target vector after modification.
     """
     # Load the original image (keep it for noise visualization later)
-    original_image_pil = Image.open(image_path).convert("RGB") # Ensure RGB
+    original_image_pil = Image.open(image_path).convert("RGB")  # Ensure RGB
 
     # Preprocess for CLIP
     image_tensor = processor(images=original_image_pil, return_tensors="pt")['pixel_values'].to(device)
 
     # If you want gradients with respect to the image tensor, set requires_grad
     image_tensor = image_tensor.clone().detach().requires_grad_(True)
-    original_image_tensor_norm = image_tensor.clone().detach() # Keep normalized original
+    original_image_tensor_norm = image_tensor.clone().detach()  # Keep normalized original
 
     if verbose:
         print(f"Starting optimization for image: {image_path}")
@@ -805,15 +808,14 @@ def modify_image(
     # Ensure target_tensor has a batch dimension if embedding doesn't
     if target_tensor.dim() == 1:
         target_tensor = target_tensor.unsqueeze(0)
-    target_tensor = F.normalize(target_tensor, p=2, dim=-1) # Normalize along the feature dimension
-
+    target_tensor = F.normalize(target_tensor, p=2, dim=-1)  # Normalize along the feature dimension
 
     # Set model to evaluation mode
     model.eval()
 
     # Retrieve normalization parameters (use standard CLIP values)
-    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1).to(device) # Add batch dim
-    std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1).to(device) # Add batch dim
+    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1).to(device)  # Add batch dim
+    std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1).to(device)  # Add batch dim
 
     # --- Optimization Loop ---
     previous_loss = float('inf')
@@ -824,7 +826,7 @@ def modify_image(
         optimizer.zero_grad()
 
         # Forward pass: get embedding
-        embedding = model.get_image_features(pixel_values=image_tensor) # Use appropriate method
+        embedding = model.get_image_features(pixel_values=image_tensor)  # Use appropriate method
         embedding = F.normalize(embedding, p=2, dim=-1)
 
         # Compute cosine similarity
@@ -833,7 +835,8 @@ def modify_image(
 
         # Compute perturbation norm (L-infinity in normalized space)
         perturbation_norm = image_tensor - original_image_tensor_norm
-        reg_loss = lambda_reg * torch.norm(perturbation_norm.view(perturbation_norm.size(0), -1), p=float('inf'), dim=1).mean()
+        reg_loss = lambda_reg * torch.norm(perturbation_norm.view(perturbation_norm.size(0), -1), p=float('inf'),
+                                           dim=1).mean()
 
         # Compute loss
         loss = -cosine_sim + reg_loss
@@ -843,7 +846,8 @@ def modify_image(
         torch.nn.utils.clip_grad_norm_([image_tensor], max_norm=1.0)
 
         if verbose and image_tensor.grad is not None:
-            print(f"Step {step + 1}/{num_steps}, Loss: {loss.item():.4f}, Cosine Sim: {cosine_sim.item():.4f}, Grad Norm: {image_tensor.grad.norm().item():.4f}")
+            print(
+                f"Step {step + 1}/{num_steps}, Loss: {loss.item():.4f}, Cosine Sim: {cosine_sim.item():.4f}, Grad Norm: {image_tensor.grad.norm().item():.4f}")
 
         # Optimizer step & Scheduler step
         optimizer.step()
@@ -860,7 +864,7 @@ def modify_image(
 
         # Early Stopping Check
         current_loss = loss.item()
-        if abs(previous_loss - current_loss) < 1e-5: # Slightly more robust threshold
+        if abs(previous_loss - current_loss) < 1e-5:  # Slightly more robust threshold
             patience_counter += 1
             if patience_counter >= patience:
                 if verbose: print("Early stopping triggered.")
@@ -868,8 +872,8 @@ def modify_image(
         else:
             patience_counter = 0
         previous_loss = current_loss
-    # --- End Optimization Loop ---
 
+    # --- End Optimization Loop ---
 
     # --- Post-processing ---
     # Denormalize the final image tensor
@@ -880,7 +884,7 @@ def modify_image(
         std_cpu = std.cpu()
         # Remove batch dim if it exists before applying std/mean which are (1,3,1,1) or (3,1,1)
         if tensor_cpu.dim() == 4:
-            tensor_cpu = tensor_cpu.squeeze(0) # Now (3, H, W)
+            tensor_cpu = tensor_cpu.squeeze(0)  # Now (3, H, W)
         if mean_cpu.dim() == 4:
             mean_cpu = mean_cpu.squeeze(0)
         if std_cpu.dim() == 4:
@@ -897,7 +901,8 @@ def modify_image(
     with torch.no_grad():
         modified_embedding = model.get_image_features(pixel_values=image_tensor)
         modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
-        final_similarity = F.cosine_similarity(modified_embedding, target_tensor, dim=-1).item() # Use item() for single value
+        final_similarity = F.cosine_similarity(modified_embedding, target_tensor,
+                                               dim=-1).item()  # Use item() for single value
 
     # Create noise visualization
     noise_visualization_pil = create_perturbation_visualization(
@@ -909,10 +914,11 @@ def modify_image(
     return (
         original_image_pil,
         modified_image_pil,
-        noise_visualization_pil, # Added return value
-        modified_embedding.cpu(), # Return embedding on CPU
+        noise_visualization_pil,  # Added return value
+        modified_embedding.cpu(),  # Return embedding on CPU
         final_similarity
     )
+
 
 def evaluate_reconstruction(x_tests_true, x_tests_est):
     """
@@ -1042,6 +1048,7 @@ def save_dict_to_df(data: dict, file_prefix: str = "output"):
     df.to_csv(filename, index=False)
 
     print(f"DataFrame saved as {filename}")
+
 
 def get_error_fixed(
         x_test,
