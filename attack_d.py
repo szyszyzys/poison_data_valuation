@@ -369,17 +369,17 @@ def evaluate_model_on_embeddings(
     """
 
     # --- Input Validation (Optional but Recommended) ---
-    if x_train_embeddings.shape[0] != len(y_train) or x_train_embeddings.shape[0] != len(w):
+    if x_train.shape[0] != len(y_train) or x_train.shape[0] != len(w):
         raise ValueError("Mismatch in number of training samples between embeddings, labels, and weights.")
-    if x_test_embeddings.shape[0] != len(y_test):
+    if x_test.shape[0] != len(y_test):
         raise ValueError("Mismatch in number of test samples between embeddings and labels.")
-    if x_train_embeddings.shape[1] != x_test_embeddings.shape[1] and not reduce_dim:
+    if x_train.shape[1] != x_test.shape[1] and not reduce_dim:
         # Note: If reduce_dim is True, dimensions might change, PCA handles consistency.
         raise ValueError("Mismatch in embedding dimensions between train and test sets.")
 
     # --- Preprocessing Steps (Applied to Embeddings) ---
-    x_train_processed = x_train_embeddings.copy()  # Work on copies
-    x_test_processed = x_test_embeddings.copy()
+    x_train_processed = x_train.copy()  # Work on copies
+    x_test_processed = x_test.copy()
 
     # 1. Normalize Embeddings (Optional)
     # Normalizing embeddings can be important for linear models.
@@ -501,6 +501,242 @@ def evaluate_model_on_embeddings(
     #     return metrics
 
 
+def evaluate_model_raw_data(
+        y_test,  # Test labels
+        y_train,  # Train labels
+        w,  # Weights for selecting training samples
+        preprocess_func,  # Function to preprocess PIL Image -> Tensor
+        device,  # PyTorch device ('cuda' or 'cpu')
+        eval_range=range(1, 10),
+        task='regression',
+        use_sklearn=True,
+        return_list=False,
+        normalize=True,
+        reduce_dim=False,
+        dim_components=100,
+        img_paths=None,  # List of ALL image paths (train + test)
+        test_img_indices=None,  # Indices in img_paths corresponding to y_test
+        sell_img_indices=None,  # Indices in img_paths corresponding to y_train and w
+        # Removed x_test, x_train from parameters as they are rebuilt or not used
+):
+    """
+    Evaluate model performance using raw images loaded from disk.
+    The model is trained on features derived from raw images, selected based on weights 'w'.
+
+    Parameters:
+    - y_test: NumPy array of test labels, shape (n_test_samples,).
+    - y_train: NumPy array of training labels, shape (n_train_samples,).
+    - w: NumPy array of weights for selecting training samples, shape (n_train_samples,).
+    - preprocess_func: A callable function that takes a PIL Image and returns a
+                       preprocessed PyTorch tensor (e.g., from CLIP).
+    - device: The PyTorch device (e.g., 'cuda' or 'cpu') to move tensors to.
+    - eval_range: Iterable of integers representing different k values for top-k selection.
+    - task: String, either 'regression' or 'classification'.
+    - use_sklearn: Boolean flag to use scikit-learn's models.
+    - return_list: Boolean flag to return errors as a list instead of a dictionary.
+    - normalize: Boolean flag to apply StandardScaler to flattened image features.
+    - reduce_dim: Boolean flag to apply PCA dimensionality reduction.
+    - dim_components: Number of components for PCA if reduce_dim is True.
+    - img_paths: List of paths to ALL images (train and test combined or separate).
+    - test_img_indices: Indices in `img_paths` that correspond to `y_test`.
+    - sell_img_indices: Indices in `img_paths` that correspond to `y_train` and `w`.
+
+    Returns:
+    - results: Dictionary or list of evaluation metrics for each k in eval_range.
+    """
+
+    # --- Input Validations ---
+    if not callable(preprocess_func):
+        raise ValueError("`preprocess_func` must be a callable function.")
+    if not isinstance(device, (str, torch.device)):
+        raise ValueError("`device` must be a string or torch.device.")
+    if img_paths is None or test_img_indices is None or sell_img_indices is None:
+        raise ValueError("`img_paths`, `test_img_indices`, and `sell_img_indices` must be provided "
+                         "to load raw image data.")
+    if len(sell_img_indices) != len(y_train) or len(sell_img_indices) != len(w):
+        raise ValueError("Length of `sell_img_indices` must match `y_train` and `w`.")
+    if len(test_img_indices) != len(y_test):
+        raise ValueError("Length of `test_img_indices` must match `y_test`.")
+
+    # --- Load and Preprocess Images ---
+    x_test_loaded = []
+    print("Loading and preprocessing test images...")
+    for img_idx in tqdm(test_img_indices, desc="Load Test Images"):
+        try:
+            img = Image.open(img_paths[img_idx]).convert("RGB")  # Ensure RGB
+            # Assuming preprocess_func returns a tensor (C, H, W)
+            img_preprocessed = preprocess_func(img).unsqueeze(0).to(device)  # Add batch dim
+            x_test_loaded.append(img_preprocessed)
+        except Exception as e:
+            raise RuntimeError(
+                f"Error loading/preprocessing test image at index {img_idx} (path: {img_paths[img_idx]}): {e}")
+
+    x_train_loaded = []
+    print("Loading and preprocessing training images...")
+    for img_idx in tqdm(sell_img_indices, desc="Load Train Images"):
+        try:
+            img = Image.open(img_paths[img_idx]).convert("RGB")  # Ensure RGB
+            img_preprocessed = preprocess_func(img).unsqueeze(0).to(device)  # Add batch dim
+            x_train_loaded.append(img_preprocessed)
+        except Exception as e:
+            raise RuntimeError(
+                f"Error loading/preprocessing train image at index {img_idx} (path: {img_paths[img_idx]}): {e}")
+
+    if not x_train_loaded or not x_test_loaded:
+        raise ValueError("No training or test images were loaded. Check indices and paths.")
+
+    # Stack tensors and move to CPU for further processing
+    # These are tensors from the preprocessing (e.g., (N, C, H, W))
+    x_train_processed_images = torch.cat(x_train_loaded).cpu().numpy()
+    x_test_processed_images = torch.cat(x_test_loaded).cpu().numpy()
+
+    # Flatten the processed images for model training (now these are features)
+    x_train_flat = x_train_processed_images.reshape(x_train_processed_images.shape[0], -1)
+    x_test_flat = x_test_processed_images.reshape(x_test_processed_images.shape[0], -1)
+
+    # Normalize the flattened features if required
+    if normalize:
+        scaler = StandardScaler()
+        x_train_flat = scaler.fit_transform(x_train_flat)
+        x_test_flat = scaler.transform(x_test_flat)
+
+    # Dimensionality Reduction (Optional) on flattened features
+    if reduce_dim:
+        if dim_components >= x_train_flat.shape[1]:
+            print(
+                f"Warning: dim_components ({dim_components}) >= original feature dim ({x_train_flat.shape[1]}). Skipping PCA.")
+        elif dim_components <= 0:
+            raise ValueError("dim_components for PCA must be positive.")
+        else:
+            pca = PCA(n_components=dim_components)
+            x_train_flat = pca.fit_transform(x_train_flat)
+            x_test_flat = pca.transform(x_test_flat)
+
+    # Sort weights in descending order and get sorted indices
+    sorted_w_indices = np.argsort(w)[::-1]
+
+    # Initialize results dictionary
+    results = {}  # Store all metrics per k
+    errors_only = {}  # Store primary error (e.g. MSE) per k for backward compatibility if return_list is True
+
+    print("Evaluating models for different k values...")
+    for k_val in tqdm(eval_range, desc="Evaluating Top-K"):
+        if k_val <= 0:
+            print(f"Warning: Skipping k={k_val} as it's not positive.")
+            continue
+
+        current_k = min(k_val, len(sorted_w_indices))  # Cap k at available samples
+        if current_k == 0:
+            print(f"Warning: No samples to select for k={k_val} (effective k=0). Assigning NaN metrics.")
+            results[k_val] = {'MSE': np.nan} if task == 'regression' else {'Accuracy': np.nan, 'MSE': np.nan}
+            errors_only[k_val] = np.nan
+            continue
+
+        selected_indices = sorted_w_indices[:current_k]
+        x_k = x_train_flat[selected_indices]
+        y_k = y_train[selected_indices]
+
+        # Ensure enough samples and variety for the model
+        if len(y_k) == 0:  # Should be caught by current_k == 0 check, but defensive
+            results[k_val] = {'MSE': np.nan} if task == 'regression' else {'Accuracy': np.nan, 'MSE': np.nan}
+            errors_only[k_val] = np.nan
+            continue
+
+        if task == 'classification' and use_sklearn and len(np.unique(y_k)) < 2:
+            print(
+                f"Warning: Only one class present in selected data for k={current_k}. LogisticRegression may fail or be meaningless. Assigning NaN metrics.")
+            results[k_val] = {'Accuracy': np.nan, 'Precision': np.nan, 'Recall': np.nan, 'F1': np.nan,
+                              'ROC_AUC': np.nan, 'MSE': np.nan}
+            errors_only[k_val] = np.nan
+            continue
+
+        current_metrics = {}
+        try:
+            # --- Initialize and train the model ---
+            if task == 'regression':
+                if use_sklearn:
+                    model = LinearRegression(fit_intercept=True)
+                    model.fit(x_k, y_k)
+                    y_pred = model.predict(x_test_flat)
+                else:  # Pseudo-inverse
+                    if current_k < x_k.shape[1]:  # Check if underdetermined
+                        print(
+                            f"Warning: k={current_k} (samples) < features ({x_k.shape[1]}). Pseudo-inverse might be unstable. Using sklearn LinearRegression instead.")
+                        model = LinearRegression(fit_intercept=True)
+                        model.fit(x_k, y_k)
+                        y_pred = model.predict(x_test_flat)
+                    else:
+                        try:
+                            beta_k = np.linalg.pinv(x_k) @ y_k
+                            y_pred = x_test_flat @ beta_k
+                        except np.linalg.LinAlgError:
+                            print(
+                                f"Error: SVD did not converge for pseudo-inverse at k={current_k}. Assigning NaN predictions.")
+                            y_pred = np.full_like(y_test, np.nan, dtype=np.float64)
+
+                # Compute Regression Metrics
+                if np.isnan(y_pred).any():
+                    current_metrics['MSE'] = np.nan
+                    current_metrics['MAE'] = np.nan
+                    current_metrics['R2'] = np.nan
+                else:
+                    current_metrics['MSE'] = mean_squared_error(y_test, y_pred)
+                    # current_metrics['MAE'] = mean_absolute_error(y_test, y_pred) # Uncomment if needed
+                    # current_metrics['R2'] = r2_score(y_test, y_pred) # Uncomment if needed
+                errors_only[k_val] = current_metrics['MSE']
+
+            elif task == 'classification':
+                if use_sklearn:
+                    model = LogisticRegression(max_iter=1000, solver='liblinear')  # liblinear is robust
+                    model.fit(x_k, y_k)
+                    y_pred = model.predict(x_test_flat)
+                    y_prob = model.predict_proba(x_test_flat) if hasattr(model, "predict_proba") else None
+
+                else:
+                    raise NotImplementedError("Custom classification model not implemented.")
+
+                # Compute Classification Metrics
+                num_classes = len(np.unique(y_test))  # Consider target classes
+                average_method = 'binary' if num_classes == 2 else 'weighted'
+
+                current_metrics['Accuracy'] = accuracy_score(y_test, y_pred)
+                current_metrics['Precision'] = precision_score(y_test, y_pred, average=average_method, zero_division=0)
+                current_metrics['Recall'] = recall_score(y_test, y_pred, average=average_method, zero_division=0)
+                current_metrics['F1'] = f1_score(y_test, y_pred, average=average_method, zero_division=0)
+                if y_prob is not None and num_classes == 2:
+                    current_metrics['ROC_AUC'] = roc_auc_score(y_test, y_prob[:, 1])
+                elif y_prob is not None and num_classes > 2 and hasattr(model, "predict_proba"):
+                    try:
+                        current_metrics['ROC_AUC'] = roc_auc_score(y_test, y_prob, multi_class='ovr',
+                                                                   average='weighted')
+                    except ValueError as e:  # Handles cases where not all classes are present in y_pred etc.
+                        print(
+                            f"Warning: ROC AUC calculation for multi-class failed for k={current_k}: {e}. Assigning NaN.")
+                        current_metrics['ROC_AUC'] = np.nan
+                else:
+                    current_metrics['ROC_AUC'] = np.nan
+
+                # For consistency with original, also compute MSE (though not standard for classification)
+                current_metrics['MSE'] = mean_squared_error(y_test, y_pred)
+                errors_only[k_val] = current_metrics['MSE']  # Or use 1.0 - Accuracy
+
+            else:
+                raise ValueError("Invalid task type. Choose 'regression' or 'classification'.")
+
+            results[k_val] = current_metrics
+
+        except Exception as e:
+            print(f"An error occurred during model training/evaluation for k={k_val}: {e}")
+            results[k_val] = {'MSE': np.nan} if task == 'regression' else {'Accuracy': np.nan,
+                                                                           'MSE': np.nan}  # Default error values
+            errors_only[k_val] = np.nan
+
+    if return_list:
+        return [errors_only.get(k, np.nan) for k in eval_range]  # Ensure order matches eval_range
+    else:
+        return results
+
+
 def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None, figure_path="./figure",
                            img_paths=None, test_img_indices=None, sell_img_indices=None):
     # Dictionaries to store errors, runtimes, and weights for each method and test point
@@ -529,7 +765,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
             task='regression',
         )
         if True:
-            error_func = evaluate_model_on_embeddings
+            error_func = evaluate_model_raw_data
             err_kwargs["return_list"] = True
         elif costs is not None:
             error_func = utils.get_error_under_budget
