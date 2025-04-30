@@ -97,12 +97,6 @@ def collate_batch(batch: List[Tuple[int, List[int]]], vocab: Any) -> Tuple[torch
     return labels, padded_texts
 
 
-def yield_tokens(data_iter: Any, tokenizer: Any) -> Any:
-    """ Helper to yield tokens from a dataset iterator. """
-    for _, text in data_iter:
-        yield tokenizer(text)
-
-
 # --- End Text Data Helper Functions ---
 
 
@@ -185,6 +179,12 @@ def get_text_data_set(
     # --- Data Loading & Iterator Setup ---
     # We need distinct iterables/iterators for vocab building vs data processing,
     # as iterating consumes the source.
+    try:
+        from datasets import load_dataset as hf_load
+        hf_datasets_available = True
+    except ImportError:
+        hf_datasets_available = False
+        logging.warning("HuggingFace 'datasets' library not found. TREC dataset loading will fail.")
 
     if dataset_name == "AG_NEWS":
         logging.info(f"Loading AG_NEWS dataset from {data_root}...")
@@ -233,7 +233,6 @@ def get_text_data_set(
         """Yields token lists from an iterator of text strings."""
         processed_count = 0
         for text in text_iterator:
-            # Ensure we are processing a string before tokenizing
             if isinstance(text, str):
                 yield tokenizer(text)
                 processed_count += 1
@@ -241,29 +240,37 @@ def get_text_data_set(
                 logging.warning(f"yield_tokens expected a string, but got {type(text)}. Skipping item.")
         logging.info(f"yield_tokens processed {processed_count} text items for vocabulary.")
 
-    specials = [unk_token, pad_token]  # Define your special tokens
+    specials = [unk_token, pad_token]
+    min_freq_for_vocab = 1  # Define the desired min frequency for the Vocab object
 
-    logging.info(f"Building vocabulary with min_freq={min_freq}...")
+    logging.info(f"Building vocabulary source structure...")
 
-    # 1. Build the ordered dictionary of tokens from the specific vocab iterator
-    #    Pass the iterator dedicated to vocabulary building.
+    # 1. Build the intermediate structure (often an ordered dict or token list)
+    #    NO min_freq argument here.
     try:
-        ordered_dict = build_vocab_from_iterator(
-            yield_tokens(vocab_source_iter),  # Use the dedicated iterator
-            # `specials` are handled by Vocab constructor
-        )
+        # This function yields token lists, build_vocab_from_iterator processes them
+        token_iterator_for_builder = yield_tokens(vocab_source_iter)
+
+        # The output here depends slightly on torchtext version but is usually
+        # suitable input for the Vocab constructor's ordering/counting.
+        # Often it's implicitly counting frequencies.
+        vocab_intermediate_data = build_vocab_from_iterator(token_iterator_for_builder)
+
     except Exception as e:
-        logging.error(f"Error during vocabulary building: {e}")
-        raise  # Re-raise after logging
+        logging.error(f"Error during vocabulary intermediate structure building: {e}")
+        raise
 
-    if not ordered_dict:
-        raise ValueError("Vocabulary building resulted in an empty dictionary. Check data source and tokenizer.")
+    if not vocab_intermediate_data:  # Check if the builder produced anything
+        raise ValueError("Vocabulary building (intermediate step) resulted in empty data.")
 
-    # 2. Create the Vocab object using the ordered dict and specials list
+    logging.info(f"Creating final Vocab object with min_freq={min_freq_for_vocab}...")
+
+    # 2. Create the Vocab object, applying min_freq here.
     vocab = Vocab(
-        ordered_dict,
+        vocab_intermediate_data,  # Pass the structure from step 1
+        min_freq=min_freq_for_vocab,  # <<< Apply min_freq constraint HERE
         specials=specials,
-        special_first=True  # Ensure specials like <unk>, <pad> get low indices
+        special_first=True
     )
 
     # 3. Set the default index for unknown tokens
@@ -350,49 +357,7 @@ def get_text_data_set(
     if not dataset:
         # This check remains valid and important
         raise ValueError("Processed training dataset is empty after filtering. Check data or processing logic.")
-    # def yield_tokens(source):
-    #     for item in source:
-    #         # item might be (label, text) or plain text
-    #         text = item[1] if isinstance(item, tuple) else item
-    #         yield tokenizer(text)
-    #
-    # specials = [unk_token, pad_token]
-    # vocab = build_vocab_from_iterator(
-    #     yield_tokens(vocab_source),
-    #     specials=specials
-    # )
-    # vocab.set_default_index(vocab[unk_token])
-    # pad_idx = vocab[pad_token]
-    # logging.info(f"Built vocab (size={len(vocab)}), '{pad_token}' idx={pad_idx}")
-    #
-    # # ── text → index pipeline ───────────────────────────────────
-    # text_pipeline = lambda t: vocab(tokenizer(t))
-    #
-    # # ── numericalize & skip empty ──────────────────────────────
-    # processed_train_data = []
-    # for lbl, txt in train_iter:
-    #     ids = text_pipeline(txt)
-    #     if ids:
-    #         processed_train_data.append((lbl - label_offset, ids))
-    #
-    # processed_test_data = []
-    # for lbl, txt in test_iter:
-    #     ids = text_pipeline(txt)
-    #     if ids:
-    #         processed_test_data.append((lbl - label_offset, ids))
-    #
-    # logging.info(
-    #     f"Processed: train={len(processed_train_data)}, "
-    #     f"test={len(processed_test_data)}"
-    # )
-    # dataset = processed_train_data
-    # test_set = processed_test_data
-    #
-    # if not dataset:
-    #     raise ValueError("Processed training dataset is empty.")
 
-    # --- Calculate Buyer Count ---
-    # (buyer count calculation remains the same)
     total_samples = len(dataset)
     buyer_count = min(int(total_samples * buyer_percentage), total_samples)
     logging.info(f"Total train samples available for splitting: {total_samples}")
