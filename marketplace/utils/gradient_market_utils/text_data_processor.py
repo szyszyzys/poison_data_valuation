@@ -5,10 +5,8 @@ from typing import List, Dict
 from typing import Optional, Tuple, Any
 
 import torch
-from datasets import load_dataset as hf_load
 from torch.utils.data import DataLoader, Subset
 from torchtext.data.utils import get_tokenizer
-from torchtext.datasets import AG_NEWS
 from torchtext.vocab import build_vocab_from_iterator, Vocab
 
 from marketplace.utils.gradient_market_utils.data_processor import split_dataset_discovery
@@ -271,7 +269,6 @@ def get_text_data_set(
         # Assume build_vocab_from_iterator returns the final Vocab object
         vocab = build_vocab_from_iterator(
             yield_tokens(vocab_source_iter),  # Pass the text string iterator
-            min_freq=min_freq_for_vocab,  # <<< Pass min_freq here
             specials=specials  # <<< Pass specials here
             # special_first=True # <<< You might try adding this back HERE if needed/supported by build_vocab...
             # but it's often handled by default when specials are given. Leave out first.

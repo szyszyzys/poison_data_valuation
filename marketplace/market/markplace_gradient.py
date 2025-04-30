@@ -240,14 +240,17 @@ class DataMarketplaceFederated(DataMarketplace):
                 victim_seller_id = None
 
         # --- 1.6 Perform Attack if Victim Found ---
-        if victim_seller_id and target_gradient:
-            gt_images, gt_labels = self.sellers[victim_seller_id].cur_data # Dataset object
-            # Call the dedicated attack function
+        if victim_seller_id is not None and target_gradient is not None:
+            dataset = self.sellers[victim_seller_id].cur_data
+            full_loader = torch.utils.data.DataLoader(dataset, batch_size=len(dataset))
+            gt_images, gt_labels = next(iter(full_loader))
+
             input_shape = gt_images[0].shape
-            num_classes = len(torch.unique(gt_labels))  # or set manually if needed
+            num_classes = len(torch.unique(gt_labels))
+
             gradient_inversion_log = perform_and_evaluate_inversion_attack(
                 target_gradient=target_gradient,
-                model_template=self.aggregator.global_model,  # Pass base structure
+                model_template=self.aggregator.global_model,
                 input_shape=input_shape,
                 num_classes=num_classes,
                 device=self.aggregator.device,
@@ -260,13 +263,10 @@ class DataMarketplaceFederated(DataMarketplace):
                 victim_id=victim_seller_id
             )
 
-            # *** Store attack result SEPARATELY ***
             if gradient_inversion_log:
-                # Add context useful for later analysis
-                gradient_inversion_log['victim_seller_idx'] = victim_seller_idx
+                gradient_inversion_log['victim_seller_idx'] = victim_seller_id
                 gradient_inversion_log['aggregation_method'] = "fedavg"
                 self.attack_results_list.append(gradient_inversion_log)
-
         # --- 2. Perform Aggregation ---
         agg_start_time = time.time()
         aggregated_gradient, selected_indices, outlier_indices = self.aggregator.aggregate(
