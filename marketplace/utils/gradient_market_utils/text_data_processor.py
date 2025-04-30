@@ -226,9 +226,6 @@ def get_text_data_set(
     #    It just generates the token counts/order.
     ordered_dict = build_vocab_from_iterator(
         yield_tokens(vocab_source),
-        min_freq=min_freq,
-        # specials=specials,  # Removed from here
-        # special_first=True # This logic moves to Vocab constructor
     )
 
     # 2. Create the Vocab object using the ordered dict and specials list

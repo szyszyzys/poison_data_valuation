@@ -241,7 +241,8 @@ class DataMarketplaceFederated(DataMarketplace):
 
         # --- 1.6 Perform Attack if Victim Found ---
         if victim_seller_id and target_gradient:
-            gt_images, gt_labels = self.sellers[victim_seller_id].cur_data
+            cur_data = dataloader.dataset
+            gt_images, gt_labels = cur_data
 
             # Call the dedicated attack function
             gradient_inversion_log = perform_and_evaluate_inversion_attack(
