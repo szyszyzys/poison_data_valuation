@@ -187,31 +187,41 @@ def get_text_data_set(
         logging.warning("HuggingFace 'datasets' library not found. TREC dataset loading will fail.")
 
     if dataset_name == "AG_NEWS":
-        logging.info(f"Loading AG_NEWS dataset from {data_root}...")
-        # Load the DataPipe objects (these are iterables)
-        dp_train_full, dp_test_full = AG_NEWS(root=data_root)
-        logging.info("Inspecting first few items from AG_NEWS dp_train_full:")
+        if not hf_datasets_available:
+            raise ImportError("HuggingFace 'datasets' library required for AG_NEWS but not installed.")
+        logging.info(f"Loading AG_NEWS dataset using HuggingFace datasets from {data_root}...")
+        # Load using HuggingFace datasets
+        ds = hf_load("ag_news", cache_dir=data_root)
+        train_ds = ds["train"]  # Dataset object
+        test_ds = ds["test"]  # Dataset object
+
+        # --- Inspection (Optional but recommended for first run) ---
+        logging.info("Inspecting first few items from AG_NEWS train_ds (HuggingFace):")
         count = 0
-        for item in dp_train_full:
-            print(f"Item {count}: type={type(item)}, content={item}")
-            if isinstance(item, tuple) and len(item) > 1:
-                print(f"  - Label type: {type(item[0])}")
-                print(f"  - Text part type: {type(item[1])}, content={item[1][:100]}...")  # Print first 100 chars
+        for ex in train_ds:
+            print(f"Item {count}: type={type(ex)}, keys={ex.keys() if isinstance(ex, dict) else 'N/A'}")
+            if isinstance(ex, dict) and "text" in ex:
+                print(f"  - Text part type: {type(ex['text'])}, content={ex['text'][:100]}...")  # Should be string
+            if isinstance(ex, dict) and "label" in ex:
+                print(f"  - Label part type: {type(ex['label'])}")  # Should be int
             count += 1
             if count >= 3: break
-        # For Vocabulary: Create an iterator specifically for vocab building (will be consumed)
-        # Note: AG_NEWS DataPipe yields (label, text_string) tuples
-        vocab_source_iter = (text for label, text in dp_train_full)
+        # --- End Inspection ---
 
-        # For Processing: Get fresh iterators from the original DataPipes
-        train_iter = iter(dp_train_full)  # Yields (label, text)
-        test_iter = iter(dp_test_full)  # Yields (label, text)
+        # For Vocabulary: Generator yielding only text from training set
+        # HF datasets usually yield dicts; access the 'text' field. Should be STRING here.
+        vocab_source_iter = (ex["text"] for ex in train_ds if isinstance(ex.get("text"), str))
+
+        # For Processing: Generators yielding (label, text) tuples
+        # AG_NEWS labels from HF start from 0
+        train_iter = ((ex["label"], ex["text"]) for ex in train_ds if isinstance(ex.get("text"), str))
+        test_iter = ((ex["label"], ex["text"]) for ex in test_ds if isinstance(ex.get("text"), str))
 
         num_classes = 4
+        # Class names matching HF ag_news labels {0: World, 1: Sports, 2: Business, 3: Sci/Tech}
         class_names = ['World', 'Sports', 'Business', 'Sci/Tech']
-        label_offset = 1  # AG_NEWS labels start at 1
-        logging.info("AG_NEWS dataset loaded.")
-
+        label_offset = 0  # Labels start at 0 with HF dataset
+        logging.info("AG_NEWS dataset loaded via HuggingFace datasets.")
     elif dataset_name == "TREC":
         if not hf_datasets_available:
             raise ImportError("HuggingFace 'datasets' library required for TREC dataset but not installed.")
@@ -283,9 +293,9 @@ def get_text_data_set(
     # 2. Create the Vocab object, applying min_freq here.
     vocab = Vocab(
         vocab_intermediate_data,  # Pass the structure from step 1
-        min_freq=min_freq_for_vocab,  # <<< Apply min_freq constraint HERE
-        specials=specials,
-        special_first=True
+        min_freq=min_freq_for_vocab,  # Apply min_freq constraint HERE
+        specials=specials  # Provide the list of special tokens
+        # special_first=True was removed as it's not supported by this torchtext version
     )
 
     # 3. Set the default index for unknown tokens

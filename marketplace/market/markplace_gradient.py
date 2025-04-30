@@ -241,15 +241,13 @@ class DataMarketplaceFederated(DataMarketplace):
 
         # --- 1.6 Perform Attack if Victim Found ---
         if victim_seller_id and target_gradient:
-            gt_images, gt_labels = self.sellers[victim_seller_id].cur_data
-            input_shape
-            num_classes
+            gt_images, gt_labels = self.sellers[victim_seller_id].cur_data # Dataset object
             # Call the dedicated attack function
             gradient_inversion_log = perform_and_evaluate_inversion_attack(
                 target_gradient=target_gradient,
                 model_template=self.aggregator.global_model,  # Pass base structure
-                input_shape=self.input_shape,
-                num_classes=self.num_classes,
+                input_shape=input_shape,
+                num_classes=num_classes,
                 device=self.aggregator.device,
                 attack_config=gradient_inversion_params,
                 ground_truth_images=gt_images,
