@@ -506,8 +506,8 @@ def evaluate_model_raw_data(
         y_test,  # Test labels
         y_train,  # Train labels
         w,  # Weights for selecting training samples
-        preprocess_func,  # Function to preprocess PIL Image -> Tensor
-        device,  # PyTorch device ('cuda' or 'cpu')
+        preprocess_func=None,  # Function to preprocess PIL Image -> Tensor
+        device='cuda',  # PyTorch device ('cuda' or 'cpu')
         eval_range=range(1, 10),
         task='regression',
         use_sklearn=True,
@@ -764,6 +764,8 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
             test_img_indices=index_query,
             sell_img_indices=sell_img_indices,
             task='regression',
+            device='cuda',
+            preprocess_func=preprocess
         )
         if True:
             error_func = evaluate_model_raw_data
