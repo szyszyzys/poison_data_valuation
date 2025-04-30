@@ -306,8 +306,8 @@ def generate_sybil_configs(output_dir):
     adv_rates = [0.1, 0.2, 0.3, 0.4]  # Fix adversary rate
     aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
     amplify_factors = [1.0]  # Vary amplification
-
-    for ds, rate, agg, amplify in itertools.product(datasets, adv_rates, aggregations, amplify_factors):
+    attack_modes = ["None", BACKDOOR, LABEL_FLIP]
+    for ds, rate, agg, amplify, attack_mode in itertools.product(datasets, adv_rates, aggregations, amplify_factors, attack_modes):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
         rate_pct = int(rate * 100)
         exp_id = f"sybil_{ds.lower()}_{agg.lower()}_adv{rate_pct}pct_amp{amplify}"
@@ -323,11 +323,20 @@ def generate_sybil_configs(output_dir):
         config['data_split']['num_sellers'] = 10
 
         # Enable backdoor attack (Sybil often works via backdoor pattern)
-        config['attack']['enabled'] = False
-        config['attack']['backdoor_target_label'] = 0  # Example target
-        config['attack']['trigger_type'] = 'blended_patch'  # Example trigger
-        config['attack']['attack_type'] = BACKDOOR
-        config['attack']['poison_rate'] = 0.2
+        if attack_modes == BACKDOOR:
+
+            config['attack']['enabled'] = True
+            config['attack']['backdoor_target_label'] = 0  # Example target
+            config['attack']['trigger_type'] = 'blended_patch'  # Example trigger
+            config['attack']['attack_type'] = BACKDOOR
+            config['attack']['poison_rate'] = 0.2
+        elif attack_mode == LABEL_FLIP:
+            config['attack']['enabled'] = True
+            config['attack']['attack_type'] = LABEL_FLIP
+            config['attack']['poison_rate'] = 0.2
+        else:
+            config['attack']['enabled'] = False
+
 
         # Enable and configure Sybil
         config['sybil']['is_sybil'] = True
