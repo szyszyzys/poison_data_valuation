@@ -250,7 +250,6 @@ def get_text_data_set(
     try:
         ordered_dict = build_vocab_from_iterator(
             yield_tokens(vocab_source_iter),  # Use the dedicated iterator
-            min_freq=min_freq,  # Use the defined min_freq
             # `specials` are handled by Vocab constructor
         )
     except Exception as e:
