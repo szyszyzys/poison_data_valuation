@@ -1,17 +1,19 @@
-import numpy as np
 import random
+from typing import Dict, List, Tuple
+
+import numpy as np
 import torch
 import torch.nn.functional as F
 from sklearn.metrics import confusion_matrix
 from sklearn.neighbors import NearestNeighbors  # Keep for potential fallback
 from torch import nn, softmax, optim
 from torcheval.metrics.functional import multiclass_f1_score
-from typing import Dict, List, Tuple
 
-from entry.gradient_market.skymask import classify
+from entry.gradient_market.skymask.classify import GMM2
 from entry.gradient_market.skymask.models import create_masknet
+from entry.gradient_market.skymask.mytorch import myconv2d, mylinear
 from marketplace.utils.gradient_market_utils.clustering import optimal_k_gap, kmeans
-from model.utils import get_image_model, load_model, apply_gradient_update, get_domain
+from model.utils import load_model, apply_gradient_update, get_domain
 
 
 # -----------------------------------------------------
@@ -688,21 +690,23 @@ class Aggregator:
                 global_epoch: int,  # Corresponds to niter
                 seller_updates: Dict[str, List[torch.Tensor]],
                 buyer_updates: List[torch.Tensor],  # The server update / baseline
-                server_data_loader, # NOTE: Type hint was removed in snippet, add DataLoader if appropriate
-                clip: bool = False, mask_epochs=20, mask_lr_config=1e-4, mask_clip_config=1.0, mask_threshold=0.5 # Adjusted default LR/Clip
+                server_data_loader,  # NOTE: Type hint was removed in snippet, add DataLoader if appropriate
+                clip: bool = False, mask_epochs=20, mask_lr_config=1e-4, mask_clip_config=1.0, mask_threshold=0.5
+                # Adjusted default LR/Clip
                 ) -> Tuple[List[torch.Tensor], List[int], List[int]]:
 
         print(f"--- Starting SkyMask (Original Logic - Recreate MaskNet) Aggregation (Epoch {global_epoch}) ---")
 
         # Define datalist structure HERE, using the model structure expected for gradients
         # This should match the structure of seller_updates and buyer_updates
-        datalist = [p.data.clone().cpu() for p in self.global_model.parameters()] # Use CPU clones for structure reference
+        datalist = [p.data.clone().cpu() for p in
+                    self.global_model.parameters()]  # Use CPU clones for structure reference
 
         # Flatten updates *before* calculating full params (for potential clipping/original grad access)
         print("Flattening updates...")
         seller_ids_list = list(seller_updates.keys())
         flat_seller_updates_dict = {}
-        processed_seller_updates_unflat = {} # Store potentially clipped unflattened updates
+        processed_seller_updates_unflat = {}  # Store potentially clipped unflattened updates
 
         if clip:
             print(f"Clipping seller updates with norm {self.clip_norm}")
@@ -710,16 +714,17 @@ class Aggregator:
                 update = seller_updates[sid]
                 update_on_device = [p.to(self.device) for p in update]
                 clipped_update_unflat = clip_gradient_update(update_on_device, self.clip_norm)
-                processed_seller_updates_unflat[sid] = clipped_update_unflat # Store for later aggregation
+                processed_seller_updates_unflat[sid] = clipped_update_unflat  # Store for later aggregation
                 flat_seller_updates_dict[sid] = flatten(clipped_update_unflat)
         else:
-             for sid in seller_ids_list:
-                 update_on_device = [p.to(self.device) for p in update]
-                 processed_seller_updates_unflat[sid] = update_on_device # Store original for later aggregation
-                 flat_seller_updates_dict[sid] = flatten(update_on_device)
+            for sid in seller_ids_list:
+                update = seller_updates[sid]
+                update_on_device = [p.to(self.device) for p in update]
+                processed_seller_updates_unflat[sid] = update_on_device  # Store original for later aggregation
+                flat_seller_updates_dict[sid] = flatten(update_on_device)
 
         flat_buyer_update = flatten([p.to(self.device) for p in buyer_updates])
-        buyer_update_on_device = [p.to(self.device) for p in buyer_updates] # Keep unflattened buyer update
+        buyer_update_on_device = [p.to(self.device) for p in buyer_updates]  # Keep unflattened buyer update
 
         # Use a detached copy of the global parameters from the start of the round
         global_params_base = [p.data.clone().to(self.device) for p in self.global_model.parameters()]
@@ -736,23 +741,23 @@ class Aggregator:
                 seller_params = [p_base + p_upd for p_base, p_upd in zip(global_params_base, update_on_device)]
                 worker_param_list.append(seller_params)
             except RuntimeError as e:
-                 print(f"Error processing update for seller {sid}. Shape mismatch or other issue?")
-                 print(f"Global param shapes: {[p.shape for p in global_params_base]}")
-                 print(f"Update shapes: {[p.shape for p in update_on_device]}")
-                 raise e
+                print(f"Error processing update for seller {sid}. Shape mismatch or other issue?")
+                print(f"Global param shapes: {[p.shape for p in global_params_base]}")
+                print(f"Update shapes: {[p.shape for p in update_on_device]}")
+                raise e
 
         # Calculate the full parameters for the buyer/server after applying the baseline update
         try:
             buyer_params = [p_base + p_upd for p_base, p_upd in zip(global_params_base, buyer_update_on_device)]
             worker_param_list.append(buyer_params)
         except RuntimeError as e:
-             print(f"Error processing buyer update. Shape mismatch or other issue?")
-             print(f"Global param shapes: {[p.shape for p in global_params_base]}")
-             print(f"Update shapes: {[p.shape for p in buyer_update_on_device]}")
-             raise e
+            print(f"Error processing buyer update. Shape mismatch or other issue?")
+            print(f"Global param shapes: {[p.shape for p in global_params_base]}")
+            print(f"Update shapes: {[p.shape for p in buyer_update_on_device]}")
+            raise e
 
-        n_models = len(worker_param_list) # Total models for MaskNet (sellers + buyer)
-        n_seller = len(seller_ids_list)   # Number of sellers only
+        n_models = len(worker_param_list)  # Total models for MaskNet (sellers + buyer)
+        n_seller = len(seller_ids_list)  # Number of sellers only
 
         # --- Basic checks ---
         if n_seller <= 0:
@@ -807,20 +812,20 @@ class Aggregator:
                 if isinstance(layer, (myconv2d, mylinear)):
                     # Extract weight mask for seller i
                     if i < len(layer.weight_mask):
-                         # Apply sigmoid HERE before flattening
-                         w_mask = torch.sigmoid(layer.weight_mask[i].data)
-                         seller_mask_tensors.append(torch.flatten(w_mask))
+                        # Apply sigmoid HERE before flattening
+                        w_mask = torch.sigmoid(layer.weight_mask[i].data)
+                        seller_mask_tensors.append(torch.flatten(w_mask))
                     else:
-                         print(f"Warning: Index {i} out of bounds for weight_mask in layer {layer}. Skipping.")
+                        print(f"Warning: Index {i} out of bounds for weight_mask in layer {layer}. Skipping.")
 
                     # Extract bias mask for seller i if it exists
                     if hasattr(layer, 'bias_mask') and layer.bias_mask is not None:
-                         if i < len(layer.bias_mask):
-                             # Apply sigmoid HERE before flattening
-                             b_mask = torch.sigmoid(layer.bias_mask[i].data)
-                             seller_mask_tensors.append(torch.flatten(b_mask))
-                         else:
-                             print(f"Warning: Index {i} out of bounds for bias_mask in layer {layer}. Skipping.")
+                        if i < len(layer.bias_mask):
+                            # Apply sigmoid HERE before flattening
+                            b_mask = torch.sigmoid(layer.bias_mask[i].data)
+                            seller_mask_tensors.append(torch.flatten(b_mask))
+                        else:
+                            print(f"Warning: Index {i} out of bounds for bias_mask in layer {layer}. Skipping.")
 
             if not seller_mask_tensors:
                 print(f"Warning: No mask parameters found for seller index {i}.")
@@ -830,26 +835,25 @@ class Aggregator:
                 # Concatenate all mask parts for this seller
                 full_client_mask = torch.cat(seller_mask_tensors)
                 # Threshold and convert to numpy
-                out = (full_client_mask > t).float() # Apply threshold
-                mask_list_np.append(out.detach().cpu().numpy()) # Now append the 1D numpy array
+                out = (full_client_mask > t).float()  # Apply threshold
+                mask_list_np.append(out.detach().cpu().numpy())  # Now append the 1D numpy array
 
         # --- Sanity Check ---
         if mask_list_np:
-             first_len = mask_list_np[0].size
-             if not all(m.size == first_len for m in mask_list_np):
-                 print("ERROR: Mask lengths are still inhomogeneous after extraction fix!")
-                 print([m.shape for m in mask_list_np])
-                 # Fallback: mark all as outliers
-                 selected_ids = []
-                 outlier_ids = list(range(n_seller))
-                 # Return zero gradient or handle error appropriately
-                 aggregated_gradient_unflattened = [torch.zeros_like(p, device=self.device) for p in datalist]
-                 return aggregated_gradient_unflattened, selected_ids, outlier_ids
-             else:
-                 print(f"Successfully extracted {len(mask_list_np)} masks with consistent length {first_len}.")
+            first_len = mask_list_np[0].size
+            if not all(m.size == first_len for m in mask_list_np):
+                print("ERROR: Mask lengths are still inhomogeneous after extraction fix!")
+                print([m.shape for m in mask_list_np])
+                # Fallback: mark all as outliers
+                selected_ids = []
+                outlier_ids = list(range(n_seller))
+                # Return zero gradient or handle error appropriately
+                aggregated_gradient_unflattened = [torch.zeros_like(p, device=self.device) for p in datalist]
+                return aggregated_gradient_unflattened, selected_ids, outlier_ids
+            else:
+                print(f"Successfully extracted {len(mask_list_np)} masks with consistent length {first_len}.")
         else:
-             print("Warning: mask_list_np is empty after extraction.")
-
+            print("Warning: mask_list_np is empty after extraction.")
 
         # 5. GMM Clustering
         print("Performing GMM clustering...")
@@ -859,26 +863,24 @@ class Aggregator:
 
         if not valid_masks_for_gmm:
             print("Warning: No valid masks extracted. Cannot perform GMM. Assuming all sellers are outliers.")
-            gmm_labels_for_valid = [] # No results
+            gmm_labels_for_valid = []  # No results
         elif len(valid_masks_for_gmm) == 1:
-             print("Warning: Only one valid mask for GMM. Marking it as an inlier (or outlier based on policy).")
-             # Policy decision: mark single client as inlier (1) or outlier (0)? Let's choose inlier.
-             gmm_labels_for_valid = [1]
+            print("Warning: Only one valid mask for GMM. Marking it as an inlier (or outlier based on policy).")
+            # Policy decision: mark single client as inlier (1) or outlier (0)? Let's choose inlier.
+            gmm_labels_for_valid = [1]
         else:
             # Pass only the non-empty masks to GMM
-            gmm_labels_for_valid = GMM2(valid_masks_for_gmm) # Get results for valid sellers
-
+            gmm_labels_for_valid = GMM2(valid_masks_for_gmm)  # Get results for valid sellers
 
         # Map GMM results back to original seller indices (0 to n_seller-1)
         # Assume 0 = outlier, 1 = inlier from GMM2's output
-        res = [0] * n_seller # Default to outlier
+        res = [0] * n_seller  # Default to outlier
         for idx_in_valid_list, original_idx in enumerate(original_indices_with_valid_masks):
             if idx_in_valid_list < len(gmm_labels_for_valid):
-                 res[original_idx] = gmm_labels_for_valid[idx_in_valid_list]
+                res[original_idx] = gmm_labels_for_valid[idx_in_valid_list]
             else:
-                 # Should not happen if GMM2 returns a list of the same length as its input
-                 print(f"Warning: GMM result missing for original index {original_idx}. Marking as outlier.")
-
+                # Should not happen if GMM2 returns a list of the same length as its input
+                print(f"Warning: GMM result missing for original index {original_idx}. Marking as outlier.")
 
         # 6. Determine selected/outliers and Aggregate using ORIGINAL UPDATES
         selected_ids = [i for i, label in enumerate(res) if label == 1]
@@ -897,8 +899,8 @@ class Aggregator:
             count = 0
             print(f"Aggregating updates from {num_selected} selected sellers.")
             for idx in selected_ids:
-                sid = seller_ids_list[idx] # Get the original ID
-                update_to_add = processed_seller_updates_unflat[sid] # Get the processed update
+                sid = seller_ids_list[idx]  # Get the original ID
+                update_to_add = processed_seller_updates_unflat[sid]  # Get the processed update
                 for i in range(len(aggregated_gradient_unflattened)):
                     aggregated_gradient_unflattened[i] += update_to_add[i]
                 count += 1
