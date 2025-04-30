@@ -161,143 +161,196 @@ def get_text_data_set(
         TypeError: If vocabulary object has unexpected type in collate_fn.
     """
     # ── reproducibility ────────────────────────────────────────
+    # ── Seed setting ───────────────────────────────────────────────
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    # For reproducibility, you might also consider these, but they can affect performance:
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.benchmark = False
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-        logging.info("CUDA available, setting CUDA seed.")
+        # torch.cuda.manual_seed(seed) # Often sufficient if using single GPU
+        logging.info(f"CUDA available, setting CUDA seeds to {seed}.")
     else:
         logging.info("CUDA not available.")
 
     # ── constants & tokenizer ───────────────────────────────────
     unk_token, pad_token = "<unk>", "<pad>"
+    min_freq = 1  # Define min_freq for vocab building consistently
     os.makedirs(data_root, exist_ok=True)
     tokenizer = get_tokenizer('basic_english')
+    logging.info("Using 'basic_english' tokenizer.")
 
-    # ── load raw iterators ──────────────────────────────────────
+    # --- Data Loading & Iterator Setup ---
+    # We need distinct iterables/iterators for vocab building vs data processing,
+    # as iterating consumes the source.
+
     if dataset_name == "AG_NEWS":
-        # returns two DataPipes of (label, text)
-        dp_train, dp_test = AG_NEWS(root=data_root)
-        train_iter = iter(dp_train)
-        test_iter = iter(dp_test)
+        logging.info(f"Loading AG_NEWS dataset from {data_root}...")
+        # Load the DataPipe objects (these are iterables)
+        dp_train_full, dp_test_full = AG_NEWS(root=data_root)
+
+        # For Vocabulary: Create an iterator specifically for vocab building (will be consumed)
+        # Note: AG_NEWS DataPipe yields (label, text_string) tuples
+        vocab_source_iter = (text for label, text in dp_train_full)
+
+        # For Processing: Get fresh iterators from the original DataPipes
+        train_iter = iter(dp_train_full)  # Yields (label, text)
+        test_iter = iter(dp_test_full)  # Yields (label, text)
 
         num_classes = 4
         class_names = ['World', 'Sports', 'Business', 'Sci/Tech']
-        label_offset = 1
-
-        # for vocab: one‐off train split
-        vocab_source = iter(AG_NEWS(root=data_root))
+        label_offset = 1  # AG_NEWS labels start at 1
+        logging.info("AG_NEWS dataset loaded.")
 
     elif dataset_name == "TREC":
-        # TREC no longer in torchtext 0.17 → use HuggingFace
-        ds = hf_load("trec", "default", cache_dir=data_root)
-        train_ds, test_ds = ds["train"], ds["test"]
+        if not hf_datasets_available:
+            raise ImportError("HuggingFace 'datasets' library required for TREC dataset but not installed.")
+        logging.info(f"Loading TREC dataset using HuggingFace datasets from {data_root}...")
+        # Load HuggingFace dataset object
+        ds = hf_load("trec", "default", cache_dir=data_root)  # Specify subset 'default' if needed
+        train_ds, test_ds = ds["train"], ds["test"]  # Access splits
 
-        # generators of (coarse_label, text)
+        # For Vocabulary: Generator yielding only text from training set
+        vocab_source_iter = (ex["text"] for ex in train_ds)
+
+        # For Processing: Generators yielding (label, text) tuples
+        # TREC labels (coarse_label) start from 0
         train_iter = ((ex["coarse_label"], ex["text"]) for ex in train_ds)
         test_iter = ((ex["coarse_label"], ex["text"]) for ex in test_ds)
 
-        num_classes = 6
+        num_classes = 6  # Based on coarse_label
         class_names = ['ABBR', 'ENTY', 'DESC', 'HUM', 'LOC', 'NUM']
-        label_offset = 0
-
-        # for vocab: just the text field
-        vocab_source = (ex["text"] for ex in train_ds)
+        label_offset = 0  # TREC labels start at 0
+        logging.info("TREC dataset loaded.")
 
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
     # ── build vocab ─────────────────────────────────────────────
-    def yield_tokens(source):
-        """Yields tokens from the source data."""
-        for item in source:
-            # item might be (label, text) or plain text
-            text = item[1] if isinstance(item, tuple) else item
-            yield tokenizer(text)
+    def yield_tokens(text_iterator):
+        """Yields token lists from an iterator of text strings."""
+        processed_count = 0
+        for text in text_iterator:
+            # Ensure we are processing a string before tokenizing
+            if isinstance(text, str):
+                yield tokenizer(text)
+                processed_count += 1
+            else:
+                logging.warning(f"yield_tokens expected a string, but got {type(text)}. Skipping item.")
+        logging.info(f"yield_tokens processed {processed_count} text items for vocabulary.")
 
     specials = [unk_token, pad_token]  # Define your special tokens
-    min_freq = 1  # Set a minimum frequency if desired (1 means include all tokens)
 
-    logging.info("Building vocabulary...")
+    logging.info(f"Building vocabulary with min_freq={min_freq}...")
 
-    # 1. Build the ordered dictionary of tokens from the iterator
-    #    This function no longer takes 'specials' directly for Vocab creation logic.
-    #    It just generates the token counts/order.
-    ordered_dict = build_vocab_from_iterator(
-        yield_tokens(vocab_source),
-    )
+    # 1. Build the ordered dictionary of tokens from the specific vocab iterator
+    #    Pass the iterator dedicated to vocabulary building.
+    try:
+        ordered_dict = build_vocab_from_iterator(
+            yield_tokens(vocab_source_iter),  # Use the dedicated iterator
+            min_freq=min_freq,  # Use the defined min_freq
+            # `specials` are handled by Vocab constructor
+        )
+    except Exception as e:
+        logging.error(f"Error during vocabulary building: {e}")
+        raise  # Re-raise after logging
+
+    if not ordered_dict:
+        raise ValueError("Vocabulary building resulted in an empty dictionary. Check data source and tokenizer.")
 
     # 2. Create the Vocab object using the ordered dict and specials list
     vocab = Vocab(
         ordered_dict,
         specials=specials,
-        special_first=True  # Ensure specials come first if needed
+        special_first=True  # Ensure specials like <unk>, <pad> get low indices
     )
 
     # 3. Set the default index for unknown tokens
-    #    Make sure unk_token is defined and is in your specials list
     if unk_token in vocab:
         vocab.set_default_index(vocab[unk_token])
         unk_idx = vocab[unk_token]
         logging.info(f"Set default index for unknown tokens to '{unk_token}' (idx={unk_idx})")
     else:
-        # Handle case where unk_token somehow wasn't included
-        # Setting default index to -1 is one option, but usually indicates an issue.
-        vocab.set_default_index(-1)
-        logging.warning(f"'{unk_token}' not found in computed vocabulary. "
-                        f"Default index set to -1. Check your specials list and data.")
+        # This case should be rare if unk_token is in specials and min_freq=1
+        vocab.set_default_index(-1)  # Or handle differently
+        logging.warning(f"'{unk_token}' not found in computed vocabulary despite being in specials. "
+                        f"Default index set to -1. This might indicate an issue.")
 
     # 4. Get the padding index
     if pad_token in vocab:
         pad_idx = vocab[pad_token]
+        logging.info(f"Padding token '{pad_token}' has index {pad_idx}.")
     else:
-        pad_idx = -1  # Should not happen if pad_token is in specials
-        logging.error(f"Critical: '{pad_token}' not found in vocabulary!")
-        # Consider raising an error here if padding is essential
+        # This should definitely not happen if pad_token is in specials
+        pad_idx = -1
+        logging.error(f"Critical: Padding token '{pad_token}' not found in vocabulary!")
+        # Depending on usage, you might want to raise an error here:
+        # raise ValueError(f"Padding token '{pad_token}' could not be added to vocabulary.")
 
-    logging.info(f"Built vocab (size={len(vocab)}), '{pad_token}' idx={pad_idx}")
+    logging.info(f"Built vocab (size={len(vocab)}).")
 
     # ── text → index pipeline ───────────────────────────────────
     # The Vocab object is callable for string-to-index lookup
-    text_pipeline = lambda t: vocab(tokenizer(t))
+    # Ensure tokenizer returns a list of tokens suitable for vocab lookup
+    text_pipeline = lambda text_string: vocab(tokenizer(text_string))
 
     # ── numericalize & skip empty ──────────────────────────────
-    # This part should remain largely the same, as it relies on the
-    # final 'vocab' object and 'text_pipeline' which are now correctly defined.
-    logging.info("Processing train data...")
-    processed_train_data = []
-    for item in train_iter:  # Assuming train_iter yields (label, text)
-        lbl, txt = item
-        ids = text_pipeline(txt)
-        if ids:  # Check if the result is not empty (e.g., after removing stopwords)
-            processed_train_data.append((lbl - label_offset, ids))
-        # else:
-        #     logging.debug(f"Skipping empty text after processing: {txt}")
+    # Use the separate train_iter and test_iter obtained earlier
 
-    logging.info("Processing test data...")
+    logging.info("Processing and numericalizing train data...")
+    processed_train_data = []
+    train_processed_count = 0
+    train_skipped_count = 0
+    for item in train_iter:  # Use the iterator dedicated to training data processing
+        try:
+            # Expecting (label, text) format from iterators defined above
+            lbl, txt = item
+            ids = text_pipeline(txt)
+            if ids:  # Check if the result is not empty
+                processed_train_data.append((lbl - label_offset, ids))  # Apply label offset
+                train_processed_count += 1
+            else:
+                train_skipped_count += 1
+                # logging.debug(f"Skipping empty text after processing train item: {txt[:50]}...") # Optional debug log
+        except Exception as e:
+            logging.warning(f"Error processing train item: {item}. Error: {e}. Skipping item.")
+            train_skipped_count += 1
+    logging.info(f"Finished processing train data. Processed: {train_processed_count}, Skipped: {train_skipped_count}")
+
+    logging.info("Processing and numericalizing test data...")
     processed_test_data = []
-    for item in test_iter:  # Assuming test_iter yields (label, text)
-        lbl, txt = item
-        ids = text_pipeline(txt)
-        if ids:
-            processed_test_data.append((lbl - label_offset, ids))
-        # else:
-        #     logging.debug(f"Skipping empty text after processing: {txt}")
+    test_processed_count = 0
+    test_skipped_count = 0
+    for item in test_iter:  # Use the iterator dedicated to test data processing
+        try:
+            # Expecting (label, text) format
+            lbl, txt = item
+            ids = text_pipeline(txt)
+            if ids:
+                processed_test_data.append((lbl - label_offset, ids))  # Apply label offset
+                test_processed_count += 1
+            else:
+                test_skipped_count += 1
+                # logging.debug(f"Skipping empty text after processing test item: {txt[:50]}...") # Optional debug log
+        except Exception as e:
+            logging.warning(f"Error processing test item: {item}. Error: {e}. Skipping item.")
+            test_skipped_count += 1
+    logging.info(f"Finished processing test data. Processed: {test_processed_count}, Skipped: {test_skipped_count}")
 
     logging.info(
-        f"Processed: train={len(processed_train_data)}, "
+        f"Total Processed Samples: train={len(processed_train_data)}, "
         f"test={len(processed_test_data)}"
     )
 
-    # Assign to dataset variables (if needed)
+    # Assign to dataset variables (if needed for clarity or downstream use)
     dataset = processed_train_data
     test_set = processed_test_data
 
     if not dataset:
-        # This check remains valid
-        raise ValueError("Processed training dataset is empty after filtering.")
-
+        # This check remains valid and important
+        raise ValueError("Processed training dataset is empty after filtering. Check data or processing logic.")
     # def yield_tokens(source):
     #     for item in source:
     #         # item might be (label, text) or plain text
