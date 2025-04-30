@@ -1,13 +1,12 @@
-import random
-from typing import Dict, List, Tuple
-
 import numpy as np
+import random
 import torch
 import torch.nn.functional as F
 from sklearn.metrics import confusion_matrix
 from sklearn.neighbors import NearestNeighbors  # Keep for potential fallback
 from torch import nn, softmax, optim
 from torcheval.metrics.functional import multiclass_f1_score
+from typing import Dict, List, Tuple
 
 from entry.gradient_market.skymask import classify
 from entry.gradient_market.skymask.models import create_masknet
@@ -177,7 +176,6 @@ class Aggregator:
         self.loss_fn = loss_fn
 
         self.sm_model_type = sm_model_type
-
 
     # ---------------------------
     # Gradient update utilities
@@ -691,7 +689,7 @@ class Aggregator:
                 seller_updates: Dict[str, List[torch.Tensor]],
                 buyer_updates: List[torch.Tensor],  # The server update / baseline
                 server_data_loader,
-                clip: bool = False
+                clip: bool = False, mask_epochs=20, mask_lr_config=1e7, clip_lmt=1e-7
                 ) -> Tuple[List[torch.Tensor], List[int], List[int]]:
         """
         Integrates the original SkyMask function logic (MaskNet+GMM).
@@ -718,8 +716,8 @@ class Aggregator:
         global_params_base = [p.data.clone().to(self.device) for p in self.global_model.parameters()]
         # 1. Prepare Updated Parameter Lists for MaskNet Input
         print("Preparing inputs for MaskNet...")
-        worker_param_list = [] # List to hold parameter lists [[seller1_params], [seller2_params], ..., [buyer_params]]
-        seller_ids_list = list(seller_updates.keys()) # Consistent order
+        worker_param_list = []  # List to hold parameter lists [[seller1_params], [seller2_params], ..., [buyer_params]]
+        seller_ids_list = list(seller_updates.keys())  # Consistent order
 
         processed_seller_updates = {}
         if clip:
@@ -747,31 +745,29 @@ class Aggregator:
                 print(f"Update shapes: {[p.shape for p in update_on_device]}")
                 raise e
 
-
         # Calculate the full parameters for the buyer/server after applying the baseline update
         buyer_update_on_device = [p.to(self.device) for p in buyer_updates]
         try:
-             # Calculate theta_buyer = theta_global + buyer_update
+            # Calculate theta_buyer = theta_global + buyer_update
             buyer_params = [p_base + p_upd for p_base, p_upd in zip(global_params_base, buyer_update_on_device)]
             worker_param_list.append(buyer_params)
         except RuntimeError as e:
-                print(f"Error processing buyer update. Shape mismatch or other issue?")
-                print(f"Global param shapes: {[p.shape for p in global_params_base]}")
-                print(f"Update shapes: {[p.shape for p in buyer_update_on_device]}")
-                raise e
+            print(f"Error processing buyer update. Shape mismatch or other issue?")
+            print(f"Global param shapes: {[p.shape for p in global_params_base]}")
+            print(f"Update shapes: {[p.shape for p in buyer_update_on_device]}")
+            raise e
 
         n_models = len(worker_param_list)
         n_seller = len(seller_ids_list)
 
-        if n_models <= 0: # Should only happen if both sellers and buyer updates are empty
-             print("Warning: No seller or buyer updates to process.")
-             # Return zero gradient matching the structure of global_params_base
-             zero_gradient = [torch.zeros_like(p, device=self.device) for p in global_params_base]
-             return (zero_gradient, [], [])
+        if n_models <= 0:  # Should only happen if both sellers and buyer updates are empty
+            print("Warning: No seller or buyer updates to process.")
+            # Return zero gradient matching the structure of global_params_base
+            zero_gradient = [torch.zeros_like(p, device=self.device) for p in global_params_base]
+            return (zero_gradient, [], [])
         elif n_seller <= 0:
-             print("Warning: No seller updates, only processing buyer update.")
-             # Handle case with only buyer update if needed, or proceed if MaskNet handles n=1
-
+            print("Warning: No seller updates, only processing buyer update.")
+            # Handle case with only buyer update if needed, or proceed if MaskNet handles n=1
 
         print(f"Prepared worker_param_list with parameters from {n_seller} sellers + 1 buyer.")
 
@@ -786,10 +782,13 @@ class Aggregator:
         if server_data_loader is None:
             raise ValueError("server_data_loader is required for MaskNet training but was not provided.")
 
+        #         mask_lr = 1e7
+        #         clip_lmt = 1e-7
         # Get training hyperparams from self (set during __init__)
-        mask_lr = self.mask_lr_config
-        clip_lmt = self.mask_clip_config
-        epochs = self.mask_epochs
+        #
+        mask_lr = mask_lr_config
+        clip_lmt = mask_clip_config
+        epochs = mask_epochs
         print(f"MaskNet Training Params: LR={mask_lr}, Clip={clip_lmt}, Epochs={epochs}")
 
         # === Call the training function on the local masknet ===
