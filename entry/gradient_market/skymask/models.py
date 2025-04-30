@@ -366,15 +366,15 @@ class CnnCifarMaskNet(nn.Module):
 
         # --- Layer Definitions ---
         self.conv1 = my.myconv2d(num_workers, device, [w[0] for w in worker_param_list],
-                                 [w[1] for w in worker_param_list], kernel_size=3, padding=1)
+                                 [w[1] for w in worker_param_list], padding=1)
         self.bn1 = my.mybatch_norm(num_workers, device, [w[2] for w in worker_param_list],
                                    [w[3] for w in worker_param_list])
         self.conv2 = my.myconv2d(num_workers, device, [w[4] for w in worker_param_list],
-                                 [w[5] for w in worker_param_list], kernel_size=3, padding=1)
+                                 [w[5] for w in worker_param_list], padding=1)
         self.bn2 = my.mybatch_norm(num_workers, device, [w[6] for w in worker_param_list],
                                    [w[7] for w in worker_param_list])
         self.conv3 = my.myconv2d(num_workers, device, [w[8] for w in worker_param_list],
-                                 [w[9] for w in worker_param_list], kernel_size=3, padding=1)
+                                 [w[9] for w in worker_param_list], padding=1)
         self.bn3 = my.mybatch_norm(num_workers, device, [w[10] for w in worker_param_list],
                                    [w[11] for w in worker_param_list])
         self.pool = nn.MaxPool2d(2, 2)  # Standard layer
