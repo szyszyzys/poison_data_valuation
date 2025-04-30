@@ -190,7 +190,15 @@ def get_text_data_set(
         logging.info(f"Loading AG_NEWS dataset from {data_root}...")
         # Load the DataPipe objects (these are iterables)
         dp_train_full, dp_test_full = AG_NEWS(root=data_root)
-
+        logging.info("Inspecting first few items from AG_NEWS dp_train_full:")
+        count = 0
+        for item in dp_train_full:
+            print(f"Item {count}: type={type(item)}, content={item}")
+            if isinstance(item, tuple) and len(item) > 1:
+                print(f"  - Label type: {type(item[0])}")
+                print(f"  - Text part type: {type(item[1])}, content={item[1][:100]}...")  # Print first 100 chars
+            count += 1
+            if count >= 3: break
         # For Vocabulary: Create an iterator specifically for vocab building (will be consumed)
         # Note: AG_NEWS DataPipe yields (label, text_string) tuples
         vocab_source_iter = (text for label, text in dp_train_full)
@@ -209,16 +217,23 @@ def get_text_data_set(
             raise ImportError("HuggingFace 'datasets' library required for TREC dataset but not installed.")
         logging.info(f"Loading TREC dataset using HuggingFace datasets from {data_root}...")
         # Load HuggingFace dataset object
-        ds = hf_load("trec", "default", cache_dir=data_root)  # Specify subset 'default' if needed
-        train_ds, test_ds = ds["train"], ds["test"]  # Access splits
+        ds = hf_load("trec", "default", cache_dir=data_root)
+        train_ds = ds["train"]
+        test_ds = ds["test"]  # <<< Define test_ds
+        logging.info("Inspecting first few items from TREC train_ds:")
+        count = 0
+        for ex in train_ds:
+            print(f"Item {count}: type={type(ex)}, keys={ex.keys() if isinstance(ex, dict) else 'N/A'}")
+            if isinstance(ex, dict) and "text" in ex:
+                print(f"  - Text part type: {type(ex['text'])}, content={ex['text'][:100]}...")
+            count += 1
+            if count >= 3: break
 
-        # For Vocabulary: Generator yielding only text from training set
         vocab_source_iter = (ex["text"] for ex in train_ds)
 
         # For Processing: Generators yielding (label, text) tuples
-        # TREC labels (coarse_label) start from 0
         train_iter = ((ex["coarse_label"], ex["text"]) for ex in train_ds)
-        test_iter = ((ex["coarse_label"], ex["text"]) for ex in test_ds)
+        test_iter = ((ex["coarse_label"], ex["text"]) for ex in test_ds) # <<< Use test_ds here
 
         num_classes = 6  # Based on coarse_label
         class_names = ['ABBR', 'ENTY', 'DESC', 'HUM', 'LOC', 'NUM']
