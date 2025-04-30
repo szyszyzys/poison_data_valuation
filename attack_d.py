@@ -330,9 +330,9 @@ def save_json(path, results):
 
 
 def evaluate_model_on_embeddings(
-        x_test_embeddings,  # Renamed for clarity
+        x_test,  # Renamed for clarity
         y_test,
-        x_train_embeddings,  # Renamed for clarity
+        x_train,  # Renamed for clarity
         y_train,
         w,
         eval_range=range(1, 10),
@@ -518,9 +518,9 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
 
         # Prepare keyword arguments for the error function
         err_kwargs = dict(
-            x_test_embeddings=x_query,
+            x_test=x_query,
             y_test=y_query,
-            x_train_embeddings=x_s,
+            x_train=x_s,
             y_train=y_s,
             eval_range=eval_range,
             img_paths=img_paths,
