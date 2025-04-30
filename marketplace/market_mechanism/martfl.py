@@ -689,7 +689,7 @@ class Aggregator:
                 seller_updates: Dict[str, List[torch.Tensor]],
                 buyer_updates: List[torch.Tensor],  # The server update / baseline
                 server_data_loader,
-                clip: bool = False, mask_epochs=20, mask_lr_config=1e7, mask_clip_config=1e-7
+                clip: bool = False, mask_epochs=20, mask_lr_config=1e7, mask_clip_config=1e-7, mask_threshold=0.5
                 ) -> Tuple[List[torch.Tensor], List[int], List[int]]:
         """
         Integrates the original SkyMask function logic (MaskNet+GMM).
@@ -833,7 +833,7 @@ class Aggregator:
 
         print(f"Extracting masks assuming {size_per_seller} param groups per seller.")
         mask_list_np = []
-        t = torch.Tensor([self.mask_threshold]).to(self.device)
+        t = torch.Tensor([mask_threshold]).to(self.device)
 
         for i in range(n_seller):
             mask = []
