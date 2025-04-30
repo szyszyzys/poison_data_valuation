@@ -23,9 +23,9 @@ from tqdm import tqdm
 
 # CLIP model and processor
 import daved.src.frank_wolfe as frank_wolfe  # Ensure this module contains the design_selection function
-from attack.adv import Adv
+from attack.attack_data_market.adv import Adv
+from attack.attack_data_market.general_attack.my_utils import plot_results_data_selection, get_data
 # Import your custom modules or utilities
-from attack.general_attack.my_utils import get_data, plot_results_data_selection
 from daved.src import utils
 from daved.src.main import plot_results
 
