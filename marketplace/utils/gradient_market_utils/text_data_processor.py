@@ -187,7 +187,7 @@ def get_text_data_set(
         label_offset = 1
 
         # for vocab: one‐off train split
-        vocab_source = iter(AG_NEWS(root=data_root, split='train'))
+        vocab_source = iter(AG_NEWS(root=data_root))
 
     elif dataset_name == "TREC":
         # TREC no longer in torchtext 0.17 → use HuggingFace

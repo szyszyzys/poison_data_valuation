@@ -246,10 +246,10 @@ class DataMarketplaceFederated(DataMarketplace):
             # Call the dedicated attack function
             gradient_inversion_log = perform_and_evaluate_inversion_attack(
                 target_gradient=target_gradient,
-                model_template=self.model_template,  # Pass base structure
+                model_template=self.aggregator.global_model,  # Pass base structure
                 input_shape=self.input_shape,
                 num_classes=self.num_classes,
-                device=self.device,
+                device=self.aggregator.device,
                 attack_config=gradient_inversion_params,
                 ground_truth_images=gt_images,
                 ground_truth_labels=gt_labels,
