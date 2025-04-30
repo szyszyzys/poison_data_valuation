@@ -39,8 +39,8 @@ def clip_gradient(optimizer, grad_clip):
                 param.grad.data.clamp_(-grad_clip, grad_clip)
 
 
-def train_masknet(masknet: torch.nn.Module,
-                  server_data_loader: torch.utils.data.DataLoader,
+def train_masknet(masknet,
+                  server_data_loader,
                   epochs: int,
                   lr: float,
                   grad_clip: float,
