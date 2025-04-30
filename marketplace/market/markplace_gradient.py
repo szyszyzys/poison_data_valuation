@@ -44,7 +44,7 @@ class DataMarketplaceFederated(DataMarketplace):
         self.benign_selection_rate_list = []
         self.attack_results_list = []  # NEW: Stores only attack log dicts
         self.attack_config = privacy_attack
-        self.attack_save_dir = privacy_attack["privacy_attack_path"]
+        self.attack_save_dir = privacy_attack.get("privacy_attack_path", './result')
         # Dict like {'type': 'index', 'value': 0} or {'type': 'id', 'value': 'seller_X'}
 
     def register_seller(self, seller_id: str, seller: BaseSeller):
