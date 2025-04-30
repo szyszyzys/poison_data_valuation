@@ -690,7 +690,7 @@ class Aggregator:
                 global_epoch: int,  # Corresponds to niter
                 seller_updates: Dict[str, List[torch.Tensor]],
                 buyer_updates: List[torch.Tensor],  # The server update / baseline
-                server_data_loader: DataLoader,
+                server_data_loader,
                 clip: bool = False
                 ) -> Tuple[List[torch.Tensor], List[int], List[int]]:
         """
