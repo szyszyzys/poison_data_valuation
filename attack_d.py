@@ -529,7 +529,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
             task='regression',
         )
         if True:
-            error_func = evaluate_model_raw_data
+            error_func = evaluate_model_on_embeddings
             err_kwargs["return_list"] = True
         elif costs is not None:
             error_func = utils.get_error_under_budget
