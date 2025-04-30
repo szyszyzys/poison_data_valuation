@@ -131,6 +131,8 @@ def poisoning_attack_text(
             target_label=label_flip_target_label
         )
         gradient_manipulation_mode = 'passive'  # Label flip usually passive
+    elif attack_type == "None":
+        attack_generator = None
     else:
         raise ValueError(f"Unknown attack_type: {attack_type}")
 

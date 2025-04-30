@@ -68,7 +68,7 @@ def parse_config_for_attack_function(config: dict) -> dict:
     # Only pass attack params if enabled, otherwise use function defaults (mostly)
     if attack_enabled:
         # todo
-        attack_type = attack_conf['attack_type']
+        attack_type = attack_conf.get('attack_type', "None")
         parsed_args['attack_type'] = attack_type
         if attack_type == BACKDOOR:
             parsed_args['backdoor_target_label'] = attack_conf.get('backdoor_target_label', 0)

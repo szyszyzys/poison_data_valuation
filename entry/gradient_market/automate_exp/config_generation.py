@@ -326,6 +326,8 @@ def generate_sybil_configs(output_dir):
         config['attack']['enabled'] = False
         config['attack']['backdoor_target_label'] = 0  # Example target
         config['attack']['trigger_type'] = 'blended_patch'  # Example trigger
+        config['attack']['attack_type'] = BACKDOOR
+        config['attack']['poison_rate'] = 0.2
 
         # Enable and configure Sybil
         config['sybil']['is_sybil'] = True
