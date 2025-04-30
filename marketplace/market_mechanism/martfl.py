@@ -714,8 +714,8 @@ class Aggregator:
         print(f"--- Starting SkyMask (Original Logic - Recreate MaskNet) Aggregation (Epoch {global_epoch}) ---")
         # Use a detached copy of the global parameters from the start of the round
         # Ensure they are on the correct device.
-        global_params_base = self.get_params()
-
+        # global_params_base = [p.data.clone().to(self.device) for p in self.current_global_params]
+        global_params_base = [p.data.clone().to(self.device) for p in self.global_model.parameters()]
         # 1. Prepare Updated Parameter Lists for MaskNet Input
         print("Preparing inputs for MaskNet...")
         worker_param_list = [] # List to hold parameter lists [[seller1_params], [seller2_params], ..., [buyer_params]]
