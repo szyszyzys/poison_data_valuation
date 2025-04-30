@@ -690,70 +690,96 @@ class Aggregator:
                 global_epoch: int,  # Corresponds to niter
                 seller_updates: Dict[str, List[torch.Tensor]],
                 buyer_updates: List[torch.Tensor],  # The server update / baseline
-                server_data_loader: torch.utils.data.DataLoader,  # CORRECTED TYPE HINT
-                clip: bool = False  # Whether to clip seller_updates first
+                server_data_loader: DataLoader,
+                clip: bool = False
                 ) -> Tuple[List[torch.Tensor], List[int], List[int]]:
         """
         Integrates the original SkyMask function logic (MaskNet+GMM).
         Creates and trains a new MaskNet instance each time it's called.
+        Assumes MaskNet combines the full parameters resulting from updates.
 
         Args:
             global_epoch (int): Current global epoch (used as niter).
-            seller_updates (Dict): Dict of seller updates (unflattened).
-            buyer_updates (List): Server/baseline update (unflattened).
-            server_data_loader (DataLoader): DataLoader for server data/labels
-                                              to train masknet.
-            clip (bool): Apply gradient clipping to seller_updates before flattening.
+            seller_updates (Dict): Dict of seller updates (unflattened, delta = new-old).
+            buyer_updates (List): Server/baseline update (unflattened, delta = new-old).
+            server_data_loader (DataLoader): DataLoader for server data/labels.
+            clip (bool): Apply gradient clipping to seller_updates before processing.
 
         Returns:
            Tuple[List[torch.Tensor], List[int], List[int]]:
              - aggregated_gradient: The computed aggregated gradient (unflattened).
-             - selected_ids: Indices of sellers selected by GMM.
-             - outlier_ids: Indices of sellers filtered out by GMM.
+             - selected_ids: Indices of sellers selected by GMM (placeholder).
+             - outlier_ids: Indices of sellers filtered out by GMM (placeholder).
         """
         print(f"--- Starting SkyMask (Original Logic - Recreate MaskNet) Aggregation (Epoch {global_epoch}) ---")
-        net = self.model_structure  # Use the stored model structure instance
-        args = {}
-        # 1. Prepare inputs
-        print("Preparing inputs...")
+        # Use a detached copy of the global parameters from the start of the round
+        # Ensure they are on the correct device.
+        global_params_base = [p.data.clone().to(self.device) for p in self.current_global_params]
+
+        # 1. Prepare Updated Parameter Lists for MaskNet Input
+        print("Preparing inputs for MaskNet...")
+        worker_param_list = [] # List to hold parameter lists [[seller1_params], [seller2_params], ..., [buyer_params]]
+        seller_ids_list = list(seller_updates.keys()) # Consistent order
+
         processed_seller_updates = {}
         if clip:
             print(f"Clipping seller updates with norm {self.clip_norm}")
-            for sid, update in seller_updates.items():
+            for sid in seller_ids_list:
+                update = seller_updates[sid]
                 # Ensure update tensors are on the correct device before clipping
                 update_on_device = [p.to(self.device) for p in update]
                 processed_seller_updates[sid] = clip_gradient_update(update_on_device, self.clip_norm)
         else:
-            # Still ensure they are on the device for flattening
-            processed_seller_updates = {sid: [p.to(self.device) for p in update] for sid, update in
-                                        seller_updates.items()}
+            processed_seller_updates = {sid: [p.to(self.device) for p in update]
+                                        for sid, update in seller_updates.items()}
 
-        flat_seller_updates = [flatten(upd) for upd in processed_seller_updates.values()]
-        flat_buyer_update = flatten([p.to(self.device) for p in buyer_updates])  # Ensure baseline is on device
+        # Calculate the full parameters for each seller after applying their update
+        for sid in seller_ids_list:
+            update_on_device = processed_seller_updates[sid]
+            # Calculate theta_i = theta_global + seller_update_i
+            # Ensure shapes match between global_params_base and update_on_device
+            try:
+                seller_params = [p_base + p_upd for p_base, p_upd in zip(global_params_base, update_on_device)]
+                worker_param_list.append(seller_params)
+            except RuntimeError as e:
+                print(f"Error processing update for seller {sid}. Shape mismatch or other issue?")
+                print(f"Global param shapes: {[p.shape for p in global_params_base]}")
+                print(f"Update shapes: {[p.shape for p in update_on_device]}")
+                raise e
 
-        grad_list = flat_seller_updates + [flat_buyer_update]
-        n_grad = len(grad_list)
-        n_seller = n_grad - 1
-        if n_seller <= 0:
-            print("Warning: No seller updates to process after preparation.")
-            return ([torch.zeros_like(p, device=self.device) for p in net.parameters()], [], [])
 
-        print(f"Prepared grad_list with {n_seller} seller updates + 1 baseline.")
-        # datalist = [p.data.clone() for p in net.parameters()]  # Structure for unflattening
-        worker_param_list = []
-        for worker_id in range(num_workers):  # Or iterate through keys if worker_models is a dict
-            # Get the specific worker model
-            worker_net = worker_models[worker_id]  # Adjust based on how you store worker models
-            worker_net.to('cpu')  # Move to CPU for cloning if they were on GPU
-            # IMPORTANT: Ensure parameters are yielded in a CONSISTENT order for all workers
-            params = [p.data.clone() for p in worker_net.parameters()]
-            worker_param_list.append(params)
-            worker_net.to(self.device)  # Move back if needed
+        # Calculate the full parameters for the buyer/server after applying the baseline update
+        buyer_update_on_device = [p.to(self.device) for p in buyer_updates]
+        try:
+             # Calculate theta_buyer = theta_global + buyer_update
+            buyer_params = [p_base + p_upd for p_base, p_upd in zip(global_params_base, buyer_update_on_device)]
+            worker_param_list.append(buyer_params)
+        except RuntimeError as e:
+                print(f"Error processing buyer update. Shape mismatch or other issue?")
+                print(f"Global param shapes: {[p.shape for p in global_params_base]}")
+                print(f"Update shapes: {[p.shape for p in buyer_update_on_device]}")
+                raise e
+
+        n_models = len(worker_param_list)
+        n_seller = len(seller_ids_list)
+
+        if n_models <= 0: # Should only happen if both sellers and buyer updates are empty
+             print("Warning: No seller or buyer updates to process.")
+             # Return zero gradient matching the structure of global_params_base
+             zero_gradient = [torch.zeros_like(p, device=self.device) for p in global_params_base]
+             return (zero_gradient, [], [])
+        elif n_seller <= 0:
+             print("Warning: No seller updates, only processing buyer update.")
+             # Handle case with only buyer update if needed, or proceed if MaskNet handles n=1
+
+
+        print(f"Prepared worker_param_list with parameters from {n_seller} sellers + 1 buyer.")
+
         # 2. Create a *new* MaskNet instance for this round
-        #    Using configured network type from args if available.
         masknet_type = self.sm_model_type
-        print(f"Creating new masknet (type: {masknet_type})...")
-        # Make sure create_masknet handles the datalist structure correctly
+        print(f"Creating new masknet (type: {masknet_type}) with {n_models} models...")
+        # Pass the list of parameter lists to create_masknet.
+        # create_masknet should internally derive the number of workers from len(worker_param_list)
         masknet = create_masknet(worker_param_list, masknet_type, self.device)
         # 3. Train the newly created MaskNet instance
         print("Executing core SkyMask logic (training MaskNet)...")
