@@ -178,7 +178,7 @@ def get_text_data_set(
     # ── load raw iterators ──────────────────────────────────────
     if dataset_name == "AG_NEWS":
         # returns two DataPipes of (label, text)
-        dp_train, dp_test = AG_NEWS(root=data_root, split=('train', 'test'))
+        dp_train, dp_test = AG_NEWS(root=data_root)
         train_iter = iter(dp_train)
         test_iter = iter(dp_test)
 

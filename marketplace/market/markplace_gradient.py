@@ -241,7 +241,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
         # --- 1.6 Perform Attack if Victim Found ---
         if victim_seller_id and target_gradient:
-            gt_images, gt_labels = self.get_ground_truth_data_for_seller(victim_seller_id, round_number)
+            gt_images, gt_labels = self.sellers[victim_seller_id].cur_data
 
             # Call the dedicated attack function
             gradient_inversion_log = perform_and_evaluate_inversion_attack(
@@ -263,9 +263,7 @@ class DataMarketplaceFederated(DataMarketplace):
             if gradient_inversion_log:
                 # Add context useful for later analysis
                 gradient_inversion_log['victim_seller_idx'] = victim_seller_idx
-                gradient_inversion_log['aggregation_method'] = self.config.get('aggregation_method', 'unknown')
-                gradient_inversion_log['experiment_id'] = self.config.get('experiment_id',
-                                                                          'unnamed')  # Add experiment id if available
+                gradient_inversion_log['aggregation_method'] = "fedavg"
                 self.attack_results_list.append(gradient_inversion_log)
 
         # --- 2. Perform Aggregation ---
