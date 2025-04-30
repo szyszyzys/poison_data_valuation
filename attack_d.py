@@ -7,12 +7,15 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+# from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+from sklearn.decomposition import PCA  # Import PCA if reduce_dim is True
+
 import clip
 import numpy as np
 import torch
 from PIL import Image
 from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.metrics import mean_squared_error
 from sklearn.metrics import pairwise_distances
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.preprocessing import StandardScaler
@@ -326,133 +329,167 @@ def save_json(path, results):
     print(f"Results saved to {path}".center(80, "="))
 
 
-def evaluate_model_raw_data(
-        x_test,
+def evaluate_model_on_embeddings(
+        x_test_embeddings,  # Renamed for clarity
         y_test,
-        x_train,
+        x_train_embeddings,  # Renamed for clarity
         y_train,
         w,
         eval_range=range(1, 10),
         task='regression',
         use_sklearn=True,
         return_list=False,
-        normalize=True,
+        normalize_embeddings=True,  # Flag specific to embeddings
         reduce_dim=False,
         dim_components=100,
-        img_paths=None,
-        test_img_indices=None,
-        sell_img_indices=None,
-
+        # Removed image path/index arguments as they are not needed for training on embeddings
 ):
     """
-    Evaluate model performance using raw images instead of embeddings.
+    Evaluate downstream model performance using input embeddings for training.
+
+    The model is trained on the top-k embeddings selected based on weights 'w'.
 
     Parameters:
-    - x_test: NumPy array of raw test images, shape (n_test_samples, height, width, channels)
-    - y_test: NumPy array of test labels, shape (n_test_samples,)
-    - x_train: NumPy array of raw training images, shape (n_train_samples, height, width, channels)
-    - y_train: NumPy array of training labels, shape (n_train_samples,)
-    - w: NumPy array of weights for selecting training samples, shape (n_train_samples,)
-    - eval_range: Iterable of integers representing different k values for top-k selection
-    - task: String, either 'regression' or 'classification'
-    - use_sklearn: Boolean flag to use scikit-learn's models
-    - return_list: Boolean flag to return errors as a list instead of a dictionary
-    - normalize: Boolean flag to apply normalization
-    - reduce_dim: Boolean flag to apply dimensionality reduction
-    - dim_components: Number of components for PCA if reduce_dim is True
+    - x_test_embeddings: NumPy array of test embeddings, shape (n_test_samples, embedding_dim).
+    - y_test: NumPy array of test labels, shape (n_test_samples,).
+    - x_train_embeddings: NumPy array of training embeddings (potentially poisoned),
+                          shape (n_train_samples, embedding_dim).
+    - y_train: NumPy array of training labels, shape (n_train_samples,).
+    - w: NumPy array of weights for selecting training samples, shape (n_train_samples,).
+    - eval_range: Iterable of integers representing different k values (number of top embeddings) for selection.
+    - task: String, either 'regression' or 'classification'.
+    - use_sklearn: Boolean flag to use scikit-learn's models.
+    - return_list: Boolean flag to return errors as a list instead of a dictionary.
+    - normalize_embeddings: Boolean flag to apply StandardScaler to embeddings before training/testing.
+    - reduce_dim: Boolean flag to apply PCA dimensionality reduction to embeddings.
+    - dim_components: Number of components for PCA if reduce_dim is True.
 
     Returns:
-    - metrics: Dictionary or list of evaluation metrics for each k in eval_range
+    - errors: Dictionary or list of evaluation metrics (default: MSE) for each k in eval_range.
     """
-    x_test = []
-    x_train = []
 
-    # Load and preprocess test images
-    for img_idx in tqdm(test_img_indices, desc="Load Test"):
-        img = Image.open(img_paths[img_idx])
-        img_preprocessed = preprocess(img).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
-        x_test.append(img_preprocessed)
+    # --- Input Validation (Optional but Recommended) ---
+    if x_train_embeddings.shape[0] != len(y_train) or x_train_embeddings.shape[0] != len(w):
+        raise ValueError("Mismatch in number of training samples between embeddings, labels, and weights.")
+    if x_test_embeddings.shape[0] != len(y_test):
+        raise ValueError("Mismatch in number of test samples between embeddings and labels.")
+    if x_train_embeddings.shape[1] != x_test_embeddings.shape[1] and not reduce_dim:
+        # Note: If reduce_dim is True, dimensions might change, PCA handles consistency.
+        raise ValueError("Mismatch in embedding dimensions between train and test sets.")
 
-    # Load and preprocess training images
-    for img_idx in tqdm(sell_img_indices, desc="Load Train"):
-        img = Image.open(img_paths[img_idx])
-        img_preprocessed = preprocess(img).unsqueeze(0).to(device)  # Shape: (1, 3, 224, 224)
-        x_train.append(img_preprocessed)
+    # --- Preprocessing Steps (Applied to Embeddings) ---
+    x_train_processed = x_train_embeddings.copy()  # Work on copies
+    x_test_processed = x_test_embeddings.copy()
 
-    # Stack tensors and move to CPU for further processing
-    x_train = torch.cat(x_train).cpu().numpy()  # Shape: (n_train, 3, 224, 224)
-    x_test = torch.cat(x_test).cpu().numpy()  # Shape: (n_test, 3, 224, 224)
-
-    # Flatten the raw images for model training
-    x_train_flat = x_train.reshape(x_train.shape[0], -1)  # Shape: (n_train, height*width*channels)
-    x_test_flat = x_test.reshape(x_test.shape[0], -1)  # Shape: (n_test, height*width*channels)
-
-    # Normalize the data if required
-    if normalize:
+    # 1. Normalize Embeddings (Optional)
+    # Normalizing embeddings can be important for linear models.
+    scaler = None  # Initialize scaler
+    if normalize_embeddings:
         scaler = StandardScaler()
-        x_train_flat = scaler.fit_transform(x_train_flat)
-        x_test_flat = scaler.transform(x_test_flat)
+        x_train_processed = scaler.fit_transform(x_train_processed)
+        x_test_processed = scaler.transform(x_test_processed)  # Use transform on test data
 
-    # Dimensionality Reduction (Optional)
+    # 2. Dimensionality Reduction (Optional, applied AFTER normalization if both used)
+    pca = None  # Initialize PCA
     if reduce_dim:
-        from sklearn.decomposition import PCA
-        pca = PCA(n_components=dim_components)
-        x_train_flat = pca.fit_transform(x_train_flat)
-        x_test_flat = pca.transform(x_test_flat)
+        if dim_components >= x_train_processed.shape[1]:
+            print(
+                f"Warning: dim_components ({dim_components}) >= original dim ({x_train_processed.shape[1]}). Skipping PCA.")
+        else:
+            pca = PCA(n_components=dim_components)
+            x_train_processed = pca.fit_transform(x_train_processed)
+            x_test_processed = pca.transform(x_test_processed)  # Use transform on test data
 
-    # Sort weights in descending order and get sorted indices
-    sorted_w = np.argsort(w)[::-1]
+    # --- Model Training and Evaluation Loop ---
+    # Sort weights in descending order to get indices for top-k selection
+    sorted_w_indices = np.argsort(w)[::-1]
 
-    # Initialize metrics dictionary
-    metrics = {}
     errors = {}
-    for k in eval_range:
+    # Use tqdm on eval_range for progress tracking
+    for k in tqdm(eval_range, desc="Evaluating Model Performance"):
+        if k <= 0: continue  # Skip invalid k
+        if k > len(sorted_w_indices):
+            print(f"Warning: k={k} exceeds number of training samples ({len(sorted_w_indices)}). Capping k.")
+            current_k = len(sorted_w_indices)
+        else:
+            current_k = k
+
+        if current_k == 0: continue  # Cannot train on 0 samples
+
         # Select top-k training samples based on weights
-        selected_indices = sorted_w[:k]
-        x_k = x_train_flat[selected_indices]
+        selected_indices = sorted_w_indices[:current_k]
+
+        # Get the corresponding embeddings and labels for training
+        # Use the *processed* embeddings (normalized/reduced)
+        x_k = x_train_processed[selected_indices]
         y_k = y_train[selected_indices]
 
-        # Initialize and train the model
-        if task == 'regression':
-            if use_sklearn:
-                model = LinearRegression(fit_intercept=True)
-                model.fit(x_k, y_k)
-                y_pred = model.predict(x_test_flat)
-            else:
-                # Using pseudo-inverse for linear regression
-                beta_k = np.linalg.pinv(x_k) @ y_k
-                y_pred = x_test_flat @ beta_k
-        elif task == 'classification':
-            if use_sklearn:
-                model = LogisticRegression(max_iter=1000)
-                model.fit(x_k, y_k)
-                y_pred = model.predict(x_test_flat)
-                y_prob = model.predict_proba(x_test_flat)[:, 1] if len(np.unique(y_k)) == 2 else None
-            else:
-                raise NotImplementedError("Custom classification model not implemented.")
-        else:
-            raise ValueError("Invalid task type. Choose 'regression' or 'classification'.")
+        # Avoid issues with single-sample training if applicable for the model
+        if len(y_k) == 0:
+            print(f"Warning: No samples selected for k={current_k}. Assigning NaN error.")
+            errors[k] = np.nan
+            continue
+        # Some models might need >1 sample or >1 class for classification
+        if task == 'classification' and len(np.unique(y_k)) < 2 and use_sklearn:
+            print(f"Warning: Only one class present for k={current_k}. Assigning NaN error for classification.")
+            errors[k] = np.nan  # Or use a default high error
+            continue
 
-        # Compute Evaluation Metrics
-        if task == 'regression':
-            mse = mean_squared_error(y_test, y_pred)
-            # mae = mean_absolute_error(y_test, y_pred)
-            # r2 = r2_score(y_test, y_pred)
-            # metrics[k] = {'MSE': mse, 'MAE': mae, 'R2': r2}
+        # Initialize and train the model
+        try:
+            if task == 'regression':
+                if use_sklearn:
+                    # Ensure enough samples if model requires it (LinearRegression is robust)
+                    model = LinearRegression(fit_intercept=True)
+                    model.fit(x_k, y_k)
+                    y_pred = model.predict(x_test_processed)  # Predict on processed test embeddings
+                else:
+                    # Using pseudo-inverse requires matrix inversion, potentially unstable for small k
+                    if current_k < x_k.shape[1]:  # Check if underdetermined
+                        print(
+                            f"Warning: k={current_k} < features ({x_k.shape[1]}). Pseudo-inverse might be unstable. Using sklearn instead.")
+                        model = LinearRegression(fit_intercept=True)
+                        model.fit(x_k, y_k)
+                        y_pred = model.predict(x_test_processed)
+                    else:
+                        try:
+                            beta_k = np.linalg.pinv(x_k) @ y_k
+                            y_pred = x_test_processed @ beta_k
+                        except np.linalg.LinAlgError:
+                            print(f"Error: SVD did not converge for pseudo-inverse at k={current_k}. Assigning NaN.")
+                            y_pred = np.full_like(y_test, np.nan)  # Assign NaN prediction
+
+            elif task == 'classification':
+                if use_sklearn:
+                    # LogisticRegression needs multiple classes usually
+                    model = LogisticRegression(max_iter=1000, solver='liblinear')  # Liblinear often robust
+                    model.fit(x_k, y_k)
+                    y_pred = model.predict(x_test_processed)
+                    # y_prob = model.predict_proba(x_test_processed)[:, 1] if len(np.unique(y_k)) == 2 else None
+                else:
+                    raise NotImplementedError("Custom classification model not implemented.")
+            else:
+                raise ValueError("Invalid task type. Choose 'regression' or 'classification'.")
+
+            # Compute Evaluation Metrics (Focusing on MSE as per original code)
+            if np.isnan(y_pred).any():  # Check if prediction failed (e.g., LinAlgError)
+                mse = np.nan
+            else:
+                mse = mean_squared_error(y_test, y_pred)
             errors[k] = mse
-        elif task == 'classification':
-            # accuracy = accuracy_score(y_test, y_pred)
-            # precision = precision_score(y_test, y_pred, average='weighted', zero_division=0)
-            # recall = recall_score(y_test, y_pred, average='weighted', zero_division=0)
-            # f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
-            #
-            # if y_prob is not None:
-            #     roc_auc = roc_auc_score(y_test, y_prob)
-            #     metrics[k] = {'Accuracy': accuracy, 'Precision': precision, 'Recall': recall, 'F1-Score': f1,
-            #                   'ROC-AUC': roc_auc}
+
+            # --- Add other metrics here if needed ---
+            # if task == 'classification':
+            #     acc = accuracy_score(y_test, y_pred)
+            #     # ... other classification metrics ...
+            #     metrics[k] = {'MSE': mse, 'Accuracy': acc, ...}
             # else:
-            #     metrics[k] = {'Accuracy': accuracy, 'Precision': precision, 'Recall': recall, 'F1-Score': f1}
-            errors[k] = mean_squared_error(y_test, y_pred)
+            #      metrics[k] = {'MSE': mse}
+            # ---------------------------------------
+
+        except Exception as e:
+            print(f"Error during model training/prediction for k={k}: {e}")
+            errors[k] = np.nan  # Assign NaN on error
 
     return list(errors.values()) if return_list else errors
 
@@ -1033,77 +1070,10 @@ def evaluate_poisoning_attack(
     for k, v in m_runtimes.items():
         benign_training_results["runtimes"][k] = v
 
-    # selection_attack_result = os.path.join(
-    #     result_dir,
-    #     f'modified_images_{attack_type}_multi_step',
-    #     f'step_{args.attack_steps}_lr_{args.attack_lr}_reg_{args.attack_reg}_advr_{adversary_ratio}',
-    #     f'target_query_batch_{test_point_index}'
-    # )
-
-    # save_json(f"{selection_attack_result}/all_result_selection.json", evaluation_results_list)
-    # save_json(f"{selection_attack_result}/avg_result_selection.json", averaged_data_selection_results)
-    # Step 5: Perform Attack on Unselected Data Points
-
     # Step 8: Evaluate Attack Success on trained model
     args.save_name = "attack_result"
     plot_results(f"{figure_path}/model_training_result.png", results=benign_training_results, args=args)
     save_results_trained_model(args, benign_training_results)
-
-    # comprehensive_evaluation(
-    #     X_sell_original, y_sell_original,
-    #     X_sell_modified, y_sell_modified,
-    #     X_buy, y_buy,
-    #     data_indices_original, data_indices_modified,
-    #     cv_folds=5
-    # )
-
-    # mse_before = evaluate_attack_trained_model(
-    #     x_s, y_s, x_b, y_b, selected_indices_initial, inverse_covariance=None)
-    #
-    # mse_after = evaluate_attack_trained_model(
-    #     x_s, y_s, x_b, y_b, selected_indices_updated, inverse_covariance=None)
-
-    # Step 8: Plot Weight Distributions
-    # plot_selection_weights(
-    #     initial_weights=initial_results['weights'],
-    #     updated_weights=updated_results['weights'],
-    #     save_path=f'{result_dir}/',  # Set a path to save the plot if desired
-    # )
-
-    # Step 9: Save Results (Optional)
-    # if save_results_flag:
-    #     results = {
-    #         'initial_selected_indices': selected_indices_initial,
-    #         'unsampled_indices_initial': unsampled_indices_initial,
-    #         'x_s_modified': x_s,
-    #         'updated_selected_indices': selected_indices_updated,
-    #         'modified_indices': modified_indices,
-    #         'attack_success_rate': success_rate,
-    #         'num_successfully_selected': num_success,
-    #         'trained_model_mse_before': mse_before,
-    #         'trained_model_mse_after': mse_after,
-    #     }
-    #     save_results(
-    #         results=results,
-    #         save_dir=result_dir,
-    #         save_name=save_name,
-    #     )
-    #     print(f"Results saved to {result_dir}/{save_name}.pkl")
-    #
-    # return {
-    #     'initial_selected_indices': selected_indices_initial,
-    #     'unsampled_indices_initial': unsampled_indices_initial,
-    #     'updated_selected_indices': selected_indices_updated,
-    #     'modified_indices': modified_indices,
-    #     'attack_success_rate': success_rate,
-    #     'num_successfully_selected': num_success,
-    # }
-
-
-# device = "cuda" if torch.cuda.is_available() else "cpu"
-#
-# model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
-# processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
 
 def attack_target_sampling(data, labels, strategy="random", num_samples=100, **kwargs):
