@@ -518,9 +518,9 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
 
         # Prepare keyword arguments for the error function
         err_kwargs = dict(
-            x_test=x_query,
+            x_test_embeddings=x_query,
             y_test=y_query,
-            x_train=x_s,
+            x_train_embeddings=x_s,
             y_train=y_s,
             eval_range=eval_range,
             img_paths=img_paths,
