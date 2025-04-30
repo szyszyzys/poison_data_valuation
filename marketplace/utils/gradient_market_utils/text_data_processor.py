@@ -243,7 +243,7 @@ def get_text_data_set(
 
         # For Processing: Generators yielding (label, text) tuples
         train_iter = ((ex["coarse_label"], ex["text"]) for ex in train_ds)
-        test_iter = ((ex["coarse_label"], ex["text"]) for ex in test_ds) # <<< Use test_ds here
+        test_iter = ((ex["coarse_label"], ex["text"]) for ex in test_ds)  # <<< Use test_ds here
 
         num_classes = 6  # Based on coarse_label
         class_names = ['ABBR', 'ENTY', 'DESC', 'HUM', 'LOC', 'NUM']
@@ -266,37 +266,30 @@ def get_text_data_set(
         logging.info(f"yield_tokens processed {processed_count} text items for vocabulary.")
 
     specials = [unk_token, pad_token]
-    min_freq_for_vocab = 1  # Define the desired min frequency for the Vocab object
-
-    logging.info(f"Building vocabulary source structure...")
-
-    # 1. Build the intermediate structure (often an ordered dict or token list)
-    #    NO min_freq argument here.
+    min_freq_for_vocab = 1  # Use this variable
     try:
-        # This function yields token lists, build_vocab_from_iterator processes them
-        token_iterator_for_builder = yield_tokens(vocab_source_iter)
-
-        # The output here depends slightly on torchtext version but is usually
-        # suitable input for the Vocab constructor's ordering/counting.
-        # Often it's implicitly counting frequencies.
-        vocab_intermediate_data = build_vocab_from_iterator(token_iterator_for_builder)
-
+        # Assume build_vocab_from_iterator returns the final Vocab object
+        vocab = build_vocab_from_iterator(
+            yield_tokens(vocab_source_iter),  # Pass the text string iterator
+            min_freq=min_freq_for_vocab,  # <<< Pass min_freq here
+            specials=specials  # <<< Pass specials here
+            # special_first=True # <<< You might try adding this back HERE if needed/supported by build_vocab...
+            # but it's often handled by default when specials are given. Leave out first.
+        )
     except Exception as e:
-        logging.error(f"Error during vocabulary intermediate structure building: {e}")
+        # Catch potential errors during vocab building itself
+        logging.error(f"Error during build_vocab_from_iterator: {e}")
+        # You might want to check the specific type of error here
+        # e.g., if build_vocab_from_iterator ALSO doesn't accept min_freq/specials
+        # in this version, the error message would change.
         raise
 
-    if not vocab_intermediate_data:  # Check if the builder produced anything
-        raise ValueError("Vocabulary building (intermediate step) resulted in empty data.")
-
-    logging.info(f"Creating final Vocab object with min_freq={min_freq_for_vocab}...")
-
-    # 2. Create the Vocab object, applying min_freq here.
-    vocab = Vocab(
-        vocab_intermediate_data,  # Pass the structure from step 1
-        min_freq=min_freq_for_vocab,  # Apply min_freq constraint HERE
-        specials=specials  # Provide the list of special tokens
-        # special_first=True was removed as it's not supported by this torchtext version
-    )
+    # --- Check if vocab building succeeded ---
+    if not vocab:
+        raise ValueError("Vocabulary building failed (returned None or empty).")
+    # Add a type check for extra safety, ensuring it's actually a Vocab object
+    if not isinstance(vocab, Vocab):
+        raise TypeError(f"Expected build_vocab_from_iterator to return a Vocab object, but got {type(vocab)}")
 
     # 3. Set the default index for unknown tokens
     if unk_token in vocab:

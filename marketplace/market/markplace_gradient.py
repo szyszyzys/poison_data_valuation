@@ -243,6 +243,8 @@ class DataMarketplaceFederated(DataMarketplace):
         if victim_seller_id and target_gradient:
             gt_images, gt_labels = self.sellers[victim_seller_id].cur_data # Dataset object
             # Call the dedicated attack function
+            input_shape = gt_images[0].shape
+            num_classes = len(torch.unique(gt_labels))  # or set manually if needed
             gradient_inversion_log = perform_and_evaluate_inversion_attack(
                 target_gradient=target_gradient,
                 model_template=self.aggregator.global_model,  # Pass base structure
