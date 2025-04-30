@@ -2,13 +2,14 @@ import argparse
 import logging
 # log_utils.py (or results_logger.py)
 import os
+from pathlib import Path
+from typing import Dict, Optional, Any
+
 import torch
 import torch.backends.cudnn
 import torch.nn as nn
-from pathlib import Path
 from torch import nn
 from torch.utils.data import DataLoader
-from typing import Dict, Optional, Any
 
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorTextGenerator, LabelFlipAttackGenerator
@@ -238,7 +239,12 @@ def poisoning_attack_text(
                 )
                 malicious_sellers_list.append(current_seller)
             else:
-                raise RuntimeError("Invalid state")
+                print(f"  Configuring BN seller {cur_id}")
+                current_seller = GradientSeller(seller_id=cur_id, local_data=seller_dataset,
+                                                dataset_name=dataset_name, save_path=save_path, device=device,
+                                                local_training_params=local_training_params, vocab=vocab,
+                                                pad_idx=padding_idx,
+                                                )
         else:  # Benign seller
             print(f"  Configuring BN seller {cur_id}")
             current_seller = GradientSeller(seller_id=cur_id, local_data=seller_dataset,
@@ -413,7 +419,7 @@ def poisoning_attack_image(
         )
         gradient_manipulation_mode = 'passive'  # Label flip usually doesn't manipulate gradients directly
     else:
-        raise ValueError(f"Unknown attack_type: {attack_type}")
+        attack_generator = None
 
     # --- Load Data ---
     # We load the *original* clean splits first. Poisoning happens later if needed.
@@ -477,7 +483,7 @@ def poisoning_attack_image(
     # Marketplace
     marketplace = DataMarketplaceFederated(aggregator,
                                            selection_method=aggregation_method, save_path=save_path,
-                                           privacy_attack = privacy_attack)
+                                           privacy_attack=privacy_attack)
 
     # --- Configure Sellers ---
     print("Configuring sellers...")
@@ -525,8 +531,10 @@ def poisoning_attack_image(
                 )
                 malicious_sellers_list.append(current_seller)
             else:
-                # Should not happen
-                raise RuntimeError("Invalid state")
+                print(f"  Configuring BN seller {cur_id}")
+                current_seller = GradientSeller(seller_id=cur_id, local_data=loader.dataset,
+                                                dataset_name=dataset_name, save_path=save_path, device=device,
+                                                local_training_params=local_training_params)
 
         else:  # Benign seller
             print(f"  Configuring BN seller {cur_id}")

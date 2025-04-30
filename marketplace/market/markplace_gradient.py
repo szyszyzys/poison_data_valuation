@@ -9,6 +9,7 @@ import pandas as pd
 import torch
 
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance_backdoor_poison
+from entry.gradient_market.privacy_attack import perform_and_evaluate_inversion_attack
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.martfl import Aggregator, flatten
 from marketplace.seller.seller import BaseSeller

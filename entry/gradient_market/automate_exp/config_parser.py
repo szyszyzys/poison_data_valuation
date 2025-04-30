@@ -67,7 +67,6 @@ def parse_config_for_attack_function(config: dict) -> dict:
     attack_enabled = attack_conf.get('enabled', False)  # Check if attack is actually enabled
     # Only pass attack params if enabled, otherwise use function defaults (mostly)
     if attack_enabled:
-        # todo
         attack_type = attack_conf.get('attack_type', "None")
         parsed_args['attack_type'] = attack_type
         if attack_type == BACKDOOR:
@@ -81,6 +80,7 @@ def parse_config_for_attack_function(config: dict) -> dict:
             parsed_args['label_flip_mode'] = attack_conf.get('label_flip_mode', 'random')
             parsed_args['poison_rate'] = attack_conf.get('poison_rate', 0.1)
     else:
+        parsed_args['attack_type'] = "None"
         # Use defaults if attack not enabled in config
         parsed_args['backdoor_target_label'] = 0
         parsed_args['backdoor_trigger_type'] = 'blended_patch'
