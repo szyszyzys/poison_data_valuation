@@ -7,13 +7,12 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-# from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
-from sklearn.decomposition import PCA  # Import PCA if reduce_dim is True
-
 import clip
 import numpy as np
 import torch
 from PIL import Image
+# from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+from sklearn.decomposition import PCA  # Import PCA if reduce_dim is True
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import pairwise_distances
@@ -502,6 +501,8 @@ def evaluate_model_on_embeddings(
 
 
 def evaluate_model_raw_data(
+        x_test,
+        x_train,
         y_test,  # Test labels
         y_train,  # Train labels
         w,  # Weights for selecting training samples
