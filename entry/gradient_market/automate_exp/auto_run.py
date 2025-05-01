@@ -1,5 +1,6 @@
 # automate_runs.py
 import argparse
+import itertools
 import logging
 import os
 import subprocess
@@ -83,9 +84,6 @@ def run_single_experiment_config(config_path: str, runner_script: str) -> bool:
         return False
 
 
-# --- Wrapper for use with multiprocessing.Pool ---
-# Needs global access to runner_script or pass it via functools.partial
-
 runner_script_path_global = None  # Global variable to hold runner script path for worker processes
 
 
@@ -96,6 +94,27 @@ def run_worker(config_path):
         logger.error("Runner script path not set for worker process!")
         return False
     return run_single_experiment_config(config_path, runner_script_path_global)
+
+
+def get_gpu_count():
+    # ... (implementation from previous answers) ...
+    try:
+        import torch
+        if torch.cuda.is_available(): return torch.cuda.device_count()
+        return 0
+    except ImportError:
+        return 0  # Basic fallback
+
+
+# --- Define the worker function for the Pool ---
+# This worker's job is primarily to call run_single_experiment_config
+# with the correct arguments, including the assigned gpu_id.
+
+def pool_worker(task_info):
+    """Worker function called by multiprocessing.Pool."""
+    config_path, runner_script_path, assigned_gpu_id = task_info
+    # Now call the modified function, passing the assigned GPU ID
+    return run_single_experiment_config(config_path, runner_script_path, assigned_gpu_id)
 
 
 # --- Main Function ---
@@ -153,6 +172,8 @@ def main():
     logger.info(f"Using runner script: {runner_script}")
     logger.info(f"Log file: {log_file}")
 
+    NUM_GPUS = get_gpu_count()
+
     # --- Find Config Files ---
     config_files = sorted(list(config_dir.glob(pattern)))
     if not config_files:
@@ -175,24 +196,44 @@ def main():
         logger.info(f"Running experiments in parallel with {num_workers} workers.")
     logger.info("=" * 60)
 
+    if NUM_GPUS > 0:
+        default_workers = NUM_GPUS
+        logger.info(f"Detected {NUM_GPUS} GPUs.")
+        if num_workers <= 0: num_workers = default_workers
+        logger.info(f"Running up to {num_workers} experiments in parallel, assigning GPUs.")
+        # Create a cycle of GPU IDs
+        gpu_id_cycle = itertools.cycle(range(NUM_GPUS))
+    else:
+        logger.warning("No GPUs detected. Running on CPU.")
+        if num_workers <= 0: num_workers = cpu_count()
+        logger.info(f"Running up to {num_workers} experiments in parallel on CPU.")
+        # Assign None for GPU ID when no GPUs are available
+        gpu_id_cycle = itertools.cycle([None])
+
     start_total_time = time.time()
     results = []  # List to store True/False for success/failure
 
     # --- Execute Runs ---
     config_paths_abs = [str(p.resolve()) for p in config_files]  # Ensure absolute paths
 
+    # --- Prepare Tasks ---
+    tasks = []
+    runner_script_path = str(runner_script)
+    for cfg_path in config_files:
+        abs_cfg_path = str(cfg_path.resolve())
+        assigned_gpu = next(gpu_id_cycle)
+        tasks.append((abs_cfg_path, runner_script_path, assigned_gpu))
+        # tasks is now like: [ (cfg1, runner.py, 0), (cfg2, runner.py, 1), ... ]
+
+    results = []
     if num_workers == 1:
-        # Sequential execution
-        for config_path in config_paths_abs:
-            success = run_single_experiment_config(config_path, str(runner_script))
-            results.append(success)
-            # Optional: Add delay if needed between sequential runs
-            # time.sleep(1)
+        logger.info("Running sequentially...")
+        for task in tasks:
+            results.append(pool_worker(task))  # Call worker directly
     else:
-        # Parallel execution using multiprocessing Pool
+        logger.info(f"Running in parallel with {num_workers} workers...")
         with Pool(processes=num_workers) as pool:
-            # map blocks until all results are available
-            results = pool.map(run_worker, config_paths_abs)
+            results = pool.map(pool_worker, tasks)
 
     end_total_time = time.time()
     total_duration = end_total_time - start_total_time
