@@ -369,7 +369,7 @@ def save_results_trained_model(args, results, result_dir):
     save_data['configuration'] = {
         'attack_type': getattr(args, 'attack_type', 'N/A'),
         'dataset': getattr(args, 'dataset', 'N/A'),
-        'num_buyer_queries': getattr(args, 'num_buyer', 'N/A'),  # Renamed for clarity
+        'num_buyer_queries': getattr(args, 'num_buyers', 'N/A'),  # Renamed for clarity
         'num_seller': getattr(args, 'num_seller', 'N/A'),
         'adversary_ratio': getattr(args, 'adversary_ratio', 'N/A'),
         'poison_rate': getattr(args, 'poison_rate', 'N/A'),
