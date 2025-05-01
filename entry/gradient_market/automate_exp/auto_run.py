@@ -2,11 +2,14 @@
 import argparse
 import itertools
 import logging
+# --- Function to run a single experiment ---
 import os
 import subprocess
+import sys  # Recommended to use sys.executable
 import time
 from multiprocessing import Pool, cpu_count
-from pathlib import Path  # Modern path handling
+from pathlib import Path
+from typing import Optional
 
 # --- Configuration ---
 # Default directory containing generated YAML config files
@@ -27,49 +30,70 @@ logging.basicConfig(
 logger = logging.getLogger("AutomationRunner")
 
 
-# --- Function to run a single experiment ---
-def run_single_experiment_config(config_path: str, runner_script: str) -> bool:
+def run_single_experiment_config(
+        config_path: str,
+        runner_script: str,
+        gpu_id: Optional[int] = None  # <-- ADDED default value None
+) -> bool:
     """
-    Runs a single experiment defined by the config file using a subprocess.
+    Runs a single experiment, optionally assigning a specific GPU via CUDA_VISIBLE_DEVICES.
 
     Args:
         config_path: Absolute path to the YAML configuration file.
         runner_script: Absolute path to the main experiment runner script.
+        gpu_id: The integer ID of the GPU to make visible. If None (default),
+                runs without specific GPU assignment (inherits default or uses CPU).
 
     Returns:
         True if the subprocess completed successfully (return code 0), False otherwise.
     """
     if not os.path.exists(config_path):
-        logger.error(f"Config file not found: {config_path}. Skipping.")
+        # Add gpu_id info to log message for clarity
+        gpu_info = f"GPU {gpu_id}" if gpu_id is not None else "CPU/Default"
+        logger.error(f"[{gpu_info}] Config file not found: {config_path}. Skipping.")
         return False
-    # Runner script existence checked in main loop
 
-    experiment_id = Path(config_path).stem  # Get filename without extension as ID
-    logger.info(f"--- Launching Experiment [{experiment_id}] from: {config_path} ---")
-    command = ["python", runner_script, config_path]
+    experiment_id = Path(config_path).stem
+    gpu_assignment_info = f"GPU {gpu_id}" if gpu_id is not None else "CPU/Default"  # For logging
+
+    logger.info(f"--- [{gpu_assignment_info}] Launching Experiment [{experiment_id}] from: {config_path} ---")
+    # Use sys.executable instead of hardcoding "python" for better portability
+    command = [sys.executable, runner_script, config_path]
     start_time = time.time()
 
+    # --- Prepare Environment for Subprocess ---
+    sub_env = os.environ.copy()  # Copy the current environment
+    if gpu_id is not None:
+        logger.debug(f"Setting CUDA_VISIBLE_DEVICES={gpu_id} for subprocess.")
+        sub_env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    else:
+        logger.debug("Running subprocess with inherited/default CUDA environment.")
+
     try:
-        # Execute the runner script as a separate process
+        # Execute the runner script with the potentially modified environment
         result = subprocess.run(
             command,
             capture_output=True,
             text=True,
-            check=False,  # Don't raise exception on non-zero exit code
-            encoding='utf-8'
+            check=False,
+            encoding='utf-8',
+            env=sub_env  # <-- FIXED: Pass the modified environment
         )
         end_time = time.time()
         duration = end_time - start_time
 
+        # Include gpu_assignment_info in result logs
         if result.returncode == 0:
-            logger.info(f"--- Experiment SUCCEEDED [{experiment_id}] (Duration: {duration:.2f}s) ---")
+            logger.info(
+                f"--- [{gpu_assignment_info}] Experiment SUCCEEDED [{experiment_id}] (Duration: {duration:.2f}s) ---")
             return True
         else:
-            logger.error(f"--- Experiment FAILED [{experiment_id}] (Duration: {duration:.2f}s) ---")
+            logger.error(
+                f"--- [{gpu_assignment_info}] Experiment FAILED [{experiment_id}] (Duration: {duration:.2f}s) ---")
             logger.error(f"  Config File: {config_path}")
             logger.error(f"  Return Code: {result.returncode}")
             # Log tail of stdout/stderr for debugging failed runs
-            log_limit = 2000  # Limit output length in log
+            log_limit = 2000
             stdout_tail = result.stdout[-log_limit:] if result.stdout else "(No stdout)"
             stderr_tail = result.stderr[-log_limit:] if result.stderr else "(No stderr)"
             logger.error(f"  STDOUT Tail:\n{stdout_tail}")
@@ -77,10 +101,14 @@ def run_single_experiment_config(config_path: str, runner_script: str) -> bool:
             return False
 
     except FileNotFoundError:
-        logger.error(f"Error: 'python' command not found or script paths incorrect.")
+        # Updated error message
+        logger.error(f"Error: Python executable '{sys.executable}' or runner script '{runner_script}' not found.")
         return False
     except Exception as e:
-        logger.error(f"An unexpected error occurred running subprocess for {config_path}: {e}", exc_info=True)
+        # Include gpu_id in error context
+        logger.error(
+            f"An unexpected error occurred running subprocess for {config_path} targeting {gpu_assignment_info}: {e}",
+            exc_info=True)
         return False
 
 
@@ -175,7 +203,7 @@ def main():
     NUM_GPUS = get_gpu_count()
 
     # --- Find Config Files ---
-    config_files = sorted(list(config_dir.glob(pattern)))
+    config_files = sorted(list(config_dir.glob(pattern)), reverse=True)
     if not config_files:
         logger.warning(f"No configuration files found matching pattern '{pattern}' in {config_dir}. Exiting.")
         return
