@@ -633,18 +633,6 @@ def denormalize_image(tensor):
     return tensor * std + mean
 
 
-def extract_features(image, model, processor, device):
-    """
-    Extract the image features using the CLIP model.
-    """
-    inputs = processor(image).to(device)
-    with torch.no_grad():
-        image_features = model.get_image_features(**inputs)
-    # Normalize the features
-    image_features = F.normalize(image_features, p=2, dim=-1)
-    return image_features.squeeze(0)  # Remove batch dimension
-
-
 class IMG:
     def __init__(self, path, idx, emb, is_modified, modify_target_idx):
         self.path = path
@@ -830,8 +818,8 @@ def modify_image(
     for step in range(num_steps):
         optimizer.zero_grad()
 
-        # Forward pass: get embedding
-        embedding = model.get_image_features(pixel_values=image_tensor)  # Use appropriate method
+        # Forward pass: get embedding image_features = model.encode_image(image_tensor)
+        embedding = model.encode_image(image_tensor)  # Use appropriate method
         embedding = F.normalize(embedding, p=2, dim=-1)
 
         # Compute cosine similarity
@@ -904,7 +892,7 @@ def modify_image(
 
     # Compute final similarity with the final tensor
     with torch.no_grad():
-        modified_embedding = model.get_image_features(pixel_values=image_tensor)
+        modified_embedding = model.encode_image(image_tensor)
         modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
         final_similarity = F.cosine_similarity(modified_embedding, target_tensor,
                                                dim=-1).item()  # Use item() for single value
