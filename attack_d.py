@@ -1469,6 +1469,7 @@ def evaluate_poisoning_attack(
 
         # Plot 1: Number of Adversarial Samples Selected (Before vs After)
         plt.figure(figsize=(12, 7))
+        # --- FIX: Remove label=... ---
         sns.lineplot(
             data=selection_df,
             x="budget",
@@ -1477,9 +1478,10 @@ def evaluate_poisoning_attack(
             style="method",  # Use style for B&W printing if needed
             markers=True,
             dashes=True,  # Dashed lines for 'before'
-            errorbar="sd",  # Show standard deviation across queries
-            label="Benign (Before Attack)"  # Custom label needs manual handling or melt
+            errorbar="sd"  # Show standard deviation across queries
+            # label="Benign (Before Attack)"  <--- REMOVE THIS LINE
         )
+        # --- FIX: Remove label=... ---
         sns.lineplot(
             data=selection_df,
             x="budget",
@@ -1488,26 +1490,39 @@ def evaluate_poisoning_attack(
             style="method",
             markers=True,
             dashes=False,  # Solid lines for 'after'
-            errorbar="sd",  # Show standard deviation across queries
-            label="Malicious (After Attack)"  # Custom label needs manual handling or melt
+            errorbar="sd"  # Show standard deviation across queries
+            # label="Malicious (After Attack)" <--- REMOVE THIS LINE
         )
 
         # Improve Plot 1 Legend (Seaborn makes combined legends tricky sometimes)
         handles, labels = plt.gca().get_legend_handles_labels()
-        # Manually create desired labels (adjust based on actual seaborn output)
+
+        # --- This manual legend code should now work correctly ---
         num_methods = selection_df['method'].nunique()
+        unique_methods = selection_df['method'].unique()  # Get the actual method names
+
         new_labels = []
         new_handles = []
-        if num_methods > 0:
-            new_labels.extend([f"Benign ({m})" for m in selection_df['method'].unique()])
-            new_labels.extend([f"Malicious ({m})" for m in selection_df['method'].unique()])
-            # This assumes the order seaborn plots (might need adjustment)
+        # Check if handles were actually generated
+        if handles and len(handles) >= 2 * num_methods:
+            # Use the unique method names obtained earlier for labels
+            new_labels.extend([f"Benign ({m})" for m in unique_methods])
+            new_labels.extend([f"Malicious ({m})" for m in unique_methods])
+
+            # Assume the first num_methods handles are for 'before' (dashed)
+            # and the next num_methods handles are for 'after' (solid)
             new_handles.extend(handles[:num_methods])  # Before handles
-            new_handles.extend(handles[num_methods:])  # After handles
+            new_handles.extend(handles[num_methods:2 * num_methods])  # After handles
 
             plt.legend(handles=new_handles, labels=new_labels, title="Condition (Method)")
+        elif handles:
+            # Fallback if something unexpected happened with handle count
+            print("Warning: Unexpected number of legend handles generated. Using default legend.")
+            plt.legend(title="Method")
         else:
-            plt.legend(title="Condition (Method)")  # Default if no data
+            # If no handles were generated (e.g., empty dataframe)
+            print("Warning: No data plotted, legend cannot be generated.")
+            plt.legend(title="Condition (Method)")
 
         plt.title('Number of Adversarial Samples Selected vs. Budget')
         plt.xlabel('Selection Budget (k)')
@@ -1517,29 +1532,6 @@ def evaluate_poisoning_attack(
         plt.savefig(plot1_save_path)
         print(f"Selection plot (adversary count) saved to: {plot1_save_path}")
         plt.close()  # Close figure to free memory
-
-        # Plot 2: Increase in Adversarial Samples Selected
-        selection_df['adv_selection_increase_calc'] = selection_df['adv_selected_after'] - selection_df[
-            'adv_selected_before']
-        plt.figure(figsize=(10, 6))
-        sns.lineplot(
-            data=selection_df,
-            x="budget",
-            y="adv_selection_increase_calc",  # Use calculated or direct value
-            hue="method",
-            style="method",
-            markers=True,
-            errorbar="sd"  # Show standard deviation
-        )
-        plt.title('Increase in Adversarial Samples Selected After Attack vs. Budget')
-        plt.xlabel('Selection Budget (k)')
-        plt.ylabel('Increase in Adversarial Samples Selected')
-        plt.legend(title="Selection Method")
-        plt.tight_layout()
-        plot2_save_path = os.path.join(figure_path, "selection_eval_adv_increase.png")
-        plt.savefig(plot2_save_path)
-        print(f"Selection plot (adversary increase) saved to: {plot2_save_path}")
-        plt.close()
 
     else:
         print("No selection evaluation data generated. Skipping CSV saving and plotting.")

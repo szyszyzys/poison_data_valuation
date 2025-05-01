@@ -588,9 +588,9 @@ def image_modification(
             base_filename = original_img_path.stem  # Get filename without extension
 
             # Define save paths
-            original_save_path = Path(output_dir) / f"original_{base_filename}{original_img_path.suffix}"
-            modified_save_path = Path(output_dir) / f"modified_{base_filename}{original_img_path.suffix}"
-            noise_save_path = Path(output_dir) / f"noise_{base_filename}{original_img_path.suffix}"  # Noise image path
+            original_save_path = Path(output_dir) / f"{base_filename}_original{original_img_path.suffix}"
+            modified_save_path = Path(output_dir) / f"{base_filename}_modified{original_img_path.suffix}"
+            noise_save_path = Path(output_dir) / f"{base_filename}_noise{original_img_path.suffix}"  # Noise image path
 
             # Save the images
             original_image_pil.save(original_save_path)
