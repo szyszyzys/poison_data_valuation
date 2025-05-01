@@ -789,7 +789,12 @@ def modify_image(
     original_image_pil = Image.open(image_path).convert("RGB")  # Ensure RGB
 
     # Preprocess for CLIP
-    image_tensor = processor(images=original_image_pil, return_tensors="pt")['pixel_values'].to(device)
+    # image_tensor = processor(images=original_image_pil, return_tensors="pt")['pixel_values'].to(device)
+    processed_tensor = processor(original_image_pil)
+
+    # 2. Add the batch dimension (CLIP models expect input shape [batch_size, channels, height, width])
+    # The preprocess output is typically [channels, height, width]
+    image_tensor = processed_tensor.unsqueeze(0).to(device)
 
     # If you want gradients with respect to the image tensor, set requires_grad
     image_tensor = image_tensor.clone().detach().requires_grad_(True)
