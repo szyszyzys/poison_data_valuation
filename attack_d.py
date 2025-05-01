@@ -24,7 +24,7 @@ from tqdm import tqdm
 # CLIP model and processor
 import daved.src.frank_wolfe as frank_wolfe  # Ensure this module contains the design_selection function
 from attack.attack_data_market.adv import Adv
-from attack.attack_data_market.general_attack.my_utils import plot_results_data_selection, get_data
+from attack.attack_data_market.general_attack.my_utils import get_data
 # Import your custom modules or utilities
 from daved.src import utils
 from daved.src.main import plot_results
@@ -324,10 +324,10 @@ def save_results_trained_model(args, results, result_dir):
 
     # Calculate mean and std dev for errors
     for method, error_list in raw_errors.items():
-        if error_list and not all(np.isnan(error_list)): # Check if list is not empty/all NaN
-            mean_err = float(np.nanmean(error_list)) # Use nanmean to ignore NaNs
-            std_err = float(np.nanstd(error_list))   # Use nanstd to ignore NaNs
-            count = int(np.sum(~np.isnan(error_list))) # Count valid entries
+        if error_list and not all(np.isnan(error_list)):  # Check if list is not empty/all NaN
+            mean_err = float(np.nanmean(error_list))  # Use nanmean to ignore NaNs
+            std_err = float(np.nanstd(error_list))  # Use nanstd to ignore NaNs
+            count = int(np.sum(~np.isnan(error_list)))  # Count valid entries
         else:
             mean_err, std_err, count = np.nan, np.nan, 0
 
@@ -369,11 +369,11 @@ def save_results_trained_model(args, results, result_dir):
     save_data['configuration'] = {
         'attack_type': getattr(args, 'attack_type', 'N/A'),
         'dataset': getattr(args, 'dataset', 'N/A'),
-        'num_buyer_queries': getattr(args, 'num_buyer', 'N/A'), # Renamed for clarity
+        'num_buyer_queries': getattr(args, 'num_buyer', 'N/A'),  # Renamed for clarity
         'num_seller': getattr(args, 'num_seller', 'N/A'),
         'adversary_ratio': getattr(args, 'adversary_ratio', 'N/A'),
         'poison_rate': getattr(args, 'poison_rate', 'N/A'),
-        'query_batch_size': getattr(args, 'batch_size', 'N/A'), # Renamed for clarity
+        'query_batch_size': getattr(args, 'batch_size', 'N/A'),  # Renamed for clarity
         'cost_used': getattr(args, 'use_cost', 'N/A'),
         'attack_steps': getattr(args, 'attack_steps', 'N/A'),
         'attack_lr': getattr(args, 'attack_lr', 'N/A'),
@@ -411,7 +411,7 @@ def save_results_trained_model(args, results, result_dir):
 
         # Save as JSON
         with open(save_path, 'w') as f:
-            json.dump(save_data, f, indent=4, cls=NpEncoder) # Use NpEncoder for numpy types
+            json.dump(save_data, f, indent=4, cls=NpEncoder)  # Use NpEncoder for numpy types
 
         print(f"Successfully saved combined model performance results to: {save_path}")
 
@@ -863,7 +863,7 @@ def evaluate_model_raw_data(
 
 
 def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None, figure_path="./figure",
-                           img_paths=None, test_img_indices=None, sell_img_indices=None):
+                           img_paths=None, test_img_indices=None, sell_img_indices=None, save_path=""):
     # Dictionaries to store errors, runtimes, and weights for each method and test point
     errors = defaultdict(list)
     runtimes = defaultdict(list)
@@ -956,7 +956,7 @@ def sampling_run_one_buyer(x_b, y_b, x_s, y_s, eval_range, costs=None, args=None
         attack_model_result = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
         with open(f"{args.result_dir}/{args.save_name}-weights.pkl", "wb") as f:
             pickle.dump(weights, f)
-        save_results_trained_model(args=args, results=attack_model_result)
+        save_results_trained_model(args=args, results=attack_model_result, result_dir=save_path)
         plot_results(f"{figure_path}_error_plotting.png", results=attack_model_result, args=args)
 
     return attack_model_result, test_point_info
@@ -1276,7 +1276,8 @@ def evaluate_poisoning_attack(
                                                                             figure_path=f"{figure_path}benign"
                                                                             , img_paths=img_paths,
                                                                             test_img_indices=index_b,
-                                                                            sell_img_indices=index_s
+                                                                            sell_img_indices=index_s,
+                                                                            save_path=result_dir
                                                                             )
 
     # transform the initial result into dictionary
@@ -1352,7 +1353,7 @@ def evaluate_poisoning_attack(
         # use the sample query to perform the attack.
         model_training_result, data_sampling_result = sampling_run_one_buyer(
             x_test, y_test, x_s_clone, y_s, eval_range, costs=costs, args=args, figure_path=attack_result_path,
-            img_paths=img_paths_clone, test_img_indices=index_b, sell_img_indices=index_s
+            img_paths=img_paths_clone, test_img_indices=index_b, sell_img_indices=index_s, save_path=result_dir
 
         )
 
@@ -1601,6 +1602,7 @@ def evaluate_poisoning_attack(
         print(f"Error saving combined model results: {e}")
 
     print("\nEvaluation complete.")
+
 
 def attack_target_sampling(data, labels, strategy="random", num_samples=100, **kwargs):
     """
@@ -1871,7 +1873,8 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     emb_model, preprocess = clip.load("ViT-B/32", device=device)
     emb_model.eval()  # Set model to evaluation mode
-
+    result_dir = './data_market/results/'
+    Path(result_dir).mkdir(exist_ok=True, parents=True)
     # Define experiment parameters
     experiment_params = {
         'dataset': args.dataset,
@@ -1887,7 +1890,7 @@ if __name__ == "__main__":
         'reg_lambda': 0.1,
         'attack_strength': 0.1,
         'save_results_flag': True,
-        'result_dir': 'results',
+        'result_dir': result_dir,
         'save_name': save_name,
         "num_select": args.num_select,
         "adversary_ratio": 0.25,
