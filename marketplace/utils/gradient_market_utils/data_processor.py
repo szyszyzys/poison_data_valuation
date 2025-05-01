@@ -31,6 +31,7 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Tuple, Any
 
 import numpy as np
+import torch
 
 
 def load_fmnist_dataset(train=True, download=True):
@@ -630,11 +631,16 @@ def get_data_set(
     #                                                         output_dir=save_path)
 
     # Create DataLoaders.
-    buyer_loader = DataLoader(Subset(dataset, buyer_indices), batch_size=batch_size, shuffle=True)
-    seller_loaders = {i: DataLoader(Subset(dataset, indices), batch_size=batch_size, shuffle=True)
-                      for i, indices in seller_splits.items()}
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False)
+    dataloader_num_workers = 2  # START WITH 0 if using multiprocessing for clients, maybe 2-4 otherwise
+    use_pin_memory = torch.cuda.is_available()  # Only pin if using GPU
 
+    buyer_loader = DataLoader(Subset(dataset, buyer_indices), batch_size=batch_size, shuffle=True,
+                              num_workers=dataloader_num_workers, pin_memory=use_pin_memory)
+    seller_loaders = {i: DataLoader(Subset(dataset, indices), batch_size=batch_size, shuffle=True,
+                                    num_workers=dataloader_num_workers, pin_memory=use_pin_memory)
+                      for i, indices in seller_splits.items()}
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False,
+                             num_workers=dataloader_num_workers, pin_memory=use_pin_memory)
     print("DataLoaders created successfully.")
     return buyer_loader, seller_loaders, dataset, test_loader, class_names
 
