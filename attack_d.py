@@ -1563,21 +1563,28 @@ def evaluate_poisoning_attack(
     # Make sure benign_training_results['errors'] and ['runtimes'] are dictionaries
     if isinstance(benign_training_results.get("errors"), dict):
         for k, v in m_errors.items():
-            # Filter out NaNs if you only want to average valid runs
-            valid_v = [val for val in v if not np.isnan(val)]
-            if valid_v:  # Only add if there's valid data
-                benign_training_results["errors"][k] = valid_v  # Store list of valid results
+            # Filter out NaNs AND skip any unexpected arrays within v
+            valid_v = [
+                val for val in v
+                if not isinstance(val, np.ndarray) and not np.isnan(val)
+            ] # Add check 'not isinstance(val, np.ndarray)'
+            if valid_v:
+                benign_training_results["errors"][k] = valid_v
             else:
-                benign_training_results["errors"][k] = []  # Or handle as appropriate
+                benign_training_results["errors"][k] = []
 
+    # --- Fix for Runtimes ---
     if isinstance(benign_training_results.get("runtimes"), dict):
         for k, v in m_runtimes.items():
-            valid_v = [val for val in v if not np.isnan(val)]
+            # Filter out NaNs AND skip any unexpected arrays within v
+            valid_v = [
+                val for val in v
+                if not isinstance(val, np.ndarray) and not np.isnan(val)
+            ] # Add check 'not isinstance(val, np.ndarray)'
             if valid_v:
                 benign_training_results["runtimes"][k] = valid_v
             else:
                 benign_training_results["runtimes"][k] = []
-
     # Step 8 Cont.: Plot and Save Trained Model Results
     # Ensure args.save_name is set if needed by the functions
     # args.save_name = "attack_model_perf_comparison" # Example
