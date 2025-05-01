@@ -1,4 +1,5 @@
 import time
+import warnings
 from collections import defaultdict
 from pathlib import Path
 
@@ -523,65 +524,159 @@ def get_baseline_values(
 def plot_errors_fixed(results, save_path):
     plt.rcParams["font.family"] = "serif"
     plt.figure(figsize=(8, 8))
-    errors = results["errors"]
-    eval_range = results["eval_range"]
+    errors = results.get("errors", {}) # Use .get for safety
+    eval_range = results.get("eval_range", []) # Use .get for safety
+
+    if not errors:
+        print("Warning: 'errors' dictionary is empty in results. Cannot generate plot.")
+        plt.close() # Close the empty figure
+        return # Exit the function
+
+    if not isinstance(eval_range, (list, np.ndarray)) or len(eval_range) == 0:
+        print("Warning: 'eval_range' is missing or empty in results. Cannot generate plot.")
+        plt.close()
+        return # Exit the function
 
     quantiles = []
-    for i, (k, v) in enumerate(errors.items()):
-        err = np.array(v)
-        quantiles.append(np.quantile(err, 0.9))
-        ms = 5
-        match k:
-            case "LavaEvaluator":
-                k = "LAVA"
-            case "InfluenceSubsample":
-                k = "Influence"
-            case "LeaveOneOut":
-                k = "Leave One Out"
-            case "KNNShapley":
-                k = "KNN Shapley"
-            case "DataOob":
-                k = "Data-OOB"
-            case "attack":
-                k = "Attack-DEVAD"
-            case _:
-                k = k
+    plot_successful = False # Flag to track if anything was plotted
 
+    for i, (k, v) in enumerate(errors.items()):
+        # Ensure v is a list or array-like before converting
+        if not isinstance(v, (list, np.ndarray)):
+             print(f"Warning: Expected list or ndarray for errors of method '{k}', got {type(v)}. Skipping.")
+             continue
+
+        err = np.array(v)
+
+        # --- FIX: Check if err array is empty ---
+        if err.size == 0:
+            print(f"Warning: No valid error data found for method '{k}'. Skipping this method in plot.")
+            continue # Skip to the next item in the loop
+
+        # Check if dimensions match eval_range (optional but good practice)
+        # This assumes errors are recorded for each point in eval_range across potentially multiple runs
+        # Example check: Needs adjustment based on your actual err shape (e.g., (num_runs, num_eval_points))
+        expected_len = len(eval_range)
+        if err.ndim > 1 and err.shape[-1] != expected_len:
+             print(f"Warning: Shape mismatch for method '{k}'. Error shape {err.shape} last dim != eval_range len {expected_len}. Skipping.")
+             continue
+        elif err.ndim == 1 and err.shape[0] != expected_len:
+             # Handle case where only one run's data might be present but flattened incorrectly
+             print(f"Warning: Shape mismatch for method '{k}'. Error shape {err.shape} != eval_range len {expected_len}. Assuming mismatched data. Skipping.")
+             continue
+
+
+        # --- Proceed only if err is not empty ---
+        try:
+            # Calculate quantile safely now
+            quantiles.append(np.quantile(err, 0.9))
+
+            # Calculate mean safely
+            # Use nanmean if NaNs might still exist somehow, though filtering should prevent it
+            # Adjust axis for mean based on your data structure (axis=0 often means average over runs)
+            mean_err = np.nanmean(err, axis=0).squeeze()
+
+            # Ensure mean_err has the same length as eval_range after averaging
+            if mean_err.size != expected_len:
+                 print(f"Warning: Mean error length mismatch after averaging for method '{k}'. Mean shape {mean_err.shape}, Eval range len {expected_len}. Skipping.")
+                 continue
+
+        except IndexError as ie:
+             # Catch potential index errors during quantile/mean if shape is unexpected despite checks
+             print(f"Warning: IndexError during processing for method '{k}'. Shape: {err.shape}. Error: {ie}. Skipping.")
+             continue
+        except Exception as e:
+             # Catch other potential numerical errors
+             print(f"Warning: Error during processing for method '{k}'. Error: {e}. Skipping.")
+             continue
+
+
+        # --- Plotting ---
+        ms = 5
+        # Use original key for matching logic if needed, then assign display key
+        display_k = k
         match k:
-            case k if "DAVED (multi-step)" in k:
-                lw = 2
-                ls = "-"
-                marker = "*"
-                ms = ms + 5
-            case k if "random" in k.lower():
-                lw = 5
-                ls = "-"
-                marker = ""
-            case _:
-                lw = 2
-                ls = "-"
-                marker = "s"
+            case "LavaEvaluator": display_k = "LAVA"
+            case "InfluenceSubsample": display_k = "Influence"
+            case "LeaveOneOut": display_k = "Leave One Out"
+            case "KNNShapley": display_k = "KNN Shapley"
+            case "DataOob": display_k = "Data-OOB"
+            # Adjust "attack" naming based on what's actually in your keys
+            case _ if "ADV DAVED (multi-step)" in k: display_k = "ADV DAVED (multi)"
+            case _ if "ADV DAVED (single step)" in k: display_k = "ADV DAVED (single)"
+            case _ if "DAVED (multi-step)" in k: display_k = "DAVED (multi)" # Benign?
+            case _ if "DAVED (single step)" in k: display_k = "DAVED (single)" # Benign?
+            case _: display_k = k # Keep original if no match
+
+        ls = "-"
+        marker = "s"
+        lw = 2
+        if "DAVED (multi-step)" in k: # Check original key for style
+            lw = 2
+            ls = "-"
+            marker = "*"
+            ms = ms + 5
+        elif "random" in k.lower(): # Check original key
+            lw = 5
+            ls = "-"
+            marker = ""
+        # Add other style conditions based on original key 'k' if needed
+
         plt.plot(
             eval_range,
-            err.mean(0).squeeze(),
-            label=k,
+            mean_err, # Use the calculated mean_err
+            label=display_k, # Use the display key for the label
             marker=marker,
             ls=ls,
             lw=lw,
             ms=ms,
         )
+        plot_successful = True # Mark that at least one line was plotted
 
-    plt.xticks(np.arange(0, max(eval_range), 10), fontsize="x-large")
-    # plt.yticks(np.arange(0, 10, 0.5), fontsize='x-large')
-    plt.ylim(0, np.median(quantiles))
+    # --- Post-plotting setup ---
+    if not plot_successful:
+         print("Error: No data was successfully plotted.")
+         plt.close()
+         return
+
+    # Set y-limit based on calculated quantiles
+    if not quantiles: # Check if quantiles list ended up empty
+         print("Warning: No valid quantiles calculated. Setting default ylim.")
+         ylim_top = 1.0 # Sensible default, adjust as needed
+    else:
+         # Use nanmedian for safety if any quantiles somehow became NaN
+         with warnings.catch_warnings(): # Suppress warnings from empty slices if median fails
+              warnings.simplefilter("ignore", category=RuntimeWarning)
+              ylim_top = np.nanmedian(quantiles)
+              if np.isnan(ylim_top): # Handle case where median is NaN
+                  print("Warning: Median of quantiles is NaN. Setting default ylim.")
+                  ylim_top = 1.0
+
+    # Ensure ylim_top is reasonable
+    if ylim_top <= 0:
+        print(f"Warning: Calculated ylim top ({ylim_top}) is non-positive. Adjusting.")
+        ylim_top = 1.0 # Adjust default if median is zero or negative
+
+
+    plt.xticks(np.arange(0, max(eval_range) + 1, 10), fontsize="x-large") # Extend xticks slightly
+    # plt.yticks(np.arange(0, 10, 0.5), fontsize='x-large') # Consider dynamic yticks if ylim varies a lot
+    plt.ylim(bottom=0, top=ylim_top * 1.1) # Set bottom to 0 and add some padding to top
     plt.xlabel("Number of Datapoints selected", fontsize="xx-large", labelpad=8)
-    plt.ylabel("Test\nError", fontsize="xx-large", rotation=0, labelpad=30)
+    plt.ylabel("Test Error", fontsize="xx-large", rotation=90, labelpad=15) # Adjusted rotation/pad
     plt.legend(
-        fontsize="xx-large", bbox_to_anchor=(0.5, 1.4), loc="upper center", ncols=2
-    )
-    plt.tight_layout(pad=0, w_pad=0)
-    plt.savefig(save_path, bbox_inches="tight")
+        fontsize="large", bbox_to_anchor=(0.5, 1.02), loc="lower center", ncol=3, borderaxespad=0.
+    ) # Adjusted legend position/size
+    plt.title("Model Test Error vs. Number of Selected Datapoints", fontsize='xx-large', pad=60) # Add title
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.tight_layout(rect=[0, 0, 1, 0.9]) # Adjust rect to make space for legend/title if needed
 
+    try:
+        plt.savefig(save_path, bbox_inches="tight")
+        print(f"Plot saved successfully to: {save_path}")
+    except Exception as e:
+        print(f"Error saving plot to {save_path}: {e}")
+    finally:
+        plt.close() # Ensure figure is closed even if saving fails
 
 def plot_errors_under_budget(results, save_path):
     plt.rcParams["font.family"] = "serif"

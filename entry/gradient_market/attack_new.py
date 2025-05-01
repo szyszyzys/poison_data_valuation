@@ -628,7 +628,8 @@ def main():
         return
 
     # Construct the base save path for this specific experiment config
-    experiment_base_path = os.path.join(base_save_dir, experiment_id)
+    # experiment_base_path = os.path.join(base_save_dir, experiment_id)
+    experiment_base_path = config.get('output', {}).get('final_save_path')
     print(f"Base results directory for this experiment: {experiment_base_path}")
 
     # Ensure base path exists
