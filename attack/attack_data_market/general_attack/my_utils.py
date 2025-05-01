@@ -533,7 +533,8 @@ def image_modification(
         learning_rate=0.1,
         lambda_reg=0.1,
         epsilon=0.05,
-        noise_vis_scale_factor=10  # Pass scale factor down
+        noise_vis_scale_factor=10,
+        visualize_limit=5
 ):
     """
     Perform the poisoning attack on selected images, saving results and noise visualization.
@@ -548,6 +549,7 @@ def image_modification(
     - modify_result (dict): Dictionary containing results for each modified image,
                             including paths to saved original, modified, and noise images.
     """
+    visualizations_saved = 0
     os.makedirs(output_dir, exist_ok=True)
     modify_result = {}
 
@@ -607,6 +609,56 @@ def image_modification(
                 "modified_img_path_saved": str(modified_save_path),  # Path where modified is saved
                 "noise_img_path_saved": str(noise_save_path)  # Path where noise vis is saved
             }
+
+            if visualize_limit == -1 or visualizations_saved < visualize_limit:
+                fig, axes = plt.subplots(2, 2, figsize=(10, 10))  # Adjust figsize as needed
+                fig.suptitle(
+                    f"Image Modification Result (Original Idx: {idx})\nTarget Idx: {target_img_idx} | Final Similarity: {similarity:.4f}",
+                    fontsize=14)
+
+                # 1. Original Image
+                ax = axes[0, 0]
+                ax.imshow(original_image_pil)
+                ax.set_title(f"Original ({base_filename})")
+                ax.axis('off')
+
+                # 2. Target Image (Load if path is valid)
+                ax = axes[0, 1]
+                target_image_pil = None
+                if target_img_path and Path(target_img_path).is_file():
+                    try:
+                        target_image_pil = Image.open(target_img_path).convert("RGB")
+                        ax.imshow(target_image_pil)
+                        ax.set_title(f"Target ({Path(target_img_path).stem})")
+                    except Exception as load_err:
+                        ax.text(0.5, 0.5, f'Error loading target:\n{load_err}', ha='center', va='center')
+                        ax.set_title("Target (Load Error)")
+                else:
+                    ax.text(0.5, 0.5, 'Target Image\nNot Available', ha='center', va='center')
+                    ax.set_title("Target (N/A)")
+                ax.axis('off')
+
+                # 3. Modified Image
+                ax = axes[1, 0]
+                ax.imshow(modified_image_pil)
+                ax.set_title("Modified (Original + Noise)")
+                ax.axis('off')
+
+                # 4. Noise Visualization
+                ax = axes[1, 1]
+                ax.imshow(noise_visualization_pil)
+                ax.set_title(f"Noise Visualization (Scaled, eps={epsilon})")
+                ax.axis('off')
+
+                plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust layout to prevent title overlap
+
+                # Define save path for the comparison figure
+                comparison_save_path = Path(output_dir) / f"{base_filename}_comparison.png"
+                plt.savefig(comparison_save_path)
+                plt.close(fig)  # Close the figure to free memory
+                visualizations_saved += 1
+                # Optionally add path to modify_result
+                modify_result[idx]["comparison_fig_path_saved"] = str(comparison_save_path)
         except FileNotFoundError:
             print(f"Error: File not found during processing for {original_img_path_str}, skipping index {idx}.")
         except Exception as e:
@@ -896,17 +948,18 @@ def modify_image(
         modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
         final_similarity = F.cosine_similarity(modified_embedding, target_tensor,
                                                dim=-1).item()  # Use item() for single value
-    target_size = modified_image_pil.size # Get (width, height) from the modified PIL image
-    original_image_resized_pil = original_image_pil.resize(target_size, Image.Resampling.LANCZOS) # Use a good resampling filter
+    target_size = modified_image_pil.size  # Get (width, height) from the modified PIL image
+    original_image_resized_pil = original_image_pil.resize(target_size,
+                                                           Image.Resampling.LANCZOS)  # Use a good resampling filter
     # Create noise visualization
     noise_visualization_pil = create_perturbation_visualization(
-        original_image_resized_pil, # Pass the RESIZED original image
+        original_image_resized_pil,  # Pass the RESIZED original image
         modified_image_pil,
         scale_factor=noise_vis_scale_factor
     )
 
     return (
-        original_image_pil,          # Return the original (non-resized) PIL for reference if needed
+        original_image_pil,  # Return the original (non-resized) PIL for reference if needed
         modified_image_pil,
         noise_visualization_pil,
         modified_embedding.cpu(),
