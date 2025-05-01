@@ -1,5 +1,6 @@
 import argparse
 import copy
+import datetime
 import json
 import os
 import pickle
@@ -297,20 +298,143 @@ def convert_arrays_to_lists(obj):
         return obj
 
 
-def save_results_trained_model(args, results):
-    for k, v in vars(args).items():
-        if k not in results:
-            if isinstance(v, Path):
-                v = str(v)
-            results[k] = v
-        else:
-            print(f"Found {k} in results. Skipping.")
+def save_results_trained_model(args, results, result_dir):
+    """
+    Calculates summary statistics for trained model performance and saves
+    them along with key configuration parameters to a JSON file.
 
-    result_path = f"{args.result_dir}/{args.save_name}-results.json"
-    results = convert_arrays_to_lists(results)
-    with open(result_path, "w") as f:
-        json.dump(results, f, default=float)
-    print(f"Results saved to {result_path}".center(80, "="))
+    Parameters:
+    - args (Namespace or object): Object containing experiment configuration parameters
+                                   (e.g., args.attack_type, args.adversary_ratio).
+                                   Must contain attributes used for filename/config saving.
+    - results (dict): Dictionary containing the aggregated performance results.
+                      Expected structure:
+                      {
+                          'errors': {'method1': [err_q1, err_q2,...], ...},
+                          'runtimes': {'method1': [rt_q1, rt_q2,...], ...}
+                      }
+                      Lists contain results from different queries/runs.
+    - result_dir (str): The directory where the results JSON file should be saved.
+    """
+    print("\nSaving combined model performance results...")
+
+    summary_metrics = {}
+    raw_errors = results.get('errors', {})
+    raw_runtimes = results.get('runtimes', {})
+
+    # Calculate mean and std dev for errors
+    for method, error_list in raw_errors.items():
+        if error_list and not all(np.isnan(error_list)): # Check if list is not empty/all NaN
+            mean_err = float(np.nanmean(error_list)) # Use nanmean to ignore NaNs
+            std_err = float(np.nanstd(error_list))   # Use nanstd to ignore NaNs
+            count = int(np.sum(~np.isnan(error_list))) # Count valid entries
+        else:
+            mean_err, std_err, count = np.nan, np.nan, 0
+
+        summary_metrics[method] = {
+            'mean_error': mean_err,
+            'std_error': std_err,
+            'error_count': count
+        }
+
+    # Calculate mean and std dev for runtimes and add to summary
+    for method, runtime_list in raw_runtimes.items():
+        if runtime_list and not all(np.isnan(runtime_list)):
+            mean_rt = float(np.nanmean(runtime_list))
+            std_rt = float(np.nanstd(runtime_list))
+            count = int(np.sum(~np.isnan(runtime_list)))
+        else:
+            mean_rt, std_rt, count = np.nan, np.nan, 0
+
+        if method in summary_metrics:
+            summary_metrics[method].update({
+                'mean_runtime': mean_rt,
+                'std_runtime': std_rt,
+                'runtime_count': count
+            })
+        else:
+            # This case might indicate an issue if a method has runtime but no error
+            print(f"Warning: Method '{method}' found in runtimes but not errors.")
+            summary_metrics[method] = {
+                'mean_runtime': mean_rt,
+                'std_runtime': std_rt,
+                'runtime_count': count
+            }
+
+    # --- Prepare data structure for saving ---
+    save_data = {}
+
+    # Extract relevant configuration parameters from args
+    # Use getattr for safety in case some attributes don't exist
+    save_data['configuration'] = {
+        'attack_type': getattr(args, 'attack_type', 'N/A'),
+        'dataset': getattr(args, 'dataset', 'N/A'),
+        'num_buyer_queries': getattr(args, 'num_buyer', 'N/A'), # Renamed for clarity
+        'num_seller': getattr(args, 'num_seller', 'N/A'),
+        'adversary_ratio': getattr(args, 'adversary_ratio', 'N/A'),
+        'poison_rate': getattr(args, 'poison_rate', 'N/A'),
+        'query_batch_size': getattr(args, 'batch_size', 'N/A'), # Renamed for clarity
+        'cost_used': getattr(args, 'use_cost', 'N/A'),
+        'attack_steps': getattr(args, 'attack_steps', 'N/A'),
+        'attack_lr': getattr(args, 'attack_lr', 'N/A'),
+        'attack_reg': getattr(args, 'attack_reg', 'N/A'),
+        'emb_model_name': getattr(args, 'emb_model_name', 'N/A'),
+        'timestamp': datetime.datetime.now().isoformat()
+        # Add any other critical parameters defining this run
+    }
+
+    # Add the calculated summary metrics
+    save_data['summary_metrics'] = summary_metrics
+
+    # Optionally include raw data if needed (can make file large)
+    # save_data['raw_metrics'] = results
+
+    # --- Construct filename and save ---
+    try:
+        # Create a descriptive filename
+        base_filename = getattr(args, 'save_name', 'model_perf_results')
+        # Include key parameters in filename for easy identification
+        filename_parts = [
+            base_filename,
+            f"attack_{save_data['configuration']['attack_type']}",
+            f"advr_{save_data['configuration']['adversary_ratio']}",
+            f"prate_{save_data['configuration']['poison_rate']}",
+            f"nBuyer_{save_data['configuration']['num_buyer_queries']}",
+            f"nSeller_{save_data['configuration']['num_seller']}"
+        ]
+        filename = "_".join(str(p) for p in filename_parts) + ".json"
+
+        # Ensure result directory exists
+        os.makedirs(result_dir, exist_ok=True)
+
+        save_path = os.path.join(result_dir, filename)
+
+        # Save as JSON
+        with open(save_path, 'w') as f:
+            json.dump(save_data, f, indent=4, cls=NpEncoder) # Use NpEncoder for numpy types
+
+        print(f"Successfully saved combined model performance results to: {save_path}")
+
+    except Exception as e:
+        print(f"Error saving model performance results: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+# Helper class to encode NumPy types to JSON
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            # Handle NaN separately, encode as None (null in JSON)
+            return None if np.isnan(obj) else float(obj)
+        if isinstance(obj, np.ndarray):
+            # Convert NaN in arrays to None before converting to list
+            return np.where(np.isnan(obj), None, obj).tolist()
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        return super(NpEncoder, self).default(obj)
 
 
 def save_json(path, results):
@@ -1242,78 +1366,241 @@ def evaluate_poisoning_attack(
     # benign_training_results = dict(errors=errors, eval_range=eval_range, runtimes=runtimes)
     attack_training_error = []
     selection_info = defaultdict(list)
-    # Step 6: attack evaluation, identify Updated Selected Data Points
+    print("Step 6 & 7: Evaluating Attack on Data Selection...")
+
+    # --- Part 1: Gather Detailed Selection Data ---
+    selection_eval_records = []  # List to hold data for DataFrame
+
     for query_n in attack_result_dict.keys():
         malicious_info = attack_result_dict[query_n]
         malicious_data_sampling_result = malicious_info["data_sampling_result"]
-        malicious_model_training_result = malicious_info["model_training_result"]
+        # malicious_model_training_result = malicious_info["model_training_result"] # Keep for later
 
-        # find the benign info
+        # Find the corresponding benign info
+        if query_n not in benign_node_sampling_result_dict:
+            print(f"Warning: Benign results not found for query {query_n}. Skipping.")
+            continue
         benign_data_sampling_result = benign_node_sampling_result_dict[query_n]
 
-        m_s_weight = malicious_data_sampling_result["single_step_weights"]
-        m_m_weight = malicious_data_sampling_result["multi_step_weights"]
+        # Get weights
+        m_s_weight = malicious_data_sampling_result.get("single_step_weights")
+        m_m_weight = malicious_data_sampling_result.get("multi_step_weights")
+        b_s_weight = benign_data_sampling_result.get("single_step_weights")
+        b_m_weight = benign_data_sampling_result.get("multi_step_weights")
 
-        b_s_weight = benign_data_sampling_result["single_step_weights"]
-        b_m_weight = benign_data_sampling_result["multi_step_weights"]
+        # --- Evaluate Single-Step Selection ---
+        if b_s_weight is not None and m_s_weight is not None:
+            try:
+                evaluation_results_single = evaluate_poisoning_effectiveness_ranged(
+                    initial_weights=b_s_weight,
+                    updated_weights=m_s_weight,
+                    adversary_indices=adversary_indices,
+                    eval_range=eval_range
+                )
+                selection_info_single = evaluation_results_single.get("selection_info")
 
-        evaluation_results_single = evaluate_poisoning_effectiveness_ranged(
-            initial_weights=b_s_weight,
-            updated_weights=m_s_weight,
-            adversary_indices=adversary_indices,
-            eval_range=eval_range)
-        selection_info_single = evaluation_results_single["selection_info"]
+                if selection_info_single:
+                    for budget in eval_range:
+                        if budget in selection_info_single:
+                            stats = selection_info_single[budget]
+                            selection_eval_records.append({
+                                "query": query_n,
+                                "budget": budget,
+                                "method": "single_step",
+                                "adv_selected_before": stats.get("num_adv_selected_before", np.nan),
+                                "adv_selected_after": stats.get("num_adv_selected_after", np.nan),
+                                "total_selected_before": stats.get("total_selected_before", np.nan),
+                                "total_selected_after": stats.get("total_selected_after", np.nan),
+                                "adv_selection_increase": stats.get("adv_selection_increase", np.nan),
+                                # Add other relevant stats if available in selection_info_single[budget]
+                            })
+                        else:
+                            print(f"Warning: Budget {budget} not found in single-step results for query {query_n}.")
 
-        evaluation_results_multi = evaluate_poisoning_effectiveness_ranged(
-            initial_weights=b_m_weight,
-            updated_weights=m_m_weight,
-            adversary_indices=adversary_indices,
-            eval_range=eval_range)
-        selection_info_multi = evaluation_results_multi["selection_info"]
+            except Exception as e:
+                print(f"Error evaluating single-step effectiveness for query {query_n}: {e}")
 
-        selection_info_bs = []
-        selection_info_ms = []
-        selection_info_bm = []
-        selection_info_mm = []
+        # --- Evaluate Multi-Step Selection ---
+        if b_m_weight is not None and m_m_weight is not None:
+            try:
+                evaluation_results_multi = evaluate_poisoning_effectiveness_ranged(
+                    initial_weights=b_m_weight,
+                    updated_weights=m_m_weight,
+                    adversary_indices=adversary_indices,
+                    eval_range=eval_range
+                )
+                selection_info_multi = evaluation_results_multi.get("selection_info")
 
-        for idx in eval_range:
-            selection_info_bs.append(selection_info_single[idx]["num_adv_selected_before"])
-            selection_info_ms.append(selection_info_single[idx]["num_adv_selected_after"])
-            selection_info_bm.append(selection_info_multi[idx]["num_adv_selected_before"])
-            selection_info_mm.append(selection_info_multi[idx]["num_adv_selected_after"])
+                if selection_info_multi:
+                    for budget in eval_range:
+                        if budget in selection_info_multi:
+                            stats = selection_info_multi[budget]
+                            selection_eval_records.append({
+                                "query": query_n,
+                                "budget": budget,
+                                "method": "multi_step",
+                                "adv_selected_before": stats.get("num_adv_selected_before", np.nan),
+                                "adv_selected_after": stats.get("num_adv_selected_after", np.nan),
+                                "total_selected_before": stats.get("total_selected_before", np.nan),
+                                "total_selected_after": stats.get("total_selected_after", np.nan),
+                                "adv_selection_increase": stats.get("adv_selection_increase", np.nan),
+                                # Add other relevant stats if available
+                            })
+                        else:
+                            print(f"Warning: Budget {budget} not found in multi-step results for query {query_n}.")
 
-        selection_info["benign(single)"].append(selection_info_bs)
-        selection_info["malicious(single)"].append(selection_info_ms)
-        selection_info["benign(multi)"].append(selection_info_bm)
-        selection_info["malicious(multi)"].append(selection_info_mm)
+            except Exception as e:
+                print(f"Error evaluating multi-step effectiveness for query {query_n}: {e}")
 
-    plot_results_data_selection("image_selection_rate", f"{figure_path}/selection_eval.png", selection_info,
-                                eval_range)
+    # --- Part 2: Save Selection Data to CSV ---
+    if selection_eval_records:
+        selection_df = pd.DataFrame(selection_eval_records)
+        csv_save_path = os.path.join(result_dir, "selection_evaluation_details.csv")
+        selection_df.to_csv(csv_save_path, index=False)
+        print(f"Detailed selection evaluation results saved to: {csv_save_path}")
 
-    # start combine the result for trained model performance
+        # --- Part 3: Visualize Selection Data ---
+        print("Generating selection evaluation plots...")
+        plt.style.use('seaborn-v0_8-darkgrid')  # Use a nice style
+
+        # Plot 1: Number of Adversarial Samples Selected (Before vs After)
+        plt.figure(figsize=(12, 7))
+        sns.lineplot(
+            data=selection_df,
+            x="budget",
+            y="adv_selected_before",
+            hue="method",
+            style="method",  # Use style for B&W printing if needed
+            markers=True,
+            dashes=True,  # Dashed lines for 'before'
+            errorbar="sd",  # Show standard deviation across queries
+            label="Benign (Before Attack)"  # Custom label needs manual handling or melt
+        )
+        sns.lineplot(
+            data=selection_df,
+            x="budget",
+            y="adv_selected_after",
+            hue="method",
+            style="method",
+            markers=True,
+            dashes=False,  # Solid lines for 'after'
+            errorbar="sd",  # Show standard deviation across queries
+            label="Malicious (After Attack)"  # Custom label needs manual handling or melt
+        )
+
+        # Improve Plot 1 Legend (Seaborn makes combined legends tricky sometimes)
+        handles, labels = plt.gca().get_legend_handles_labels()
+        # Manually create desired labels (adjust based on actual seaborn output)
+        num_methods = selection_df['method'].nunique()
+        new_labels = []
+        new_handles = []
+        if num_methods > 0:
+            new_labels.extend([f"Benign ({m})" for m in selection_df['method'].unique()])
+            new_labels.extend([f"Malicious ({m})" for m in selection_df['method'].unique()])
+            # This assumes the order seaborn plots (might need adjustment)
+            new_handles.extend(handles[:num_methods])  # Before handles
+            new_handles.extend(handles[num_methods:])  # After handles
+
+            plt.legend(handles=new_handles, labels=new_labels, title="Condition (Method)")
+        else:
+            plt.legend(title="Condition (Method)")  # Default if no data
+
+        plt.title('Number of Adversarial Samples Selected vs. Budget')
+        plt.xlabel('Selection Budget (k)')
+        plt.ylabel('Number of Adversarial Samples Selected')
+        plt.tight_layout()
+        plot1_save_path = os.path.join(figure_path, "selection_eval_adv_count.png")
+        plt.savefig(plot1_save_path)
+        print(f"Selection plot (adversary count) saved to: {plot1_save_path}")
+        plt.close()  # Close figure to free memory
+
+        # Plot 2: Increase in Adversarial Samples Selected
+        selection_df['adv_selection_increase_calc'] = selection_df['adv_selected_after'] - selection_df[
+            'adv_selected_before']
+        plt.figure(figsize=(10, 6))
+        sns.lineplot(
+            data=selection_df,
+            x="budget",
+            y="adv_selection_increase_calc",  # Use calculated or direct value
+            hue="method",
+            style="method",
+            markers=True,
+            errorbar="sd"  # Show standard deviation
+        )
+        plt.title('Increase in Adversarial Samples Selected After Attack vs. Budget')
+        plt.xlabel('Selection Budget (k)')
+        plt.ylabel('Increase in Adversarial Samples Selected')
+        plt.legend(title="Selection Method")
+        plt.tight_layout()
+        plot2_save_path = os.path.join(figure_path, "selection_eval_adv_increase.png")
+        plt.savefig(plot2_save_path)
+        print(f"Selection plot (adversary increase) saved to: {plot2_save_path}")
+        plt.close()
+
+    else:
+        print("No selection evaluation data generated. Skipping CSV saving and plotting.")
+
+    # --- Part 4: Combine Results for Trained Model Performance ---
+    print("\nStep 8: Evaluating Attack Success on Downstream Model...")
 
     m_errors = defaultdict(list)
     m_runtimes = defaultdict(list)
+
+    # **Important**: Check this logic carefully based on your results structure!
+    # This assumes 'DAVED (multi-step)' keys exist in the malicious results.
+    # If the previous potential bug was real, this needs fixing.
     for query_n in attack_result_dict.keys():
         malicious_info = attack_result_dict[query_n]
-        malicious_model_training_result = malicious_info["model_training_result"]
-        m_runtimes["ADV DAVED (single step)"].append(
-            malicious_model_training_result["runtimes"]["DAVED (single step)"][0])
-        m_errors["ADV DAVED (single step)"].append(malicious_model_training_result["errors"]["DAVED (single step)"][0])
+        malicious_model_training_result = malicious_info.get("model_training_result", {})
+        runtimes = malicious_model_training_result.get("runtimes", {})
+        errors = malicious_model_training_result.get("errors", {})
+
+        # Safely get results, append None or NaN if key missing
+        m_runtimes["ADV DAVED (single step)"].append(runtimes.get("DAVED (single step)", [np.nan])[0])
+        m_errors["ADV DAVED (single step)"].append(errors.get("DAVED (single step)", [np.nan])[0])
         m_runtimes["ADV DAVED (multi-step)"].append(
-            malicious_model_training_result["runtimes"]["DAVED (multi-step)"][0])
-        m_errors["ADV DAVED (multi-step)"].append(malicious_model_training_result["errors"]["DAVED (multi-step)"][0])
+            runtimes.get("DAVED (multi-step)", [np.nan])[0])  # Check this key exists!
+        m_errors["ADV DAVED (multi-step)"].append(
+            errors.get("DAVED (multi-step)", [np.nan])[0])  # Check this key exists!
 
-    for k, v in m_errors.items():
-        benign_training_results["errors"][k] = v
-    for k, v in m_runtimes.items():
-        benign_training_results["runtimes"][k] = v
+    # Add malicious results to the benign results dictionary
+    # Make sure benign_training_results['errors'] and ['runtimes'] are dictionaries
+    if isinstance(benign_training_results.get("errors"), dict):
+        for k, v in m_errors.items():
+            # Filter out NaNs if you only want to average valid runs
+            valid_v = [val for val in v if not np.isnan(val)]
+            if valid_v:  # Only add if there's valid data
+                benign_training_results["errors"][k] = valid_v  # Store list of valid results
+            else:
+                benign_training_results["errors"][k] = []  # Or handle as appropriate
 
-    # Step 8: Evaluate Attack Success on trained model
-    args.save_name = "attack_result"
-    plot_results(f"{figure_path}/model_training_result.png", results=benign_training_results, args=args)
-    save_results_trained_model(args, benign_training_results)
+    if isinstance(benign_training_results.get("runtimes"), dict):
+        for k, v in m_runtimes.items():
+            valid_v = [val for val in v if not np.isnan(val)]
+            if valid_v:
+                benign_training_results["runtimes"][k] = valid_v
+            else:
+                benign_training_results["runtimes"][k] = []
 
+    # Step 8 Cont.: Plot and Save Trained Model Results
+    # Ensure args.save_name is set if needed by the functions
+    # args.save_name = "attack_model_perf_comparison" # Example
+    model_plot_path = os.path.join(figure_path, "model_training_result_comparison.png")
+    try:
+        # Assuming plot_results handles dictionaries where values are lists of results per query
+        plot_results(model_plot_path, results=benign_training_results, args=args)
+        print(f"Combined model performance plot saved to: {model_plot_path}")
+    except Exception as e:
+        print(f"Error plotting combined model results: {e}")
+
+    try:
+        # Assuming save_results_trained_model handles the structure
+        save_results_trained_model(args, benign_training_results, result_dir)  # Pass result_dir if needed
+        print(f"Combined model performance data saved.")
+    except Exception as e:
+        print(f"Error saving combined model results: {e}")
+
+    print("\nEvaluation complete.")
 
 def attack_target_sampling(data, labels, strategy="random", num_samples=100, **kwargs):
     """

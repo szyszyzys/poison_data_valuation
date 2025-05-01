@@ -896,19 +896,20 @@ def modify_image(
         modified_embedding = F.normalize(modified_embedding, p=2, dim=-1)
         final_similarity = F.cosine_similarity(modified_embedding, target_tensor,
                                                dim=-1).item()  # Use item() for single value
-
+    target_size = modified_image_pil.size # Get (width, height) from the modified PIL image
+    original_image_resized_pil = original_image_pil.resize(target_size, Image.Resampling.LANCZOS) # Use a good resampling filter
     # Create noise visualization
     noise_visualization_pil = create_perturbation_visualization(
-        original_image_pil,
+        original_image_resized_pil, # Pass the RESIZED original image
         modified_image_pil,
         scale_factor=noise_vis_scale_factor
     )
 
     return (
-        original_image_pil,
+        original_image_pil,          # Return the original (non-resized) PIL for reference if needed
         modified_image_pil,
-        noise_visualization_pil,  # Added return value
-        modified_embedding.cpu(),  # Return embedding on CPU
+        noise_visualization_pil,
+        modified_embedding.cpu(),
         final_similarity
     )
 
