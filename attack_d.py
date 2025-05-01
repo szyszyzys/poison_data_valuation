@@ -324,7 +324,9 @@ def save_results_trained_model(args, results, result_dir):
 
     # Calculate mean and std dev for errors
     for method, error_list in raw_errors.items():
-        if error_list and not all(np.isnan(error_list)):  # Check if list is not empty/all NaN
+        # --- FIX HERE ---
+        # Original: if error_list and not all(np.isnan(error_list)):
+        if not all(np.isnan(error_list)):  # Check if list contains at least one non-NaN value
             mean_err = float(np.nanmean(error_list))  # Use nanmean to ignore NaNs
             std_err = float(np.nanstd(error_list))  # Use nanstd to ignore NaNs
             count = int(np.sum(~np.isnan(error_list)))  # Count valid entries
@@ -339,7 +341,9 @@ def save_results_trained_model(args, results, result_dir):
 
     # Calculate mean and std dev for runtimes and add to summary
     for method, runtime_list in raw_runtimes.items():
-        if runtime_list and not all(np.isnan(runtime_list)):
+        # --- FIX HERE ---
+        # Original: if runtime_list and not all(np.isnan(runtime_list)): (assuming similar pattern)
+        if not all(np.isnan(runtime_list)):  # Check if list contains at least one non-NaN value
             mean_rt = float(np.nanmean(runtime_list))
             std_rt = float(np.nanstd(runtime_list))
             count = int(np.sum(~np.isnan(runtime_list)))
