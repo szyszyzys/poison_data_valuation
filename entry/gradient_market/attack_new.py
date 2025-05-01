@@ -620,7 +620,7 @@ def main():
     dataset_name = config.get('dataset_name')
     model_structure_name = config.get('model_structure')  # Get model name from config
     base_save_dir = config.get('output', {}).get('save_path_base', './experiment_results')
-    n_samples = config.get('n_samples', 10)  # Number of runs with different seeds
+    n_samples = config.get('n_samples', 3)  # Number of runs with different seeds
     initial_seed = config.get('seed', 42)
 
     if not dataset_name or not model_structure_name:
