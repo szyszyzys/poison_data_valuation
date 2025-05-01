@@ -1348,7 +1348,7 @@ def evaluate_poisoning_attack(
         for img_idx, info in manipulated_img_dict.items():
             modified_embedding = info["m_embedding"]
             x_s_clone[img_idx] = modified_embedding
-            img_paths_clone[img_idx] = info["modified_img_path"]
+            img_paths_clone[img_idx] = info["modified_img_path_saved"]
 
         # use the sample query to perform the attack.
         model_training_result, data_sampling_result = sampling_run_one_buyer(
@@ -1860,6 +1860,18 @@ if __name__ == "__main__":
         type=float,
         help="rate of images to do poison for a buyer",
     )
+    parser.add_argument(
+        "--adversary_ratio",
+        default=0.25,
+        type=float,
+        help="rate of images to do poison for a buyer",
+    )
+    parser.add_argument(
+        "--attack_type",
+        default="mimic",
+        type=str,
+        help="rate of images to do poison for a buyer",
+    )
 
     parser.add_argument(
         "--attack_steps",
@@ -1893,7 +1905,7 @@ if __name__ == "__main__":
         'result_dir': result_dir,
         'save_name': save_name,
         "num_select": args.num_select,
-        "adversary_ratio": 0.25,
+        "adversary_ratio": args.adversary_ratio,
         "emb_model": emb_model,
         "img_preprocess": preprocess,
         "emb_model_name": "clip"
