@@ -10,8 +10,11 @@ from pathlib import Path
 
 import clip
 import numpy as np
+import pandas as pd
+import seaborn as sns
 import torch
 from PIL import Image
+from matplotlib import pyplot as plt
 # from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 from sklearn.decomposition import PCA  # Import PCA if reduce_dim is True
 from sklearn.linear_model import LinearRegression, LogisticRegression
