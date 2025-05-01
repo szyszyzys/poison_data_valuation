@@ -203,7 +203,7 @@ def main():
     NUM_GPUS = get_gpu_count()
 
     # --- Find Config Files ---
-    config_files = sorted(list(config_dir.glob(pattern)), reverse=True)
+    config_files = sorted(list(config_dir.glob(pattern)))
     if not config_files:
         logger.warning(f"No configuration files found matching pattern '{pattern}' in {config_dir}. Exiting.")
         return
