@@ -85,7 +85,7 @@ def poisoning_attack_text(
     gradient_manipulation_mode = args.gradient_manipulation_mode
     loss_fn = nn.CrossEntropyLoss()
     es_monitor = 'acc'
-    early_stopper = FederatedEarlyStopper(patience=20, min_delta=0.01, monitor=es_monitor)
+    early_stopper = FederatedEarlyStopper(patience=10, min_delta=0.01, monitor=es_monitor)
     if sybil_params is None: sybil_params = {'benign_rounds': 0, 'sybil_mode': 'passive', 'alpha': 1,
                                              'amplify_factor': 1, 'cost_scale': 1, 'trigger_mode': 'data'}
     if local_training_params is None: local_training_params = {'epochs': 1, 'lr': 0.01, 'batch_size': 64}
