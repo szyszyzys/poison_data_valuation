@@ -1563,32 +1563,66 @@ def evaluate_poisoning_attack(
     # Make sure benign_training_results['errors'] and ['runtimes'] are dictionaries
     if isinstance(benign_training_results.get("errors"), dict):
         for k, v in m_errors.items():
-            # Filter out NaNs AND skip any unexpected arrays within v
-            valid_v = [
-                val for val in v
-                if not isinstance(val, np.ndarray) and not np.isnan(val)
-            ] # Add check 'not isinstance(val, np.ndarray)'
+            valid_v = []
+            if not isinstance(v, list):  # Ensure v is actually a list first
+                print(f"Warning: Expected list for key '{k}' in m_errors, got {type(v)}. Skipping.")
+                benign_training_results["errors"][k] = []
+                continue
+
+            for i, val in enumerate(v):
+                # Check if val is a standard Python or NumPy scalar numeric type
+                if isinstance(val, (int, float, np.integer, np.floating)):
+                    try:
+                        # Safely check if the scalar value is NaN
+                        if not np.isnan(val):
+                            valid_v.append(val)
+                        # else: # Optional: print if you encounter a scalar NaN
+                        #     print(f"Info: Found scalar NaN for key '{k}', index {i}. Excluding.")
+                    except TypeError as e:
+                        # Should not happen with the isinstance check, but for extreme safety
+                        print(
+                            f"Warning: TypeError during np.isnan check for scalar '{val}' (type: {type(val)}) at key '{k}', index {i}. Skipping. Error: {e}")
+                # else: # Optional: print if you encounter non-scalar types
+                #     print(f"Warning: Skipping non-scalar value '{val}' (type: {type(val)}) at key '{k}', index {i}.")
+
+            # Assign the filtered list
             if valid_v:
                 benign_training_results["errors"][k] = valid_v
             else:
                 benign_training_results["errors"][k] = []
 
-    # --- Fix for Runtimes ---
+    # --- Robust Fix for Runtimes ---
     if isinstance(benign_training_results.get("runtimes"), dict):
         for k, v in m_runtimes.items():
-            # Filter out NaNs AND skip any unexpected arrays within v
-            valid_v = [
-                val for val in v
-                if not isinstance(val, np.ndarray) and not np.isnan(val)
-            ] # Add check 'not isinstance(val, np.ndarray)'
+            valid_v = []
+            if not isinstance(v, list):  # Ensure v is actually a list first
+                print(f"Warning: Expected list for key '{k}' in m_runtimes, got {type(v)}. Skipping.")
+                benign_training_results["runtimes"][k] = []
+                continue
+
+            for i, val in enumerate(v):
+                # Check if val is a standard Python or NumPy scalar numeric type
+                if isinstance(val, (int, float, np.integer, np.floating)):
+                    try:
+                        # Safely check if the scalar value is NaN
+                        if not np.isnan(val):
+                            valid_v.append(val)
+                        # else:
+                        #     print(f"Info: Found scalar NaN for key '{k}', index {i}. Excluding.")
+                    except TypeError as e:
+                        print(
+                            f"Warning: TypeError during np.isnan check for scalar '{val}' (type: {type(val)}) at key '{k}', index {i}. Skipping. Error: {e}")
+                # else:
+                #      print(f"Warning: Skipping non-scalar value '{val}' (type: {type(val)}) at key '{k}', index {i}.")
+
+            # Assign the filtered list
             if valid_v:
                 benign_training_results["runtimes"][k] = valid_v
             else:
-                benign_training_results["runtimes"][k] = []
-    # Step 8 Cont.: Plot and Save Trained Model Results
+                benign_training_results["runtimes"][k] = []    # Step 8 Cont.: Plot and Save Trained Model Results
     # Ensure args.save_name is set if needed by the functions
     # args.save_name = "attack_model_perf_comparison" # Example
-    model_plot_path = os.path.join(figure_path, "model_training_result_comparison.png")
+    model_plot_path = os.path.join(result_dir, "model_training_result_comparison.png")
     try:
         # Assuming plot_results handles dictionaries where values are lists of results per query
         plot_results(model_plot_path, results=benign_training_results, args=args)
