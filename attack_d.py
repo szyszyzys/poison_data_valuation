@@ -317,7 +317,7 @@ def save_results_trained_model(args, results, result_dir):
     - result_dir (str): The directory where the results JSON file should be saved.
     """
     print("\nSaving combined model performance results...")
-
+    Path(result_dir).mkdir(parents=True, exist_ok=True)
     summary_metrics = {}
     raw_errors = results.get('errors', {})
     raw_runtimes = results.get('runtimes', {})
@@ -1347,7 +1347,7 @@ def evaluate_poisoning_attack(
         img_paths_clone = copy.deepcopy(img_paths)
         for img_idx, info in manipulated_img_dict.items():
             modified_embedding = info["m_embedding"]
-            x_s_clone[img_idx] = modified_embedding.cpu().numpy()
+            x_s_clone[img_idx] = modified_embedding
             img_paths_clone[img_idx] = info["modified_img_path"]
 
         # use the sample query to perform the attack.
