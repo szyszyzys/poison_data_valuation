@@ -123,7 +123,7 @@ def get_fitzpatrick_data(
             dict(embeddings=embeddings, labels=labels), data_dir / embedding_path
         )
 
-    embed_dict = torch.load(data_dir / embedding_path)
+    embed_dict = torch.load(data_dir / embedding_path, weights_only=False)
     embeddings = embed_dict["embeddings"]
     labels = embed_dict["labels"]
 
@@ -159,7 +159,7 @@ def get_bone_data(
             dict(embeddings=embeddings, labels=labels), data_dir / embedding_path
         )
 
-    embed_dict = torch.load(data_dir / embedding_path)
+    embed_dict = torch.load(data_dir / embedding_path, weights_only=False)
     embeddings = embed_dict["embeddings"]
     labels = embed_dict["labels"]
 
@@ -229,7 +229,7 @@ def get_drug_data(
             dict(embeddings=embeddings, labels=labels, index=index), data_dir / embedding_path
         )
 
-    embed_dict = torch.load(data_dir / embedding_path)
+    embed_dict = torch.load(data_dir / embedding_path, weights_only=False)
     embeddings = embed_dict["embeddings"]
     labels = embed_dict["labels"]
     index = embed_dict["index"]
