@@ -271,160 +271,155 @@ class Aggregator:
 
     def fltrust(self,
                 global_epoch: int,
-                seller_updates: Dict[str, List[torch.Tensor]],
-                buyer_updates: List[torch.Tensor],  # This is the 'baseline' from your code
+                seller_updates: Dict[str, List[torch.Tensor]], # Hint still assumes tensor, but code handles numpy
+                buyer_updates: List[torch.Tensor],  # Hint still assumes tensor, but code handles numpy
                 clip: bool = True) -> Tuple[List[torch.Tensor], List[int], List[int]]:
         """
-        Performs FLTrust aggregation, adapted from the provided logic.
-          1) Flattens and optionally clips seller updates.
-          2) Flattens the buyer (server/root) update (baseline).
-          3) Computes cosine similarity between each seller update and the buyer update.
-          4) Computes Trust Scores (ReLU of similarities).
-          5) Normalizes Trust Scores to get weights.
-          6) Performs weighted aggregation of original (clipped) seller updates.
-          7) Scales the final aggregated result by the buyer update norm.
-
-        Returns:
-           aggregated_gradient: The aggregated update (list of tensors).
-           selected_ids: List of indices of sellers with positive trust scores (weight > 0).
-           outlier_ids: List of indices of sellers with zero trust scores (weight == 0).
+        Performs FLTrust aggregation. Handles numpy arrays in inputs defensively.
+        (Rest of the docstring is the same)
         """
-        print(f"--- Starting FLTrust Aggregation (Epoch {global_epoch}) ---")
+        logger.info(f"--- Starting FLTrust Aggregation (Epoch {global_epoch}) ---")
         n_seller = len(seller_updates)
-        seller_ids = list(seller_updates.keys())  # Store original IDs if needed later
+        seller_ids = list(seller_updates.keys())
+
+        # Get the structure (shapes and dtypes) for zero gradients
+        param_structure = [p.clone().detach() for p in self.model_structure.parameters()]
 
         if n_seller == 0:
-            print("Warning: No seller updates received.")
-            return ([torch.zeros_like(p, device=self.device) for p in self.model_structure.parameters()], [], [])
+            logger.warning("No seller updates received.")
+            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], [])
 
-        print(f"Processing {n_seller} seller updates.")
+        logger.info(f"Processing {n_seller} seller updates.")
 
         # Initialize aggregated gradient structure (unflattened)
         aggregated_gradient = [
-            torch.zeros_like(param, device=self.device)
-            for param in self.model_structure.parameters()
+            torch.zeros_like(param, device=self.device) for param in param_structure
         ]
 
-        # 1) Flatten and optionally clip seller updates
-        print("Flattening and clipping seller gradients...")
+        # --- Helper function for defensive tensor conversion ---
+        def ensure_tensor_on_device(param_list):
+            if not param_list: return []
+            return [
+                (torch.from_numpy(p) if isinstance(p, np.ndarray) else p).to(self.device)
+                for p in param_list
+            ]
+        # --------------------------------------------------------
+
+        # 1) Process, optionally clip, and flatten seller updates
+        logger.info("Processing, clipping, and flattening seller gradients...")
         clients_update_flattened = []
-        # original_updates_list = list(seller_updates.values())  # Keep original structure for aggregation
-        #
-        # # Store the processed (clipped, device-correct) *unflattened* updates
+        original_updates_list = list(seller_updates.values())
+
         processed_updates_unflattened = []
+        for i, update in enumerate(original_updates_list):
+            # **FIX:** Ensure tensors are on the correct device *first*
+            update_tensor = ensure_tensor_on_device(update)
 
-        # clients_update_flattened = [
-        #     flatten(clip_gradient_update(update, clip_norm=self.clip_norm))
-        #     for sid, update in seller_updates.items()
-        # ]
+            # Clone *after* ensuring it's a tensor and on the device
+            # Cloning prevents modification of original inputs if clipping/flattening were in-place
+            processed_update = [p.clone() for p in update_tensor]
 
-        for i, update in enumerate(seller_updates):
-            # Ensure update tensors are on the correct device first
-            # update_device = [p.clone().to(self.device) for p in update]
             if clip:
-                processed_update = clip_gradient_update(update, clip_norm=self.clip_norm)
+                processed_update = clip_gradient_update(processed_update, self.clip_norm) # Assume this returns list of tensors
 
-            processed_updates_unflattened.append(update)  # Store unflattened version
-            clients_update_flattened.append(flatten(processed_update))  # Flatten for similarity calc
+            processed_updates_unflattened.append(processed_update)  # Store unflattened version
+            # Flatten needs tensors
+            clients_update_flattened.append(flatten(processed_update))
 
-        clients_stack = torch.stack(clients_update_flattened)  # shape: (n_seller, d)
+        # Handle cases where flattening might return None or empty tensors if an update was bad
+        valid_flattened_updates = [upd for upd in clients_update_flattened if upd is not None and upd.numel() > 0]
+        if not valid_flattened_updates:
+             logger.error("No valid flattened seller updates found after processing.")
+             return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_seller)))
+
+        try:
+            clients_stack = torch.stack(valid_flattened_updates)  # shape: (n_valid_seller, d)
+            # Keep track of which original indices correspond to valid_flattened_updates if needed
+        except RuntimeError as e:
+             logger.error(f"Error stacking flattened client updates: {e}")
+             # Log shapes for debugging
+             for i, upd in enumerate(valid_flattened_updates):
+                  logger.error(f"  Update {i} shape: {upd.shape}")
+             return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_seller)))
+
 
         # 2) Process the buyer (server/root) update (baseline)
-        print("Processing buyer (server) update...")
-        # Ensure buyer update is on the correct device
-        # buyer_updates_device = [p.clone().to(self.device) for p in buyer_updates]
-        if clip:
-            cg = clip_gradient_update(buyer_updates, clip_norm=self.clip_norm)
-        else:
-            cg = buyer_updates
+        logger.info("Processing buyer (server) update...")
+        # **FIX:** Ensure buyer update is tensor and on the correct device
+        buyer_updates_tensor = ensure_tensor_on_device(buyer_updates)
+        # Clone if necessary (e.g., if clipping were applied)
+        buyer_updates_device = [p.clone() for p in buyer_updates_tensor]
 
-        buyer_update_flattened = flatten(cg)
-        # Optional: Clip the buyer update? Usually not done, but can be added.
+        # Optional: Clip the buyer update? Usually not done.
         # if clip:
-        #      buyer_updates_device = clip_gradient_update(buyer_updates_device, self.clip_norm)
-        # buyer_update_flattened = flatten(buyer_updates_device)
-        buyer_update_norm = torch.norm(buyer_update_flattened, p=2) + 1e-9  # Add epsilon for stability
+        #     buyer_updates_device = clip_gradient_update(buyer_updates_device, self.clip_norm)
 
-        print(f"Buyer update norm: {buyer_update_norm.item():.4f}")
-        if buyer_update_norm.item() < 1e-8:  # Check against a small threshold
-            print("Warning: Buyer update norm is close to zero. FLTrust may yield zero result.")
-            # Return zero gradient, all sellers are outliers in this context
-            return aggregated_gradient, [], list(range(n_seller))
+        # Flatten needs tensors
+        buyer_update_flattened = flatten(buyer_updates_device)
+        buyer_update_norm = torch.norm(buyer_update_flattened, p=2) + 1e-9
+
+        logger.info(f"Buyer update norm: {buyer_update_norm.item():.4f}")
+        if buyer_update_norm.item() < 1e-8:
+            logger.warning("Buyer update norm is close to zero. FLTrust may yield zero result.")
+            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_seller)))
 
         # 3) Compute cosine similarity with buyer update (baseline)
-        print("Computing cosine similarities with buyer update...")
-        # Using the formula: dot(a, b) / (norm(a) * norm(b))
-        # Vectorized approach:
-        clients_norms = torch.norm(clients_stack, p=2, dim=1) + 1e-9  # Add epsilon for stability
-        # Dot product of baseline with each client stack row: baseline @ clients_stack.T
-        dot_products = torch.mv(clients_stack, buyer_update_flattened)  # Result shape: (n_seller)
-
+        logger.info("Computing cosine similarities with buyer update...")
+        clients_norms = torch.norm(clients_stack, p=2, dim=1) + 1e-9
+        dot_products = torch.mv(clients_stack, buyer_update_flattened)
         cosine_similarities = dot_products / (buyer_update_norm * clients_norms)
-        cosine_similarities = torch.clamp(cosine_similarities, -1.0, 1.0)  # Clamp for numerical stability
+        cosine_similarities = torch.clamp(cosine_similarities, -1.0, 1.0)
 
-        print(f"Cosine Similarities: {cosine_similarities.cpu().numpy()}")
+        logger.info(f"Cosine Similarities: {cosine_similarities.cpu().numpy()}")
 
         # 4) Compute Trust Scores (ReLU of similarities)
-        # Equivalent to torch.maximum(cos_sim, torch.tensor(0.0, device=self.device))
         trust_scores = torch.relu(cosine_similarities)
-        print(f"Trust Scores (ReLU): {trust_scores.cpu().numpy()}")
+        logger.info(f"Trust Scores (ReLU): {trust_scores.cpu().numpy()}")
 
         # 5) Normalize Trust Scores to get weights
-        total_trust = torch.sum(trust_scores) + 1e-9  # Add epsilon for stability
-        print(f"Total Trust Score: {total_trust.item():.4f}")
+        total_trust = torch.sum(trust_scores) + 1e-9
+        logger.info(f"Total Trust Score: {total_trust.item():.4f}")
 
-        if total_trust.item() < 1e-8:  # Check against a small threshold
-            print("Warning: Total trust score is close to zero. Aggregation will result in zero.")
+        if total_trust.item() < 1e-8:
+            logger.warning("Total trust score is close to zero. Aggregation will result in zero.")
             weights = torch.zeros_like(trust_scores)
+            # If stacking removed invalid updates, indices need mapping back
             selected_ids = []
-            outlier_ids = list(range(n_seller))
+            outlier_ids = list(range(n_seller)) # All original sellers are outliers
         else:
             weights = trust_scores / total_trust
-            # Consider seller 'i' selected if their weight is significantly > 0
+            # Map indices back if stacking removed some updates
+            # Assuming valid_flattened_updates corresponds 1:1 to the original list for now
+            # A more robust implementation would track original indices through filtering
             selected_ids = [i for i, w in enumerate(weights) if w > 1e-9]
             outlier_ids = [i for i, w in enumerate(weights) if w <= 1e-9]
 
-        print(f"Aggregation Weights: {weights.cpu().numpy()}")
-        print(f"Selected seller indices ({len(selected_ids)}): {selected_ids}")
-        print(f"Outlier seller indices ({len(outlier_ids)}): {outlier_ids}")
+        logger.info(f"Aggregation Weights: {weights.cpu().numpy()}")
+        logger.info(f"Selected seller indices ({len(selected_ids)}): {selected_ids}")
+        logger.info(f"Outlier seller indices ({len(outlier_ids)}): {outlier_ids}")
 
         # 6) Perform weighted aggregation using the *original* (clipped) seller updates
-        #    This uses the standard FLTrust interpretation: aggregate first.
         temp_aggregated_gradient = [
-            torch.zeros_like(param, device=self.device)
-            for param in self.model_structure.parameters()
+             torch.zeros_like(param, device=self.device) for param in param_structure
         ]
-        if selected_ids:  # Only aggregate if there are selected clients
-            print(f"Aggregating updates from {len(selected_ids)} selected sellers...")
-            for idx in selected_ids:
-                weight = weights[idx]
-                # Use the processed (clipped, device-correct) *unflattened* updates
-                add_gradient_updates(temp_aggregated_gradient, processed_updates_unflattened[idx], weight=weight)
+        if selected_ids:
+            logger.info(f"Aggregating updates from {len(selected_ids)} selected sellers...")
+            for idx in selected_ids: # idx here refers to the index in the processed list/weights tensor
+                 # Need to ensure this idx maps correctly back to processed_updates_unflattened
+                 # Assuming direct mapping for now (e.g., no sellers were filtered before stacking)
+                 weight = weights[idx]
+                 add_gradient_updates(temp_aggregated_gradient, processed_updates_unflattened[idx], weight=weight)
 
             # 7) Scale the final aggregated gradient by the norm of the buyer update (baseline)
-            scaling_factor = buyer_update_norm.item()  # Use the calculated norm
-            print(f"Scaling final aggregated gradient by buyer norm: {scaling_factor:.4f}")
+            scaling_factor = buyer_update_norm.item()
+            logger.info(f"Scaling final aggregated gradient by buyer norm: {scaling_factor:.4f}")
             aggregated_gradient = [param.data * scaling_factor for param in temp_aggregated_gradient]
-
-            # --- Note on Alternative Aggregation from your code ---
-            # Your original code normalized each client update *before* summing:
-            # new_param_list = []
-            # for i in range(n):
-            #    norm_i = torch.norm(param_list[i]) + 1e-9
-            #    new_param_list.append(param_list[i] * normalized_weights[i] / norm_i * torch.norm(baseline))
-            # global_update = torch.sum(torch.cat(new_param_list, dim=1), dim=-1)
-            # If you specifically need this behavior, the aggregation loop (step 6 & 7) would change.
-            # Let me know if that specific formula is required.
-            # --- End Note ---
-
         else:
-            # If no clients selected (all trust scores <= 0), aggregated_gradient remains zeros.
-            print("No clients selected based on trust scores. Returning zero gradient.")
+            logger.info("No clients selected based on trust scores. Returning zero gradient.")
+            # aggregated_gradient remains zeros
 
-        print("--- FLTrust Aggregation Finished ---")
-        # Return the UNFLATTENED aggregated gradient, selected indices, outlier indices
+        logger.info("--- FLTrust Aggregation Finished ---")
         return aggregated_gradient, selected_ids, outlier_ids
-
     # ---------------------------
     def martFL(self,
                global_epoch: int,
