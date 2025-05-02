@@ -1,3 +1,4 @@
+import logging
 import random
 from typing import Dict, List, Tuple
 
@@ -14,6 +15,8 @@ from entry.gradient_market.skymask.models import create_masknet
 from entry.gradient_market.skymask.mytorch import myconv2d, mylinear
 from marketplace.utils.gradient_market_utils.clustering import optimal_k_gap, kmeans
 from model.utils import load_model, apply_gradient_update, get_domain
+
+logger = logging.getLogger("Aggregator")
 
 
 # -----------------------------------------------------
@@ -271,7 +274,7 @@ class Aggregator:
 
     def fltrust(self,
                 global_epoch: int,
-                seller_updates: Dict[str, List[torch.Tensor]], # Hint still assumes tensor, but code handles numpy
+                seller_updates: Dict[str, List[torch.Tensor]],  # Hint still assumes tensor, but code handles numpy
                 buyer_updates: List[torch.Tensor],  # Hint still assumes tensor, but code handles numpy
                 clip: bool = True) -> Tuple[List[torch.Tensor], List[int], List[int]]:
         """
@@ -303,6 +306,7 @@ class Aggregator:
                 (torch.from_numpy(p) if isinstance(p, np.ndarray) else p).to(self.device)
                 for p in param_list
             ]
+
         # --------------------------------------------------------
 
         # 1) Process, optionally clip, and flatten seller updates
@@ -320,7 +324,8 @@ class Aggregator:
             processed_update = [p.clone() for p in update_tensor]
 
             if clip:
-                processed_update = clip_gradient_update(processed_update, self.clip_norm) # Assume this returns list of tensors
+                processed_update = clip_gradient_update(processed_update,
+                                                        self.clip_norm)  # Assume this returns list of tensors
 
             processed_updates_unflattened.append(processed_update)  # Store unflattened version
             # Flatten needs tensors
@@ -329,19 +334,18 @@ class Aggregator:
         # Handle cases where flattening might return None or empty tensors if an update was bad
         valid_flattened_updates = [upd for upd in clients_update_flattened if upd is not None and upd.numel() > 0]
         if not valid_flattened_updates:
-             logger.error("No valid flattened seller updates found after processing.")
-             return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_seller)))
+            logger.error("No valid flattened seller updates found after processing.")
+            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_seller)))
 
         try:
             clients_stack = torch.stack(valid_flattened_updates)  # shape: (n_valid_seller, d)
             # Keep track of which original indices correspond to valid_flattened_updates if needed
         except RuntimeError as e:
-             logger.error(f"Error stacking flattened client updates: {e}")
-             # Log shapes for debugging
-             for i, upd in enumerate(valid_flattened_updates):
-                  logger.error(f"  Update {i} shape: {upd.shape}")
-             return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_seller)))
-
+            logger.error(f"Error stacking flattened client updates: {e}")
+            # Log shapes for debugging
+            for i, upd in enumerate(valid_flattened_updates):
+                logger.error(f"  Update {i} shape: {upd.shape}")
+            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_seller)))
 
         # 2) Process the buyer (server/root) update (baseline)
         logger.info("Processing buyer (server) update...")
@@ -385,7 +389,7 @@ class Aggregator:
             weights = torch.zeros_like(trust_scores)
             # If stacking removed invalid updates, indices need mapping back
             selected_ids = []
-            outlier_ids = list(range(n_seller)) # All original sellers are outliers
+            outlier_ids = list(range(n_seller))  # All original sellers are outliers
         else:
             weights = trust_scores / total_trust
             # Map indices back if stacking removed some updates
@@ -400,15 +404,15 @@ class Aggregator:
 
         # 6) Perform weighted aggregation using the *original* (clipped) seller updates
         temp_aggregated_gradient = [
-             torch.zeros_like(param, device=self.device) for param in param_structure
+            torch.zeros_like(param, device=self.device) for param in param_structure
         ]
         if selected_ids:
             logger.info(f"Aggregating updates from {len(selected_ids)} selected sellers...")
-            for idx in selected_ids: # idx here refers to the index in the processed list/weights tensor
-                 # Need to ensure this idx maps correctly back to processed_updates_unflattened
-                 # Assuming direct mapping for now (e.g., no sellers were filtered before stacking)
-                 weight = weights[idx]
-                 add_gradient_updates(temp_aggregated_gradient, processed_updates_unflattened[idx], weight=weight)
+            for idx in selected_ids:  # idx here refers to the index in the processed list/weights tensor
+                # Need to ensure this idx maps correctly back to processed_updates_unflattened
+                # Assuming direct mapping for now (e.g., no sellers were filtered before stacking)
+                weight = weights[idx]
+                add_gradient_updates(temp_aggregated_gradient, processed_updates_unflattened[idx], weight=weight)
 
             # 7) Scale the final aggregated gradient by the norm of the buyer update (baseline)
             scaling_factor = buyer_update_norm.item()
@@ -420,6 +424,7 @@ class Aggregator:
 
         logger.info("--- FLTrust Aggregation Finished ---")
         return aggregated_gradient, selected_ids, outlier_ids
+
     # ---------------------------
     def martFL(self,
                global_epoch: int,
