@@ -308,19 +308,23 @@ class Aggregator:
         # 1) Flatten and optionally clip seller updates
         print("Flattening and clipping seller gradients...")
         clients_update_flattened = []
-        original_updates_list = list(seller_updates.values())  # Keep original structure for aggregation
-
-        # Store the processed (clipped, device-correct) *unflattened* updates
+        # original_updates_list = list(seller_updates.values())  # Keep original structure for aggregation
+        #
+        # # Store the processed (clipped, device-correct) *unflattened* updates
         processed_updates_unflattened = []
 
-        for i, update in enumerate(original_updates_list):
-            # Ensure update tensors are on the correct device first
-            update_device = [p.clone().to(self.device) for p in update]
-            processed_update = update_device
-            if clip:
-                processed_update = clip_gradient_update(processed_update, self.clip_norm)
+        # clients_update_flattened = [
+        #     flatten(clip_gradient_update(update, clip_norm=self.clip_norm))
+        #     for sid, update in seller_updates.items()
+        # ]
 
-            processed_updates_unflattened.append(processed_update)  # Store unflattened version
+        for i, update in enumerate(seller_updates):
+            # Ensure update tensors are on the correct device first
+            # update_device = [p.clone().to(self.device) for p in update]
+            if clip:
+                processed_update = clip_gradient_update(update, clip_norm=self.clip_norm)
+
+            processed_updates_unflattened.append(update)  # Store unflattened version
             clients_update_flattened.append(flatten(processed_update))  # Flatten for similarity calc
 
         clients_stack = torch.stack(clients_update_flattened)  # shape: (n_seller, d)
@@ -328,11 +332,17 @@ class Aggregator:
         # 2) Process the buyer (server/root) update (baseline)
         print("Processing buyer (server) update...")
         # Ensure buyer update is on the correct device
-        buyer_updates_device = [p.clone().to(self.device) for p in buyer_updates]
+        # buyer_updates_device = [p.clone().to(self.device) for p in buyer_updates]
+        if clip:
+            cg = clip_gradient_update(buyer_updates, clip_norm=self.clip_norm)
+        else:
+            cg = buyer_updates
+
+        buyer_update_flattened = flatten(cg)
         # Optional: Clip the buyer update? Usually not done, but can be added.
         # if clip:
         #      buyer_updates_device = clip_gradient_update(buyer_updates_device, self.clip_norm)
-        buyer_update_flattened = flatten(buyer_updates_device)
+        # buyer_update_flattened = flatten(buyer_updates_device)
         buyer_update_norm = torch.norm(buyer_update_flattened, p=2) + 1e-9  # Add epsilon for stability
 
         print(f"Buyer update norm: {buyer_update_norm.item():.4f}")
