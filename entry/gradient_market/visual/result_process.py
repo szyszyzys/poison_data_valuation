@@ -466,29 +466,38 @@ def load_all_results(base_dir: str, csv_filename: str = "round_results.csv") -> 
     all_results: Dict[str, List[pd.DataFrame]] = {}
     logging.info(f"Loading results from: {base_path}")
 
+    # Iterate first-level experiment directories
     for exp_path in sorted(base_path.iterdir()):
-        if not exp_path.is_dir(): continue
+        if not exp_path.is_dir():
+            continue
         exp_name = exp_path.name
         run_dfs: List[pd.DataFrame] = []
         logging.info(f"Processing experiment: {exp_name}")
-        subdirs = [d for d in exp_path.iterdir() if d.is_dir() and d.name.startswith(exp_name)]
-        search_dirs = subdirs or [exp_path]
+
+        # Collect search directories: exp_path itself and any subdirectories
+        search_dirs = [exp_path] + [d for d in exp_path.iterdir() if d.is_dir()]
+
+        # Look for run_* under both levels
         for sd in search_dirs:
             for run_dir in sorted(sd.glob('run_*')):
                 csv_file = run_dir / csv_filename
-                if not csv_file.is_file(): continue
+                if not csv_file.is_file():
+                    continue
                 try:
                     df = pd.read_csv(csv_file)
-                    if df.empty: continue
+                    if df.empty:
+                        continue
                     df['run_id'] = run_dir.name
                     df['experiment_setup'] = exp_name
                     run_dfs.append(df)
                 except Exception as e:
                     logging.error(f"Failed to load {csv_file}: {e}")
+
         if run_dfs:
             all_results[exp_name] = run_dfs
         else:
             logging.warning(f"No valid runs for experiment: {exp_name}")
+
     if not all_results:
         logging.error("No experiments loaded.")
     return all_results
