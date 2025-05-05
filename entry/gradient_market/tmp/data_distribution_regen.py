@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 from typing import Dict, Optional, Any
 
-import torch
-import torch.backends.cudnn
 import torch.nn as nn
 from scipy import datasets
 from torch import nn
@@ -89,7 +87,7 @@ def poisoning_attack_text_reg_distri(
     # --- Load Data (get vocab and padding_idx) ---
     print("Loading clean text data splits...")
     # This function should return the vocab and padding_idx needed later
-    buyer_loader, client_loaders_clean_data, test_loader, class_names, vocab, padding_idx = get_text_data_set_distri(
+    get_text_data_set_distri(
         dataset_name,
         buyer_percentage=buyer_percentage,
         num_sellers=n_sellers,
@@ -113,6 +111,7 @@ def get_text_data_set_distri(
         buyer_bias_type: str = "dirichlet",
         buyer_dirichlet_alpha: float = 0.3,
         seed: int = 42,
+        data_root: str = "./data",
         save_path: str = "./result"
 ):
     """
@@ -123,75 +122,39 @@ def get_text_data_set_distri(
         - seller_splits: Dict mapping seller_id -> list of indices
         - data_distribution_info: whatever print_and_save_data_statistics returns
     """
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+    try:
+        from datasets import load_dataset as hf_load
+    except ImportError:
+        raise ImportError("HuggingFace 'datasets' library required but not installed.")
+
     # ── LOAD RAW LABELS ────────────────────────────────────────
     if dataset_name == "AG_NEWS":
-        if not hf_datasets_available:
-            raise ImportError("HuggingFace 'datasets' library required for AG_NEWS but not installed.")
-        logging.info(f"Loading AG_NEWS dataset using HuggingFace datasets from {data_root}...")
-        # Load using HuggingFace datasets
+        logging.info(f"Loading AG_NEWS dataset from HuggingFace cache at {data_root}...")
         ds = hf_load("ag_news", cache_dir=data_root)
-        train_ds = ds["train"]  # Dataset object
-        test_ds = ds["test"]  # Dataset object
-
-        # --- Inspection (Optional but recommended for first run) ---
-        logging.info("Inspecting first few items from AG_NEWS train_ds (HuggingFace):")
-        count = 0
-        for ex in train_ds:
-            print(f"Item {count}: type={type(ex)}, keys={ex.keys() if isinstance(ex, dict) else 'N/A'}")
-            if isinstance(ex, dict) and "text" in ex:
-                print(f"  - Text part type: {type(ex['text'])}, content={ex['text'][:100]}...")  # Should be string
-            if isinstance(ex, dict) and "label" in ex:
-                print(f"  - Label part type: {type(ex['label'])}")  # Should be int
-            count += 1
-            if count >= 3: break
-        # --- End Inspection ---
-
-        # For Vocabulary: Generator yielding only text from training set
-        # HF datasets usually yield dicts; access the 'text' field. Should be STRING here.
-        vocab_source_iter = (ex["text"] for ex in train_ds if isinstance(ex.get("text"), str))
-
-        # For Processing: Generators yielding (label, text) tuples
-        # AG_NEWS labels from HF start from 0
-        train_iter = ((ex["label"], ex["text"]) for ex in train_ds if isinstance(ex.get("text"), str))
-        test_iter = ((ex["label"], ex["text"]) for ex in test_ds if isinstance(ex.get("text"), str))
-
+        train_ds, test_ds = ds["train"], ds["test"]
+        label_field = "label"
         num_classes = 4
-        # Class names matching HF ag_news labels {0: World, 1: Sports, 2: Business, 3: Sci/Tech}
         class_names = ['World', 'Sports', 'Business', 'Sci/Tech']
-        label_offset = 0  # Labels start at 0 with HF dataset
-        logging.info("AG_NEWS dataset loaded via HuggingFace datasets.")
+        vocab_source_iter = (ex["text"] for ex in train_ds if isinstance(ex.get("text"), str))
+        train_iter = ((ex[label_field], ex["text"]) for ex in train_ds if isinstance(ex.get("text"), str))
+        test_iter = ((ex[label_field], ex["text"]) for ex in test_ds if isinstance(ex.get("text"), str))
+
     elif dataset_name == "TREC":
-        if not hf_datasets_available:
-            raise ImportError("HuggingFace 'datasets' library required for TREC dataset but not installed.")
-        logging.info(f"Loading TREC dataset using HuggingFace datasets from {data_root}...")
-        # Load HuggingFace dataset object
+        logging.info(f"Loading TREC dataset from HuggingFace cache at {data_root}...")
         ds = hf_load("trec", "default", cache_dir=data_root)
-        train_ds = ds["train"]
-        test_ds = ds["test"]  # <<< Define test_ds
-        logging.info("Inspecting first few items from TREC train_ds:")
-        count = 0
-        for ex in train_ds:
-            print(f"Item {count}: type={type(ex)}, keys={ex.keys() if isinstance(ex, dict) else 'N/A'}")
-            if isinstance(ex, dict) and "text" in ex:
-                print(f"  - Text part type: {type(ex['text'])}, content={ex['text'][:100]}...")
-            count += 1
-            if count >= 3: break
-
-        vocab_source_iter = (ex["text"] for ex in train_ds)
-
-        # For Processing: Generators yielding (label, text) tuples
-        train_iter = ((ex["coarse_label"], ex["text"]) for ex in train_ds)
-        test_iter = ((ex["coarse_label"], ex["text"]) for ex in test_ds)  # <<< Use test_ds here
-
-        num_classes = 6  # Based on coarse_label
+        train_ds, test_ds = ds["train"], ds["test"]
+        label_field = "coarse_label"
+        num_classes = 6
         class_names = ['ABBR', 'ENTY', 'DESC', 'HUM', 'LOC', 'NUM']
-        label_offset = 0  # TREC labels start at 0
-        logging.info("TREC dataset loaded.")
+        vocab_source_iter = (ex["text"] for ex in train_ds)
+        train_iter = ((ex[label_field], ex["text"]) for ex in train_ds)
+        test_iter = ((ex[label_field], ex["text"]) for ex in test_ds)
 
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
-    # Extract labels
+    # Extract all labels from the training split
     labels_only = [example[label_field] for example in train_ds]
     total_samples = len(labels_only)
     buyer_count = min(int(total_samples * buyer_percentage), total_samples)
@@ -201,7 +164,8 @@ def get_text_data_set_distri(
         buyer_bias_dist = generate_buyer_bias_distribution(
             num_classes=num_classes,
             bias_type=buyer_bias_type,
-            alpha=buyer_dirichlet_alpha
+            alpha=buyer_dirichlet_alpha,
+            seed=seed
         )
         buyer_indices, seller_splits = split_dataset_discovery(
             dataset=labels_only,
@@ -209,10 +173,11 @@ def get_text_data_set_distri(
             num_clients=num_sellers,
             noise_factor=discovery_quality,
             buyer_data_mode=buyer_data_mode,
-            buyer_bias_distribution=buyer_bias_dist
+            buyer_bias_distribution=buyer_bias_dist,
+            seed=seed
         )
     else:
-        raise ValueError(f"Unsupported split_method: {split_method}")
+        raise ValueError(f"Unsupported split_method: {split_method!r}")
 
     # ── LOG & SAVE DISTRIBUTION ─────────────────────────────────
     os.makedirs(save_path, exist_ok=True)
@@ -227,101 +192,60 @@ def get_text_data_set_distri(
     return buyer_indices, seller_splits, data_distribution_info
 
 
-def poisoning_attack_image_reg_distri(
-        dataset_name: str,
-        n_sellers: int,
-        adv_rate: float,
-        attack_type: str,  # 'backdoor' or 'label_flip'
-        model_structure: str,  # Pass the model class/constructor
-        aggregation_method: str = 'martfl',
-        global_rounds: int = 100,
-        # --- Backdoor Params ---
-        backdoor_target_label: Optional[int] = 0,
-        backdoor_trigger_type: str = "blended_patch",
-        backdoor_trigger_location: str = "bottom_right",  # From args.bkd_loc previously
-        poison_rate: float = 0.1,  # trigger_rate previously
-        backdoor_poison_strength: float = 1.0,  # poison_strength previously
-        # --- Label Flip Params ---
-        label_flip_target_label: int = 0,  # Target for fixed_target mode
-        label_flip_mode: str = "fixed_target",  # 'fixed_target' or 'random_different'
-        # --- Common Params ---
-        save_path: str = "/",
-        device: str = 'cpu',
-        args: Optional[Any] = None,  # Pass general args if needed
-        buyer_percentage: float = 0.02,
-        sybil_params: Optional[Dict] = None,
-        local_training_params: Optional[Dict] = None,
-        change_base: bool = True,
-        data_split_mode: str = "NonIID",
-        dm_params: Optional[Dict] = None, local_attack_params=None, privacy_attack={}
-):
+def get_image_data_distribution(
+    dataset_name: str,
+    n_sellers: int,
+    adv_rate: float,
+    buyer_percentage: float = 0.02,
+    data_split_mode: str = "NonIID",
+    discovery_quality: float = 0.3,
+    buyer_data_mode: str = "random",
+    batch_size: int = 64,
+    save_path: str = "./data_splits",
+    seed: int = 42,
+) -> Tuple[Any, List[Any], Any, List[str]]:
     """
-    Runs a federated learning experiment with either Backdoor or Label Flipping IMAGE poisoning.
+    Load and split image data for a poisoning experiment (but do NOT run the attack itself).
 
-    Args:
-        dataset_name (str): Name of the image dataset (e.g., "CIFAR", "FMNIST").
-        n_sellers (int): Total number of sellers.
-        adv_rate (float): Fraction of sellers that are adversaries.
-        attack_type (str): Type of attack: 'backdoor' or 'label_flip'.
-        model_structure (nn.Module): The model architecture class.
-        aggregation_method (str): Method for aggregation (e.g., 'martfl', 'fedavg').
-        global_rounds (int): Number of communication rounds.
-        backdoor_target_label (Optional[int]): Target label for backdoor attacks.
-        backdoor_trigger_type (str): Type of visual trigger for backdoor.
-        backdoor_trigger_location (str): Location of the trigger.
-        backdoor_trigger_rate (float): Fraction of adversary's data to poison for backdoor.
-        backdoor_poison_strength (float): Scaling factor for backdoor gradient manipulation (if applicable).
-        label_flip_target_label (Optional[int]): Target label for fixed label flipping.
-        label_flip_mode (str): Mode for label flipping ('fixed_target' or 'random_different').
-        save_path (str): Directory to save results.
-        device (str): Device ('cpu' or 'cuda').
-        args (Optional[Any]): General arguments object (pass necessary fields like clip, remove_baseline).
-        buyer_percentage (float): Percentage of data for the buyer.
-        sybil_params (Optional[Dict]): Parameters for Sybil coordinator (if used).
-        local_training_params (Optional[Dict]): Parameters for local client training (epochs, lr, etc.).
-        change_base (bool): Flag for certain aggregation methods.
-        data_split_mode (str): How to split data among clients.
-        dm_params (Optional[Dict]): Parameters specific to discovery market splitting.
+    Returns:
+      - buyer_loader:        DataLoader for the buyer’s portion
+      - client_loaders:      List of DataLoaders (one per seller) for the clean data
+      - test_loader:         DataLoader for the held-out test set
+      - class_names:         List of class names in the dataset
     """
-    print(f"--- Starting IMAGE Poisoning Attack ---")
-    print(f"Dataset: {dataset_name}, Attack Type: {attack_type}")
-    print(f"Sellers: {n_sellers}, Adversary Rate: {adv_rate}")
+    # ——— Logging setup —————————————————————————————————————————————
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(levelname)s] %(message)s")
+    logging.info(f"Preparing data splits for {dataset_name} | "
+                 f"{n_sellers} sellers | {adv_rate*100:.1f}% adversaries")
 
-    sm_model_type = "None"
-    if dataset_name == "FMNIST":
-        sm_model_type = 'lenet'
-    elif dataset_name == "CIFAR":
-        sm_model_type = 'cifarcnn'
-    # --- Basic Setup ---
+    # ——— Compute number of adversaries —————————————————————————————
     n_adversaries = int(n_sellers * adv_rate)
-    if args is None:  # Use default args if none provided
-        from types import SimpleNamespace
-        args = SimpleNamespace(gradient_manipulation_mode='passive', is_sybil=False, clip=None,
-                               remove_baseline=False)  # Example defaults
-    gradient_manipulation_mode = args.gradient_manipulation_mode  # Assume passive if not backdoor
-    loss_fn = nn.CrossEntropyLoss()
-    es_monitor = 'acc'  # Monitor accuracy for early stopping
-    early_stopper = FederatedEarlyStopper(patience=20, min_delta=0.01, monitor=es_monitor)
-    if sybil_params is None: sybil_params = {'benign_rounds': 0, 'sybil_mode': 'passive', 'alpha': 1,
-                                             'amplify_factor': 1, 'cost_scale': 1, 'trigger_mode': 'data'}
-    if local_training_params is None: local_training_params = {'epochs': 1, 'lr': 0.01,
-                                                               'batch_size': 64}  # Example defaults
-    if dm_params is None: dm_params = {"discovery_quality": 0.3, "buyer_data_mode": "random"}
 
-    # --- Load Data ---
-    # We load the *original* clean splits first. Poisoning happens later if needed.
-    print("Loading clean image data splits...")
-    buyer_loader, client_loaders_clean_data, _, test_loader, class_names = get_img_distribution(
-        dataset_name,
+    # ——— Ensure output directory exists ——————————————————————————
+    os.makedirs(save_path, exist_ok=True)
+
+    # ——— Call your existing splitter ——————————————————————————
+    buyer_loader, client_loaders, _, test_loader, class_names = get_img_distribution(
+        dataset_name=dataset_name,
         buyer_percentage=buyer_percentage,
         num_sellers=n_sellers,
-        batch_size=local_training_params.get('batch_size', 64),  # Use consistent batch size
+        batch_size=batch_size,
         split_method=data_split_mode,
-        n_adversaries=n_adversaries,  # Splitter might use this info
+        n_adversaries=n_adversaries,
         save_path=save_path,
-        discovery_quality=dm_params["discovery_quality"],
-        buyer_data_mode=dm_params["buyer_data_mode"]
+        discovery_quality=discovery_quality,
+        buyer_data_mode=buyer_data_mode,
+        seed=seed,
     )
+
+    logging.info("Data split complete.")
+    logging.info(f" → Buyer samples: {len(buyer_loader.dataset)}")
+    logging.info(f" → Each seller ≈ {len(client_loaders[0].dataset)} samples")
+    logging.info(f" → Test samples:  {len(test_loader.dataset)}")
+    logging.info(f" → Classes:       {class_names}")
+
+    return buyer_loader, client_loaders, test_loader, class_names
 
 
 def get_img_distribution(
@@ -473,57 +397,9 @@ def main():
         if hasattr(run_specific_args['args'], 'seed'):
             run_specific_args['args'].seed = current_seed
 
-        is_rerun_true = False
-        if isinstance(cli_args.rerun, str):
-            # Handle string comparison (case-insensitive)
-            is_rerun_true = cli_args.rerun.lower() == 'true'
-        elif isinstance(cli_args.rerun, bool):
-            # Handle boolean directly
-            is_rerun_true = cli_args.rerun
-        else:
-            # Handle unexpected type if necessary, maybe default to False or raise error
-            logging.warning(f"Unexpected type for cli_args.rerun: {type(cli_args.rerun)}. Assuming False.")
-            is_rerun_true = False
-
-        # --- Define the target file path ---
-        results_file_path = os.path.join(current_run_save_path, "round_results.csv")
-
-        # --- Logic to decide whether to run or skip ---
-        should_run_experiment = True  # Assume we run by default
-
-        if not is_rerun_true:
-            # Rerun is False - check if results already exist
-            if os.path.exists(results_file_path):
-                logging.info(
-                    f"Results file found at '{results_file_path}' and rerun is False. Skipping experiment for this run.")
-                should_run_experiment = False
-                pass
-            else:
-                logging.info(f"Results file not found at '{results_file_path}'. Proceeding with experiment.")
-        else:
-            # Rerun is True - clear the path before running
-            logging.info(f"Rerun is True. Clearing working path: '{current_run_save_path}'")
-            try:
-                # Make sure the directory exists before trying to clear (optional safety)
-                if os.path.isdir(current_run_save_path):
-                    logging.info(f"Successfully cleared path: '{current_run_save_path}'")
-                else:
-                    logging.warning(
-                        f"Path '{current_run_save_path}' does not exist or is not a directory. Cannot clear.")
-                # Even if clearing fails or path didn't exist, we still want to run because rerun=True
-                should_run_experiment = True
-            except Exception as e:
-                logging.error(f"Failed to clear working path '{current_run_save_path}': {e}", exc_info=True)
-                pass
-
-        # --- Execute based on the decision ---
-        if not should_run_experiment:
-            pass
-        clear_work_path(current_run_save_path)
-        # Execute the main attack function
         try:
             if dataset_domain == 'image':
-                poisoning_attack_image_reg_distri(**run_specific_args)
+                get_image_data_distribution(**run_specific_args)
             else:
                 poisoning_attack_text_reg_distri(**run_specific_args)
             logging.info(f"--- Finished Run {i} ---")
