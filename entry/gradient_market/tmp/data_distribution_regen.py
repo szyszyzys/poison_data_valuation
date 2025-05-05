@@ -3,7 +3,7 @@ import logging
 # log_utils.py (or results_logger.py)
 import os
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple, List
 
 import torch.nn as nn
 from scipy import datasets
