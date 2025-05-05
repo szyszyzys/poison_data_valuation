@@ -3,15 +3,13 @@ import logging
 # log_utils.py (or results_logger.py)
 import os
 from pathlib import Path
-from typing import Dict, Optional, Any, Tuple, List
+from typing import Dict, Optional, Any
 
-import torch.nn as nn
 from scipy import datasets
 from torch import nn
 
 from entry.gradient_market.automate_exp.config_parser import parse_config_for_attack_function
-from entry.gradient_market.backdoor_attack import FederatedEarlyStopper, load_config, set_seed, \
-    clear_work_path
+from entry.gradient_market.backdoor_attack import FederatedEarlyStopper, load_config, set_seed
 from general_utils.file_utils import save_to_json
 from marketplace.utils.gradient_market_utils.data_processor import print_and_save_data_statistics, \
     generate_buyer_bias_distribution, split_dataset_discovery, get_transforms
@@ -193,17 +191,33 @@ def get_text_data_set_distri(
 
 
 def get_image_data_distribution(
-    dataset_name: str,
-    n_sellers: int,
-    adv_rate: float,
-    buyer_percentage: float = 0.02,
-    data_split_mode: str = "NonIID",
-    discovery_quality: float = 0.3,
-    buyer_data_mode: str = "random",
-    batch_size: int = 64,
-    save_path: str = "./data_splits",
-    seed: int = 42,
-) -> Tuple[Any, List[Any], Any, List[str]]:
+        dataset_name: str,
+        n_sellers: int,
+        adv_rate: float,
+        attack_type: str,  # 'backdoor' or 'label_flip'
+        model_structure: str,  # Pass the model class/constructor
+        aggregation_method: str = 'martfl',
+        global_rounds: int = 100,
+        # --- Backdoor Params ---
+        backdoor_target_label: Optional[int] = 0,
+        backdoor_trigger_type: str = "blended_patch",
+        backdoor_trigger_location: str = "bottom_right",  # From args.bkd_loc previously
+        poison_rate: float = 0.1,  # trigger_rate previously
+        backdoor_poison_strength: float = 1.0,  # poison_strength previously
+        # --- Label Flip Params ---
+        label_flip_target_label: int = 0,  # Target for fixed_target mode
+        label_flip_mode: str = "fixed_target",  # 'fixed_target' or 'random_different'
+        # --- Common Params ---
+        save_path: str = "/",
+        device: str = 'cpu',
+        args: Optional[Any] = None,  # Pass general args if needed
+        buyer_percentage: float = 0.02,
+        sybil_params: Optional[Dict] = None,
+        local_training_params: Optional[Dict] = None,
+        change_base: bool = True,
+        data_split_mode: str = "NonIID",
+        dm_params: Optional[Dict] = None, local_attack_params=None, privacy_attack={}
+):
     """
     Load and split image data for a poisoning experiment (but do NOT run the attack itself).
 
@@ -217,7 +231,7 @@ def get_image_data_distribution(
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
     logging.info(f"Preparing data splits for {dataset_name} | "
-                 f"{n_sellers} sellers | {adv_rate*100:.1f}% adversaries")
+                 f"{n_sellers} sellers | {adv_rate * 100:.1f}% adversaries")
 
     # ——— Compute number of adversaries —————————————————————————————
     n_adversaries = int(n_sellers * adv_rate)
@@ -230,13 +244,11 @@ def get_image_data_distribution(
         dataset_name=dataset_name,
         buyer_percentage=buyer_percentage,
         num_sellers=n_sellers,
-        batch_size=batch_size,
         split_method=data_split_mode,
         n_adversaries=n_adversaries,
         save_path=save_path,
-        discovery_quality=discovery_quality,
-        buyer_data_mode=buyer_data_mode,
-        seed=seed,
+        discovery_quality=dm_params["discovery_quality"],
+        buyer_data_mode=dm_params["buyer_data_mode"]
     )
 
     logging.info("Data split complete.")
