@@ -298,7 +298,6 @@ def generate_label_flipping_attack_configs(output_dir):
         file_path = os.path.join(output_dir, "attack_comparison", f"{exp_id}.yaml")
         save_config(config, file_path)
 
-
 def generate_sybil_configs(output_dir):
     """Focus on varying Sybil parameters."""
     print("\n--- Generating Sybil Attack Configs ---")

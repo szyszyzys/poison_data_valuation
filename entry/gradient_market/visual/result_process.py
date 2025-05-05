@@ -1,25 +1,15 @@
 import ast
-import ast
 import logging
-import logging
-import matplotlib.pyplot as plt
-import matplotlib.pyplot as plt
-import numpy as np
-import numpy as np
-import pandas as pd
-import pandas as pd
 import re
-import re
-import seaborn as sns
-import seaborn as sns
-from collections import Counter
 from collections import Counter
 from pathlib import Path
-from pathlib import Path
-from scipy.stats import spearmanr
-from scipy.stats import spearmanr
 from typing import Any, Dict, List, Optional, Tuple
-from typing import Any, Dict, List, Optional, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from scipy.stats import spearmanr
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -29,6 +19,71 @@ logging.basicConfig(
 
 # --- Plotting Style ---
 sns.set_theme(style="whitegrid", palette="viridis")
+OBJECTIVES = [
+    "attack_comparison",
+    "label_flip_attack_comparison",
+    "sybil_comparison",
+    "discovery_split",
+    "privacy",
+    "baselines"
+]
+
+
+def load_all_results(
+    base_dir: str,
+    csv_filename: str = "round_results.csv",
+    objectives: Optional[List[str]] = None
+) -> Dict[str, List[pd.DataFrame]]:
+    """
+    Load results from base_dir/<objective>/<experiment>/run_*/csv_filename,
+    only for objectives in the provided list (or all if None).
+    """
+    objectives = objectives or []
+    base_path = Path(base_dir)
+    if not base_path.is_dir():
+        logging.error(f"Base directory '{base_dir}' not found.")
+        return {}
+
+    all_results: Dict[str, List[pd.DataFrame]] = {}
+    logging.info(f"Loading results from: {base_path}")
+
+    for obj_path in sorted(base_path.iterdir()):
+        if not obj_path.is_dir():
+            continue
+        if objectives and obj_path.name not in objectives:
+            logging.debug(f"Skipping objective folder: {obj_path.name}")
+            continue
+        # Iterate experiments under this objective
+        for exp_path in sorted(obj_path.iterdir()):
+            if not exp_path.is_dir():
+                continue
+            exp_name = exp_path.name
+            run_dfs: List[pd.DataFrame] = []
+            logging.info(f"Processing experiment: {exp_name} under objective: {obj_path.name}")
+
+            # Look for run_* directories
+            for run_dir in sorted(exp_path.glob('run_*')):
+                csv_file = run_dir / csv_filename
+                if not csv_file.is_file():
+                    continue
+                try:
+                    df = pd.read_csv(csv_file)
+                    if df.empty:
+                        continue
+                    df['run_id'] = run_dir.name
+                    df['experiment_setup'] = exp_name
+                    run_dfs.append(df)
+                except Exception as e:
+                    logging.error(f"Failed to load {csv_file}: {e}")
+
+            if run_dfs:
+                all_results[exp_name] = run_dfs
+            else:
+                logging.warning(f"No valid runs for experiment: {exp_name}")
+
+    if not all_results:
+        logging.error("No experiments loaded.")
+    return all_results
 
 
 def safe_literal_eval(val: Any) -> Any:
@@ -52,131 +107,6 @@ def safe_literal_eval(val: Any) -> Any:
             return s
     return val
 
-
-def load_all_results(base_dir: str, csv_filename: str = "round_results.csv") -> Dict[str, List[pd.DataFrame]]:
-    """
-    Traverse base_dir/<experiment>/<run> and load CSVs into DataFrames.
-    """
-    base_path = Path(base_dir)
-    if not base_path.is_dir():
-        logging.error(f"Base directory '{base_dir}' not found.")
-        return {}
-
-    all_results: Dict[str, List[pd.DataFrame]] = {}
-    logging.info(f"Loading results from: {base_path}")
-
-    for exp_path in sorted(base_path.iterdir()):
-        if not exp_path.is_dir():
-            continue
-        exp_name = exp_path.name
-        run_dfs: List[pd.DataFrame] = []
-        logging.info(f"Processing experiment: {exp_name}")
-
-        # Identify directories containing runs
-        subdirs = [d for d in exp_path.iterdir() if d.is_dir() and d.name.startswith(exp_name)]
-        search_dirs = subdirs or [exp_path]
-
-        for sd in search_dirs:
-            for run_dir in sorted(sd.glob('run_*')):
-                if not run_dir.is_dir():
-                    continue
-                csv_file = run_dir / csv_filename
-                if not csv_file.is_file():
-                    continue
-                try:
-                    df = pd.read_csv(csv_file)
-                    if df.empty:
-                        continue
-                    df['run_id'] = run_dir.name
-                    df['experiment_setup'] = exp_name
-                    run_dfs.append(df)
-                except Exception as e:
-                    logging.error(f"Failed to load {csv_file}: {e}")
-        if run_dfs:
-            all_results[exp_name] = run_dfs
-        else:
-            logging.warning(f"No valid runs for experiment: {exp_name}")
-
-    if not all_results:
-        logging.error("No experiments loaded.")
-    return all_results
-
-
-def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean and extract metrics from raw run DataFrame.
-    """
-    logging.debug(f"Preprocessing columns: {df.columns.tolist()}")
-
-    # --- Literal eval columns ---
-    eval_cols = {
-        'list': ['selected_sellers', 'seller_ids_all'],
-        'dict': ['perf_global', 'perf_local', 'selection_rate_info', 'gradient_inversion_log']
-    }
-    for col in df.columns:
-        if col in eval_cols['list'] + eval_cols['dict']:
-            df[col] = df[col].apply(safe_literal_eval)
-
-    # --- Ensure types ---
-    for col in eval_cols['list']:
-        if col in df.columns:
-            df[col] = df[col].apply(lambda x: x if isinstance(x, list) else [])
-    for col in eval_cols['dict']:
-        if col in df.columns:
-            df[col] = df[col].apply(lambda x: x if isinstance(x, dict) else {})
-
-    # --- Extract global metrics ---
-    if 'perf_global' in df.columns:
-        df['global_acc'] = df['perf_global'].apply(lambda d: d.get('accuracy', np.nan))
-        df['global_loss'] = df['perf_global'].apply(lambda d: d.get('loss', np.nan))
-        df['global_asr'] = df['perf_global'].apply(lambda d: d.get('attack_success_rate', np.nan))
-
-    # --- Extract privacy metrics ---
-    if 'gradient_inversion_log' in df.columns:
-        def _get_metric(log: dict, key: str) -> float:
-            return log.get('metrics', {}).get(key, np.nan)
-
-        df['attack_psnr'] = df['gradient_inversion_log'].apply(lambda d: _get_metric(d, 'psnr'))
-        df['attack_ssim'] = df['gradient_inversion_log'].apply(lambda d: _get_metric(d, 'ssim'))
-        df['attack_label_acc'] = df['gradient_inversion_log'].apply(lambda d: _get_metric(d, 'label_accuracy'))
-
-    # --- Numeric conversions ---
-    for col in ['round_number', 'round_duration_sec', 'num_sellers_selected']:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-    if 'round_number' in df.columns and not df['round_number'].dropna().empty:
-        df['round_number'] = df['round_number'].astype(int)
-
-    # --- Parse experiment name ---
-    df['exp_adv_rate'] = 0.0
-    if 'experiment_setup' in df.columns and isinstance(df['experiment_setup'].iloc[0], str):
-        name = df['experiment_setup'].iloc[0]
-        m = re.search(r'_adv(\d+)pct', name)
-        if m:
-            df['exp_adv_rate'] = int(m.group(1)) / 100.0
-
-    # --- Identify sellers ---
-    seller_ids = df['seller_ids_all'].iloc[0] if 'seller_ids_all' in df.columns and len(df) > 0 else []
-    benign_ids = [s for s in seller_ids if isinstance(s, str) and s.startswith('bn_')]
-    adv_ids = [s for s in seller_ids if isinstance(s, str) and s.startswith('adv_')]
-
-    df['num_benign'] = len(benign_ids)
-    df['num_malicious'] = len(adv_ids)
-    df['benign_selected_count'] = df['selected_sellers'].apply(
-        lambda sel: sum(1 for s in sel if s in benign_ids)
-    ) if 'selected_sellers' in df.columns else 0
-    df['malicious_selected_count'] = df['selected_sellers'].apply(
-        lambda sel: sum(1 for s in sel if s in adv_ids)
-    ) if 'selected_sellers' in df.columns else 0
-
-    df['benign_selection_rate'] = (
-            df['benign_selected_count'] / df['num_sellers_selected'].replace(0, np.nan)
-    )
-    df['malicious_selection_rate'] = (
-            df['malicious_selected_count'] / df['num_sellers_selected'].replace(0, np.nan)
-    )
-
-    return df
 
 
 def calculate_cost_of_convergence(df_run: pd.DataFrame, target_acc: float) -> Optional[float]:
@@ -438,71 +368,6 @@ def plot_aggregated_metric_bar(
     plt.close()
 
 
-def safe_literal_eval(val: Any) -> Any:
-    if pd.isna(val) or val is None:
-        return None
-    if isinstance(val, (list, dict)):
-        return val
-    if isinstance(val, str):
-        s = val.strip()
-        if (s.startswith('{') and s.endswith('}')) or (s.startswith('[') and s.endswith(']')):
-            try:
-                return ast.literal_eval(s)
-            except (ValueError, SyntaxError):
-                pass
-        try:
-            return float(s)
-        except ValueError:
-            return s
-    return val
-
-
-def load_all_results(base_dir: str, csv_filename: str = "round_results.csv") -> Dict[str, List[pd.DataFrame]]:
-    base_path = Path(base_dir)
-    if not base_path.is_dir():
-        logging.error(f"Base directory '{base_dir}' not found.")
-        return {}
-
-    all_results: Dict[str, List[pd.DataFrame]] = {}
-    logging.info(f"Loading results from: {base_path}")
-
-    # Iterate first-level experiment directories
-    for exp_path in sorted(base_path.iterdir()):
-        if not exp_path.is_dir():
-            continue
-        exp_name = exp_path.name
-        run_dfs: List[pd.DataFrame] = []
-        logging.info(f"Processing experiment: {exp_name}")
-
-        # Collect search directories: exp_path itself and any subdirectories
-        search_dirs = [exp_path] + [d for d in exp_path.iterdir() if d.is_dir()]
-
-        # Look for run_* under both levels
-        for sd in search_dirs:
-            for run_dir in sorted(sd.glob('run_*')):
-                csv_file = run_dir / csv_filename
-                if not csv_file.is_file():
-                    continue
-                try:
-                    df = pd.read_csv(csv_file)
-                    if df.empty:
-                        continue
-                    df['run_id'] = run_dir.name
-                    df['experiment_setup'] = exp_name
-                    run_dfs.append(df)
-                except Exception as e:
-                    logging.error(f"Failed to load {csv_file}: {e}")
-
-        if run_dfs:
-            all_results[exp_name] = run_dfs
-        else:
-            logging.warning(f"No valid runs for experiment: {exp_name}")
-
-    if not all_results:
-        logging.error("No experiments loaded.")
-    return all_results
-
-
 def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     logging.debug(f"Preprocessing columns: {df.columns.tolist()}")
     # Literal-eval
@@ -563,7 +428,6 @@ if __name__ == "__main__":
     for n, runs in processed.items():
         vals = {'coc': [], 'fairness_diff': [], 'gini': [], 'entropy': [], 'stability': [], 'fair_corr_rho': []}
         for df in runs:
-            from math import isnan
 
             # assume functions return nan if not available
             vals['coc'].append(calculate_cost_of_convergence(df, TARGET_ACC))
