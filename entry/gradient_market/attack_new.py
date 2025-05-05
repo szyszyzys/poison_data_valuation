@@ -689,8 +689,6 @@ def main():
             is_rerun_true = False
 
         # --- Define the target file path ---
-        current_run_save_path = os.path.join(experiment_base_path, f"run_{i}")
-
         results_file_path = os.path.join(current_run_save_path, "round_results.csv")
 
         # --- Logic to decide whether to run or skip ---

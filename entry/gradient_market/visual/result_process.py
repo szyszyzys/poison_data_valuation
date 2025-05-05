@@ -1,310 +1,621 @@
-# analyze_fl_results_full_with_mal_selection.py
-
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 import ast
-from pathlib import Path
-import warnings
+import ast
 import logging
-import re # Import regular expressions for parsing adv_rate
-from typing import Dict, List, Optional, Tuple, Any, Union
+import logging
+import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
+import numpy as np
+import numpy as np
+import pandas as pd
+import pandas as pd
+import re
+import re
+import seaborn as sns
+import seaborn as sns
+from collections import Counter
+from collections import Counter
+from pathlib import Path
+from pathlib import Path
+from scipy.stats import spearmanr
+from scipy.stats import spearmanr
+from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # --- Logging Setup ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
 
 # --- Plotting Style ---
 sns.set_theme(style="whitegrid", palette="viridis")
 
 
-# ======================================================================
-# == Helper Functions (load_all_results, safe_literal_eval) ==
-# ======================================================================
-# --- (Keep implementations from previous answer) ---
-def safe_literal_eval(val): # Condensed version
-    if pd.isna(val) or val is None: return None
-    if isinstance(val, (list, dict)): return val
-    try:
-        if isinstance(val, str) and (('{' in val and '}' in val) or ('[' in val and ']' in val)): return ast.literal_eval(val)
-        else:
-            try: return float(val)
-            except (ValueError, TypeError): pass
-            return val
-    except: return None
+def safe_literal_eval(val: Any) -> Any:
+    """
+    Safely evaluate strings to Python literals (list/dict/float) or return original.
+    """
+    if pd.isna(val) or val is None:
+        return None
+    if isinstance(val, (list, dict)):
+        return val
+    if isinstance(val, str):
+        s = val.strip()
+        if (s.startswith('{') and s.endswith('}')) or (s.startswith('[') and s.endswith(']')):
+            try:
+                return ast.literal_eval(s)
+            except (ValueError, SyntaxError):
+                pass
+        try:
+            return float(s)
+        except ValueError:
+            return s
+    return val
+
 
 def load_all_results(base_dir: str, csv_filename: str = "round_results.csv") -> Dict[str, List[pd.DataFrame]]:
-    base_path = Path(base_dir); all_results = {};
-    if not base_path.is_dir(): logging.error(f"Base directory '{base_dir}' not found."); return all_results
+    """
+    Traverse base_dir/<experiment>/<run> and load CSVs into DataFrames.
+    """
+    base_path = Path(base_dir)
+    if not base_path.is_dir():
+        logging.error(f"Base directory '{base_dir}' not found.")
+        return {}
+
+    all_results: Dict[str, List[pd.DataFrame]] = {}
     logging.info(f"Loading results from: {base_path}")
-    for experiment_path in sorted(base_path.iterdir()):
-        if experiment_path.is_dir():
-            experiment_name = experiment_path.name; run_dfs = []
-            logging.info(f"  Loading Experiment: {experiment_name}")
-            for run_path in sorted(experiment_path.glob("run_*")):
-                if run_path.is_dir():
-                    csv_file = run_path / csv_filename
-                    if csv_file.is_file():
-                        try: df = pd.read_csv(csv_file);
-                        except Exception as e: logging.error(f"    Error loading {csv_file}: {e}"); continue
-                        if not df.empty: df['run_id'] = run_path.name; df['experiment_setup'] = experiment_name; run_dfs.append(df)
-            if run_dfs: all_results[experiment_name] = run_dfs
-    if not all_results: logging.error(f"No experiments loaded from {base_dir}.")
+
+    for exp_path in sorted(base_path.iterdir()):
+        if not exp_path.is_dir():
+            continue
+        exp_name = exp_path.name
+        run_dfs: List[pd.DataFrame] = []
+        logging.info(f"Processing experiment: {exp_name}")
+
+        # Identify directories containing runs
+        subdirs = [d for d in exp_path.iterdir() if d.is_dir() and d.name.startswith(exp_name)]
+        search_dirs = subdirs or [exp_path]
+
+        for sd in search_dirs:
+            for run_dir in sorted(sd.glob('run_*')):
+                if not run_dir.is_dir():
+                    continue
+                csv_file = run_dir / csv_filename
+                if not csv_file.is_file():
+                    continue
+                try:
+                    df = pd.read_csv(csv_file)
+                    if df.empty:
+                        continue
+                    df['run_id'] = run_dir.name
+                    df['experiment_setup'] = exp_name
+                    run_dfs.append(df)
+                except Exception as e:
+                    logging.error(f"Failed to load {csv_file}: {e}")
+        if run_dfs:
+            all_results[exp_name] = run_dfs
+        else:
+            logging.warning(f"No valid runs for experiment: {exp_name}")
+
+    if not all_results:
+        logging.error("No experiments loaded.")
     return all_results
 
-# ======================================================================
-# == Preprocessing Function (Modified) ==
-# ======================================================================
-def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
-    logging.debug(f"Preprocessing DataFrame with columns: {df.columns.tolist()}")
-    eval_columns = ["selected_sellers", "outlier_sellers", "perf_global", "perf_local", "selection_rate_info", "defense_metrics", "selection_scores", "gradient_inversion_log", "selected_seller_indices", "outlier_seller_indices", "seller_ids_all"] # Added list cols
-    numeric_list_cols = ["selected_sellers", "outlier_sellers", "selected_seller_indices", "outlier_seller_indices"] # Treat ids as maybe non-numeric if strings
-    dict_cols = ["perf_global", "perf_local", "selection_rate_info", "defense_metrics", "selection_scores", "gradient_inversion_log"]
-    str_list_cols = ["seller_ids_all"] # List of strings
 
-    # Apply literal eval first
+def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean and extract metrics from raw run DataFrame.
+    """
+    logging.debug(f"Preprocessing columns: {df.columns.tolist()}")
+
+    # --- Literal eval columns ---
+    eval_cols = {
+        'list': ['selected_sellers', 'seller_ids_all'],
+        'dict': ['perf_global', 'perf_local', 'selection_rate_info', 'gradient_inversion_log']
+    }
     for col in df.columns:
-        if col in eval_columns:
-            logging.debug(f"  Applying safe_literal_eval to '{col}'")
+        if col in eval_cols['list'] + eval_cols['dict']:
             df[col] = df[col].apply(safe_literal_eval)
 
-    # Ensure correct empty types and list contents after eval
-    for col in df.columns:
-         if col in eval_columns:
-            if col in numeric_list_cols: df[col] = df[col].apply(lambda x: x if isinstance(x, list) else [])
-            elif col in dict_cols: df[col] = df[col].apply(lambda x: x if isinstance(x, dict) else {})
-            elif col in str_list_cols: df[col] = df[col].apply(lambda x: x if isinstance(x, list) else [])
+    # --- Ensure types ---
+    for col in eval_cols['list']:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: x if isinstance(x, list) else [])
+    for col in eval_cols['dict']:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: x if isinstance(x, dict) else {})
 
-
-    # --- Extract nested performance metrics ---
+    # --- Extract global metrics ---
     if 'perf_global' in df.columns:
-        df['global_acc'] = df['perf_global'].apply(lambda x: x.get('accuracy') if isinstance(x, dict) else np.nan)
-        df['global_loss'] = df['perf_global'].apply(lambda x: x.get('loss') if isinstance(x, dict) else np.nan)
-        df['global_asr'] = df['perf_global'].apply(lambda x: x.get('attack_success_rate') if isinstance(x, dict) else np.nan)
+        df['global_acc'] = df['perf_global'].apply(lambda d: d.get('accuracy', np.nan))
+        df['global_loss'] = df['perf_global'].apply(lambda d: d.get('loss', np.nan))
+        df['global_asr'] = df['perf_global'].apply(lambda d: d.get('attack_success_rate', np.nan))
 
-    # --- Extract Selection Rate Info ---
-    if 'selection_rate_info' in df.columns:
-        df['selection_fpr'] = df['selection_rate_info'].apply(lambda x: x.get('false_positive_rate', x.get('FPR')) if isinstance(x, dict) else np.nan)
-        df['selection_fnr'] = df['selection_rate_info'].apply(lambda x: x.get('false_negative_rate', x.get('FNR')) if isinstance(x, dict) else np.nan)
+    # --- Extract privacy metrics ---
+    if 'gradient_inversion_log' in df.columns:
+        def _get_metric(log: dict, key: str) -> float:
+            return log.get('metrics', {}).get(key, np.nan)
 
-    # --- Convert numeric columns ---
-    numeric_cols_to_convert = ['round_number', 'round_duration_sec', 'num_sellers_selected', 'avg_client_train_loss', 'comm_up_avg_bytes', 'comm_up_max_bytes', 'comm_down_bytes', 'client_time_avg_ms', 'client_time_max_ms', 'server_agg_time_ms', 'attack_victim_idx_targeted', 'attack_victim_score']
-    for col in numeric_cols_to_convert:
-        if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
+        df['attack_psnr'] = df['gradient_inversion_log'].apply(lambda d: _get_metric(d, 'psnr'))
+        df['attack_ssim'] = df['gradient_inversion_log'].apply(lambda d: _get_metric(d, 'ssim'))
+        df['attack_label_acc'] = df['gradient_inversion_log'].apply(lambda d: _get_metric(d, 'label_accuracy'))
 
-    if 'round_number' in df.columns:
-        df = df.dropna(subset=['round_number'])
-        if not df.empty: df['round_number'] = df['round_number'].astype(int)
+    # --- Numeric conversions ---
+    for col in ['round_number', 'round_duration_sec', 'num_sellers_selected']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    if 'round_number' in df.columns and not df['round_number'].dropna().empty:
+        df['round_number'] = df['round_number'].astype(int)
 
-    # --- Parse experiment setup for easier filtering ---
-    adv_rate = np.nan # Default
-    num_sellers = 10 # Default, might need adjustment or parsing
+    # --- Parse experiment name ---
+    df['exp_adv_rate'] = 0.0
     if 'experiment_setup' in df.columns and isinstance(df['experiment_setup'].iloc[0], str):
-        exp_name = df['experiment_setup'].iloc[0] # Use first row's name
-        df['exp_type'] = exp_name.split('_')[0] if len(exp_name.split('_')) > 0 else 'unknown'
-        df['exp_dataset'] = exp_name.split('_')[1] if len(exp_name.split('_')) > 1 else 'unknown'
-        df['exp_aggregator'] = exp_name.split('_')[2] if len(exp_name.split('_')) > 2 else 'unknown'
-        # Extract adversary rate (example using regex)
-        match = re.search(r'_adv(\d+)pct', exp_name)
-        if match:
-             adv_rate = int(match.group(1)) / 100.0
-        df['exp_adv_rate'] = adv_rate # Store parsed rate
-        # Add more parsing if needed (e.g., quality 'q0.7')
-    else:
-        df['exp_type'] = 'unknown'
-        df['exp_adv_rate'] = adv_rate
+        name = df['experiment_setup'].iloc[0]
+        m = re.search(r'_adv(\d+)pct', name)
+        if m:
+            df['exp_adv_rate'] = int(m.group(1)) / 100.0
 
-    # --- *** NEW: Calculate Malicious Selection Rate *** ---
-    # Requires 'selected_seller_indices' and knowledge of which indices are malicious
-    df['malicious_selection_rate'] = np.nan # Initialize column
+    # --- Identify sellers ---
+    seller_ids = df['seller_ids_all'].iloc[0] if 'seller_ids_all' in df.columns and len(df) > 0 else []
+    benign_ids = [s for s in seller_ids if isinstance(s, str) and s.startswith('bn_')]
+    adv_ids = [s for s in seller_ids if isinstance(s, str) and s.startswith('adv_')]
 
-    # Apply row-wise calculation
-    def calculate_mal_select_rate(row):
-        selected_indices = row.get('selected_seller_indices')
-        exp_adv_rate = row.get('exp_adv_rate')
-        seller_ids = row.get('seller_ids_all')
+    df['num_benign'] = len(benign_ids)
+    df['num_malicious'] = len(adv_ids)
+    df['benign_selected_count'] = df['selected_sellers'].apply(
+        lambda sel: sum(1 for s in sel if s in benign_ids)
+    ) if 'selected_sellers' in df.columns else 0
+    df['malicious_selected_count'] = df['selected_sellers'].apply(
+        lambda sel: sum(1 for s in sel if s in adv_ids)
+    ) if 'selected_sellers' in df.columns else 0
 
-        # Basic checks
-        if not isinstance(selected_indices, list) or pd.isna(exp_adv_rate) or exp_adv_rate == 0 or not isinstance(seller_ids, list) or not seller_ids:
-            return 0.0 # Return 0 if no adversaries or no selection info
+    df['benign_selection_rate'] = (
+            df['benign_selected_count'] / df['num_sellers_selected'].replace(0, np.nan)
+    )
+    df['malicious_selection_rate'] = (
+            df['malicious_selected_count'] / df['num_sellers_selected'].replace(0, np.nan)
+    )
 
-        num_total_sellers = len(seller_ids)
-        num_malicious = int(round(num_total_sellers * exp_adv_rate)) # Calculate expected number of malicious
-
-        # ** ASSUMPTION: Malicious clients are the first 'num_malicious' indices **
-        malicious_indices_set = set(range(num_malicious))
-
-        if not selected_indices: # Handle case where no sellers were selected
-             return 0.0
-
-        num_malicious_selected = sum(1 for idx in selected_indices if idx in malicious_indices_set)
-        num_total_selected = len(selected_indices)
-
-        return num_malicious_selected / num_total_selected if num_total_selected > 0 else 0.0
-
-    if 'selected_seller_indices' in df.columns and 'exp_adv_rate' in df.columns and 'seller_ids_all' in df.columns:
-         df['malicious_selection_rate'] = df.apply(calculate_mal_select_rate, axis=1)
-    else:
-        logging.warning("Could not calculate malicious_selection_rate. Required columns: 'selected_seller_indices', 'exp_adv_rate', 'seller_ids_all'")
-
-
-    logging.debug("Preprocessing finished.")
     return df
 
-# ======================================================================
-# == Plotting Functions (plot_metric_comparison, plot_final_round_comparison) ==
-# ======================================================================
-# --- (Keep implementations from previous answer) ---
-def plot_metric_comparison(results_dict, metric_column, title=None, xlabel="Communication Round", ylabel=None, confidence_interval='sd', use_seaborn=True, save_path=None, figsize=(10, 6), legend_loc='best', ylim=None, filter_metric_nan=True, **kwargs):
-    # ... (implementation from previous answer) ...
-    if not results_dict: print("Error: No results data for plotting."); return
-    all_runs_list = []; valid_experiments = []
-    for experiment_name, run_dfs in results_dict.items():
-        if not run_dfs: continue
-        first_df_processed = run_dfs[0]
-        if metric_column not in first_df_processed.columns: logging.warning(f"Metric '{metric_column}' not found for exp '{experiment_name}'. Skipping."); continue
-        if filter_metric_nan and first_df_processed[metric_column].isnull().all(): logging.warning(f"Metric '{metric_column}' is all NaN for exp '{experiment_name}'. Skipping."); continue
-        combined_exp_df = pd.concat(run_dfs, ignore_index=True); all_runs_list.append(combined_exp_df); valid_experiments.append(experiment_name)
-    if not all_runs_list: logging.error(f"No valid data found for metric '{metric_column}' across experiments."); return
-    all_runs_df = pd.concat(all_runs_list, ignore_index=True)
-    if filter_metric_nan: original_rows = len(all_runs_df); all_runs_df = all_runs_df.dropna(subset=[metric_column]);
-    if all_runs_df.empty: logging.error(f"No non-NaN data left for metric '{metric_column}' after filtering."); return
-    plt.figure(figsize=figsize); plot_ylabel = ylabel if ylabel is not None else metric_column.replace('_', ' ').title(); plot_title = title if title is not None else f"{plot_ylabel} vs. {xlabel}"
-    palette = sns.color_palette("viridis", n_colors=len(valid_experiments))
-    if use_seaborn:
-        try: sns.lineplot(data=all_runs_df, x="round_number", y=metric_column, hue="experiment_setup", hue_order=sorted(valid_experiments), palette=palette, errorbar=confidence_interval, linewidth=2.5, alpha=0.9, **kwargs); plt.grid(True, linestyle='--', alpha=0.6); plt.legend(title='Experiment Setup', loc=legend_loc, fontsize=9)
-        except Exception as e: logging.error(f"Error during seaborn plot: {e}"); plt.close(); return
-    else: logging.error("Manual matplotlib plotting not fully implemented here, using seaborn is recommended."); plt.close(); return
-    plt.title(plot_title, fontsize=16, pad=15); plt.xlabel(xlabel, fontsize=13); plt.ylabel(plot_ylabel, fontsize=13);
-    if ylim: plt.ylim(ylim)
-    plt.tight_layout()
-    if save_path: save_path = Path(save_path); save_path.parent.mkdir(parents=True, exist_ok=True);
-    try: plt.savefig(save_path, dpi=300); logging.info(f"Plot saved: {save_path}")
-    except Exception as e: logging.error(f"Error saving plot {save_path}: {e}")
-    plt.close()
 
-def plot_final_round_comparison(results_dict, metric_column, title=None, ylabel=None, higher_is_better=True, save_path=None, figsize=(10, 6), **kwargs):
-    # ... (implementation from previous answer) ...
-    final_metrics = {}; final_errors = {}
-    for exp_name, run_dfs in results_dict.items():
-        if not run_dfs: continue; first_df = run_dfs[0]
-        if metric_column not in first_df.columns: logging.warning(f"Metric '{metric_column}' missing for {exp_name}, skipping final comparison."); continue
-        final_vals_for_exp = []
-        for df in run_dfs:
-            df = df.dropna(subset=[metric_column, 'round_number'])
-            if not df.empty: final_round_val = df.loc[df['round_number'].idxmax(), metric_column]
-            if not pd.isna(final_round_val): final_vals_for_exp.append(final_round_val)
-        if final_vals_for_exp: final_metrics[exp_name] = np.mean(final_vals_for_exp); final_errors[exp_name] = np.std(final_vals_for_exp) / np.sqrt(len(final_vals_for_exp)) if len(final_vals_for_exp) > 0 else 0
-    if not final_metrics: logging.error(f"No final round data found for metric '{metric_column}'."); return
-    exp_names = sorted(list(final_metrics.keys())); mean_values = [final_metrics[name] for name in exp_names]; std_errors = [final_errors[name] for name in exp_names]
-    plt.figure(figsize=figsize); palette = sns.color_palette("viridis", n_colors=len(exp_names))
-    best_val = max(mean_values) if higher_is_better else min(mean_values)
-    colors = [palette[exp_names.index(name)] if final_metrics[name] != best_val else sns.color_palette("Reds", 1)[0] for name in exp_names] # Consistent color mapping
-    bars = plt.bar(exp_names, mean_values, yerr=std_errors, capsize=5, color=colors, **kwargs)
-    plot_ylabel = ylabel if ylabel is not None else metric_column.replace('_', ' ').title(); plot_title = title if title is not None else f"Comparison of Final Round {plot_ylabel}"
-    plt.title(plot_title, fontsize=16, pad=15); plt.ylabel(plot_ylabel, fontsize=13); plt.xticks(rotation=30, ha='right', fontsize=10); plt.grid(axis='y', linestyle='--', alpha=0.7); plt.tight_layout()
-    for bar in bars: yval = bar.get_height(); plt.text(bar.get_x() + bar.get_width()/2.0, yval, f'{yval:.3f}', va='bottom' if yval >= 0 else 'top', ha='center', fontsize=9, fontweight='bold')
-    if save_path: save_path = Path(save_path); save_path.parent.mkdir(parents=True, exist_ok=True);
-    try: plt.savefig(save_path, dpi=300); logging.info(f"Plot saved: {save_path}")
-    except Exception as e: logging.error(f"Error saving plot {save_path}: {e}")
-    plt.close()
+def calculate_cost_of_convergence(df_run: pd.DataFrame, target_acc: float) -> Optional[float]:
+    """
+    Return cumulative #selected until global_acc >= target_acc, else NaN.
+    """
+    if 'global_acc' not in df_run.columns or 'num_sellers_selected' not in df_run.columns:
+        return np.nan
+    meets = df_run[df_run['global_acc'] >= target_acc]
+    if meets.empty:
+        return np.nan
+    r0 = meets['round_number'].min()
+    return df_run.loc[df_run['round_number'] <= r0, 'num_sellers_selected'].sum()
 
 
-# ======================================================================
-# == Main Analysis Execution ==
-# ======================================================================
-if __name__ == "__main__":
-    # --- Configuration ---
-    RESULTS_BASE_DIR = "./experiment_results" # <<<--- CHANGE THIS PATH!!!
-    OUTPUT_PLOT_DIR = Path("./analysis_plots_final_v2")
-    OUTPUT_PLOT_DIR.mkdir(parents=True, exist_ok=True)
+def calculate_fairness_differential(df_run: pd.DataFrame) -> Optional[float]:
+    """
+    Avg per-seller benign selection rate minus malicious.
+    """
+    n_rounds = df_run['round_number'].max() if 'round_number' in df_run else 0
+    b = df_run['benign_selected_count'].sum()
+    m = df_run['malicious_selected_count'].sum()
+    nb = df_run['num_benign'].iloc[0] if 'num_benign' in df_run else 0
+    nm = df_run['num_malicious'].iloc[0] if 'num_malicious' in df_run else 0
+    if n_rounds <= 0 or nm == 0:
+        return np.nan
+    return (b / nb / n_rounds) - (m / nm / n_rounds)
 
-    # --- Load & Preprocess ---
-    all_results_raw = load_all_results(RESULTS_BASE_DIR)
-    all_results_processed = {}
-    if all_results_raw:
-        for exp_name, run_dfs_raw in all_results_raw.items():
-            processed_runs = []
-            logging.info(f"Preprocessing experiment: {exp_name}")
-            for i, df_raw in enumerate(run_dfs_raw):
-                try: df_processed = preprocess_data(df_raw.copy());
-                except Exception as e: logging.error(f"  Error preprocessing run {i} for {exp_name}: {e}", exc_info=True); continue
-                if not df_processed.empty: processed_runs.append(df_processed)
-            if processed_runs: all_results_processed[exp_name] = processed_runs
-    else: exit("No results loaded. Exiting.")
 
-    if not all_results_processed: exit("No data survived preprocessing. Exiting.")
+def get_seller_divergence(sid: str, exp_name: str) -> Optional[float]:
+    """Placeholder for divergence lookup."""
+    m = re.search(r'_f([\d\.]+)_', sid)
+    if m:
+        return float(m.group(1))
+    return None
 
-    logging.info("\n--- Starting Analysis & Plotting ---")
 
-    # === Define Experiment Groups for Analysis ===
-    exp_groups = {
-        "Baseline (CIFAR)": [k for k in all_results_processed if k.startswith('baseline_cifar_')],
-        "Baseline (FMNIST)": [k for k in all_results_processed if k.startswith('baseline_fmnist_')],
-        "Backdoor (CIFAR, 10% Adv)": [k for k in all_results_processed if k.startswith('backdoor_cifar_adv10pct')],
-        "Backdoor (CIFAR, 30% Adv)": [k for k in all_results_processed if k.startswith('backdoor_cifar_adv30pct')],
-        "LabelFlip (FMNIST, 10% Adv)": [k for k in all_results_processed if k.startswith('label_flip_fmnist_adv10pct')],
-        "LabelFlip (FMNIST, 30% Adv)": [k for k in all_results_processed if k.startswith('label_flip_fmnist_adv30pct')],
-        "Sybil (CIFAR, 30% Adv)": [k for k in all_results_processed if k.startswith('sybil_cifar_adv30pct')], # Example specific rate
-        "Discovery (CIFAR, Q=0.7)": [k for k in all_results_processed if k.startswith('discovery_cifar_') and '_q0.7_' in k],
-        "Privacy (CIFAR, Q=0.7)": [k for k in all_results_processed if k.startswith('privacy_discovery_cifar_') and '_q0.7_' in k], # Check your actual naming
-        "Privacy (FMNIST, Q=0.3)": [k for k in all_results_processed if k.startswith('privacy_discovery_fmnist_') and '_q0.3_' in k], # Check your actual naming
-    }
-
-    # --- Generate Plots for Each Group ---
-    for group_name, exp_keys in exp_groups.items():
-        logging.info(f"\n--- Analyzing Group: {group_name} ---")
-        group_results = {k: all_results_processed[k] for k in exp_keys if k in all_results_processed}
-        if not group_results:
-            logging.warning(f"No results found for group '{group_name}'. Skipping plots.")
+def calculate_fairness_correlation(df_run: pd.DataFrame) -> Optional[Tuple[float, float]]:
+    """
+    Spearman correlation between benign selection frequency and divergence.
+    """
+    if 'selected_sellers' not in df_run or 'seller_ids_all' not in df_run:
+        return None
+    benign_ids = [s for s in df_run['seller_ids_all'].iloc[0] if s.startswith('bn_')]
+    counts = Counter(sum(df_run['selected_sellers'], []))
+    freqs: List[float] = []
+    divs: List[float] = []
+    for bid in benign_ids:
+        div = get_seller_divergence(bid, df_run['experiment_setup'].iloc[0])
+        if div is None:
             continue
-
-        group_plot_dir = OUTPUT_PLOT_DIR / group_name.lower().replace(' ', '_').replace('(', '').replace(')', '').replace('%', 'pct').replace('=', '')
-        group_plot_dir.mkdir(parents=True, exist_ok=True)
-
-        # Common Performance Plots
-        plot_metric_comparison(group_results, "global_acc", title=f"{group_name} - Accuracy", ylabel="Accuracy", ylim=(0, 1.0), save_path=group_plot_dir / "global_accuracy.png")
-        plot_metric_comparison(group_results, "global_loss", title=f"{group_name} - Loss", ylabel="Loss", save_path=group_plot_dir / "global_loss.png")
-        plot_final_round_comparison(group_results, "global_acc", title=f"{group_name} - Final Accuracy", ylabel="Accuracy", save_path=group_plot_dir / "final_accuracy_bar.png")
-
-        # Attack Specific Plots (ASR) - Plot only if the metric likely exists for the group
-        if "Backdoor" in group_name or "Sybil" in group_name:
-            plot_metric_comparison(group_results, "global_asr", title=f"{group_name} - ASR", ylabel="ASR", ylim=(-0.05, 1.05), save_path=group_plot_dir / "global_asr.png")
-            plot_final_round_comparison(group_results, "global_asr", title=f"{group_name} - Final ASR", ylabel="ASR", higher_is_better=False, save_path=group_plot_dir / "final_asr_bar.png")
-
-        # Selection Plots (Always potentially relevant)
-        plot_metric_comparison(group_results, "num_sellers_selected", title=f"{group_name} - # Selected Sellers", ylabel="# Selected", save_path=group_plot_dir / "num_selected.png")
-        plot_metric_comparison(group_results, "selection_fpr", title=f"{group_name} - Selection FPR", ylabel="FPR", ylim=(-0.05, 1.05), save_path=group_plot_dir / "selection_fpr.png")
-        plot_metric_comparison(group_results, "selection_fnr", title=f"{group_name} - Selection FNR", ylabel="FNR", ylim=(-0.05, 1.05), save_path=group_plot_dir / "selection_fnr.png")
-
-        # *** NEW: Malicious Selection Rate Plot ***
-        # Plot only if the group involves adversaries (adv rate > 0 likely)
-        if "Backdoor" in group_name or "LabelFlip" in group_name or "Sybil" in group_name:
-             # Check if the column was successfully created
-             if 'malicious_selection_rate' in list(group_results.values())[0][0].columns:
-                 plot_metric_comparison(group_results, "malicious_selection_rate",
-                                        title=f"{group_name} - Malicious Selection Rate",
-                                        ylabel="Fraction of Selected who are Malicious", ylim=(-0.05, 1.05),
-                                        save_path=group_plot_dir / "malicious_selection_rate.png")
-                 plot_final_round_comparison(group_results, "malicious_selection_rate",
-                                            title=f"{group_name} - Final Malicious Selection Rate",
-                                            ylabel="Malicious Rate among Selected", higher_is_better=False, # Lower is better
-                                            save_path=group_plot_dir / "final_malicious_selection_rate_bar.png")
-             else:
-                  logging.warning(f"Column 'malicious_selection_rate' not found for group '{group_name}'. Skipping plot.")
+        freq = counts.get(bid, 0) / (df_run['round_number'].max() or 1)
+        freqs.append(freq)
+        divs.append(div)
+    logging.debug(f"Correlation sample size: {len(freqs)}/{len(benign_ids)}")
+    if len(freqs) < 2:
+        return None
+    rho, p = spearmanr(freqs, divs)
+    return rho, p
 
 
-        # Privacy Specific Plots - Plot only if metrics likely exist
-        if "Privacy" in group_name:
-             # Check if the columns were successfully created
-             first_df = list(group_results.values())[0][0] if group_results else None
-             if first_df is not None and 'attack_psnr' in first_df.columns:
-                 plot_metric_comparison(group_results, "attack_psnr", title=f"{group_name} - Attack PSNR", ylabel="PSNR (dB)", filter_metric_nan=True, save_path=group_plot_dir / "attack_psnr.png")
-                 plot_metric_comparison(group_results, "attack_ssim", title=f"{group_name} - Attack SSIM", ylabel="SSIM", ylim=(0,1.05), filter_metric_nan=True, save_path=group_plot_dir / "attack_ssim.png")
-                 plot_final_round_comparison(group_results, "attack_psnr", title=f"{group_name} - Final Attack PSNR", ylabel="PSNR (dB)", higher_is_better=True, save_path=group_plot_dir / "final_attack_psnr_bar.png") # Higher PSNR -> worse for attacker
-             else:
-                  logging.warning(f"Attack metric columns (e.g., 'attack_psnr') not found for group '{group_name}'. Skipping privacy plots.")
+def gini(x: np.ndarray) -> float:
+    """Gini coefficient of array x."""
+    x = np.array(x, dtype=float)
+    if x.min() < 0:
+        x -= x.min()
+    if (x == 0).all():
+        return 0.0
+    x_sorted = np.sort(x)
+    n = len(x)
+    cum = np.cumsum(x_sorted)
+    return (2 * np.sum((np.arange(1, n + 1) * x_sorted)) / (n * cum[-1]) - (n + 1) / n)
 
 
-    logging.info("\n--- Analysis Script Finished ---")
-    logging.info(f"Plots saved in subdirectories under: {OUTPUT_PLOT_DIR}")
+def calculate_gini_coefficient(df_run: pd.DataFrame) -> Optional[float]:
+    """Gini over total selections per seller."""
+    if 'seller_ids_all' not in df_run:
+        return np.nan
+    ids = df_run['seller_ids_all'].iloc[0]
+    counts = Counter(sum(df_run['selected_sellers'], []))
+    vals = [counts.get(s, 0) for s in ids]
+    if len(vals) < 2:
+        return 0.0
+    return gini(np.array(vals))
+
+
+def calculate_selection_entropy(df_run: pd.DataFrame) -> Optional[float]:
+    """Normalized Shannon entropy of selection frequencies."""
+    if 'seller_ids_all' not in df_run:
+        return np.nan
+    ids = df_run['seller_ids_all'].iloc[0]
+    freq = np.array(list(Counter(sum(df_run['selected_sellers'], [])).values()), dtype=float)
+    total = freq.sum()
+    if total == 0:
+        return 0.0
+    p = freq / total
+    p = p[p > 0]
+    H = -np.sum(p * np.log2(p))
+    return H / np.log2(len(ids))
+
+
+def jaccard_similarity(a: set, b: set) -> float:
+    """Jaccard index between two sets."""
+    if not a and not b:
+        return 1.0
+    return len(a & b) / len(a | b)
+
+
+def calculate_selection_stability(df_run: pd.DataFrame) -> Optional[float]:
+    """Avg Jaccard between consecutive rounds."""
+    sels = [set(s) for s in df_run.sort_values('round_number')['selected_sellers']]
+    if len(sels) < 2:
+        return np.nan
+    js = [jaccard_similarity(sels[i], sels[i + 1]) for i in range(len(sels) - 1)]
+    return float(np.mean(js))
+
+
+def plot_metric_comparison(
+        results: Dict[str, List[pd.DataFrame]],
+        metric: str,
+        title: str,
+        xlabel: str = "Round",
+        ylabel: Optional[str] = None,
+        ci: str = 'sd',
+        save_path: Optional[Path] = None
+) -> None:
+    """Line plot of a metric over rounds with mean ± CI."""
+    all_dfs = []
+    for name, runs in results.items():
+        for df in runs:
+            if metric in df:
+                tmp = df[['round_number', metric]].copy()
+                tmp['experiment'] = name
+                all_dfs.append(tmp)
+    if not all_dfs:
+        logging.warning(f"No data for metric {metric}")
+        return
+    df_all = pd.concat(all_dfs, ignore_index=True).dropna()
+    plt.figure(figsize=(10, 6))
+    sns.lineplot(
+        data=df_all,
+        x='round_number',
+        y=metric,
+        hue='experiment',
+        estimator=np.mean,
+        errorbar=ci
+    )
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel or metric)
+    plt.legend(title='Experiment', loc='best')
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
+def plot_final_round_comparison(
+        results: Dict[str, List[pd.DataFrame]],
+        metric: str,
+        title: str,
+        higher_is_better: bool = True,
+        save_path: Optional[Path] = None
+) -> None:
+    """Bar plot comparing final-round metric across experiments."""
+    means, errs, names = [], [], []
+    for name, runs in results.items():
+        vals = []
+        for df in runs:
+            if metric in df:
+                dfv = df.dropna(subset=[metric, 'round_number'])
+                if not dfv.empty:
+                    last = dfv.loc[dfv['round_number'].idxmax(), metric]
+                    vals.append(last)
+        if vals:
+            names.append(name)
+            means.append(np.mean(vals))
+            errs.append(np.std(vals, ddof=1) / np.sqrt(len(vals)) if len(vals) > 1 else 0)
+    if not names:
+        logging.warning(f"No final data for {metric}")
+        return
+    idx = np.arange(len(names))
+    palette = sns.color_palette(None, len(names))
+    best = int(np.argmax(means) if higher_is_better else np.argmin(means))
+    colors = [palette[i] if i != best else 'red' for i in range(len(names))]
+    plt.figure(figsize=(10, 6))
+    plt.bar(names, means, yerr=errs, capsize=5, color=colors)
+    plt.xticks(rotation=45, ha='right')
+    plt.title(title)
+    plt.ylabel(metric)
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
+def plot_scatter_comparison(
+        results: Dict[str, List[pd.DataFrame]],
+        x: str,
+        y: str,
+        title: str,
+        save_path: Optional[Path] = None
+) -> None:
+    """Scatter of two final-round metrics across experiments."""
+    rows = []
+    for name, runs in results.items():
+        xs, ys = [], []
+        for df in runs:
+            dfv = df.dropna(subset=[x, y, 'round_number'])
+            if not dfv.empty:
+                last = dfv.loc[dfv['round_number'].idxmax()]
+                xs.append(last[x])
+                ys.append(last[y])
+        if xs and ys:
+            rows.append({'experiment': name, x: np.mean(xs), y: np.mean(ys)})
+    if not rows:
+        logging.warning(f"No data for scatter {x} vs {y}")
+        return
+    dfp = pd.DataFrame(rows)
+    plt.figure(figsize=(8, 8))
+    sns.scatterplot(data=dfp, x=x, y=y, hue='experiment', s=100)
+    plt.title(title)
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
+def plot_aggregated_metric_bar(
+        df: pd.DataFrame,
+        metric_base: str,
+        title: str,
+        ylabel: str,
+        higher_is_better: bool,
+        save_path: Path
+) -> None:
+    """Bar plot of aggregated marketplace metrics (mean ± std)."""
+    mean_col = f"{metric_base}_mean"
+    std_col = f"{metric_base}_std"
+    if mean_col not in df.columns:
+        logging.warning(f"Missing column {mean_col}")
+        return
+    dfx = df.set_index('experiment_setup')[[mean_col, std_col]].dropna()
+    if dfx.empty:
+        return
+    names = dfx.index.tolist()
+    means = dfx[mean_col].values
+    errs = dfx[std_col].values
+    best = int(np.nanargmax(means) if higher_is_better else np.nanargmin(means))
+    palette = sns.color_palette(None, len(names))
+    colors = [palette[i] if i != best else 'red' for i in range(len(names))]
+    plt.figure(figsize=(10, 6))
+    plt.bar(names, means, yerr=errs, capsize=5, color=colors)
+    plt.xticks(rotation=45, ha='right')
+    plt.title(title)
+    plt.ylabel(ylabel)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
+def safe_literal_eval(val: Any) -> Any:
+    if pd.isna(val) or val is None:
+        return None
+    if isinstance(val, (list, dict)):
+        return val
+    if isinstance(val, str):
+        s = val.strip()
+        if (s.startswith('{') and s.endswith('}')) or (s.startswith('[') and s.endswith(']')):
+            try:
+                return ast.literal_eval(s)
+            except (ValueError, SyntaxError):
+                pass
+        try:
+            return float(s)
+        except ValueError:
+            return s
+    return val
+
+
+def load_all_results(base_dir: str, csv_filename: str = "round_results.csv") -> Dict[str, List[pd.DataFrame]]:
+    base_path = Path(base_dir)
+    if not base_path.is_dir():
+        logging.error(f"Base directory '{base_dir}' not found.")
+        return {}
+
+    all_results: Dict[str, List[pd.DataFrame]] = {}
+    logging.info(f"Loading results from: {base_path}")
+
+    for exp_path in sorted(base_path.iterdir()):
+        if not exp_path.is_dir(): continue
+        exp_name = exp_path.name
+        run_dfs: List[pd.DataFrame] = []
+        logging.info(f"Processing experiment: {exp_name}")
+        subdirs = [d for d in exp_path.iterdir() if d.is_dir() and d.name.startswith(exp_name)]
+        search_dirs = subdirs or [exp_path]
+        for sd in search_dirs:
+            for run_dir in sorted(sd.glob('run_*')):
+                csv_file = run_dir / csv_filename
+                if not csv_file.is_file(): continue
+                try:
+                    df = pd.read_csv(csv_file)
+                    if df.empty: continue
+                    df['run_id'] = run_dir.name
+                    df['experiment_setup'] = exp_name
+                    run_dfs.append(df)
+                except Exception as e:
+                    logging.error(f"Failed to load {csv_file}: {e}")
+        if run_dfs:
+            all_results[exp_name] = run_dfs
+        else:
+            logging.warning(f"No valid runs for experiment: {exp_name}")
+    if not all_results:
+        logging.error("No experiments loaded.")
+    return all_results
+
+
+def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
+    logging.debug(f"Preprocessing columns: {df.columns.tolist()}")
+    # Literal-eval
+    lists = ['selected_sellers', 'seller_ids_all']
+    dicts = ['perf_global', 'perf_local', 'selection_rate_info', 'gradient_inversion_log']
+    for col in lists + dicts:
+        if col in df.columns:
+            df[col] = df[col].apply(safe_literal_eval)
+    for col in lists:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: x if isinstance(x, list) else [])
+    for col in dicts:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: x if isinstance(x, dict) else {})
+    # Extract global metrics
+    if 'perf_global' in df.columns:
+        df['global_acc'] = df['perf_global'].apply(lambda d: d.get('accuracy', np.nan))
+        df['global_asr'] = df['perf_global'].apply(lambda d: d.get('attack_success_rate', np.nan))
+    # Extract privacy
+    if 'gradient_inversion_log' in df.columns:
+        df['attack_psnr'] = df['gradient_inversion_log'].apply(lambda d: d.get('metrics', {}).get('psnr', np.nan))
+    # Numerics
+    for col in ['round_number', 'num_sellers_selected']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    if 'round_number' in df.columns and not df['round_number'].dropna().empty:
+        df['round_number'] = df['round_number'].astype(int)
+    # Parse adv rate
+    df['exp_adv_rate'] = 0.0
+    if 'experiment_setup' in df.columns:
+        m = re.search(r'_adv(\d+)pct', df['experiment_setup'].iloc[0] or '')
+        if m: df['exp_adv_rate'] = int(m.group(1)) / 100.0
+    # Sellers
+    ids = df['seller_ids_all'].iloc[0] if 'seller_ids_all' in df.columns and len(df) > 0 else []
+    benign = [s for s in ids if isinstance(s, str) and s.startswith('bn_')]
+    adv = [s for s in ids if isinstance(s, str) and s.startswith('adv_')]
+    df['num_benign'], df['num_malicious'] = len(benign), len(adv)
+    if 'selected_sellers' in df.columns:
+        df['benign_selected_count'] = df['selected_sellers'].apply(lambda sel: sum(1 for s in sel if s in benign))
+        df['malicious_selected_count'] = df['selected_sellers'].apply(lambda sel: sum(1 for s in sel if s in adv))
+        df['benign_selection_rate'] = df['benign_selected_count'] / df['num_sellers_selected'].replace(0, np.nan)
+        df['malicious_selection_rate'] = df['malicious_selected_count'] / df['num_sellers_selected'].replace(0, np.nan)
+    return df
+
+
+# Metric calculators and plotting omitted for brevity; assume they are defined above
+
+if __name__ == "__main__":
+    RESULTS_BASE_DIR = "./experiment_results"
+    OUTPUT_DIR = Path("./analysis_plots_marketplace")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    TARGET_ACC = 0.75
+    # Load & preprocess
+    raw = load_all_results(RESULTS_BASE_DIR)
+    processed = {n: [preprocess_data(df) for df in dfs] for n, dfs in raw.items()}
+    # Marketplace summary
+    summary = []
+    for n, runs in processed.items():
+        vals = {'coc': [], 'fairness_diff': [], 'gini': [], 'entropy': [], 'stability': [], 'fair_corr_rho': []}
+        for df in runs:
+            from math import isnan
+
+            # assume functions return nan if not available
+            vals['coc'].append(calculate_cost_of_convergence(df, TARGET_ACC))
+            vals['fairness_diff'].append(calculate_fairness_differential(df))
+            vals['gini'].append(calculate_gini_coefficient(df))
+            vals['entropy'].append(calculate_selection_entropy(df))
+            vals['stability'].append(calculate_selection_stability(df))
+            corr = calculate_fairness_correlation(df)
+            if corr: vals['fair_corr_rho'].append(corr[0])
+        rec = {'experiment_setup': n}
+        for k, arr in vals.items():
+            arr_np = np.array(arr, dtype=float)
+            rec[f"{k}_mean"] = np.nanmean(arr_np)
+            rec[f"{k}_std"] = np.nanstd(arr_np)
+        summary.append(rec)
+    summary_df = pd.DataFrame(summary)
+    summary_df.to_csv(OUTPUT_DIR / "marketplace_metrics_summary.csv", index=False)
+    # Define experiment groups
+    all_keys = list(processed.keys())
+    exp_groups = {
+        "Baselines": [k for k in all_keys if k.startswith("baseline_")],
+        "Backdoor_Attacks_All": [k for k in all_keys if k.startswith("backdoor_")],
+        "LabelFlip_Attacks_All": [k for k in all_keys if k.startswith("label_flip_")],
+        "Compare_Agg_CIFAR_Backdoor_30pct": [k for k in all_keys if
+                                             k.startswith('backdoor_cifar_') and '_adv30pct' in k],
+        "Compare_AdvRate_CIFAR_Backdoor_FLTrust": [k for k in all_keys if k.startswith('backdoor_cifar_fltrust_')]
+    }
+    exp_groups = {g: ks for g, ks in exp_groups.items() if ks}
+    # Plot per group
+    for g, keys in exp_groups.items():
+        grp_dir = OUTPUT_DIR / g
+        grp_dir.mkdir(exist_ok=True)
+        subset = {k: processed[k] for k in keys}
+        # Standard metrics
+        plot_metric_comparison(subset, 'global_acc', f"{g} - Global Acc", save_path=grp_dir / "global_acc.png")
+        plot_final_round_comparison(subset, 'global_acc', f"{g} - Final Global Acc",
+                                    save_path=grp_dir / "final_global_acc.png")
+        plot_metric_comparison(subset, 'global_asr', f"{g} - Global ASR", save_path=grp_dir / "global_asr.png")
+        plot_final_round_comparison(subset, 'global_asr', f"{g} - Final Global ASR", higher_is_better=False,
+                                    save_path=grp_dir / "final_global_asr.png")
+        plot_metric_comparison(subset, 'attack_psnr', f"{g} - Attack PSNR", save_path=grp_dir / "attack_psnr.png")
+        plot_final_round_comparison(subset, 'attack_psnr', f"{g} - Final Attack PSNR",
+                                    save_path=grp_dir / "final_attack_psnr.png")
+        # Marketplace aggregated bars
+        group_market = summary_df[summary_df['experiment_setup'].isin(keys)]
+        plot_aggregated_metric_bar(group_market, 'coc', f"{g} - Cost of Convergence (>= {TARGET_ACC})",
+                                   "Total Selections", False, grp_dir / "coc.png")
+        plot_aggregated_metric_bar(group_market, 'fairness_diff', f"{g} - Fairness Differential",
+                                   "BenignRate - MalRate", True, grp_dir / "fairness_diff.png")
+        plot_aggregated_metric_bar(group_market, 'gini', f"{g} - Payment Gini", "Gini (0=Equal)", False,
+                                   grp_dir / "gini.png")
+        plot_aggregated_metric_bar(group_market, 'entropy', f"{g} - Selection Entropy", "Norm Entropy", True,
+                                   grp_dir / "entropy.png")
+        plot_aggregated_metric_bar(group_market, 'stability', f"{g} - Selection Stability", "Avg Jaccard", True,
+                                   grp_dir / "stability.png")
+        plot_aggregated_metric_bar(group_market, 'fair_corr_rho', f"{g} - Fairness Corr (Rho)", "Spearman Rho", False,
+                                   grp_dir / "fairness_corr_rho.png")
+        # Scatter plots
+        plot_scatter_comparison(subset, 'global_asr', 'global_acc', f"{g}: ASR vs Acc",
+                                save_path=grp_dir / "scatter_asr_acc.png")
+        if any('malicious_selection_rate' in df.columns for runs in subset.values() for df in runs):
+            plot_scatter_comparison(subset, 'malicious_selection_rate', 'global_acc', f"{g}: Mal Select Rate vs Acc",
+                                    save_path=grp_dir / "scatter_mal_rate_acc.png")
+    logging.info("All plots generated.")
