@@ -227,40 +227,52 @@ def visualize_and_save_attack(reconstructed_images, ground_truth_images, reconst
 # ======================================================================
 # == Attack Wrapper Function (Encapsulates Attack+Eval+Viz) ==
 # ======================================================================
-def perform_and_evaluate_inversion_attack(target_gradient, model_template, input_shape, num_classes, device,
-                                          attack_config, ground_truth_images=None, ground_truth_labels=None,
-                                          save_visuals=True, save_dir=Path("./attack_visualizations"), round_num=None,
-                                          victim_id=None) -> Dict[str, Any]:
-    import logging, copy, time
+def perform_and_evaluate_inversion_attack(
+        target_gradient: List[torch.Tensor],
+        model_template: torch.nn.Module,
+        input_shape: tuple,  # e.g., (C, H, W)
+        num_classes: int,
+        device: torch.device,
+        attack_config: Dict[str, Any],
+        ground_truth_images: Optional[torch.Tensor] = None,
+        ground_truth_labels: Optional[torch.Tensor] = None,
+        save_visuals: bool = True,
+        save_dir: Path = Path("./attack_visualizations"),  # Default is Path object
+        round_num: Optional[int] = None,
+        victim_id: Optional[str] = None
+) -> Dict[str, Any]:
+    # Ensure save_dir is a Path object
+    if not isinstance(save_dir, Path):
+        save_dir = Path(save_dir)
+
     logging.info(f"Attempting GIA on victim '{victim_id}' (Round {round_num})...")
     attack_start_time = time.time()
-    attack_results_log = {"victim_id": victim_id, "round": round_num}
+    attack_results_log: Dict[str, Any] = {"victim_id": victim_id, "round": round_num}
+
     try:
         attack_model = copy.deepcopy(model_template).to(device)
         attack_model.eval()
-        num_images = attack_config.get('num_images', 1)  # Number of images the attack attempts to reconstruct
+        num_images = attack_config.get('num_images', 1)
         iterations = attack_config.get('iterations', 500)
         lr = attack_config.get('lr', 0.1)
         label_type = attack_config.get('label_type', 'optimize')
         atk_kwargs = {k: v for k, v in attack_config.items() if
                       k not in ['num_images', 'iterations', 'lr', 'label_type']}
 
-        current_gt_labels_for_attack = None  # Labels used as input for the attack if label_type='ground_truth'
+        current_gt_labels_for_attack = None
 
-        if ground_truth_images is None:  # If GT images are not available, GT labels for attack are also not.
+        if ground_truth_images is None:
             if label_type == 'ground_truth':
                 logging.warning(f"GT data unavailable for {victim_id}, switching label_type to 'optimize' for attack.")
             label_type = 'optimize'
         elif label_type == 'ground_truth':
-            if ground_truth_labels is None or len(
-                    ground_truth_labels) < num_images:  # Check if enough labels for num_images
+            if ground_truth_labels is None or len(ground_truth_labels) < num_images:
                 logging.warning(
                     f"GT labels missing or insufficient (have {len(ground_truth_labels) if ground_truth_labels is not None else 0}, need {num_images}) "
                     f"for victim {victim_id}, switching label_type to 'optimize' for attack."
                 )
                 label_type = 'optimize'
             else:
-                # Use the first num_images labels for the attack
                 current_gt_labels_for_attack = ground_truth_labels[:num_images].clone().to(device)
 
         reconstructed_images, reconstructed_labels = gradient_inversion_attack(
@@ -273,12 +285,11 @@ def perform_and_evaluate_inversion_attack(target_gradient, model_template, input
         attack_results_log["duration_sec"] = attack_duration_sec
         logging.info(f"Attack on '{victim_id}' finished in {attack_duration_sec:.2f} seconds.")
 
-        # --- Start of Evaluation Block ---
         if ground_truth_images is not None:
             logging.info(f"Evaluating reconstruction for victim '{victim_id}'...")
+            gt_images_for_eval: Optional[torch.Tensor] = None
+            gt_labels_for_eval: Optional[torch.Tensor] = None
 
-            # We need to compare 'num_images' reconstructed images.
-            # So, we must select the corresponding 'num_images' from the provided ground_truth_images.
             if ground_truth_images.shape[0] < num_images:
                 logging.error(
                     f"Victim {victim_id}: Not enough ground truth images ({ground_truth_images.shape[0]}) "
@@ -286,79 +297,57 @@ def perform_and_evaluate_inversion_attack(target_gradient, model_template, input
                 )
                 attack_results_log["metrics"] = {
                     "error": f"Insufficient GT images for evaluation: have {ground_truth_images.shape[0]}, need {num_images}"}
-                # Fall through to logic that saves only reconstructed images if save_visuals is True
-                gt_images_for_eval = None  # Mark as not available for subsequent steps
             else:
                 gt_images_for_eval = ground_truth_images[:num_images].clone()
-                # Prepare corresponding ground truth labels for evaluation
                 if ground_truth_labels is not None and len(ground_truth_labels) >= num_images:
                     gt_labels_for_eval = ground_truth_labels[:num_images].clone()
                 else:
-                    # This case should ideally be caught by the label check for the attack,
-                    # but good to be defensive for evaluation too.
-                    if ground_truth_labels is not None:  # but len < num_images
+                    if ground_truth_labels is not None:
                         logging.warning(
                             f"Insufficient GT labels for evaluation (have {len(ground_truth_labels)}, need {num_images}). Labels won't be used in metrics.")
-                    gt_labels_for_eval = None
 
-            # Proceed with evaluation only if we have valid gt_images_for_eval
             if gt_images_for_eval is not None:
-                rec_images_for_eval = reconstructed_images.clone()  # Work with a copy
+                rec_images_for_eval = reconstructed_images.clone()
 
                 logging.info(
                     f"Shapes for evaluation (before internal fix): REC={rec_images_for_eval.shape}, GT={gt_images_for_eval.shape}")
 
-                # Ensure 4D (N, C, H, W)
-                # reconstructed_images should be (num_images, C, H, W). If num_images=1 and it's 3D, unsqueeze.
                 if rec_images_for_eval.ndim == 3 and num_images == 1:
                     rec_images_for_eval = rec_images_for_eval.unsqueeze(0)
-                # gt_images_for_eval is already sliced to num_images. If num_images=1 and it's 3D, unsqueeze.
-                if gt_images_for_eval.ndim == 3 and num_images == 1:  # (C,H,W)
+                if gt_images_for_eval.ndim == 3 and num_images == 1:
                     gt_images_for_eval = gt_images_for_eval.unsqueeze(0)
 
-                # After potential unsqueezing, batch dimensions should match num_images
-                # This check is crucial if the error persists
+                valid_shapes_for_eval = True
                 if rec_images_for_eval.shape[0] != num_images:
-                    logging.error(f"Reconstructed images batch dimension ({rec_images_for_eval.shape[0]}) "
-                                  f"does not match num_images ({num_images}) after processing. Attack output issue?")
-                    # Handle this severe mismatch, e.g. by setting gt_images_for_eval to None
-                    gt_images_for_eval = None  # Cannot proceed with evaluation
-                elif gt_images_for_eval.shape[
-                    0] != num_images:  # Should not happen if slicing and unsqueezing is correct
-                    logging.error(f"Ground truth images for evaluation batch dimension ({gt_images_for_eval.shape[0]}) "
-                                  f"does not match num_images ({num_images}) after processing. Slicing/unsqueeze issue?")
-                    gt_images_for_eval = None  # Cannot proceed with evaluation
+                    logging.error(f"Reconstructed images batch dim ({rec_images_for_eval.shape[0]}) "
+                                  f"mismatch with num_images ({num_images}). Attack output issue?")
+                    valid_shapes_for_eval = False
+                elif gt_images_for_eval.shape[0] != num_images:
+                    logging.error(f"Ground truth images for eval batch dim ({gt_images_for_eval.shape[0]}) "
+                                  f"mismatch with num_images ({num_images}). Slicing/unsqueeze issue?")
+                    valid_shapes_for_eval = False
 
-                if gt_images_for_eval is not None:  # Check again if previous error occurred
-                    # Channel alignment
-                    if rec_images_for_eval.shape[1] == 1 and gt_images_for_eval.shape[
-                        1] == 3:  # Rec: Grayscale, GT: RGB
+                if valid_shapes_for_eval:
+                    if rec_images_for_eval.shape[1] == 1 and gt_images_for_eval.shape[1] == 3:
                         rec_images_for_eval = rec_images_for_eval.repeat(1, 3, 1, 1)
-                    elif rec_images_for_eval.shape[1] == 3 and gt_images_for_eval.shape[
-                        1] == 1:  # Rec: RGB, GT: Grayscale
-                        # It's more common to convert GT to RGB if reconstructed is RGB, or reconstructed to Gray if GT is Gray.
-                        # Here, we make GT match reconstructed if reconstructed is RGB.
-                        # Or, you might want to convert reconstructed to grayscale if GT is grayscale.
-                        # For now, assume we make GT match reconstructed channels if it's 1 vs 3.
+                    elif rec_images_for_eval.shape[1] == 3 and gt_images_for_eval.shape[1] == 1:
                         gt_images_for_eval = gt_images_for_eval.repeat(1, 3, 1, 1)
 
                     logging.info(
                         f"Shapes for evaluation (after internal fix): REC={rec_images_for_eval.shape}, GT={gt_images_for_eval.shape}")
 
-                    # Final check: if shapes are still not identical, something is wrong.
                     if rec_images_for_eval.shape != gt_images_for_eval.shape:
                         logging.error(
-                            f"Final shape mismatch before evaluation! REC: {rec_images_for_eval.shape}, GT: {gt_images_for_eval.shape}")
+                            f"Final shape mismatch! REC: {rec_images_for_eval.shape}, GT: {gt_images_for_eval.shape}")
                         attack_results_log["metrics"] = {
-                            "error": f"Evaluation shape mismatch: REC {rec_images_for_eval.shape}, GT {gt_images_for_eval.shape}"}
-                        gt_images_for_eval = None  # Cannot evaluate
+                            "error": f"Eval shape mismatch: REC {rec_images_for_eval.shape}, GT {gt_images_for_eval.shape}"}
+                        valid_shapes_for_eval = False
 
-                # Perform evaluation if gt_images_for_eval is still valid
-                if gt_images_for_eval is not None:
+                if valid_shapes_for_eval:
                     eval_metrics = evaluate_inversion(
                         reconstructed_images=rec_images_for_eval.to(device),
                         ground_truth_images=gt_images_for_eval.to(device),
-                        reconstructed_labels=reconstructed_labels.to(device),  # Already on device
+                        reconstructed_labels=reconstructed_labels.to(device),
                         ground_truth_labels=gt_labels_for_eval.to(device) if gt_labels_for_eval is not None else None
                     )
                     attack_results_log["metrics"] = eval_metrics
@@ -366,70 +355,63 @@ def perform_and_evaluate_inversion_attack(target_gradient, model_template, input
 
                     if save_visuals:
                         filename = f"round_{round_num}_victim_{victim_id}_comparison.png" if round_num is not None else f"victim_{victim_id}_comparison.png"
+                        # The line causing error was here or similar lines below using `save_dir / filename`
                         visualize_and_save_attack(
-                            rec_images_for_eval, gt_images_for_eval, reconstructed_labels, gt_labels_for_eval,
-                            eval_metrics,
-                            save_dir / filename
+                            rec_images_for_eval, gt_images_for_eval, reconstructed_labels,
+                            gt_labels_for_eval, eval_metrics, save_dir / filename
                         )
-                else:  # gt_images_for_eval became None due to earlier errors/mismatches
-                    if "error" not in attack_results_log.get("metrics", {}):  # If no specific error was logged yet
-                        attack_results_log["metrics"] = None
+                else:  # valid_shapes_for_eval became False
+                    if "error" not in attack_results_log.get("metrics", {}):
+                        attack_results_log["metrics"] = {"error": "Shape validation for evaluation failed."}
                     logging.warning(
-                        f"Skipping quantitative evaluation for {victim_id} due to GT data processing issues.")
-                    # Save only reconstructed if visuals are enabled and evaluation failed
+                        f"Skipping quantitative evaluation for {victim_id} due to GT data processing/shape issues.")
                     if save_visuals:
                         try:
                             from torchvision.utils import save_image
-                            filename = f"round_{round_num}_victim_{victim_id}_reconstructed_eval_failed.png"
-                            rec_path = save_dir / filename
+                            filename_rv = f"round_{round_num}_victim_{victim_id}_reconstructed_eval_failed.png"
+                            rec_path = save_dir / filename_rv
                             save_dir.mkdir(parents=True, exist_ok=True)
-                            save_image(reconstructed_images.cpu(), rec_path,
-                                       normalize=True)  # Save original reconstructed
+                            save_image(reconstructed_images.cpu(), rec_path, normalize=True)
                             logging.info(f"Saved reconstructed image (evaluation failed) to {rec_path}")
                         except ImportError:
-                            logging.warning("torchvision.utils not found, cannot save reconstructed image.")
+                            logging.warning("torchvision.utils not found.")
                         except Exception as e_save:
-                            logging.error(f"Failed to save reconstructed image (evaluation failed): {e_save}")
-            # This else corresponds to: if gt_images_for_eval was None initially because GT.shape[0] < num_images
-            # The metrics would already have an error message. This part handles saving.
+                            logging.error(f"Failed to save reconstructed image (eval failed): {e_save}")
+            # This else is for: if gt_images_for_eval was None because GT.shape[0] < num_images
             else:
                 if save_visuals:
                     try:
                         from torchvision.utils import save_image
-                        filename = f"round_{round_num}_victim_{victim_id}_reconstructed_insufficient_gt.png"
-                        rec_path = save_dir / filename
+                        filename_ins_gt = f"round_{round_num}_victim_{victim_id}_reconstructed_insufficient_gt.png"
+                        rec_path = save_dir / filename_ins_gt
                         save_dir.mkdir(parents=True, exist_ok=True)
-                        save_image(reconstructed_images.cpu(), rec_path, normalize=True)  # Save original reconstructed
-                        logging.info(f"Saved reconstructed image (insufficient GT for eval) to {rec_path}")
+                        save_image(reconstructed_images.cpu(), rec_path, normalize=True)
+                        logging.info(f"Saved reconstructed (insufficient GT for eval) to {rec_path}")
                     except ImportError:
-                        logging.warning("torchvision.utils not found, cannot save reconstructed image.")
+                        logging.warning("torchvision.utils not found.")
                     except Exception as e_save:
-                        logging.error(f"Failed to save reconstructed image (insufficient GT for eval): {e_save}")
-
-        # --- End of Evaluation Block (if ground_truth_images was not None) ---
-        # --- Start of Block if ground_truth_images was None from the beginning ---
+                        logging.error(f"Failed to save reconstructed (insufficient GT): {e_save}")
         else:
             attack_results_log["metrics"] = None
             logging.info(f"GT data unavailable for '{victim_id}', skipping quantitative evaluation.")
             if save_visuals:
                 try:
                     from torchvision.utils import save_image
-                    filename = f"round_{round_num}_victim_{victim_id}_reconstructed.png" if round_num is not None else f"victim_{id}_reconstructed.png"
-                    rec_path = save_dir / filename
+                    # Corrected typo: victim_{victim_id} instead of victim_{id}
+                    filename_no_gt = f"round_{round_num}_victim_{victim_id}_reconstructed.png" if round_num is not None else f"victim_{victim_id}_reconstructed.png"
+                    rec_path = save_dir / filename_no_gt
                     save_dir.mkdir(parents=True, exist_ok=True)
                     save_image(reconstructed_images.cpu(), rec_path, normalize=True)
                     logging.info(f"Saved reconstructed image (no GT) to {rec_path}")
                 except ImportError:
-                    logging.warning("torchvision.utils not found, cannot save reconstructed image.")
+                    logging.warning("torchvision.utils not found.")
                 except Exception as e_save:
                     logging.error(f"Failed to save reconstructed image: {e_save}")
-        # --- End of Block if ground_truth_images was None ---
 
         del attack_model
 
     except Exception as e:
-        logging.error(f"GIA failed for victim {victim_id}: {e}",
-                      exc_info=True)  # Changed to exc_info=True for full traceback
+        logging.error(f"GIA failed for victim {victim_id}: {e}", exc_info=True)
         attack_results_log["error"] = str(e)
         attack_results_log["duration_sec"] = time.time() - attack_start_time
 
