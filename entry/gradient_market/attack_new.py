@@ -131,7 +131,7 @@ def poisoning_attack_text(
             attack_mode=label_flip_mode,
             target_label=label_flip_target_label
         )
-        gradient_manipulation_mode = 'single'  # Label flip usually passive
+        gradient_manipulation_mode = args.gradient_manipulation_mode  # Allow gradient manipulation for backdoor
     elif attack_type == "None":
         attack_generator = None
     else:
