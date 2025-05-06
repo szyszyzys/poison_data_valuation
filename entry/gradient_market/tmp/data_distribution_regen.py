@@ -41,6 +41,7 @@ def poisoning_attack_text_reg_distri(
         # --- Common Params ---
         save_path: str = "/",
         device: str = 'cpu',
+        seed=0,
         args: Optional[Any] = None,
         buyer_percentage: float = 0.02,
         sybil_params: Optional[Dict] = None,
@@ -209,6 +210,7 @@ def get_image_data_distribution(
         label_flip_mode: str = "fixed_target",  # 'fixed_target' or 'random_different'
         # --- Common Params ---
         save_path: str = "/",
+        seed=0,
         device: str = 'cpu',
         args: Optional[Any] = None,  # Pass general args if needed
         buyer_percentage: float = 0.02,
