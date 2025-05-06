@@ -172,7 +172,7 @@ def main():
     parser.add_argument(
         '--parallel',
         type=int,
-        default=0,
+        default=20,
         help="Number of experiments to run in parallel (default: 1). Use 0 or negative for cpu_count()."
     )
 
@@ -203,7 +203,7 @@ def main():
     NUM_GPUS = get_gpu_count()
 
     # --- Find Config Files ---
-    config_files = sorted(list(config_dir.glob(pattern)), reverse=True)
+    config_files = sorted(list(config_dir.glob(pattern)))
     if not config_files:
         logger.warning(f"No configuration files found matching pattern '{pattern}' in {config_dir}. Exiting.")
         return
