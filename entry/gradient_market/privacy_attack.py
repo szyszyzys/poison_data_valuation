@@ -231,6 +231,7 @@ def perform_and_evaluate_inversion_attack(target_gradient, model_template, input
                                           attack_config, ground_truth_images=None, ground_truth_labels=None,
                                           save_visuals=True, save_dir=Path("./attack_visualizations"), round_num=None,
                                           victim_id=None) -> Dict[str, Any]:
+    import logging, copy, time
     logging.info(f"Attempting GIA on victim '{victim_id}' (Round {round_num})...")
     attack_start_time = time.time()
     attack_results_log = {"victim_id": victim_id, "round": round_num}
@@ -244,26 +245,46 @@ def perform_and_evaluate_inversion_attack(target_gradient, model_template, input
         atk_kwargs = {k: v for k, v in attack_config.items() if
                       k not in ['num_images', 'iterations', 'lr', 'label_type']}
         current_gt_labels = None
+
         if ground_truth_images is None:
-            if label_type == 'ground_truth': logging.warning(
-                f"GT data unavailable for {victim_id}, switching label_type to 'optimize'.")
+            if label_type == 'ground_truth':
+                logging.warning(f"GT data unavailable for {victim_id}, switching label_type to 'optimize'.")
             label_type = 'optimize'
         elif label_type == 'ground_truth':
             if ground_truth_labels is None or len(ground_truth_labels) != num_images:
-                logging.warning(
-                    f"GT labels missing/mismatch for {victim_id}, switching label_type to 'optimize'.")
+                logging.warning(f"GT labels missing/mismatch for {victim_id}, switching label_type to 'optimize'.")
                 label_type = 'optimize'
                 ground_truth_labels = None
             else:
                 current_gt_labels = ground_truth_labels.to(device)
+
         reconstructed_images, reconstructed_labels = gradient_inversion_attack(
             target_gradient=[g.clone().to(device) for g in target_gradient], model=attack_model,
             input_shape=input_shape, num_classes=num_classes, device=device, num_images=num_images,
             iterations=iterations, lr=lr, label_type=label_type, ground_truth_labels=current_gt_labels, **atk_kwargs)
+
         attack_duration_sec = time.time() - attack_start_time
         attack_results_log["duration_sec"] = attack_duration_sec
         logging.info(f"Attack on '{victim_id}' finished in {attack_duration_sec:.2f} seconds.")
+
         if ground_truth_images is not None:
+            # --- Fix: Ensure correct shapes ---
+            logging.info(f"reconstructed_images shape before fix: {reconstructed_images.shape}")
+            logging.info(f"ground_truth_images shape before fix: {ground_truth_images.shape}")
+
+            if reconstructed_images.ndim == 3:
+                reconstructed_images = reconstructed_images.unsqueeze(0)
+            if ground_truth_images.ndim == 3:
+                ground_truth_images = ground_truth_images.unsqueeze(0)
+
+            if reconstructed_images.shape[1] == 1 and ground_truth_images.shape[1] == 3:
+                reconstructed_images = reconstructed_images.repeat(1, 3, 1, 1)
+            elif reconstructed_images.shape[1] == 3 and ground_truth_images.shape[1] == 1:
+                ground_truth_images = ground_truth_images.repeat(1, 3, 1, 1)
+
+            logging.info(f"reconstructed_images shape after fix: {reconstructed_images.shape}")
+            logging.info(f"ground_truth_images shape after fix: {ground_truth_images.shape}")
+
             logging.info(f"Evaluating reconstruction for victim '{victim_id}'...")
             eval_metrics = evaluate_inversion(reconstructed_images=reconstructed_images,
                                               ground_truth_images=ground_truth_images.to(device),
@@ -271,32 +292,33 @@ def perform_and_evaluate_inversion_attack(target_gradient, model_template, input
                                               ground_truth_labels=ground_truth_labels)
             attack_results_log["metrics"] = eval_metrics
             logging.info(f"  Evaluation Metrics: {eval_metrics}")
-            if save_visuals: filename = f"round_{round_num}_victim_{victim_id}_comparison.png" if round_num is not None else f"victim_{victim_id}_comparison.png"
-            visualize_and_save_attack(
-                reconstructed_images, ground_truth_images, reconstructed_labels, ground_truth_labels, eval_metrics,
-                save_dir / filename)
+
+            if save_visuals:
+                filename = f"round_{round_num}_victim_{victim_id}_comparison.png" if round_num is not None else f"victim_{victim_id}_comparison.png"
+                visualize_and_save_attack(
+                    reconstructed_images, ground_truth_images, reconstructed_labels, ground_truth_labels, eval_metrics,
+                    save_dir / filename)
         else:
             attack_results_log["metrics"] = None
             logging.info(f"GT data unavailable for '{victim_id}', skipping quantitative evaluation.")
             if save_visuals:
                 try:
-                    from torchvision.utils import \
-                        save_image
+                    from torchvision.utils import save_image
                     filename = f"round_{round_num}_victim_{victim_id}_reconstructed.png" if round_num is not None else f"victim_{victim_id}_reconstructed.png"
                     rec_path = save_dir / filename
-                    save_dir.mkdir(
-                        parents=True, exist_ok=True)
-                    save_image(reconstructed_images.cpu(), rec_path,
-                               normalize=True)
-                    logging.info(
-                        f"Saved reconstructed image (no GT) to {rec_path}")
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    save_image(reconstructed_images.cpu(), rec_path, normalize=True)
+                    logging.info(f"Saved reconstructed image (no GT) to {rec_path}")
                 except ImportError:
                     logging.warning("torchvision.utils not found, cannot save reconstructed image.")
                 except Exception as e_save:
                     logging.error(f"Failed to save reconstructed image: {e_save}")
+
         del attack_model
+
     except Exception as e:
         logging.error(f"GIA failed for victim {victim_id}: {e}", exc_info=False)
         attack_results_log["error"] = str(e)
         attack_results_log["duration_sec"] = time.time() - attack_start_time
+
     return attack_results_log
