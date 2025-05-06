@@ -100,7 +100,7 @@ def parse_config_for_attack_function(config: dict) -> dict:
 
     # Construct the 'args' Namespace object from config values
     args_namespace = Namespace()
-    args_namespace.gradient_manipulation_mode = attack_conf.get('gradient_manipulation_mode', 'default')
+    args_namespace.gradient_manipulation_mode = attack_conf.get('gradient_manipulation_mode', 'single')
     args_namespace.bkd_loc = attack_conf.get('bkd_loc', 'bottom_right')
     args_namespace.is_sybil = sybil_conf.get('is_sybil', False)
     args_namespace.clip = training_conf.get('clip', 10.0)
