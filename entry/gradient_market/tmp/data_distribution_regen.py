@@ -90,9 +90,7 @@ def poisoning_attack_text_reg_distri(
         dataset_name,
         buyer_percentage=buyer_percentage,
         num_sellers=n_sellers,
-        batch_size=local_training_params.get('batch_size', 64),
         split_method=data_split_mode,
-        n_adversaries=n_adversaries,
         discovery_quality=dm_params[
             "discovery_quality"],
         buyer_data_mode=dm_params[
