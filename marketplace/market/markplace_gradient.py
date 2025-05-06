@@ -169,266 +169,231 @@ class DataMarketplaceFederated(DataMarketplace):
 
     def train_federated_round(self,
                               round_number: int,
-                              buyer,  # Assumes buyer object has get_gradient_for_upload method
-                              n_adv=0,  # Ground truth number of adversaries
+                              buyer,
+                              n_adv=0,  # Ground truth number of adversaries, used for logging/verification
                               test_dataloader_buyer_local=None,
                               test_dataloader_global=None,
                               loss_fn=None,
                               backdoor_target_label=0,
-                              backdoor_generator=None,  # Assumes it's used by evaluate_attack_performance
+                              backdoor_generator=None,
                               clip=False,
                               remove_baseline=False,
-                              perform_gradient_inversion: bool = False,  # Control if attack happens
+                              # perform_gradient_inversion is now part of self.attack_config
                               ):
-        """
-        Perform one round of federated training with enhanced logging.
-        """
         round_start_time = time.time()
         logging.info(f"--- Round {round_number} Started ---")
 
-        # --- Timing and Metrics Initialization ---
-        client_train_losses = []
-        client_compute_times_ms = []
-        client_upload_bytes = []
-        server_aggregation_time_ms = None
-        gradient_inversion_log = None
-        # --- Get Buyer Gradient (Baseline) ---
-        # Consider timing this if it's significant
-        baseline_gradient, _ = buyer.get_gradient_for_upload(self.aggregator.global_model)
+        client_train_losses, client_compute_times_ms, client_upload_bytes = [], [], []
+        baseline_gradient = None
+
+        # --- Conditionally Get Buyer Gradient (Baseline) ---
+        # Assumes aggregator has a way to indicate if it needs a baseline
+        if hasattr(self.aggregator, 'requires_baseline_gradient') and self.aggregator.requires_baseline_gradient:
+            # Or check: self.aggregator.aggregation_method in ["MartFL", "FedMGDA+"] etc.
+            baseline_gradient, _ = buyer.get_gradient_for_upload(self.aggregator.global_model)
 
         # --- 1. Get Gradients & Stats from Sellers ---
         seller_gradients_dict, seller_ids, seller_stats = self.get_current_market_gradients(
             self.aggregator.global_model)
-        # Process returned stats
         for stats in seller_stats:
-            if stats:  # Check if stats were actually returned
+            if stats:
                 client_train_losses.append(stats.get('train_loss'))
                 client_compute_times_ms.append(stats.get('compute_time_ms'))
                 client_upload_bytes.append(stats.get('upload_bytes'))
 
-        # --- 1.5 Determine if Attack Should Happen and Select Victim ---
-        perform_attack_flag = self.attack_config.get('perform_gradient_inversion', False)
-        attack_frequency = self.attack_config.get('attack_frequency', 50)
-        attack_victim_strategy = self.attack_config.get('attack_victim_strategy', 'fixed')
-        attack_fixed_victim_idx = self.attack_config.get('attack_fixed_victim_idx', 0)
-        save_attack_visuals_flag = self.attack_config.get('save_attack_visuals', True)
-        gradient_inversion_params = self.attack_config.get('gradient_inversion_params', {})
+        # --- 1.5 Gradient Inversion Attack Logic ---
+        gradient_inversion_log = None
+        attack_conf = self.attack_config.get('gradient_inversion', {})  # Group GIA params
+        perform_attack_flag = attack_conf.get('perform', False)
 
-        should_attack_this_round = perform_attack_flag and (round_number % attack_frequency == 0)
-        victim_seller_id = None
-        target_gradient = None
-        victim_seller_idx = None
+        if perform_attack_flag and seller_ids and (round_number % attack_conf.get('frequency', 50) == 0):
+            victim_seller_id = None
+            target_gradient = None
 
-        if should_attack_this_round and seller_ids:
-            if attack_victim_strategy == 'fixed':
-                victim_seller_idx = attack_fixed_victim_idx
-            elif attack_victim_strategy == 'random':
-                victim_seller_idx = np.random.randint(0, len(seller_ids))
+            victim_strategy = attack_conf.get('victim_strategy', 'fixed')
+            if victim_strategy == 'fixed':
+                victim_idx = attack_conf.get('fixed_victim_idx', 0)
+            elif victim_strategy == 'random':
+                victim_idx = np.random.randint(0, len(seller_ids))
             else:
-                logging.warning(f"Unknown victim strategy: {attack_victim_strategy}. Using fixed index 0.")
-                victim_seller_idx = 0
+                logging.warning(f"Unknown GIA victim strategy: {victim_strategy}. Using fixed index 0.")
+                victim_idx = 0
 
-            if 0 <= victim_seller_idx < len(seller_ids):
-                victim_seller_id = seller_ids[victim_seller_idx]
+            if 0 <= victim_idx < len(seller_ids):
+                victim_seller_id = seller_ids[victim_idx]
                 target_gradient = seller_gradients_dict.get(victim_seller_id)
                 if target_gradient is None:
-                    logging.warning(
-                        f"Could not retrieve gradient for target victim '{victim_seller_id}' (idx={victim_seller_idx}). Skipping attack.")
-                    victim_seller_id = None  # Reset if gradient missing
+                    logging.warning(f"GIA: Could not retrieve gradient for victim '{victim_seller_id}'. Skipping.")
+                    victim_seller_id = None
             else:
-                logging.warning(f"Victim index {victim_seller_idx} out of bounds. Skipping attack.")
+                logging.warning(f"GIA: Victim index {victim_idx} out of bounds. Skipping attack.")
                 victim_seller_id = None
 
-        # --- 1.6 Perform Attack if Victim Found ---
-        if victim_seller_id is not None and target_gradient is not None:
-            dataset = self.sellers[victim_seller_id].cur_data
-            full_loader = torch.utils.data.DataLoader(dataset, batch_size=len(dataset))
-            gt_images, gt_labels = next(iter(full_loader))
+            if victim_seller_id and target_gradient:
+                logging.info(f"GIA: Attempting on victim '{victim_seller_id}' (Round {round_number})...")
+                victim_seller_obj = self.sellers.get(victim_seller_id)
 
-            input_shape = gt_images[0].shape
-            num_classes = len(torch.unique(gt_labels))
+                # For GIA, we need ground truth images and labels.
+                # The attack typically reconstructs `num_images`. We need a GT batch of this size.
+                gia_params = attack_conf.get('params', {})
+                num_images_for_attack = gia_params.get('num_images', 1)
 
-            gradient_inversion_log = perform_and_evaluate_inversion_attack(
-                target_gradient=target_gradient,
-                model_template=self.aggregator.global_model,
-                input_shape=input_shape,
-                num_classes=num_classes,
-                device=self.aggregator.device,
-                attack_config=gradient_inversion_params,
-                ground_truth_images=gt_images,
-                ground_truth_labels=gt_labels,
-                save_visuals=save_attack_visuals_flag,
-                save_dir=self.attack_save_dir,
-                round_num=round_number,
-                victim_id=victim_seller_id
-            )
+                gt_images, gt_labels = None, None
+                input_shape_gia, num_classes_gia = self.input_shape_for_attack, self.num_classes_for_attack
 
-            if gradient_inversion_log:
-                gradient_inversion_log['victim_seller_idx'] = victim_seller_id
-                gradient_inversion_log['aggregation_method'] = "fedavg"
-                self.attack_results_list.append(gradient_inversion_log)
+                if victim_seller_obj and hasattr(victim_seller_obj, 'cur_data'):
+                    victim_dataset = victim_seller_obj.cur_data
+                    if len(victim_dataset) >= num_images_for_attack:
+                        # Sample a batch of 'num_images_for_attack' for GT evaluation
+                        # This assumes victim_dataset is a torch.utils.data.Dataset
+                        try:
+                            sample_loader = torch.utils.data.DataLoader(
+                                victim_dataset,
+                                batch_size=num_images_for_attack,
+                                shuffle=True  # Get a random sample
+                            )
+                            gt_images, gt_labels = next(iter(sample_loader))
+
+                            # Derive shape/classes if not pre-configured (less efficient)
+                            if not input_shape_gia:
+                                input_shape_gia = gt_images[0].shape
+                            if not num_classes_gia:
+                                # This can be slow if gt_labels is large and not on GPU
+                                unique_labels = torch.unique(gt_labels.cpu())
+                                num_classes_gia = len(unique_labels)
+                        except Exception as e:
+                            logging.error(f"GIA: Error loading data for victim {victim_seller_id}: {e}")
+                            gt_images, gt_labels = None, None  # Ensure they are None if loading fails
+                    else:
+                        logging.warning(
+                            f"GIA: Victim '{victim_seller_id}' has insufficient data ({len(victim_dataset)}) for {num_images_for_attack} images. Skipping GT.")
+                else:
+                    logging.warning(f"GIA: Victim '{victim_seller_id}' or their data not found. Skipping GT.")
+
+                if input_shape_gia and num_classes_gia:  # Check if we have necessary info
+                    # from privacy_attack import perform_and_evaluate_inversion_attack # Ensure it's imported
+                    gradient_inversion_log = perform_and_evaluate_inversion_attack(
+                        target_gradient=target_gradient,
+                        model_template=self.aggregator.global_model,
+                        input_shape=input_shape_gia,
+                        num_classes=num_classes_gia,
+                        device=self.aggregator.device,
+                        attack_config=gia_params,
+                        ground_truth_images=gt_images,  # Can be None if not available
+                        ground_truth_labels=gt_labels,  # Can be None
+                        save_visuals=attack_conf.get('save_visuals', True),
+                        save_dir=self.attack_save_dir,
+                        round_num=round_number,
+                        victim_id=victim_seller_id
+                    )
+                    if gradient_inversion_log:
+                        gradient_inversion_log[
+                            'victim_seller_idx_in_round'] = victim_idx  # Store the index within the current round's seller list
+                        gradient_inversion_log['aggregation_method'] = self.aggregator.aggregation_method
+                        self.attack_results_list.append(gradient_inversion_log)
+                else:
+                    logging.warning(f"GIA: Missing input_shape or num_classes for attack. Skipping.")
+
         # --- 2. Perform Aggregation ---
         agg_start_time = time.time()
         aggregated_gradient, selected_indices, outlier_indices = self.aggregator.aggregate(
-            round_number,
-            seller_gradients_dict,  # Assuming aggregate works with list of gradients
-            baseline_gradient,
-            clip=clip,
-            remove_baseline=remove_baseline,
-            server_data=test_dataloader_buyer_local
+            round_number, seller_gradients_dict, baseline_gradient,
+            clip=clip, remove_baseline=remove_baseline, server_data=test_dataloader_buyer_local
         )
-        agg_end_time = time.time()
-        server_aggregation_time_ms = (agg_end_time - agg_start_time) * 1000
+        server_aggregation_time_ms = (time.time() - agg_start_time) * 1000
 
-        # Map selected/outlier indices back to actual seller IDs
-        # Assumes seller_ids list corresponds to seller_gradients list order
         selected_ids = [seller_ids[i] for i in selected_indices]
         outlier_ids = [seller_ids[i] for i in outlier_indices]
 
-        print(f"Selected Sellers ({len(selected_ids)}): {selected_ids}")
-        print(f"Outlier Sellers ({len(outlier_ids)}): {outlier_ids}")
-        print(f"Aggregated gradient norm: {np.linalg.norm(flatten(aggregated_gradient))}")  # Assuming flatten exists
+        logging.info(f"Selected Sellers ({len(selected_ids)}): {selected_ids}")
+        logging.info(f"Outlier Sellers ({len(outlier_ids)}): {outlier_ids}")
+        if aggregated_gradient and aggregated_gradient[0] is not None:
+            # Use the pre-defined flatten_grads method
+            logging.info(f"Aggregated gradient norm: {np.linalg.norm(self.flatten_grads(aggregated_gradient))}")
 
         # --- 3. Update Global Model ---
-        # Consider timing this if significant
         update_start_time = time.time()
         self.update_global_model(aggregated_gradient)
-        update_end_time = time.time()
-        server_update_time_ms = (update_end_time - update_start_time) * 1000
-        # Combine server times
+        server_update_time_ms = (time.time() - update_start_time) * 1000
         server_total_time_ms = server_aggregation_time_ms + server_update_time_ms
 
         # --- 4. Broadcast Updated Global Model (Optional) ---
         if self.broadcast_local:
-            # Consider timing broadcast if needed
             self.broadcast_global_model()
 
         # --- 5. Evaluation ---
-        perf_global = None
-        perf_local = None
-        global_asr = None
-        # Add local ASR evaluation if possible/needed
-        # local_asr = None
-
-        if test_dataloader_global is not None and loss_fn is not None:
+        perf_global, perf_local, global_asr = None, None, None
+        if test_dataloader_global and loss_fn:
             eval_global_res = self.evaluate_global_model(test_dataloader_global, loss_fn)
-            perf_global = {
-                "accuracy": eval_global_res.get("acc"),
-                "loss": eval_global_res.get("loss"),
-                # Add other metrics from eval_global_res if available
-            }
-            # Evaluate backdoor attack performance
-            if backdoor_generator is not None:
-                # !! ASSUMPTION !! evaluate_attack_performance returns dict with at least ASR
+            perf_global = {"accuracy": eval_global_res.get("acc"), "loss": eval_global_res.get("loss")}
+            if backdoor_generator:
+                # from evaluation import evaluate_attack_performance_backdoor_poison # Ensure imported
                 poison_metrics = evaluate_attack_performance_backdoor_poison(
-                    self.aggregator.global_model,
-                    test_dataloader_global,
-                    self.aggregator.device,
-                    backdoor_generator,
-                    target_label=backdoor_target_label, plot=False,
-                    # Save path could be made round-specific if needed
+                    self.aggregator.global_model, test_dataloader_global, self.aggregator.device,
+                    backdoor_generator, target_label=backdoor_target_label, plot=False,
                 )
                 global_asr = poison_metrics.get("attack_success_rate")
-                perf_global["attack_success_rate"] = global_asr  # Add ASR to perf dict
-                # Add other poison metrics if needed: perf_global['other_poison_metric'] = poison_metrics.get(...)
+                perf_global["attack_success_rate"] = global_asr
 
-        if test_dataloader_buyer_local is not None and loss_fn is not None:
+        if test_dataloader_buyer_local and loss_fn:
             eval_local_res = self.evaluate_global_model(test_dataloader_buyer_local, loss_fn)
-            perf_local = {
-                "accuracy": eval_local_res.get("acc"),
-                "loss": eval_local_res.get("loss"),
-                # Add other metrics if available
-                # "attack_success_rate": local_asr, # Log local ASR if evaluated
-            }
+            perf_local = {"accuracy": eval_local_res.get("acc"), "loss": eval_local_res.get("loss")}
 
-        # --- 6. Calculate Overhead Metrics (Averages/Max) ---
-        # Filter out None values before calculating stats
+        # --- 6. Calculate Overhead Metrics ---
         valid_losses = [l for l in client_train_losses if l is not None]
         valid_times = [t for t in client_compute_times_ms if t is not None]
         valid_bytes = [b for b in client_upload_bytes if b is not None]
 
-        avg_client_train_loss = np.mean(valid_losses) if valid_losses else None
-        client_time_avg_ms = np.mean(valid_times) if valid_times else None
-        client_time_max_ms = np.max(valid_times) if valid_times else None
-        comm_up_avg_bytes = np.mean(valid_bytes) if valid_bytes else None
-        comm_up_max_bytes = np.max(valid_bytes) if valid_bytes else None
-        # Estimate downlink bytes (model size) - requires model saving/sizing
-        # comm_down_bytes = estimate_model_size_bytes(self.aggregator.global_model) # Placeholder
-
-        # --- 7. Compute Selection Rates ---
-        # Needs ground truth sets of adversary/benign IDs corresponding to seller_ids
-        # Construct these sets based on n_adv and the structure of seller_ids
-        # Example: assumes first n_adv IDs in the original full list were adversaries
-        # This mapping needs to be robust if seller_ids order changes.
-        # It's better if the aggregator or marketplace tracks ground truth status.
-        all_seller_ids = list(self.sellers.keys())  # Get IDs in a consistent order if possible
-        # Assume IDs like 'adv_0', 'adv_1', ..., 'seller_k', ...
-        adv_ids_set = {sid for sid in all_seller_ids if sid.startswith('adv_')}
-        benign_ids_set = {sid for sid in all_seller_ids if not sid.startswith('adv_')}
-        # Make sure n_adv matches len(adv_ids_set)
-        if len(adv_ids_set) != n_adv:
+        # --- 7. Compute Selection Rates (Using pre-computed sets) ---
+        # Verify n_adv against pre-computed set for consistency check (optional)
+        if len(self._adv_ids_set) != n_adv:
             logging.warning(
-                f"Mismatch between n_adv ({n_adv}) and actual adv IDs found ({len(adv_ids_set)}). Check ID format.")
-
-        selection_rate_info = self.compute_selection_rates(selected_ids, outlier_ids, adv_ids_set,
-                                                           benign_ids_set)  # Modified signature needed
+                f"Mismatch: n_adv parameter ({n_adv}) vs. pre-computed adv IDs ({len(self._adv_ids_set)}). Ensure consistency.")
+        selection_rate_info = self.compute_selection_rates(selected_ids, outlier_ids, self._adv_ids_set,
+                                                           self._benign_ids_set)
 
         # --- 8. Get Defense/Algorithm Specific Metrics ---
         defense_metrics = {}
         if hasattr(self.aggregator, 'get_specific_metrics'):
-            # !! ASSUMPTION !! Aggregator provides specific metrics
             defense_metrics = self.aggregator.get_specific_metrics(round_number)
-        elif self.aggregator.aggregation_method == 'MartFL':  # Explicit check if no generic method
-            defense_metrics['baseline_id'] = self.aggregator.baseline_id if hasattr(self.aggregator,
-                                                                                    'baseline_id') else None
-        # Add elif blocks for other specific aggregators (Skymask, FLTrust) if needed
+        # Example: elif self.aggregator.aggregation_method == 'MartFL': ...
 
         # --- 9. Construct Final Round Record ---
         round_end_time = time.time()
         final_round_record = {
-            # Core Info
-            "round_number": round_number,
-            "timestamp": round_end_time,
+            "round_number": round_number, "timestamp": round_end_time,
             "round_duration_sec": round_end_time - round_start_time,
             "aggregation_method": self.aggregator.aggregation_method,
-
-            # Participation & Selection
-            "selected_sellers": selected_ids,
-            "num_sellers_selected": len(selected_ids),
-            "outlier_sellers": outlier_ids,
-            "selection_rate_info": selection_rate_info,  # Contains TP/FP rates etc.
-
-            # Performance
-            "perf_global": perf_global,  # Dict: {acc, loss, attack_success_rate, ...}
-            "perf_local": perf_local,  # Dict: {acc, loss, attack_success_rate*, ...} (*if added)
-            "avg_client_train_loss": avg_client_train_loss,  # Needs modification elsewhere
-
-            # Overhead
-            "comm_up_avg_bytes": comm_up_avg_bytes,  # Needs modification elsewhere
-            "comm_up_max_bytes": comm_up_max_bytes,  # Needs modification elsewhere
-            "comm_down_bytes": None,  # Placeholder - estimate model size
-            "client_time_avg_ms": client_time_avg_ms,  # Needs modification elsewhere
-            "client_time_max_ms": client_time_max_ms,  # Needs modification elsewhere
+            "selected_sellers": selected_ids, "num_sellers_selected": len(selected_ids),
+            "outlier_sellers": outlier_ids, "selection_rate_info": selection_rate_info,
+            "perf_global": perf_global, "perf_local": perf_local,
+            "avg_client_train_loss": np.mean(valid_losses) if valid_losses else None,
+            "comm_up_avg_bytes": np.mean(valid_bytes) if valid_bytes else None,
+            "comm_up_max_bytes": np.max(valid_bytes) if valid_bytes else None,
+            "comm_down_bytes": None,  # Placeholder
+            "client_time_avg_ms": np.mean(valid_times) if valid_times else None,
+            "client_time_max_ms": np.max(valid_times) if valid_times else None,
             "server_time_ms": server_total_time_ms,
-
-            # Defense/Algorithm Specifics (optional)
-            "defense_metrics": defense_metrics if defense_metrics else None,  # Only include if non-empty
+            "defense_metrics": defense_metrics if defense_metrics else None,
+            "gradient_inversion_performed": bool(gradient_inversion_log),
+            # "gradient_inversion_details": gradient_inversion_log # Optionally log full GIA details here or keep separate
         }
 
         # --- 10. Update Sellers & Log ---
-        # Update sellers *after* constructing the log, in case their state affects metrics
         for sid, seller in self.sellers.items():
-            is_selected = (sid in selected_ids)
-            seller.round_end_process(round_number, is_selected)  # Assumes seller has this method
+            if hasattr(seller, 'round_end_process'):
+                seller.round_end_process(round_number, (sid in selected_ids))
 
         self.round_logs.append(final_round_record)
         logging.info(f"--- Round {round_number} Ended (Duration: {final_round_record['round_duration_sec']:.2f}s) ---")
+        pg_acc = perf_global.get('accuracy', 'N/A')
+        pg_asr = perf_global.get('attack_success_rate', 'N/A')
+        pl_acc = perf_local.get('accuracy', 'N/A')
         logging.info(
-            f"  Global Acc: {perf_global.get('accuracy', 'N/A'):.4f}, Global ASR: {perf_global.get('attack_success_rate', 'N/A')}")
-        logging.info(f"  Local Acc: {perf_local.get('accuracy', 'N/A'):.4f}")
+            f"  Global Acc: {pg_acc:.4f if isinstance(pg_acc, float) else pg_acc}, Global ASR: {pg_asr:.4f if isinstance(pg_asr, float) else pg_asr}")
+        logging.info(f"  Local Acc: {pl_acc:.4f if isinstance(pl_acc, float) else pl_acc}")
         logging.info(f"  Server Time: {server_total_time_ms:.2f}ms")
 
-        # Return the detailed record and the gradient (as before)
         return final_round_record, aggregated_gradient
 
     # --- Modified compute_selection_rates signature ---
