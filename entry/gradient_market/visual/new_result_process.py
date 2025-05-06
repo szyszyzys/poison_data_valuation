@@ -401,7 +401,7 @@ def load_all_results(
         if not objective_path.is_dir():
             continue
 
-        objective_name = objective_path.
+        objective_name = objective_path.name
         print(objective_name)
         # 2. Filter by objectives list if provided
         if objectives and objective_name not in objectives:
