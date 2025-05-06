@@ -1335,6 +1335,7 @@ if __name__ == "__main__":
         csv_filename="round_results.csv",
         objectives=OBJECTIVES_TO_LOAD
     )
+    print(raw_results)
 
     if not raw_results:
         logging.error("No results were loaded. Exiting analysis.")
@@ -1448,8 +1449,8 @@ if __name__ == "__main__":
         # Adaptive/Sybil Attacks - Compare Aggregators (e.g., CIFAR, 30% Adv)
         "Sybil_CIFAR_30pct": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'cifar' and ('sybil' in summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0] or 'mimicry' in summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0]) and summary_df.loc[summary_df['experiment_setup']==k, 'exp_adv_rate'].iloc[0] == 0.3],
 
-         # Privacy Attack Experiments (Group all where privacy was measured - check summary df)
-        "Privacy_Analysis_CIFAR": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'cifar' and not pd.isna(summary_df.loc[summary_df['experiment_setup']==k, 'attack_psnr_mean'].iloc[0])],
+        #  # Privacy Attack Experiments (Group all where privacy was measured - check summary df)
+        # "Privacy_Analysis_CIFAR": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'cifar' and not pd.isna(summary_df.loc[summary_df['experiment_setup']==k, 'attack_psnr_mean'].iloc[0])],
 
         # Groups based on objective folder name (if loaded)
         # "Objective_Baselines": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'objective_name'].iloc[0] == 'baselines'],
