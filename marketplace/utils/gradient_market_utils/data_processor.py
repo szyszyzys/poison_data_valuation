@@ -777,35 +777,64 @@ def split_dataset_buyer_seller_improved(dataset,
     return buyer_indices, seller_splits
 
 
-def print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_results=True, output_dir='./results'):
+import os
+import json
+import logging
+from typing import Any, Dict, List
+import numpy as np
+
+def _extract_targets(dataset: Any) -> np.ndarray:
+    """
+    Return a 1D numpy array of labels for every item in `dataset`, handling:
+      1) .targets attribute (e.g. torchvision)
+      2) HuggingFace-style dicts with 'label' or 'labels'
+      3) tuple/list (x, y) -> use y
+      4) scalar labels (dataset[i] itself is label)
+    """
+    n = len(dataset)
+    # 1) PyTorch-style .targets
+    if hasattr(dataset, "targets"):
+        return np.array(dataset.targets)
+
+    # 2) Inspect one sample
+    first = dataset[0]
+    # 2a) HF-dict
+    if isinstance(first, dict):
+        key = "label" if "label" in first else "labels" if "labels" in first else None
+        if key:
+            return np.array([dataset[i][key] for i in range(n)])
+        raise ValueError("Dict dataset has no 'label' or 'labels' key.")
+    # 2b) tuple/list
+    if isinstance(first, (list, tuple)) and len(first) >= 2:
+        return np.array([dataset[i][1] for i in range(n)])
+    # 2c) scalar label
+    if isinstance(first, (int, float, np.integer, np.floating)):
+        return np.array([dataset[i] for i in range(n)])
+    # otherwise
+    raise ValueError(
+        "Cannot extract labels: expected .targets, dict with 'label(s)', tuple (x,y), or scalar label."
+    )
+
+
+def print_and_save_data_statistics(
+    dataset: Any,
+    buyer_indices: np.ndarray,
+    seller_splits: Dict[int, List[int]],
+    save_results: bool = True,
+    output_dir: str = './results'
+) -> Dict[str, Any]:
     """
     Print and visualize the class distribution statistics for the buyer and each seller.
-    Also compute and print the distribution alignment metrics between the buyer's data and each seller's data,
-    and then print the ranking of sellers from high to low alignment.
-
-    Parameters:
-      dataset: Dataset object with attribute 'targets' or that returns (data, label).
-      buyer_indices: Array-like of indices for the buyer.
-      seller_splits: Dictionary mapping seller id to list of indices.
-      save_results (bool): Whether to save the results.
-      output_dir (str): Directory where the results will be saved.
+    Also compute and print the distribution alignment metrics and save to JSON.
     """
-    import os, json
-    import numpy as np
-
-    # Get the targets from the dataset.
-    if hasattr(dataset, 'targets'):
-        targets = np.array(dataset.targets)
-    else:
-        # Assume dataset[i] returns (data, label)
-        targets = np.array([dataset[i][1] for i in range(len(dataset))])
-
-    # Compute unique classes present in the dataset.
+    logger = logging.getLogger(__name__)
+    # 1) Extract all labels robustly
+    targets = _extract_targets(dataset)
     unique_classes = np.unique(targets)
 
-    # Compute buyer statistics.
+    # 2) Buyer stats
     buyer_targets = targets[buyer_indices]
-    buyer_counts = {str(c): int(np.sum(buyer_targets == c)) for c in unique_classes}
+    buyer_counts = {str(c): int((buyer_targets == c).sum()) for c in unique_classes}
     buyer_stats = {
         "total_samples": int(len(buyer_indices)),
         "class_distribution": buyer_counts
@@ -817,11 +846,11 @@ def print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_r
         print(f"  Class {c}: {buyer_counts[str(c)]}")
     print("\n" + "=" * 40 + "\n")
 
-    # Compute seller statistics.
-    seller_stats = {}
+    # 3) Seller stats
+    seller_stats: Dict[int, Dict[str, Any]] = {}
     for seller_id, indices in seller_splits.items():
         seller_targets = targets[indices]
-        counts = {str(c): int(np.sum(seller_targets == c)) for c in unique_classes}
+        counts = {str(c): int((seller_targets == c).sum()) for c in unique_classes}
         seller_stats[seller_id] = {
             "total_samples": int(len(indices)),
             "class_distribution": counts
@@ -832,19 +861,21 @@ def print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_r
             print(f"  Class {c}: {counts[str(c)]}")
         print("-" * 30)
 
-    # Save statistics to a dictionary.
+    # 4) Package results
     results = {
         "buyer_stats": buyer_stats,
         "seller_stats": seller_stats
     }
 
-    # Save the results if requested.
+    # 5) Save JSON if desired
     if save_results:
         os.makedirs(output_dir, exist_ok=True)
         stats_file = os.path.join(output_dir, 'data_statistics.json')
         with open(stats_file, 'w') as f:
             json.dump(results, f, indent=2)
         print(f"Statistics saved to {stats_file}")
+
+    return results
 
     # # Visualize Buyer Distribution.
     # plt.figure(figsize=(8, 4))
