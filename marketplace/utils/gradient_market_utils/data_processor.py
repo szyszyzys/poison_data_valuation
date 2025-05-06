@@ -627,8 +627,8 @@ def get_data_set(
         )
 
     # --- Post-splitting steps ---
-    # data_distribution_info = print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_results=True,
-    #                                                         output_dir=save_path)
+    data_distribution_info = print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_results=True,
+                                                            output_dir=save_path)
 
     # Create DataLoaders.
     dataloader_num_workers = 2  # START WITH 0 if using multiprocessing for clients, maybe 2-4 otherwise

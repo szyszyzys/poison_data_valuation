@@ -9,7 +9,8 @@ from torch.utils.data import DataLoader, Subset
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator, Vocab
 
-from marketplace.utils.gradient_market_utils.data_processor import split_dataset_discovery
+from marketplace.utils.gradient_market_utils.data_processor import split_dataset_discovery, \
+    print_and_save_data_statistics
 
 # Make sure necessary torchtext components are imported
 
@@ -106,7 +107,7 @@ def get_text_data_set(
         data_root="./data",
         split_method: str = "discovery",
         n_adversaries: int = 0,
-        # save_path: str = './result', # Path might be needed for stats saving later
+        save_path: str = './result', # Path might be needed for stats saving later
         # --- Discovery Split Specific Params ---
         discovery_quality: float = 0.3,
         buyer_data_mode: str = "unbiased",
@@ -481,7 +482,8 @@ def get_text_data_set(
         logging.warning("Processed test set is empty or None. Test DataLoader will be None.")
 
     logging.info("Text data loading, processing, splitting, and DataLoader creation complete.")
-
+    data_distribution_info = print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_results=True,
+                                                            output_dir=save_path)
     # --- >>> MODIFIED RETURN STATEMENT <<< ---
     return buyer_loader, seller_loaders, test_loader, class_names, vocab, pad_idx
 

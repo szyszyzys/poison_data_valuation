@@ -103,6 +103,7 @@ def poisoning_attack_text(
         batch_size=local_training_params.get('batch_size', 64),
         split_method=data_split_mode,
         n_adversaries=n_adversaries,
+        save_path=save_path,
         discovery_quality=dm_params[
             "discovery_quality"],
         buyer_data_mode=dm_params[
