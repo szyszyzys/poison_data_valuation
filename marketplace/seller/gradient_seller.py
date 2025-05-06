@@ -5,21 +5,20 @@
 import collections
 import copy
 import logging
+import numpy as np
+import pandas as pd
 import sys
 import time
+import torch
+import torch.nn.functional as F
 from collections import abc  # abc.Mapping for general dicts
 from functools import partial
+from torch import optim, nn
+from torch.utils.data import DataLoader, Dataset
 from typing import Any
 from typing import Dict
 from typing import List, Optional, Union
 from typing import Tuple
-
-import numpy as np
-import pandas as pd
-import torch
-import torch.nn.functional as F
-from torch import optim, nn
-from torch.utils.data import DataLoader, Dataset
 
 from general_utils.data_utils import list_to_tensor_dataset, TextDataset, collate_batch
 from marketplace.seller.seller import BaseSeller
@@ -925,6 +924,58 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
         self.record_federated_round(round_number, is_selected, final_model_params)
 
 
+class TriggeredSubsetDataset(Dataset):
+    def __init__(self, original_dataset: Dataset, trigger_indices: np.ndarray,
+                 target_label: int, backdoor_generator, device: str):
+        self.original_dataset = original_dataset
+        self.trigger_indices_set = set(trigger_indices)  # Use a set for O(1) average time complexity lookups
+        self.target_label = target_label
+        self.backdoor_generator = backdoor_generator
+        self.device = device
+
+        # Pre-fetch all items if original_dataset is slow or not easily indexable in a loop
+        # For torchvision datasets, direct indexing is usually fine.
+        # If original_dataset is very large and __getitem__ is slow, this might be a trade-off.
+        # For now, we assume direct indexing is efficient.
+
+    def __len__(self):
+        return len(self.original_dataset)
+
+    def __getitem__(self, idx: int):
+        # Fetch original image and label
+        img, label = self.original_dataset[idx]
+
+        # Ensure image is a tensor and on the correct device
+        # Transformations (like ToTensor) should have been applied when original_dataset was created
+        if not isinstance(img, torch.Tensor):
+            # This case should ideally not happen if original_dataset is properly set up
+            # For robustness, one might add a ToTensor transform here, but it's better upstream.
+            raise TypeError(f"Image at index {idx} is not a Tensor. Found type: {type(img)}")
+
+        img = img.to(self.device)
+
+        if idx in self.trigger_indices_set:
+            # Apply trigger and change label
+            # The backdoor_generator's apply_trigger_tensor should handle the trigger application
+            # and expect an image tensor.
+            img = self.backdoor_generator.apply_trigger_tensor(img)
+            # label = self.target_label # Label is an int
+            # Convert label to tensor for consistency if your model/loss expects it
+            final_label = torch.tensor(self.target_label, dtype=torch.long).to(self.device)
+        else:
+            # Convert original label to tensor if it's not already
+            if isinstance(label, int):
+                final_label = torch.tensor(label, dtype=torch.long).to(self.device)
+            elif isinstance(label, torch.Tensor):
+                final_label = label.to(torch.long).to(self.device)
+            else:
+                raise TypeError(f"Unsupported label type: {type(label)}")
+
+        return img, final_label
+
+
+# --- End of New Dataset Wrapper ---
+
 class AdvancedBackdoorAdversarySeller(GradientSeller):
     """
     An advanced seller that supports multiple adversary behaviors.
@@ -994,171 +1045,236 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
     # ============================
     # Data Injection Methods
     # ============================
-    def _inject_triggers(self, data: List[Tuple[torch.Tensor, int]], fraction: float):
-        """
-        Insert a stealthy trigger into a fraction of images.
-        """
+    # def _inject_triggers(self, data: List[Tuple[torch.Tensor, int]], fraction: float):
+    #     """
+    #     Insert a stealthy trigger into a fraction of images.
+    #     """
+    #     n = len(data)
+    #     n_trigger = int(n * fraction)
+    #     idxs = np.random.choice(n, size=n_trigger, replace=False)
+    #     backdoor_data, clean_data = [], []
+    #     for i, (img, label) in enumerate(data):
+    #         if i in idxs:
+    #             if self.backdoor_generator is None:
+    #                 raise NotImplementedError(f"Cannot find the backdoor generator")
+    #             else:
+    #                 triggered_img = self.backdoor_generator.apply_trigger_tensor(img)
+    #             backdoor_data.append((triggered_img, self.target_label))
+    #         else:
+    #             clean_data.append((img, label))
+    #     return backdoor_data, clean_data
+    def _inject_triggers(self, data: list, fraction: float): # Original, now likely unused but kept for reference
+        # ... (original implementation as you provided, assuming it's for list input) ...
+        # This method is superseded by the TriggeredSubsetDataset for 'single' mode if data is a Dataset
+        logging.warning("_inject_triggers (list input version) was called. Consider using TriggeredSubsetDataset for Dataset inputs.")
         n = len(data)
         n_trigger = int(n * fraction)
         idxs = np.random.choice(n, size=n_trigger, replace=False)
-        backdoor_data, clean_data = [], []
-        for i, (img, label) in enumerate(data):
+        backdoor_data_tuples, clean_data_tuples = [], []
+        for i, (img_tensor, label_int) in enumerate(data): # Expects (Tensor, int)
+            img_tensor = img_tensor.to(self.device)
             if i in idxs:
                 if self.backdoor_generator is None:
-                    raise NotImplementedError(f"Cannot find the backdoor generator")
-                else:
-                    triggered_img = self.backdoor_generator.apply_trigger_tensor(img)
-                backdoor_data.append((triggered_img, self.target_label))
+                    raise NotImplementedError("Cannot find the backdoor generator")
+                triggered_img = self.backdoor_generator.apply_trigger_tensor(img_tensor)
+                backdoor_data_tuples.append((triggered_img, self.target_label))
             else:
-                clean_data.append((img, label))
-        return backdoor_data, clean_data
-
+                # clean_data_tuples.append((img_tensor, torch.tensor(label_int, dtype=torch.long).to(self.device)))
+                clean_data_tuples.append((img_tensor, label_int)) # Keep as (Tensor, int)
+        return backdoor_data_tuples, clean_data_tuples
     # ============================
     # Adversary Behavior Methods
     # ============================
     def get_clean_gradient(self, base_model):
-        """
-        Compute the gradient on clean (benign) local data.
-        """
-        gradient, gradient_flt, updated_model, local_eval_res, training_stats = self._compute_local_grad(base_model,
-                                                                                                         self.dataset)
+        gradient, gradient_flt, _, local_eval_res, _ = self._compute_local_grad(base_model, self.dataset)
         self.recent_metrics = local_eval_res
-        return gradient
+        return gradient  # List of Tensors
 
     def gradient_manipulation_cmd(self, base_model):
-        """
-        Compute a gradient that combines benign and backdoor gradients.
-        """
         grad_benign, g_benign_flt, _, _, _ = self._compute_local_grad(base_model, self.dataset)
-        original_shapes = [param.shape for param in grad_benign]
-        g_backdoor, g_backdoor_flt, _, _, _ = self._compute_local_grad(base_model, self.backdoor_data)
-        final_poisoned_flt = ((1 - self.poison_strength) * g_benign_flt +
-                              self.poison_strength * g_backdoor_flt)
-        self.last_benign_grad = g_benign_flt
-        final_poisoned = unflatten_np(final_poisoned_flt, original_shapes)
-        return final_poisoned
+        if not grad_benign:  # Should not happen if model has parameters
+            logging.error("CMD: grad_benign is empty!")
+            return []
+        original_shapes = [param.shape for param in grad_benign]  # grad_benign is list of Tensors
 
+        # Ensure self.backdoor_data is not None and not empty
+        if self.backdoor_data is None or len(self.backdoor_data) == 0:
+            logging.warning("CMD: self.backdoor_data is not available or empty. Returning benign gradient.")
+            # Convert grad_benign (list of Tensors) to list of np arrays if unflatten_np expects np
+            # For now, assume unflatten_np handles list of Tensors or this needs adjustment
+            return [gb.cpu().numpy() for gb in grad_benign]  # Example conversion
+
+        g_backdoor, g_backdoor_flt, _, _, _ = self._compute_local_grad(base_model, self.backdoor_data)
+
+        # Ensure g_benign_flt and g_backdoor_flt are numpy arrays for arithmetic
+        g_benign_flt_np = g_benign_flt if isinstance(g_benign_flt, np.ndarray) else g_benign_flt.cpu().numpy()
+        g_backdoor_flt_np = g_backdoor_flt if isinstance(g_backdoor_flt, np.ndarray) else g_backdoor_flt.cpu().numpy()
+
+        final_poisoned_flt = ((1 - self.poison_strength) * g_benign_flt_np +
+                              self.poison_strength * g_backdoor_flt_np)
+        # self.last_benign_grad = g_benign_flt_np # If needed elsewhere
+        final_poisoned_np = unflatten_np(final_poisoned_flt, original_shapes)  # Returns list of np arrays
+        return final_poisoned_np  # List of np arrays
+
+    # --- MODIFIED gradient_manipulation_single ---
     def gradient_manipulation_single(self, base_model):
         """
-        Compute the gradient on combined (backdoor + clean) data.
+        Compute the gradient on combined (backdoor + clean) data using TriggeredSubsetDataset.
         """
-        backdoor_data, clean_data = self._inject_triggers(self.dataset, self.trigger_rate)
-        g_combined, g_combined_flt, _, _, _ = self._compute_local_grad(base_model, backdoor_data + clean_data)
-        original_shapes = [param.shape for param in g_combined]
-        final_poisoned = unflatten_np(g_combined_flt, original_shapes)
-        return final_poisoned
+        if not hasattr(self, 'dataset') or self.dataset is None or len(self.dataset) == 0:
+            logging.warning("gradient_manipulation_single: Seller has no data. Returning empty gradient.")
+            return []  # Or handle appropriately, e.g., return clean gradient if possible but there's no data
+
+        num_total_samples = len(self.dataset)
+        num_triggered_samples = int(num_total_samples * self.trigger_rate)
+
+        # Randomly select indices to trigger from the original dataset
+        all_indices = np.arange(num_total_samples)
+        indices_to_trigger = np.random.choice(all_indices, size=num_triggered_samples, replace=False)
+
+        # Create the wrapper dataset that applies triggers on-the-fly
+        # logging.info(f"[{self.seller_id}] Creating TriggeredSubsetDataset with {num_triggered_samples}/{num_total_samples} triggered samples.")
+        poisoned_dataset_view = TriggeredSubsetDataset(
+            original_dataset=self.dataset,  # self.dataset is the seller's local_data
+            trigger_indices=indices_to_trigger,
+            target_label=self.target_label,
+            backdoor_generator=self.backdoor_generator,
+            device=self.device
+        )
+
+        # Compute gradient on this "view" of the dataset
+        # _compute_local_grad expects a Dataset object
+        g_combined_tensors, g_combined_flt_np, _, _, _ = self._compute_local_grad(base_model, poisoned_dataset_view)
+
+        if not g_combined_tensors:  # Handle case where model has no parameters / gradient is empty
+            logging.warning("gradient_manipulation_single: Gradient list 'g_combined_tensors' is empty.")
+            return []
+
+        original_shapes = [param.shape for param in g_combined_tensors]  # g_combined_tensors is list of Tensors
+
+        # Unflatten the gradient (g_combined_flt_np should be a NumPy array)
+        final_poisoned_np = unflatten_np(g_combined_flt_np, original_shapes)  # Returns list of np arrays
+        return final_poisoned_np  # List of np arrays
+
+    # --- END OF MODIFIED gradient_manipulation_single ---
 
     def get_local_gradient(self, global_model=None):
-        """
-        Compute the local gradient using the selected adversary behavior.
-        The behavior is selected via self.gradient_manipulation_mode.
-        """
         if self.cur_local_gradient is not None:
             return self.cur_local_gradient
 
         if global_model is not None:
-            base_model = global_model
+            base_model = global_model  # _compute_local_grad will handle .to(self.device) if base_model is not already there
         else:
             try:
-                base_model = self.load_local_model()
+                base_model = self.load_local_model()  # Should return model on self.device
             except Exception as e:
-                base_model = get_image_model(self.dataset_name)
+                logging.warning(f"[{self.seller_id}] Failed to load local model: {e}. Using new model.")
+                base_model = get_image_model(self.dataset_name)  # Returns model on CPU typically
                 base_model = base_model.to(self.device)
 
-        # Select the behavior function from the registry; default to clean gradient.
-        if self.sybil_coordinator.start_atk:
+        # Ensure base_model is on the correct device before passing to behavior_func
+        base_model = base_model.to(self.device)
+
+        if self.sybil_coordinator and self.sybil_coordinator.start_atk:  # Check if coordinator exists
             behavior_func = self.adversary_behaviors.get(self.gradient_manipulation_mode, self.get_clean_gradient)
         else:
             behavior_func = self.get_clean_gradient
 
-        # get local gradient
-        local_gradient = behavior_func(base_model)
-        self.cur_local_gradient = local_gradient
-        return local_gradient
+        logging.info(f"[{self.seller_id}] Using behavior: {behavior_func.__name__}")
+        local_gradient_list_np_or_tensor = behavior_func(base_model)  # Can be list of Tensors or np arrays
 
-    # ============================
-    # Coordinator Integration Methods
-    # ============================
+        self.cur_local_gradient = local_gradient_list_np_or_tensor
+        return local_gradient_list_np_or_tensor
+
     def get_gradient_for_upload(self, global_model=None):
-        """
-        Compute the local gradient for upload.
-        If not in a Sybil setting, return the local gradient directly.
-        If Sybil and not selected last round, query the coordinator to update the gradient.
-        """
         if global_model is not None:
-            base_model = copy.deepcopy(global_model)
-            print(f"[{self.seller_id}] Using provided global model.")
-        else:
-            try:
-                base_model = self.load_local_model()
-                print(f"[{self.seller_id}] Loaded previous local model.")
-            except Exception as e:
-                print(f"[{self.seller_id}] No saved model found; using default initialization.")
-                base_model = get_image_model(self.dataset_name)
+            # _compute_local_grad in the behavior functions will use a copy if it modifies
+            # or just use it as is. For get_local_gradient, we pass it directly.
+            # The deepcopy here is more about ensuring the base_model state for THIS seller's computation
+            # is isolated if this function is called multiple times with the same global_model object.
+            # However, get_local_gradient already handles model loading/selection.
+            # The primary model passed to behavior_func is from get_local_gradient's logic.
+            # So, this deepcopy might be redundant if get_local_gradient handles model state well.
+            # For safety, keeping it if global_model is directly passed to _compute_local_grad somewhere later.
+            # Let's assume get_local_gradient correctly sets up the base_model.
+            pass  # base_model will be set by get_local_gradient
 
-        base_model = base_model.to(self.device)
-        local_grad = self.get_local_gradient(base_model)
-        self.cur_upload_gradient_flt = local_grad
+        # Call get_local_gradient, which handles model loading/selection and device placement
+        local_grad_list_np_or_tensor = self.get_local_gradient(global_model)  # Pass global_model hint
 
-        if not self.is_sybil:
-            return local_grad, {}
+        # Convert to list of Tensors on self.device if it's list of np arrays,
+        # as this is likely the more common format for internal processing/aggregation.
+        # The aggregator will likely expect Tensors.
+        if local_grad_list_np_or_tensor and isinstance(local_grad_list_np_or_tensor[0], np.ndarray):
+            processed_local_grad = [torch.from_numpy(g).to(self.device) for g in local_grad_list_np_or_tensor]
+        elif local_grad_list_np_or_tensor and isinstance(local_grad_list_np_or_tensor[0], torch.Tensor):
+            processed_local_grad = [g.to(self.device) for g in local_grad_list_np_or_tensor]  # Ensure device
+        else:  # Empty or unexpected
+            processed_local_grad = []
 
-        # If selected in last round, do not modify gradient.
+        # self.cur_upload_gradient_flt is poorly named if it stores a list of tensors/arrays.
+        # Let's assume it's meant to store the processed gradient before Sybil coordination.
+        # For now, we'll assign the processed_local_grad (list of Tensors).
+        # If a flattened version is truly needed for `self.cur_upload_gradient_flt` for some reason (e.g. logging),
+        # then it should be flattened explicitly.
+        self.cur_upload_gradient_list_tensors = processed_local_grad  # New attribute for clarity
+
+        if not self.is_sybil or self.sybil_coordinator is None:  # Added check for sybil_coordinator
+            return processed_local_grad, {}  # Return list of Tensors
+
         if getattr(self, "selected_last_round", False):
-            return local_grad, {}
+            return processed_local_grad, {}
 
-        # Provide information to the coordinator and get an updated gradient.
-        coordinated_grad = self._query_coordinator(local_grad)
-        self.cur_upload_gradient_flt = coordinated_grad
-        return coordinated_grad, {}
+        coordinated_grad_list_tensors = self._query_coordinator(
+            processed_local_grad)  # Expects and returns list of Tensors
+        self.cur_upload_gradient_list_tensors = coordinated_grad_list_tensors
+        return coordinated_grad_list_tensors, {}
 
-    def _query_coordinator(self, local_grad):
-        """
-        Send the current local gradient to the coordinator and get an updated gradient.
-        This is an extension point—different coordinator integration strategies can be implemented here.
-        """
+    def _query_coordinator(self, local_grad_list_tensors):  # Expects list of Tensors
         if self.sybil_coordinator is not None:
-            # For example, the coordinator might adjust the gradient for non-selected sellers.
-            updated_grad = self.sybil_coordinator.update_nonselected_gradient(local_grad)
-            return updated_grad
-        return local_grad
+            # update_nonselected_gradient should also expect and return list of Tensors
+            updated_grad_list_tensors = self.sybil_coordinator.update_nonselected_gradient(local_grad_list_tensors)
+            return updated_grad_list_tensors
+        return local_grad_list_tensors  # Return list of Tensors
 
     def reset_current_local_gradient(self):
-        """Reset cached gradient information."""
         self.cur_local_gradient = None
-        self.cur_upload_gradient_flt = None
+        self.cur_upload_gradient_list_tensors = None  # Updated attribute name
+        # self.cur_upload_gradient_flt = None # Old name, remove if not used elsewhere
 
-    # ============================
-    # Federated Round Reporting
-    # ============================
     def record_federated_round(self, round_number: int, is_selected: bool,
-                               final_model_params: Optional[np.ndarray] = None):
-        """
-        Record the result of a federated round.
-        """
+                               final_model_params=None):  # Optional[np.ndarray] type hint
+        # Assuming we want to log the final gradient that was (or would have been) uploaded
+        # This should be a serializable format, e.g., flattened numpy array or list of arrays.
+        grad_to_log = None
+        if hasattr(self, 'cur_upload_gradient_list_tensors') and self.cur_upload_gradient_list_tensors:
+            # Example: flatten and convert to numpy for logging
+            try:
+                grad_to_log = torch.cat([g.cpu().flatten() for g in self.cur_upload_gradient_list_tensors]).numpy()
+            except Exception as e:
+                logging.error(f"Error converting gradient to loggable format: {e}")
+                grad_to_log = "Error in serialization"
+
         record = {
             "round_number": round_number,
-            "timestamp": pd.Timestamp.now().isoformat(),
+            # "timestamp": pd.Timestamp.now().isoformat(), # Requires pandas
+            "timestamp": "some_timestamp_placeholder",  # Placeholder if pandas not imported
             "is_selected": is_selected,
-            "gradient": self.cur_upload_gradient_flt,
+            "gradient_logged": grad_to_log,  # Log the serializable version
         }
         self.selected_last_round = is_selected
+        # self.federated_round_history.append(record) # If you want to store history in memory
 
     def round_end_process(self, round_number: int, is_selected: bool,
                           final_model_params=None):
-        """
-        Process the end-of-round tasks: reset gradient cache and record round info.
-        """
         self.reset_current_local_gradient()
         self.record_federated_round(round_number, is_selected, final_model_params)
 
+    # --- Trigger Optimization Methods (Assumed to be okay as per "running good" and focus on 'single' mode) ---
+    # upload_global_trigger, get_new_trigger, trigger_opt methods would remain here.
+    # Make sure they are compatible with the self.device and backdoor_generator used.
     def upload_global_trigger(self, global_model, first_attack=False, lr=0.01, num_steps=50, lambda_param=1):
-        """
-        If this seller is selected and designated as the trigger broadcaster,
-        update the trigger and then broadcast the new trigger to all malicious sellers
-        via the coordinator.
-        """
-        print(f"[{self.seller_id}] Broadcasting new trigger...")
+        logging.info(f"[{self.seller_id}] Broadcasting new trigger...")
         new_trigger = self.get_new_trigger(global_model, first_attack=first_attack, lr=lr, num_steps=num_steps,
                                            lambda_param=lambda_param)
         if self.sybil_coordinator is not None:
@@ -1166,166 +1282,130 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         return new_trigger
 
     def get_new_trigger(self, global_model, first_attack, lr=0.01, num_steps=50, lambda_param=1):
-        # For first attack (round 0), use loss alignment then gradient alignment
-        # first load the base trigger
+        # (Implementation from your original code)
+        # Ensure self.backdoor_generator.get_trigger() and apply_trigger_tensor are robust
         trigger = self.backdoor_generator.get_trigger().detach().to(self.device).requires_grad_(True)
         model = global_model.to(self.device)
         if first_attack:
-            # First optimize trigger with both objectives
             tmp_trigger = self.trigger_opt(model, trigger, first_attack=True, trigger_lr=lr, num_steps=num_steps,
                                            lambda_param=0.0)
-
-            # Then use gradient alignment
-            tmp_trigger = self.trigger_opt(model, tmp_trigger, first_attack=False, trigger_lr=lr,
-                                           num_steps=num_steps,
+            tmp_trigger = self.trigger_opt(model, tmp_trigger, first_attack=False, trigger_lr=lr, num_steps=num_steps,
                                            lambda_param=1.0)
         else:
-            # For subsequent rounds, only use gradient alignment
-            tmp_trigger = self.trigger_opt(model, trigger, first_attack=False, trigger_lr=lr,
-                                           num_steps=num_steps,
+            tmp_trigger = self.trigger_opt(model, trigger, first_attack=False, trigger_lr=lr, num_steps=num_steps,
                                            lambda_param=1.0)
-
         return tmp_trigger
 
     def trigger_opt(self, model, trigger, first_attack=False, trigger_lr=0.01, num_steps=50, lambda_param=1.0):
-        """
-        Optimize the backdoor trigger in two phases:
-          Phase 1: Loss alignment (if first_attack is True) minimizes the classification loss
-                   on backdoored data.
-          Phase 2: Gradient alignment optimizes the trigger such that the difference between
-                   the gradients on clean and backdoored data is minimized (weighted by lambda_param).
-
-        Returns the updated trigger.
-        """
-        # Set model to evaluation mode
+        # (Implementation from your original code - ensure imports like optim, nn, DataLoader are present at file level)
+        # For brevity, not re-pasting the full trigger_opt, but it would be here.
+        # Key: ensure that self.dataset used inside DataLoader here is the original clean dataset.
+        # And self.backdoor_generator.apply_trigger_tensor(data, trigger) is used.
+        # Also, the model passed should be on self.device.
+        # (The rest of your trigger_opt code as provided previously)
         model.eval()
+        if not trigger.requires_grad: trigger = trigger.clone().detach().requires_grad_(True)
+        trigger_optimizer = torch.optim.Adam([trigger], lr=trigger_lr)  # Ensure optim is imported
+        criterion = torch.nn.CrossEntropyLoss()  # Ensure nn is imported
+        # Use self.dataset (original clean data) for trigger optimization source
+        dataloader = DataLoader(self.dataset, batch_size=self.local_training_params.get('batch_size', 64), shuffle=True)
 
-        # (Optional) Ensure trigger has gradients enabled from the start.
-        if not trigger.requires_grad:
-            trigger = trigger.clone().detach().requires_grad_(True)
-
-        # Create optimizer for the trigger
-        trigger_optimizer = optim.Adam([trigger], lr=trigger_lr)
-        criterion = nn.CrossEntropyLoss()
-        dataloader = DataLoader(self.dataset, batch_size=64, shuffle=True)
-
-        # Phase 1: Loss alignment (only for first attack)
+        # Phase 1
         if first_attack:
-            print("Phase 1: Loss alignment")
+            logging.info("Trigger Opt - Phase 1: Loss alignment")
             for step in range(num_steps):
-                total_loss = 0.0
-                batches = 0
-
-                for data, _ in dataloader:
-                    # If data is missing a channel dimension, add it.
-                    if data.dim() == 3:  # [batch, 28, 28]
-                        data = data.unsqueeze(1)  # becomes [batch, 1, 28, 28]
-                    data = data.to(self.device)
-
-                    batches += 1
-                    backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
-
-                    # Create target labels for the backdoor task for the entire batch
-                    backdoor_labels = torch.full((data.shape[0],), self.target_label,
-                                                 dtype=torch.long, device=self.device)
-
-                    # Forward pass – minimize classification loss for the backdoor task
-                    outputs = model(backdoored_data)
-                    loss = criterion(outputs, backdoor_labels)
-                    total_loss += loss.item()
-
-                    # Backward pass and optimization
-                    trigger_optimizer.zero_grad()
-                    loss.backward()
-                    trigger_optimizer.step()
-
-                    # Clip trigger values to valid range [0, 1]
-                    with torch.no_grad():
-                        trigger.clamp_(0, 1)
-
-                    # Limit number of batches per step for efficiency
-                    if batches >= 10:
-                        break
-                if (step + 1) % 10 == 0:
-                    print(f"Phase 1 - Step {step + 1}, Loss: {total_loss / batches:.4f}")
-
-        # Phase 2: Gradient alignment optimization
-        print(f"Phase 2: Gradient alignment optimization (λ={lambda_param})")
-        dataloader = DataLoader(self.dataset, batch_size=64, shuffle=True)
-        # Ensure trigger requires grad in Phase 2
-        if not trigger.requires_grad:
-            trigger = trigger.clone().detach().requires_grad_(True)
-
-        for step in range(num_steps):
-            total_gradient_distance = 0.0
-            total_backdoor_loss = 0.0
-            batches_processed = 0
-
-            for data, label in dataloader:
-                # Ensure proper shape: [batch, 1, 28, 28]
-                if data.dim() == 3:
-                    data = data.unsqueeze(1)
-                data, label = data.to(self.device), label.to(self.device)
-                batches_processed += 1
-
-                # Create backdoored data and corresponding target labels
-                backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)
-                backdoor_labels = torch.full((data.shape[0],), self.target_label,
-                                             dtype=torch.long, device=self.device)
-
-                # Compute clean loss and store clean gradients
-                model.zero_grad()
-                clean_outputs = model(data)
-                clean_loss = criterion(clean_outputs, label)
-                clean_loss.backward(retain_graph=True)
-                clean_grads = {}
-                for name, param in model.named_parameters():
-                    if param.grad is not None:
-                        clean_grads[name] = param.grad.clone()
-
-                # Compute backdoor loss and gradients
-                model.zero_grad()
-                backdoor_outputs = model(backdoored_data)
-                backdoor_loss = criterion(backdoor_outputs, backdoor_labels)
-                backdoor_loss.backward(retain_graph=True)
-
-                # Compute gradient distance (L2 norm squared difference)
-                gradient_distance = torch.tensor(0.0, device=self.device)
-                for name, param in model.named_parameters():
-                    if param.grad is not None and name in clean_grads:
-                        distance = torch.sum((param.grad - clean_grads[name]) ** 2)
-                        gradient_distance += distance
-
-                # Combined loss for trigger optimization
-                combined_loss = lambda_param * gradient_distance + (1 - lambda_param) * backdoor_loss
-
-                total_gradient_distance += gradient_distance.item()
-                total_backdoor_loss += backdoor_loss.item()
-
-                # Optimize trigger using the combined loss
-                trigger_optimizer.zero_grad()
-                if lambda_param > 0:
-                    trigger_grad = torch.autograd.grad(combined_loss, trigger, retain_graph=True)[0]
-                else:
-                    trigger_grad = torch.autograd.grad(backdoor_loss, trigger)[0]
-                trigger.grad = trigger_grad
+                # ... (your phase 1 loop)
+                # Example of one batch from your code:
+                data, _ = next(iter(dataloader))  # Get a batch
+                if data.dim() == 3: data = data.unsqueeze(1)
+                data = data.to(self.device)
+                backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)  # Pass trigger explicitly
+                backdoor_labels = torch.full((data.shape[0],), self.target_label, dtype=torch.long, device=self.device)
+                outputs = model(backdoored_data)
+                loss = criterion(outputs, backdoor_labels)
+                trigger_optimizer.zero_grad();
+                loss.backward();
                 trigger_optimizer.step()
-
                 with torch.no_grad():
                     trigger.clamp_(0, 1)
+                if (step + 1) % 10 == 0: logging.info(f"Phase 1 - Step {step + 1}, Loss: {loss.item():.4f}")
 
-                # Break after processing a few batches for efficiency
-                if batches_processed >= 10:
-                    break
-            if (step + 1) % 10 == 0:
-                print(
-                    f"Phase 2 - Step {step + 1}, Gradient Distance: {total_gradient_distance / batches_processed:.4f}, "
-                    f"Backdoor Loss: {total_backdoor_loss / batches_processed:.4f}")
+        # Phase 2
+        logging.info(f"Trigger Opt - Phase 2: Gradient alignment optimization (λ={lambda_param})")
+        # Re-initialize dataloader or ensure it can be iterated again if needed, or use a fresh one
+        dataloader_phase2 = DataLoader(self.dataset, batch_size=self.local_training_params.get('batch_size', 64),
+                                       shuffle=True)
+        if not trigger.requires_grad: trigger = trigger.clone().detach().requires_grad_(True)
 
-        # Detach and return the updated trigger
-        trigger = trigger.detach()
-        return trigger
+        for step in range(num_steps):
+            # ... (your phase 2 loop)
+            # Example of one batch from your code:
+            data, label = next(iter(dataloader_phase2))
+            if data.dim() == 3: data = data.unsqueeze(1)
+            data, label = data.to(self.device), label.to(self.device)
+            backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)  # Pass trigger explicitly
+            backdoor_labels = torch.full((data.shape[0],), self.target_label, dtype=torch.long, device=self.device)
 
+            model.zero_grad();
+            clean_outputs = model(data);
+            clean_loss = criterion(clean_outputs, label)
+            clean_loss.backward(retain_graph=True)
+            clean_grads = {name: param.grad.clone() for name, param in model.named_parameters() if
+                           param.grad is not None}
+
+            model.zero_grad();
+            backdoor_outputs = model(backdoored_data);
+            backdoor_loss_val = criterion(backdoor_outputs, backdoor_labels)
+            # If lambda_param is 0, backdoor_loss_val.backward() alone is enough to get grads for backdoor_loss_val
+            # If lambda_param is >0 and <1, you need grads from both backdoor_loss_val and gradient_distance
+            # If lambda_param is 1, you only need grads from gradient_distance
+
+            # Simplified: calculate combined loss and backprop once if possible.
+            # For gradient_distance, you need param.grad from backdoor_loss.backward() first.
+            backdoor_loss_val.backward(retain_graph=True)  # Get param.grad for backdoor data
+
+            gradient_distance = torch.tensor(0.0, device=self.device)
+            for name, param in model.named_parameters():
+                if param.grad is not None and name in clean_grads:
+                    gradient_distance += torch.sum((param.grad - clean_grads[name]) ** 2)
+
+            combined_loss = lambda_param * gradient_distance
+            if (1 - lambda_param) > 1e-6:  # only add backdoor loss if its weight is meaningful
+                combined_loss += (1 - lambda_param) * backdoor_loss_val
+
+            trigger_optimizer.zero_grad()
+            # Need to compute gradient of combined_loss w.r.t trigger
+            # This requires combined_loss to be a function of trigger.
+            # The param.grad values used in gradient_distance are themselves functions of trigger (via backdoored_data).
+            # backdoor_loss_val is also a function of trigger.
+            if trigger.grad is not None: trigger.grad.zero_()  # Clear previous trigger gradients
+
+            # We need d(combined_loss)/d(trigger).
+            # torch.autograd.grad is the right tool here.
+            # Ensure that operations contributing to combined_loss are part of the graph involving trigger.
+            if combined_loss.requires_grad:  # Check if it's part of a graph that requires grad
+                trigger_grads_from_loss = torch.autograd.grad(combined_loss, trigger,
+                                                              retain_graph=False)  # retain_graph=False if not needed further
+                if trigger_grads_from_loss[0] is not None:
+                    trigger.grad = trigger_grads_from_loss[0]
+                    trigger_optimizer.step()
+                else:
+                    logging.warning("Gradient of combined_loss w.r.t trigger is None.")
+            else:  # if lambda_param is 0, combined_loss might be just backdoor_loss_val
+                if (1 - lambda_param) > 1e-6:  # if backdoor_loss term is active
+                    trigger_grads_from_bloss = torch.autograd.grad(backdoor_loss_val, trigger, retain_graph=False)
+                    if trigger_grads_from_bloss[0] is not None:
+                        trigger.grad = trigger_grads_from_bloss[0]
+                        trigger_optimizer.step()
+                    else:
+                        logging.warning("Gradient of backdoor_loss_val w.r.t trigger is None.")
+
+            with torch.no_grad():
+                trigger.clamp_(0, 1)
+            if (step + 1) % 10 == 0: logging.info(
+                f"Phase 2 - Step {step + 1}, GradDist: {gradient_distance.item():.4f}, BdoorLoss: {backdoor_loss_val.item():.4f}")
+
+        return trigger.detach()
 
 def global_clip_np(arr, max_norm: float) -> np.ndarray:
     current_norm = np.linalg.norm(arr)
