@@ -1,12 +1,11 @@
 # generate_configs.py
 import copy
 import itertools
-import os
-from types import NoneType  # Import NoneType for the representer
-
 import numpy as np  # Make sure numpy is imported
+import os
 import torch
 import yaml
+from types import NoneType  # Import NoneType for the representer
 
 from entry.constant.constant import BACKDOOR, LABEL_FLIP
 
@@ -48,12 +47,13 @@ MyDumper.add_representer(np.bool_, numpy_representer)
 
 BASE_CONFIG_TEMPLATE = {
     # --- Top Level Params for backdoor_attack ---
+    'exp_name': 'new',  # Default, override per experiment
     'dataset_name': 'CIFAR',  # Default, override per experiment
     'model_structure': 'SimpleCNN',  # Default, override per experiment
     'aggregation_method': 'fedavg',  # Default, override per experiment
     'global_rounds': 200,
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',  # Detect device
-
+    'n_samples': 10,
     # --- Data Split Info (Passed to get_data_set) ---
     'data_split': {
         'num_sellers': 10,
@@ -297,6 +297,7 @@ def generate_label_flipping_attack_configs(output_dir):
         file_path = os.path.join(output_dir, "attack_comparison", f"{exp_id}.yaml")
         save_config(config, file_path)
 
+
 def generate_sybil_configs(output_dir):
     """Focus on varying Sybil parameters."""
     print("\n--- Generating Sybil Attack Configs ---")
@@ -305,7 +306,8 @@ def generate_sybil_configs(output_dir):
     aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
     amplify_factors = [1.0]  # Vary amplification
     attack_modes = ["None", BACKDOOR]
-    for ds, rate, agg, amplify, attack_mode in itertools.product(datasets, adv_rates, aggregations, amplify_factors, attack_modes):
+    for ds, rate, agg, amplify, attack_mode in itertools.product(datasets, adv_rates, aggregations, amplify_factors,
+                                                                 attack_modes):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
         rate_pct = int(rate * 100)
         exp_id = f"sybil_{ds.lower()}_{agg.lower()}_adv{rate_pct}pct_amp{amplify}_attack_local_{attack_mode}"
@@ -334,7 +336,6 @@ def generate_sybil_configs(output_dir):
             config['attack']['poison_rate'] = 0.2
         else:
             config['attack']['enabled'] = False
-
 
         # Enable and configure Sybil
         config['sybil']['is_sybil'] = True
@@ -441,7 +442,7 @@ if __name__ == "__main__":
         # Manually set device in template if torch is unavailable
         BASE_CONFIG_TEMPLATE['device'] = 'cpu'
 
-    CONFIG_OUTPUT_DIRECTORY = "./configs_generated_new"  # Directory to save generated configs
+    CONFIG_OUTPUT_DIRECTORY = "./configs_generated_test"  # Directory to save generated configs
 
     print(f"Generating configuration files in: {CONFIG_OUTPUT_DIRECTORY}")
 

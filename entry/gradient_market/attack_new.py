@@ -659,7 +659,11 @@ def main():
 
     # 7. Loop for multiple runs (if n_samples > 1)
     print(f"Starting, dataset type: {dataset_domain}, {n_samples} run(s) for experiment: {experiment_id}")
-    for i in range(n_samples):
+    if config.get("exp_name", "None") != "None":
+        lower = 3
+    else:
+        lower = 0
+    for i in range(lower, n_samples):
         current_seed = initial_seed + i
         set_seed(current_seed)  # Set seed for this specific run
 
