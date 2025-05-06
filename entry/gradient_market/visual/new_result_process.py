@@ -177,8 +177,7 @@ def preprocess_and_integrate(df: pd.DataFrame, config: Dict) -> Optional[pd.Data
 
     df = df.copy() # Avoid modifying original DataFrame
 
-    # --- 1. Rename CSV columns to shorter internal names (Optional but good practice) ---
-    # Maps CSV column name -> desired DataFrame column name
+    # --- 1. Rename CSV columns ---
     rename_map = {
         'perf_global_accuracy': 'global_acc',
         'perf_global_loss': 'global_loss',
@@ -186,37 +185,31 @@ def preprocess_and_integrate(df: pd.DataFrame, config: Dict) -> Optional[pd.Data
         'selection_rate_info_detection_rate (TPR)': 'tpr',
         'selection_rate_info_false_positive_rate (FPR)': 'fpr',
         'num_sellers_selected': 'num_selected',
-        # Add others if needed, e.g., 'perf_local_accuracy': 'local_acc'
     }
-    # Only rename columns that actually exist in the DataFrame
     df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns}, inplace=True)
 
     # --- 2. Ensure Core Columns Exist and Have Correct Types ---
     numeric_cols = ['global_acc', 'global_loss', 'global_asr', 'tpr', 'fpr', 'num_selected', 'round_number']
     for col in numeric_cols:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce') # Convert to numeric, set errors to NaN
+            df[col] = pd.to_numeric(df[col], errors='coerce')
         else:
-            df[col] = np.nan # Add column as NaN if missing
+            df[col] = np.nan
 
     if 'round_number' in df.columns:
-        # Use Int64 for nullable integers
         df['round_number'] = df['round_number'].astype(pd.Int64Dtype())
 
-    # --- 3. Parse List Columns (selected_sellers) ---
+    # --- 3. Parse List Columns ---
     if 'selected_sellers' in df.columns and df['selected_sellers'].dtype == 'object':
-        # Apply literal_eval carefully
         df['selected_sellers'] = df['selected_sellers'].apply(safe_literal_eval)
-        # Ensure it's a list, fill NaNs/errors with empty lists
         df['selected_sellers'] = df['selected_sellers'].apply(lambda x: x if isinstance(x, list) else [])
     elif 'selected_sellers' not in df.columns:
-        df['selected_sellers'] = [[] for _ in range(len(df))] # Add empty column if missing
+        df['selected_sellers'] = [[] for _ in range(len(df))]
 
-
-    # --- 4. Calculate Selection Composition (Benign/Malicious in Selected Set) ---
+    # --- 4. Calculate Selection Composition ---
     def get_composition(selected_list):
         if not isinstance(selected_list, list) or not selected_list:
-            return 0, 0 # Benign count, Malicious count
+            return 0, 0
         benign_count = sum(1 for s in selected_list if isinstance(s, str) and s.startswith('bn_'))
         malicious_count = sum(1 for s in selected_list if isinstance(s, str) and s.startswith('adv_'))
         return benign_count, malicious_count
@@ -225,28 +218,45 @@ def preprocess_and_integrate(df: pd.DataFrame, config: Dict) -> Optional[pd.Data
     df['benign_selected_count'] = counts.apply(lambda x: x[0])
     df['malicious_selected_count'] = counts.apply(lambda x: x[1])
 
+    # Recalculate num_selected if it wasn't present or reliable
+    if 'num_selected' not in df.columns or df['num_selected'].isnull().any():
+         df['num_selected'] = df['benign_selected_count'] + df['malicious_selected_count']
+         # Ensure it's numeric after calculation
+         df['num_selected'] = pd.to_numeric(df['num_selected'], errors='coerce')
+
+
     # Calculate composition proportions (handle division by zero)
     df['selected_comp_benign'] = (df['benign_selected_count'] / df['num_selected']).fillna(0)
     df['selected_comp_malicious'] = (df['malicious_selected_count'] / df['num_selected']).fillna(0)
 
 
     # --- 5. Integrate Key Config Parameters ---
-    # Add parameters directly to the DataFrame for easy grouping/filtering later
     df['exp_aggregator'] = config.get('aggregation_method', 'unknown')
     df['exp_dataset'] = config.get('dataset_name', 'unknown')
     df['exp_adv_rate'] = config.get('data_split', {}).get('adv_rate', 0.0)
 
-    # Attack details
     attack_config = config.get('attack', {})
     df['exp_attack_enabled'] = attack_config.get('enabled', False)
-    df['exp_attack_type'] = attack_config.get('attack_type', 'none') # Use 'attack_type' if available
-    if df['exp_attack_type'] == 'none' and attack_config.get('scenario') == 'backdoor': # Fallback if using older config structure
-        df['exp_attack_type'] = 'backdoor'
+    # Get attack type, prioritize 'attack_type' if present
+    attack_type = attack_config.get('attack_type')
+    # If 'attack_type' is missing or None, check 'scenario' as a fallback
+    if attack_type is None:
+        attack_type = attack_config.get('scenario', 'none') # Default to 'none' if neither is present
+    df['exp_attack_type'] = attack_type if attack_type else 'none' # Ensure it's not None
 
-    # Discovery details
+    # *** FIXED LINE HERE ***
+    # Check the value from the *first row* of the Series
+    if not df.empty and df['exp_attack_type'].iloc[0] == 'none' and attack_config.get('scenario') == 'backdoor':
+        # If the primary check resulted in 'none' but the older 'scenario' key exists and is 'backdoor',
+        # update the 'exp_attack_type' for all rows. This handles potential inconsistencies
+        # in older config files where only 'scenario' might have been set.
+        logging.debug(f"Correcting attack type based on fallback 'scenario' key for {config.get('_combined_exp_key')}")
+        df['exp_attack_type'] = 'backdoor'
+    # *** END FIX ***
+
     data_split_config = config.get('data_split', {})
     df['exp_split_mode'] = data_split_config.get('data_split_mode', 'unknown')
-    if df['exp_split_mode'].iloc[0] == 'discovery':
+    if not df.empty and df['exp_split_mode'].iloc[0] == 'discovery':
         dm_params = data_split_config.get('dm_params', {})
         df['exp_discovery_quality'] = dm_params.get('discovery_quality', np.nan)
         df['exp_buyer_mode'] = dm_params.get('buyer_data_mode', 'unknown')
@@ -254,17 +264,14 @@ def preprocess_and_integrate(df: pd.DataFrame, config: Dict) -> Optional[pd.Data
         df['exp_discovery_quality'] = np.nan
         df['exp_buyer_mode'] = 'N/A'
 
-    # Sybil details
     sybil_config = config.get('sybil', {})
     df['exp_sybil_enabled'] = sybil_config.get('is_sybil', False)
 
-    # Add identifiers passed from loading stage
     df['objective_name'] = config.get('_objective_name', 'unknown')
     df['experiment_id_part'] = config.get('_experiment_id_part', 'unknown')
-    df['combined_exp_key'] = config.get('_combined_exp_key', 'unknown') # Same as experiment_setup in previous versions
+    df['combined_exp_key'] = config.get('_combined_exp_key', 'unknown')
 
     return df
-
 
 # --- Statistics Aggregation ---
 
