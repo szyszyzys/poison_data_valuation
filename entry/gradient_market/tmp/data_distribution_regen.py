@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 def poisoning_attack_text_reg_distri(
         dataset_name: str,
-        dataset_name: str,
         n_sellers: int,
         adv_rate: float,
         model_structure: str,
