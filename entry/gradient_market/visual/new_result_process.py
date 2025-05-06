@@ -380,11 +380,13 @@ def calculate_selection_stability(df_run: pd.DataFrame) -> Optional[float]:
 def load_all_results(
     base_dir: str,
     csv_filename: str = "round_results.csv",
-    objectives: Optional[List[str]] = None # Currently unused, loads all
+    objectives: Optional[List[str]] = None # Now used for filtering
 ) -> Dict[str, List[pd.DataFrame]]:
     """
     Load results from base_dir/<objective>/<experiment>/run_*/csv_filename.
-    Returns a dictionary mapping experiment_setup name to a list of run DataFrames.
+    Only loads from objective folders listed in `objectives` if provided.
+    Returns a dictionary mapping a combined 'objective_experiment' name
+    to a list of run DataFrames.
     """
     base_path = Path(base_dir)
     if not base_path.is_dir():
@@ -392,63 +394,82 @@ def load_all_results(
         return {}
 
     all_results: Dict[str, List[pd.DataFrame]] = {}
-    logging.info(f"Scanning for results in: {base_path}")
+    logging.info(f"Scanning for results under objectives in: {base_path}")
 
-    # Iterate through all subdirectories, assuming they are objectives or experiments
-    for exp_path in sorted(base_path.rglob('*')): # Use rglob to find experiments at different depths
-        if not exp_path.is_dir():
+    # 1. Iterate through directories directly under base_dir (these are objectives)
+    for objective_path in sorted(base_path.iterdir()):
+        if not objective_path.is_dir():
             continue
 
-        # Look for run_* directories directly within this path
-        run_dirs = list(exp_path.glob('run_*'))
-        if not run_dirs:
-            continue # Not an experiment directory containing runs
+        objective_name = objective_path.
+        print(objective_name)
+        # 2. Filter by objectives list if provided
+        if objectives and objective_name not in objectives:
+            logging.debug(f"Skipping objective folder (not in requested list): {objective_name}")
+            continue
 
-        # Determine a meaningful experiment name (e.g., relative path from base_dir)
-        try:
-            exp_name = str(exp_path.relative_to(base_path)).replace('/','_') # Create unique name
-        except ValueError:
-            exp_name = exp_path.name # Fallback if not relative
+        logging.info(f"Processing objective: {objective_name}")
 
-        run_dfs: List[pd.DataFrame] = []
-        logging.info(f"Processing experiment: {exp_name}")
-
-        for run_dir in sorted(run_dirs):
-            if not run_dir.is_dir(): continue # Ensure it's a directory
-            csv_file = run_dir / csv_filename
-            if not csv_file.is_file():
-                logging.warning(f"CSV file '{csv_filename}' not found in {run_dir}")
+        # 3. Iterate through subdirectories of the objective (these are experiments)
+        for exp_path in sorted(objective_path.iterdir()):
+            if not exp_path.is_dir():
                 continue
-            try:
-                df = pd.read_csv(csv_file)
-                if df.empty:
-                    logging.warning(f"CSV file is empty: {csv_file}")
-                    continue
-                # Store original experiment path/name and run ID
-                df['run_id'] = run_dir.name
-                df['experiment_setup'] = exp_name
-                # Add full path for debugging if needed
-                # df['run_path'] = str(run_dir.resolve())
-                run_dfs.append(df)
-            except pd.errors.EmptyDataError:
-                 logging.warning(f"CSV file is empty: {csv_file}")
-            except Exception as e:
-                logging.error(f"Failed to load or process {csv_file}: {e}")
 
-        if run_dfs:
-            # If experiment name already exists (e.g., from different objectives), append runs
-            if exp_name in all_results:
-                 all_results[exp_name].extend(run_dfs)
-            else:
-                 all_results[exp_name] = run_dfs
-            logging.info(f"-> Loaded {len(run_dfs)} runs for {exp_name}")
-        # else:
-        #     logging.warning(f"No valid runs found for experiment path: {exp_path}")
+            experiment_name_part = exp_path.name
+            # 6. Construct the combined experiment name
+            combined_exp_name = f"{objective_name}_{experiment_name_part}"
+
+            run_dfs: List[pd.DataFrame] = []
+            logging.info(f"--> Processing experiment: {experiment_name_part} (Combined Key: {combined_exp_name})")
+
+            # 4. Look for run_* directories within the experiment path
+            run_dirs = list(exp_path.glob('run_*'))
+            if not run_dirs:
+                logging.warning(f"No 'run_*' directories found in {exp_path}")
+                continue
+
+            # 5. Load data from each run directory
+            for run_dir in sorted(run_dirs):
+                if not run_dir.is_dir(): continue
+                csv_file = run_dir / csv_filename
+                if not csv_file.is_file():
+                    # Optional: log only if verbose logging is enabled
+                    # logging.debug(f"CSV file '{csv_filename}' not found in {run_dir}")
+                    continue
+                try:
+                    df = pd.read_csv(csv_file)
+                    if df.empty:
+                        logging.warning(f"CSV file is empty: {csv_file}")
+                        continue
+                    # Store run ID and the combined experiment name
+                    df['run_id'] = run_dir.name
+                    df['experiment_setup'] = combined_exp_name # Use the combined name
+                    # Store original parts if needed for later filtering
+                    df['objective_name'] = objective_name
+                    df['experiment_name_part'] = experiment_name_part
+                    run_dfs.append(df)
+                except pd.errors.EmptyDataError:
+                     logging.warning(f"CSV file is empty: {csv_file}")
+                except Exception as e:
+                    logging.error(f"Failed to load or process {csv_file}: {e}")
+
+            # 7. Store results keyed by the combined name
+            if run_dfs:
+                # If combined name already exists (shouldn't with this structure but safer), append
+                if combined_exp_name in all_results:
+                     all_results[combined_exp_name].extend(run_dfs)
+                     logging.warning(f"Appended {len(run_dfs)} runs to existing key '{combined_exp_name}'. Check for duplicate experiment structures.")
+                else:
+                     all_results[combined_exp_name] = run_dfs
+                logging.info(f"--> Loaded {len(run_dfs)} runs for {combined_exp_name}")
+            # else: (already warned about no runs found)
 
     if not all_results:
-        logging.error(f"No experiments loaded from {base_dir}. Check directory structure and '{csv_filename}'.")
+        logging.error(f"No experiments loaded matching the structure base_dir/objective/experiment/run_* from {base_path}.")
+        if objectives:
+             logging.error(f"Filtering was active for objectives: {objectives}")
     else:
-        logging.info(f"Loaded data for {len(all_results)} unique experiment setups.")
+        logging.info(f"Finished loading. Found data for {len(all_results)} unique experiment setups.")
     return all_results
 
 
@@ -603,6 +624,10 @@ def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # --- Plotting Functions ---
+# (Keep all plotting functions as they were in the previous version)
+# plot_metric_comparison, plot_final_round_comparison, plot_scatter_comparison,
+# plot_aggregated_metric_bar, plot_discovery_effect, plot_buyer_mode_effect,
+# plot_fairness_scatter
 
 def plot_metric_comparison(
         results: Dict[str, List[pd.DataFrame]],
@@ -722,26 +747,41 @@ def plot_final_round_comparison(
     df_plot = pd.DataFrame({'experiment': exp_names, 'mean': means, 'sem': errors})
 
     # Find the best performing experiment
-    best_idx = int(np.argmax(means) if higher_is_better else np.argmin(means))
-    best_exp_name = exp_names[best_idx]
+    best_idx = -1
+    if means: # Check if means list is not empty
+        try:
+            best_idx = int(np.argmax(means) if higher_is_better else np.argmin(means))
+        except ValueError: # Handle cases where means might contain NaNs after processing
+            logging.warning(f"Could not determine best experiment for {metric} in '{title}' due to invalid values.")
+
 
     plt.figure(figsize=(max(8, len(exp_names) * 0.8), 6)) # Adjust width based on number of bars
 
     # Create bar plot
-    bar_container = plt.bar(df_plot['experiment'], df_plot['mean'], yerr=df_plot['sem'], capsize=5,
-                            color=sns.color_palette("viridis", len(exp_names))) # Use a color palette
+    try:
+        bar_container = plt.bar(df_plot['experiment'], df_plot['mean'], yerr=df_plot['sem'], capsize=5,
+                                color=sns.color_palette("viridis", len(exp_names))) # Use a color palette
 
-    # Highlight the best bar
-    bar_container[best_idx].set_color('red')
+        # Highlight the best bar if found
+        if best_idx != -1 and best_idx < len(bar_container):
+            best_exp_name = exp_names[best_idx]
+            bar_container[best_idx].set_color('red')
+            # Add annotation for the best experiment
+            plt.text(best_idx, df_plot['mean'].iloc[best_idx] + df_plot['sem'].iloc[best_idx], ' Best',
+                     ha='center', va='bottom', color='red', fontweight='bold')
+        elif best_idx != -1:
+             logging.warning(f"Best index {best_idx} out of range for highlighting in '{title}'.")
+
+
+    except Exception as e:
+        logging.error(f"Error creating bar plot for '{title}': {e}")
+        plt.close()
+        return
 
     plt.xticks(rotation=45, ha='right', fontsize='small') # Rotate labels for readability
     plt.title(title)
     plt.ylabel(ylabel or metric.replace('_', ' ').title())
     plt.tight_layout()
-
-    # Add annotation for the best experiment
-    plt.text(best_idx, df_plot['mean'].iloc[best_idx] + df_plot['sem'].iloc[best_idx], ' Best',
-             ha='center', va='bottom', color='red', fontweight='bold')
 
 
     if save_path:
@@ -804,20 +844,26 @@ def plot_scatter_comparison(
     df_scatter = pd.DataFrame(scatter_data)
 
     plt.figure(figsize=(8, 8))
-    scatter_plot = sns.scatterplot(
-        data=df_scatter,
-        x=x_metric,
-        y=y_metric,
-        hue='experiment',
-        s=100, # Size of points
-        legend='full'
-    )
-    plt.title(title)
-    plt.xlabel(xlabel or x_metric.replace('_', ' ').title())
-    plt.ylabel(ylabel or y_metric.replace('_', ' ').title())
-    # Position legend outside plot
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
-    plt.tight_layout(rect=[0, 0, 0.85, 1]) # Adjust layout to make space for legend
+    try:
+        scatter_plot = sns.scatterplot(
+            data=df_scatter,
+            x=x_metric,
+            y=y_metric,
+            hue='experiment',
+            s=100, # Size of points
+            legend='full'
+        )
+        plt.title(title)
+        plt.xlabel(xlabel or x_metric.replace('_', ' ').title())
+        plt.ylabel(ylabel or y_metric.replace('_', ' ').title())
+        # Position legend outside plot
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0., fontsize='small')
+        plt.tight_layout(rect=[0, 0, 0.85, 1]) # Adjust layout to make space for legend
+    except Exception as e:
+         logging.error(f"Error creating scatter plot '{title}': {e}")
+         plt.close()
+         return
+
 
     if save_path:
         save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -865,30 +911,48 @@ def plot_aggregated_metric_bar(
         df_plot[std_col] = 0.0
 
     # Sort by experiment name for consistent order? Optional.
-    # df_plot = df_plot.sort_values('experiment_setup')
+    df_plot = df_plot.sort_values('experiment_setup')
 
     exp_names = df_plot['experiment_setup'].tolist()
     means = df_plot[mean_col].values
     errors = df_plot[std_col].values if use_error_bars else np.zeros_like(means)
 
     # Find the best performing experiment based on the mean value
-    best_idx = int(np.nanargmax(means) if higher_is_better else np.nanargmin(means))
-    best_exp_name = exp_names[best_idx]
+    best_idx = -1
+    if means.size > 0: # Check if array is not empty
+        try:
+            # Use nanargmax/nanargmin to handle potential NaNs if any slipped through
+            best_idx = int(np.nanargmax(means) if higher_is_better else np.nanargmin(means))
+        except ValueError:
+            logging.warning(f"Could not determine best experiment for {metric_base} in '{title}' due to invalid values.")
+
 
     plt.figure(figsize=(max(8, len(exp_names) * 0.8), 6))
 
     # Create bar plot
-    bar_container = plt.bar(exp_names, means, yerr=errors, capsize=5,
-                            color=sns.color_palette("viridis", len(exp_names)))
-
-    # Highlight the best bar
     try:
-        bar_container[best_idx].set_color('red')
-        # Add annotation for the best experiment
-        plt.text(best_idx, means[best_idx] + errors[best_idx], ' Best',
-                 ha='center', va='bottom', color='red', fontweight='bold')
-    except IndexError:
-         logging.warning(f"Could not highlight best bar for '{title}'. Index {best_idx} out of bounds for {len(bar_container)} bars.")
+        bar_container = plt.bar(exp_names, means, yerr=errors, capsize=5,
+                                color=sns.color_palette("viridis", len(exp_names)))
+
+        # Highlight the best bar
+        if best_idx != -1 and best_idx < len(bar_container):
+            try:
+                bar_container[best_idx].set_color('red')
+                # Add annotation for the best experiment
+                plt.text(best_idx, means[best_idx] + errors[best_idx], ' Best',
+                         ha='center', va='bottom', color='red', fontweight='bold')
+            except IndexError:
+                 logging.warning(f"Could not highlight best bar for '{title}'. Index {best_idx} out of bounds for {len(bar_container)} bars.")
+            except ValueError: # Handle cases where mean/error might be NaN
+                 logging.warning(f"Could not place annotation for best bar in '{title}' due to NaN value.")
+
+        elif best_idx != -1:
+             logging.warning(f"Best index {best_idx} out of range for highlighting in '{title}'.")
+
+    except Exception as e:
+        logging.error(f"Error creating aggregated bar plot '{title}': {e}")
+        plt.close()
+        return
 
 
     plt.xticks(rotation=45, ha='right', fontsize='small')
@@ -911,7 +975,7 @@ def plot_discovery_effect(
 ) -> None:
     """
     Plots the final performance metric against the discovery noise level 'f'.
-    Generates one plot per aggregator, showing how performance changes with f.
+    Generates one plot per dataset, showing how performance changes with f for each aggregator.
     Assumes experiment names encode the 'f' value and aggregator type.
     """
     plot_data = []
@@ -922,9 +986,13 @@ def plot_discovery_effect(
         aggregator = df_first_run['exp_aggregator'].iloc[0]
         discovery_f = df_first_run[discovery_param].iloc[0]
         dataset = df_first_run['exp_dataset'].iloc[0]
+        # Optionally filter by attack type etc. if discovery effect is attack-specific
+        attack = df_first_run['exp_attack'].iloc[0]
+        adv_rate = df_first_run['exp_adv_rate'].iloc[0]
 
-        if aggregator == 'unknown' or pd.isna(discovery_f):
-            # logging.debug(f"Skipping exp {exp_name} for discovery plot (missing aggregator or f).")
+
+        if aggregator == 'unknown' or pd.isna(discovery_f) or dataset == 'unknown':
+            # logging.debug(f"Skipping exp {exp_name} for discovery plot (missing aggregator, f, or dataset).")
             continue
 
         # Calculate final metric value (mean across runs)
@@ -943,8 +1011,11 @@ def plot_discovery_effect(
                 'aggregator': aggregator,
                 'discovery_f': discovery_f,
                 'dataset': dataset,
+                'attack': attack, # Include for potential facetting
+                'adv_rate': adv_rate, # Include for potential facetting
                 f'{metric}_mean': np.mean(final_vals),
-                f'{metric}_std': np.std(final_vals)
+                f'{metric}_std': np.std(final_vals),
+                 'n_runs': len(final_vals) # For calculating SEM if needed
             })
 
     if not plot_data:
@@ -952,36 +1023,44 @@ def plot_discovery_effect(
         return
 
     df_plot = pd.DataFrame(plot_data)
+    df_plot[f'{metric}_sem'] = df_plot[f'{metric}_std'] / np.sqrt(df_plot['n_runs'])
 
-    # Create a separate plot for each dataset
-    for dataset_name, group_data in df_plot.groupby('dataset'):
-        if dataset_name == 'unknown': continue
+
+    # Create a separate plot for each dataset (and optionally attack scenario)
+    for (dataset_name, attack_name, adv_rate_val), group_data in df_plot.groupby(['dataset', 'attack', 'adv_rate']):
+        if dataset_name == 'unknown' or group_data.empty: continue
 
         plt.figure(figsize=(10, 6))
-        # Plot with lines connecting points for the same aggregator, and error bars
-        sns.lineplot(
-            data=group_data,
-            x='discovery_f',
-            y=f'{metric}_mean',
-            hue='aggregator',
-            style='aggregator', # Use different styles (lines/markers)
-            markers=True,
-            err_style="bars", # Show std dev as error bars
-            errorbar=('ci', 95), # Or 'sd'
-            legend='full'
-        )
+        try:
+            # Plot with lines connecting points for the same aggregator, and error bars
+            sns.lineplot(
+                data=group_data,
+                x='discovery_f',
+                y=f'{metric}_mean',
+                hue='aggregator',
+                style='aggregator', # Use different styles (lines/markers)
+                markers=True,
+                err_style="bars", # Show std dev or SEM as error bars
+                errorbar=('ci', 95), # Or use errorbar=lambda data: (data[f'{metric}_mean'] - data[f'{metric}_sem'], data[f'{metric}_mean'] + data[f'{metric}_sem'])) for SEM
+                legend='full'
+            )
 
-        plt.title(f"{title_prefix} on {dataset_name.upper()} ({metric})")
-        plt.xlabel("Discovery Noise Level (f)")
-        plt.ylabel(f"Final {metric.replace('_', ' ').title()} (Mean ± CI)")
-        plt.legend(title='Aggregator', loc='best')
-        plt.tight_layout()
+            attack_str = f"Attack: {attack_name}" + (f" ({int(adv_rate_val*100)}%)" if adv_rate_val > 0 else "")
+            plt.title(f"{title_prefix} on {dataset_name.upper()} ({metric})\n{attack_str}")
+            plt.xlabel("Discovery Noise Level (f)")
+            plt.ylabel(f"Final {metric.replace('_', ' ').title()} (Mean ± 95% CI)")
+            plt.legend(title='Aggregator', loc='best')
+            plt.tight_layout()
 
-        save_path = output_dir / f"discovery_effect_{dataset_name}_{metric}.png"
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        logging.info(f"Saved plot: {save_path}")
-        plt.close()
+            save_path = output_dir / f"discovery_effect_{dataset_name}_{attack_name}_{int(adv_rate_val*100)}pct_{metric}.png"
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            logging.info(f"Saved plot: {save_path}")
+
+        except Exception as e:
+            logging.error(f"Failed to generate discovery plot for {dataset_name}, {attack_name}, {metric}: {e}")
+        finally:
+            plt.close()
 
 
 def plot_buyer_mode_effect(
@@ -993,9 +1072,9 @@ def plot_buyer_mode_effect(
 ) -> None:
     """
     Compares the final performance metric between 'unbiased' and 'biased' buyer root data settings.
-    Generates bar plots grouped by aggregator/dataset. Assumes experiment names encode buyer mode.
+    Generates bar plots grouped by aggregator/dataset/attack scenario. Assumes experiment names encode buyer mode.
     """
-    comparison_data = {} # {(dataset, aggregator): {'unbiased': [vals], 'biased': [vals]}}
+    comparison_data = {} # {(dataset, aggregator, attack, adv_rate): {'unbiased': [vals], 'biased': [vals]}}
 
     for exp_name, run_list in processed_results.items():
         if not run_list: continue
@@ -1028,7 +1107,12 @@ def plot_buyer_mode_effect(
                         final_vals.append(final_val)
 
         if final_vals:
-             comparison_data[exp_key][buyer_mode].extend(final_vals) # Use extend to add all run values
+             # Check if the specific mode list exists before extending
+             if buyer_mode in comparison_data[exp_key]:
+                 comparison_data[exp_key][buyer_mode].extend(final_vals) # Use extend to add all run values
+             else:
+                 logging.warning(f"Unexpected buyer_mode '{buyer_mode}' encountered for key {exp_key}.")
+
 
     # --- Now Plot ---
     plot_rows = []
@@ -1056,52 +1140,73 @@ def plot_buyer_mode_effect(
 
     # Create a separate plot per dataset (and potentially per attack scenario)
     for (dataset_name, attack_name, adv_rate_val), group_data in df_plot.groupby(['dataset', 'attack', 'adv_rate']):
-         if dataset_name == 'unknown': continue
+         if dataset_name == 'unknown' or group_data.empty: continue
 
          plt.figure(figsize=(10, 6))
-         ax = sns.barplot(
-             data=group_data,
-             x='aggregator',
-             y='mean_metric',
-             hue='buyer_mode',
-             palette={'unbiased': 'blue', 'biased': 'orange'}, # Assign colors
-             errorbar=None # We will add error bars manually for clarity
-         )
+         try:
+             ax = sns.barplot(
+                 data=group_data,
+                 x='aggregator',
+                 y='mean_metric',
+                 hue='buyer_mode',
+                 palette={'unbiased': 'tab:blue', 'biased': 'tab:orange'}, # Use distinct colors
+                 errorbar=None # We will add error bars manually for clarity
+             )
 
-         # Add error bars manually
-         num_aggregators = len(group_data['aggregator'].unique())
-         x_coords = np.arange(num_aggregators)
-         width = 0.4 # Bar width for hue plots
+             # Add error bars manually
+             num_aggregators = len(group_data['aggregator'].unique())
+             x_coords = np.arange(num_aggregators)
+             width = 0.4 # Default bar width for hue plots in seaborn
 
-         unbiased_data = group_data[group_data['buyer_mode'] == 'unbiased'].set_index('aggregator')
-         biased_data = group_data[group_data['buyer_mode'] == 'biased'].set_index('aggregator')
+             # Get the aggregator order from the plot axis for correct alignment
+             agg_order = [tick.get_text() for tick in ax.get_xticklabels()]
 
-         # Ensure consistent ordering based on the plot's x-axis ticks
-         agg_order = [tick.get_text() for tick in ax.get_xticklabels()]
-         unbiased_data = unbiased_data.reindex(agg_order)
-         biased_data = biased_data.reindex(agg_order)
+             unbiased_data = group_data[group_data['buyer_mode'] == 'unbiased'].set_index('aggregator').reindex(agg_order)
+             biased_data = group_data[group_data['buyer_mode'] == 'biased'].set_index('aggregator').reindex(agg_order)
 
-         if not unbiased_data.empty:
-            ax.errorbar(x=x_coords - width/2, y=unbiased_data['mean_metric'], yerr=unbiased_data['sem_metric'],
-                        fmt='none', c='black', capsize=5, label='_nolegend_')
-         if not biased_data.empty:
-            ax.errorbar(x=x_coords + width/2, y=biased_data['mean_metric'], yerr=biased_data['sem_metric'],
-                        fmt='none', c='black', capsize=5, label='_nolegend_')
+             # Calculate positions for error bars (centered on the bars)
+             unbiased_pos = x_coords - width / 2
+             biased_pos = x_coords + width / 2
+
+             # Add error bars, handling potential missing data for a mode/aggregator combination
+             if not unbiased_data.empty:
+                # Ensure alignment even if some aggregators are missing for this mode
+                valid_unbiased_indices = [i for i, agg in enumerate(agg_order) if agg in unbiased_data.index]
+                ax.errorbar(x=unbiased_pos[valid_unbiased_indices],
+                            y=unbiased_data.loc[agg_order[valid_unbiased_indices], 'mean_metric'],
+                            yerr=unbiased_data.loc[agg_order[valid_unbiased_indices], 'sem_metric'],
+                            fmt='none', c='black', capsize=5)
+             if not biased_data.empty:
+                 valid_biased_indices = [i for i, agg in enumerate(agg_order) if agg in biased_data.index]
+                 ax.errorbar(x=biased_pos[valid_biased_indices],
+                             y=biased_data.loc[agg_order[valid_biased_indices], 'mean_metric'],
+                             yerr=biased_data.loc[agg_order[valid_biased_indices], 'sem_metric'],
+                             fmt='none', c='black', capsize=5)
 
 
-         attack_str = f"Attack: {attack_name}" + (f" ({int(adv_rate_val*100)}%)" if adv_rate_val > 0 else "")
-         plt.title(f"{title_prefix} on {dataset_name.upper()} ({metric})\n{attack_str}")
-         plt.xlabel("Aggregator")
-         plt.ylabel(f"Final {metric.replace('_', ' ').title()} (Mean ± SEM)")
-         plt.xticks(rotation=15, ha='right')
-         plt.legend(title='Buyer Root Data', loc='best')
-         plt.tight_layout()
+             attack_str = f"Attack: {attack_name}" + (f" ({int(adv_rate_val*100)}%)" if adv_rate_val > 0 else "")
+             plt.title(f"{title_prefix} on {dataset_name.upper()} ({metric})\n{attack_str}")
+             plt.xlabel("Aggregator")
+             plt.ylabel(f"Final {metric.replace('_', ' ').title()} (Mean ± SEM)")
+             plt.xticks(rotation=15, ha='right')
+             # Ensure legend only shows 'unbiased' and 'biased' once
+             handles, labels = ax.get_legend_handles_labels()
+             if handles: # Check if legend exists
+                 ax.legend(handles, labels, title='Buyer Root Data', loc='best')
+             else:
+                 logging.warning(f"Could not generate legend for buyer mode plot: {dataset_name}, {attack_name}")
 
-         save_path = output_dir / f"buyer_mode_effect_{dataset_name}_{attack_name}_{int(adv_rate_val*100)}pct_{metric}.png"
-         save_path.parent.mkdir(parents=True, exist_ok=True)
-         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-         logging.info(f"Saved plot: {save_path}")
-         plt.close()
+             plt.tight_layout()
+
+             save_path = output_dir / f"buyer_mode_effect_{dataset_name}_{attack_name}_{int(adv_rate_val*100)}pct_{metric}.png"
+             save_path.parent.mkdir(parents=True, exist_ok=True)
+             plt.savefig(save_path, dpi=300, bbox_inches='tight')
+             logging.info(f"Saved plot: {save_path}")
+
+         except Exception as e:
+             logging.error(f"Failed to generate buyer mode plot for {dataset_name}, {attack_name}, {metric}: {e}")
+         finally:
+             plt.close()
 
 
 def plot_fairness_scatter(
@@ -1112,7 +1217,7 @@ def plot_fairness_scatter(
 ) -> None:
     """
     Generates scatter plots showing benign seller selection frequency vs. their divergence proxy.
-    Creates one plot per experiment setup (or potentially grouped by dataset/aggregator).
+    Creates one plot per Dataset-Attack-AdvRate combo, hue by Aggregator.
     """
     scatter_points = []
 
@@ -1149,13 +1254,15 @@ def plot_fairness_scatter(
         # If we collected data, add points to the main list for plotting
         if run_freq_div_pairs:
             # Combine pairs from all runs for this experiment setup
+            # Each point represents one seller from one run
+            # Alternatively, average freq/div per seller across runs? Let's plot all points first.
             all_pairs_for_exp = [pair for run_pairs in run_freq_div_pairs for pair in run_pairs]
             for freq, divergence in all_pairs_for_exp:
                  scatter_points.append({
-                     'experiment': exp_name,
+                     'experiment': exp_name, # Keep original experiment name if needed
                      'frequency': freq,
                      'divergence': divergence,
-                     # Add other identifying info if needed for grouping plots
+                     # Add pre-extracted parameters for grouping plots
                      'dataset': run_list[0]['exp_dataset'].iloc[0],
                      'aggregator': run_list[0]['exp_aggregator'].iloc[0],
                      'attack': run_list[0]['exp_attack'].iloc[0],
@@ -1168,60 +1275,66 @@ def plot_fairness_scatter(
 
     df_scatter = pd.DataFrame(scatter_points)
 
-    # --- Plotting Strategy ---
-    # Option 1: One massive plot colored by experiment (might be too cluttered)
-    # Option 2: Faceted plot (e.g., grid by dataset and aggregator)
-    # Option 3: Separate plot per dataset/aggregator/attack combo
-
-    # Let's go with Option 3 for clarity: Separate plot per Dataset-Attack-AdvRate combo, hue by Aggregator
-
+    # Plot: Separate plot per Dataset-Attack-AdvRate combo, hue by Aggregator
     for (dataset_name, attack_name, adv_rate_val), group_data in df_scatter.groupby(['dataset', 'attack', 'adv_rate']):
-        if dataset_name == 'unknown': continue
-
-        if group_data.empty: continue
+        if dataset_name == 'unknown' or group_data.empty: continue
 
         plt.figure(figsize=(10, 7))
-        sns.scatterplot(
-            data=group_data,
-            x='divergence',
-            y='frequency',
-            hue='aggregator',
-            style='aggregator', # Use different markers as well
-            alpha=0.7, # Make points slightly transparent
-            s=50 # Adjust point size
-        )
+        try:
+            sns.scatterplot(
+                data=group_data,
+                x='divergence',
+                y='frequency',
+                hue='aggregator',
+                style='aggregator', # Use different markers as well
+                alpha=0.6, # Make points slightly transparent if many points overlap
+                s=50 # Adjust point size
+            )
 
-        attack_str = f"Attack: {attack_name}" + (f" ({int(adv_rate_val*100)}%)" if adv_rate_val > 0 else "")
-        plt.title(f"{title_prefix}\nDataset: {dataset_name.upper()}, {attack_str}")
-        plt.xlabel(divergence_metric)
-        plt.ylabel("Benign Seller Selection Frequency")
-        plt.legend(title='Aggregator', loc='best', fontsize='small')
-        plt.tight_layout()
+            attack_str = f"Attack: {attack_name}" + (f" ({int(adv_rate_val*100)}%)" if adv_rate_val > 0 else "")
+            plt.title(f"{title_prefix}\nDataset: {dataset_name.upper()}, {attack_str}")
+            plt.xlabel(divergence_metric)
+            plt.ylabel("Benign Seller Selection Frequency")
+            plt.legend(title='Aggregator', loc='best', fontsize='small')
+            # Optional: Add grid lines
+            plt.grid(True, linestyle='--', alpha=0.6)
+            plt.tight_layout()
 
-        save_path = output_dir / f"fairness_scatter_{dataset_name}_{attack_name}_{int(adv_rate_val*100)}pct.png"
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        logging.info(f"Saved plot: {save_path}")
-        plt.close()
+            save_path = output_dir / f"fairness_scatter_{dataset_name}_{attack_name}_{int(adv_rate_val*100)}pct.png"
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            logging.info(f"Saved plot: {save_path}")
+
+        except Exception as e:
+             logging.error(f"Failed to generate fairness scatter plot for {dataset_name}, {attack_name}: {e}")
+        finally:
+            plt.close()
 
 
 # --- Main Execution Logic ---
 
 if __name__ == "__main__":
     # --- Configuration ---
-    # Base directory where objective folders (or experiment folders) reside
+    # Base directory where objective folders (like 'baselines', 'backdoor_attack') reside
     RESULTS_BASE_DIR = "./experiment_results" # MODIFY AS NEEDED
     # Directory to save generated plots and summary CSV
     OUTPUT_DIR = Path("./analysis_plots_marketplace_revised") # MODIFY AS NEEDED
     # Target accuracy for Cost of Convergence calculation
     TARGET_ACC_FOR_COC = 0.75 # MODIFY AS NEEDED
+    # Optional: Specify exactly which objective folders to load, or None to load all
+    # OBJECTIVES_TO_LOAD = ['baselines', 'backdoor_attacks_cifar', 'privacy_analysis']
+    OBJECTIVES_TO_LOAD = None # Set to None to load all objectives found
 
-    # Create output directory
+    # --- Setup ---
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # --- 1. Load Data ---
-    # Load results from all experiments found under RESULTS_BASE_DIR
-    raw_results = load_all_results(RESULTS_BASE_DIR, csv_filename="round_results.csv")
+    # Load results using the modified function
+    raw_results = load_all_results(
+        RESULTS_BASE_DIR,
+        csv_filename="round_results.csv",
+        objectives=OBJECTIVES_TO_LOAD
+    )
 
     if not raw_results:
         logging.error("No results were loaded. Exiting analysis.")
@@ -1275,15 +1388,22 @@ if __name__ == "__main__":
         # Add extracted parameters for easier filtering/grouping of summary
         if run_list:
             first_run = run_list[0]
+            # Add objective_name and experiment_name_part if they exist from loading
+            for orig_param in ['objective_name', 'experiment_name_part']:
+                 agg_record[orig_param] = first_run[orig_param].iloc[0] if orig_param in first_run else 'unknown'
+
+            # Add extracted parameters like dataset, aggregator etc.
             for param in ['exp_dataset', 'exp_aggregator', 'exp_attack', 'exp_adv_rate', 'exp_buyer_mode', 'exp_discovery_f']:
                  agg_record[param] = first_run[param].iloc[0] if param in first_run else 'unknown'
 
 
         for metric_key, values in run_vals.items():
             values_np = np.array(values, dtype=float) # Ensure float for nan handling
-            if len(values_np[~np.isnan(values_np)]) > 0: # Check if there are any non-NaN values
-                agg_record[f"{metric_key}_mean"] = np.nanmean(values_np)
-                agg_record[f"{metric_key}_std"] = np.nanstd(values_np, ddof=1) # Use sample std dev
+            valid_values = values_np[~np.isnan(values_np)] # Filter NaNs for calculation
+            if valid_values.size > 0: # Check if there are any non-NaN values
+                agg_record[f"{metric_key}_mean"] = np.mean(valid_values)
+                # Use sample std dev (ddof=1), requires at least 2 points
+                agg_record[f"{metric_key}_std"] = np.std(valid_values, ddof=1) if valid_values.size > 1 else 0.0
             else:
                 agg_record[f"{metric_key}_mean"] = np.nan
                 agg_record[f"{metric_key}_std"] = np.nan
@@ -1301,41 +1421,39 @@ if __name__ == "__main__":
 
 
     # --- 4. Define Experiment Groups for Plotting ---
-    # **IMPORTANT**: Customize these groups based on your experiment naming convention
-    # and the specific comparisons you want to make, matching your Results sections.
+    # **IMPORTANT**: Customize these groups based on your combined experiment names
+    # (e.g., 'objective_experimentname') and the specific comparisons needed.
     all_exp_keys = list(processed_results.keys())
 
-    # Example Groupings (ADAPT THESE):
+    # Example Groupings (ADAPT THESE based on your combined names):
     experiment_groups = {
         # Baselines (No Attack) - Per Dataset
-        "Baseline_CIFAR": [k for k in all_exp_keys if 'cifar' in k and 'baseline_' in k and 'adv0' in k and 'none' in k],
-        "Baseline_FMNIST": [k for k in all_exp_keys if 'fmnist' in k and 'baseline_' in k and 'adv0' in k and 'none' in k],
-        "Baseline_AGNEWS": [k for k in all_exp_keys if 'agnews' in k and 'baseline_' in k and 'adv0' in k and 'none' in k],
-        "Baseline_TREC": [k for k in all_exp_keys if 'trec' in k and 'baseline_' in k and 'adv0' in k and 'none' in k],
+        "Baseline_CIFAR": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'cifar' and summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0] == 'none'],
+        "Baseline_FMNIST": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'fmnist' and summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0] == 'none'],
+        "Baseline_AGNEWS": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'agnews' and summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0] == 'none'],
+        "Baseline_TREC": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'trec' and summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0] == 'none'],
 
         # Backdoor Attacks - Compare Aggregators (e.g., CIFAR, 30% Adv)
-        "Backdoor_CIFAR_30pct": [k for k in all_exp_keys if 'cifar' in k and 'backdoor' in k and ('adv30pct' in k or 'adv0.3' in k)],
-        "Backdoor_FMNIST_30pct": [k for k in all_exp_keys if 'fmnist' in k and 'backdoor' in k and ('adv30pct' in k or 'adv0.3' in k)],
-         "Backdoor_AGNEWS_30pct": [k for k in all_exp_keys if 'agnews' in k and 'backdoor' in k and ('adv30pct' in k or 'adv0.3' in k)],
+        "Backdoor_CIFAR_30pct": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'cifar' and summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0] == 'backdoor' and summary_df.loc[summary_df['experiment_setup']==k, 'exp_adv_rate'].iloc[0] == 0.3],
+        "Backdoor_FMNIST_30pct": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'fmnist' and summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0] == 'backdoor' and summary_df.loc[summary_df['experiment_setup']==k, 'exp_adv_rate'].iloc[0] == 0.3],
+        "Backdoor_AGNEWS_30pct": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'agnews' and summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0] == 'backdoor' and summary_df.loc[summary_df['experiment_setup']==k, 'exp_adv_rate'].iloc[0] == 0.3],
 
         # Backdoor Attacks - Compare Adv Rates (e.g., CIFAR, FLTrust)
-        "Backdoor_CIFAR_FLTrust_vs_AdvRate": [k for k in all_exp_keys if 'cifar' in k and 'backdoor' in k and 'fltrust' in k],
+        "Backdoor_CIFAR_FLTrust_vs_AdvRate": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'cifar' and summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0] == 'backdoor' and summary_df.loc[summary_df['experiment_setup']==k, 'exp_aggregator'].iloc[0] == 'fltrust'],
 
         # Label Flipping Attacks - Compare Aggregators (e.g., CIFAR, 30% Adv)
-        "LabelFlip_CIFAR_30pct": [k for k in all_exp_keys if 'cifar' in k and ('label_flip' in k or 'labelflip' in k) and ('adv30pct' in k or 'adv0.3' in k)],
-        "LabelFlip_FMNIST_30pct": [k for k in all_exp_keys if 'fmnist' in k and ('label_flip' in k or 'labelflip' in k) and ('adv30pct' in k or 'adv0.3' in k)],
+        "LabelFlip_CIFAR_30pct": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'cifar' and 'label' in summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0] and summary_df.loc[summary_df['experiment_setup']==k, 'exp_adv_rate'].iloc[0] == 0.3],
+        "LabelFlip_FMNIST_30pct": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'fmnist' and 'label' in summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0] and summary_df.loc[summary_df['experiment_setup']==k, 'exp_adv_rate'].iloc[0] == 0.3],
 
         # Adaptive/Sybil Attacks - Compare Aggregators (e.g., CIFAR, 30% Adv)
-        "Sybil_CIFAR_30pct": [k for k in all_exp_keys if 'cifar' in k and ('sybil' in k or 'mimicry' in k) and ('adv30pct' in k or 'adv0.3' in k)],
+        "Sybil_CIFAR_30pct": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'cifar' and ('sybil' in summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0] or 'mimicry' in summary_df.loc[summary_df['experiment_setup']==k, 'exp_attack'].iloc[0]) and summary_df.loc[summary_df['experiment_setup']==k, 'exp_adv_rate'].iloc[0] == 0.3],
 
-        # Discovery Scenario Experiments (Group all related)
-        "Discovery_Experiments": [k for k in all_exp_keys if 'discovery' in k or '_f' in k], # Adjust pattern if needed
+         # Privacy Attack Experiments (Group all where privacy was measured - check summary df)
+        "Privacy_Analysis_CIFAR": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'exp_dataset'].iloc[0] == 'cifar' and not pd.isna(summary_df.loc[summary_df['experiment_setup']==k, 'attack_psnr_mean'].iloc[0])],
 
-        # Buyer Mode Experiments (Group all related)
-        "BuyerMode_Experiments": [k for k in all_exp_keys if 'buyerUnbiased' in k or 'buyerBiased' in k],
-
-         # Privacy Attack Experiments (Group all where privacy was measured)
-        "Privacy_Analysis_CIFAR": [k for k in all_exp_keys if 'cifar' in k and not summary_df[summary_df['experiment_setup']==k]['attack_psnr_mean'].isna().all()],
+        # Groups based on objective folder name (if loaded)
+        # "Objective_Baselines": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'objective_name'].iloc[0] == 'baselines'],
+        # "Objective_Backdoor": [k for k in all_exp_keys if summary_df.loc[summary_df['experiment_setup']==k, 'objective_name'].iloc[0].startswith('backdoor')],
 
         # You might need more specific groups depending on your analysis needs.
     }
@@ -1344,7 +1462,7 @@ if __name__ == "__main__":
     experiment_groups = {g_name: g_keys for g_name, g_keys in experiment_groups.items() if g_keys}
 
     if not experiment_groups:
-         logging.warning("No experiment groups were defined or matched any experiments. No plots will be generated.")
+         logging.warning("No experiment groups were defined or matched any experiments based on current filters. Limited plots will be generated.")
 
     # --- 5. Generate Plots for each Group ---
     for group_name, exp_keys in experiment_groups.items():
@@ -1360,6 +1478,9 @@ if __name__ == "__main__":
 
         # Get the subset of the summary DataFrame for this group
         group_summary_df = summary_df[summary_df['experiment_setup'].isin(exp_keys)]
+        if group_summary_df.empty:
+             logging.warning(f"Summary data is empty for group {group_name}. Skipping aggregated plots.")
+             # continue # Or allow non-aggregated plots to proceed
 
         # --- Plot Standard Performance Metrics (Time Series & Final) ---
         # Fig 1a-X (Accuracy), Fig 2a-X (Acc/ASR), Fig 3a-X (Acc), Fig 4a-X (Acc/ASR)
@@ -1403,20 +1524,24 @@ if __name__ == "__main__":
                                save_path=group_output_dir / "ts_num_sellers_selected.png")
 
         # --- Plot Aggregated Marketplace Metrics (Bar plots from summary_df) ---
-        # Fig 6.7 (CoC, Gini, Entropy, Stability, Fairness Corr/Diff)
-        plot_aggregated_metric_bar(group_summary_df, 'coc', f"{group_name} - Cost of Convergence (Acc >= {TARGET_ACC_FOR_COC})",
-                                   "Total Selections", higher_is_better=False, save_path=group_output_dir / "agg_coc.png")
-        plot_aggregated_metric_bar(group_summary_df, 'gini', f"{group_name} - Gini Coefficient of Selections",
-                                   "Gini (0=Equal, 1=Max Ineq.)", higher_is_better=False, save_path=group_output_dir / "agg_gini.png")
-        plot_aggregated_metric_bar(group_summary_df, 'entropy', f"{group_name} - Normalized Selection Entropy (Diversity)",
-                                   "Norm. Entropy (0=Min, 1=Max Div.)", higher_is_better=True, save_path=group_output_dir / "agg_entropy.png")
-        plot_aggregated_metric_bar(group_summary_df, 'stability', f"{group_name} - Selection Stability (Avg. Jaccard)",
-                                   "Avg. Jaccard Index", higher_is_better=True, save_path=group_output_dir / "agg_stability.png")
-        plot_aggregated_metric_bar(group_summary_df, 'fairness_diff', f"{group_name} - Fairness Differential (Benign Rate - Malicious Rate)",
-                                   "Selection Rate Difference", higher_is_better=True, save_path=group_output_dir / "agg_fairness_diff.png")
-        plot_aggregated_metric_bar(group_summary_df, 'fair_corr_rho', f"{group_name} - Fairness Correlation (Selection Freq vs Divergence)",
-                                   "Spearman Rho", higher_is_better=False, # Often aiming for low correlation (fairness)
-                                   save_path=group_output_dir / "agg_fairness_corr_rho.png")
+        if not group_summary_df.empty:
+            # Fig 6.7 (CoC, Gini, Entropy, Stability, Fairness Corr/Diff)
+            plot_aggregated_metric_bar(group_summary_df, 'coc', f"{group_name} - Cost of Convergence (Acc >= {TARGET_ACC_FOR_COC})",
+                                    "Total Selections", higher_is_better=False, save_path=group_output_dir / "agg_coc.png")
+            plot_aggregated_metric_bar(group_summary_df, 'gini', f"{group_name} - Gini Coefficient of Selections",
+                                    "Gini (0=Equal, 1=Max Ineq.)", higher_is_better=False, save_path=group_output_dir / "agg_gini.png")
+            plot_aggregated_metric_bar(group_summary_df, 'entropy', f"{group_name} - Normalized Selection Entropy (Diversity)",
+                                    "Norm. Entropy (0=Min, 1=Max Div.)", higher_is_better=True, save_path=group_output_dir / "agg_entropy.png")
+            plot_aggregated_metric_bar(group_summary_df, 'stability', f"{group_name} - Selection Stability (Avg. Jaccard)",
+                                    "Avg. Jaccard Index", higher_is_better=True, save_path=group_output_dir / "agg_stability.png")
+            plot_aggregated_metric_bar(group_summary_df, 'fairness_diff', f"{group_name} - Fairness Differential (Benign Rate - Malicious Rate)",
+                                    "Selection Rate Difference", higher_is_better=True, save_path=group_output_dir / "agg_fairness_diff.png")
+            plot_aggregated_metric_bar(group_summary_df, 'fair_corr_rho', f"{group_name} - Fairness Correlation (Selection Freq vs Divergence)",
+                                    "Spearman Rho", higher_is_better=False, # Often aiming for low correlation (fairness)
+                                    save_path=group_output_dir / "agg_fairness_corr_rho.png")
+        else:
+             logging.warning(f"Skipping aggregated marketplace plots for group {group_name} due to empty summary data.")
+
 
         # --- Plot Scatter Plots for Trade-offs ---
         # Fig 6.8 (Trade-offs), e.g., Acc vs ASR, Acc vs Privacy, Acc vs Fairness/Cost
@@ -1424,37 +1549,37 @@ if __name__ == "__main__":
                                 xlabel="Final Global Accuracy", ylabel="Final Global ASR", save_path=group_output_dir / "scatter_acc_vs_asr.png")
         plot_scatter_comparison(group_results, 'global_acc', 'attack_psnr', f"{group_name} - Trade-off: Final Accuracy vs Privacy (PSNR)",
                                 xlabel="Final Global Accuracy", ylabel="Final Attack PSNR", save_path=group_output_dir / "scatter_acc_vs_psnr.png")
-        # Scatter using aggregated values from summary_df
-        # Need to merge summary data back or re-calculate final points
-        # Example: Accuracy vs Cost of Convergence
-        plot_scatter_comparison(group_results, 'global_acc', 'coc_mean', f"{group_name} - Trade-off: Final Accuracy vs Cost of Convergence",
-                                xlabel="Final Global Accuracy", ylabel=f"Avg Cost of Convergence (Acc >= {TARGET_ACC_FOR_COC})",
-                                # Requires adding 'coc_mean' to the 'scatter_data' calculation in plot_scatter_comparison or using summary_df directly
-                                # For now, we comment this out as it needs modifications to the scatter function or data prep
-                                # save_path=group_output_dir / "scatter_acc_vs_coc.png"
-                                )
-        # Example: Accuracy vs Gini
-        # plot_scatter_comparison(group_results, 'global_acc', 'gini_mean', ... )
+        # Add more scatter plots as needed, potentially using aggregated data from summary_df if appropriate
 
 
-    # --- 6. Generate Specific Comparison Plots (outside the main group loop) ---
+    # --- 6. Generate Specific Comparison Plots (across groups or all data) ---
 
     # --- Plot Discovery Effect (Fig 5a) ---
-    # Uses all relevant processed results
+    # Uses all relevant processed results (those with discovery_f parameter)
     logging.info("--- Generating Discovery Effect plots ---")
-    plot_discovery_effect(processed_results, metric='global_acc', output_dir=OUTPUT_DIR / "Comparison_DiscoveryEffect")
-    # Add plots for other metrics if needed (e.g., ASR)
-    # plot_discovery_effect(processed_results, metric='global_asr', output_dir=OUTPUT_DIR / "Comparison_DiscoveryEffect")
+    # Filter processed_results to only include experiments where discovery_f is not NaN
+    discovery_results = {k: v for k, v in processed_results.items() if not pd.isna(v[0]['exp_discovery_f'].iloc[0])}
+    if discovery_results:
+        plot_discovery_effect(discovery_results, metric='global_acc', output_dir=OUTPUT_DIR / "Comparison_DiscoveryEffect")
+        plot_discovery_effect(discovery_results, metric='global_asr', output_dir=OUTPUT_DIR / "Comparison_DiscoveryEffect") # If relevant
+    else:
+        logging.warning("No experiments with valid 'exp_discovery_f' found for discovery effect plots.")
 
     # --- Plot Buyer Mode Effect (Fig 5b) ---
-    # Uses all relevant processed results
+    # Uses all relevant processed results (those with known buyer_mode)
     logging.info("--- Generating Buyer Mode Effect plots ---")
-    plot_buyer_mode_effect(processed_results, metric='global_acc', output_dir=OUTPUT_DIR / "Comparison_BuyerModeEffect")
-    # Add plots for other metrics if needed (e.g., ASR)
-    # plot_buyer_mode_effect(processed_results, metric='global_asr', output_dir=OUTPUT_DIR / "Comparison_BuyerModeEffect", higher_is_better=False)
+    buyer_mode_results = {k: v for k, v in processed_results.items() if v[0]['exp_buyer_mode'].iloc[0] in ['unbiased', 'biased']}
+    if buyer_mode_results:
+        plot_buyer_mode_effect(buyer_mode_results, metric='global_acc', output_dir=OUTPUT_DIR / "Comparison_BuyerModeEffect")
+        plot_buyer_mode_effect(buyer_mode_results, metric='global_asr', output_dir=OUTPUT_DIR / "Comparison_BuyerModeEffect", higher_is_better=False) # If relevant
+    else:
+         logging.warning("No experiments with 'unbiased' or 'biased' buyer modes found for buyer mode effect plots.")
+
 
     # --- Plot Fairness Scatter (Optional Fig 6.7) ---
     logging.info("--- Generating Fairness Scatter plots ---")
+    # Potentially filter results here if only certain scenarios are relevant for this plot
+    # e.g., fairness_scatter_results = {k: v for k,v in processed_results.items() if v[0]['exp_discovery_f'] ... }
     plot_fairness_scatter(processed_results, output_dir=OUTPUT_DIR / "Comparison_FairnessScatter")
 
 
