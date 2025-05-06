@@ -41,7 +41,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
         summary_data: Dictionary with summary metrics
     """
     try:
-        experiment_data = torch.load(file_path, map_location='cpu')
+        experiment_data = torch.load(file_path, map_location='cpu', weights_only=False)
         data_stats = load_json(data_statistics_path)
 
         buyer_distribution = data_stats['buyer_stats']['class_distribution']
