@@ -30,59 +30,117 @@ OBJECTIVES = [
 
 
 def load_all_results(
-    base_dir: str,
-    csv_filename: str = "round_results.csv",
-    objectives: Optional[List[str]] = None
+        base_dir: str,
+        csv_filename: str = "round_results.csv",
+        objectives: Optional[List[str]] = None  # Optional list of objective folders to load
 ) -> Dict[str, List[pd.DataFrame]]:
     """
-    Load results from base_dir/<objective>/<experiment>/run_*/csv_filename,
-    only for objectives in the provided list (or all if None).
+    Load results structured as base_dir/<objective>/<experiment_id>/run_*/csv_filename.
+
+    Args:
+        base_dir: The root directory containing the objective folders
+                  (e.g., './experiment_results').
+        csv_filename: The name of the results CSV file within each run directory.
+        objectives: An optional list of strings. If provided, only objective folders
+                    matching these names will be scanned. If None, all objective
+                    folders under base_dir will be scanned.
+
+    Returns:
+        A dictionary where keys are combined strings '<objective>_<experiment_id>'
+        and values are lists of pandas DataFrames, each DataFrame representing
+        one run's results.
     """
-    objectives = objectives or []
     base_path = Path(base_dir)
     if not base_path.is_dir():
-        logging.error(f"Base directory '{base_dir}' not found.")
+        logging.error(f"Base results directory not found: '{base_dir}'")
         return {}
 
     all_results: Dict[str, List[pd.DataFrame]] = {}
-    logging.info(f"Loading results from: {base_path}")
+    logging.info(f"Scanning for results in: {base_path}")
+    if objectives:
+        logging.info(f"Filtering for objectives: {objectives}")
 
-    for obj_path in sorted(base_path.iterdir()):
-        if not obj_path.is_dir():
+    # 1. Iterate through objective folders directly under base_dir
+    for objective_path in sorted(base_path.iterdir()):
+        if not objective_path.is_dir():
+            continue  # Skip files, etc.
+
+        objective_name = objective_path.name
+
+        # 2. Filter by the provided objectives list (if any)
+        if objectives and objective_name not in objectives:
+            logging.debug(f"Skipping objective folder (not in filter list): {objective_name}")
             continue
-        if objectives and obj_path.name not in objectives:
-            logging.debug(f"Skipping objective folder: {obj_path.name}")
-            continue
-        # Iterate experiments under this objective
-        for exp_path in sorted(obj_path.iterdir()):
+
+        logging.info(f"Processing objective: {objective_name}")
+
+        # 3. Iterate through experiment_id folders within the objective folder
+        for exp_path in sorted(objective_path.iterdir()):
             if not exp_path.is_dir():
-                continue
-            exp_name = exp_path.name
-            run_dfs: List[pd.DataFrame] = []
-            logging.info(f"Processing experiment: {exp_name} under objective: {obj_path.name}")
+                continue  # Skip files, etc.
 
-            # Look for run_* directories
-            for run_dir in sorted(exp_path.glob('run_*')):
+            experiment_id_part = exp_path.name
+
+            # 4. Construct the unique key for the results dictionary
+            combined_exp_key = f"{objective_name}_{experiment_id_part}"
+
+            run_dfs: List[pd.DataFrame] = []
+            logging.info(f"--> Processing experiment: {experiment_id_part} (Key: {combined_exp_key})")
+
+            # 5. Find and process run_* directories within the experiment folder
+            run_dirs_found = False
+            for run_dir in sorted(exp_path.glob('run_*')):  # Use glob to find run directories
+                if not run_dir.is_dir():
+                    continue
+                run_dirs_found = True
+
                 csv_file = run_dir / csv_filename
                 if not csv_file.is_file():
+                    logging.warning(f"      CSV file '{csv_filename}' not found in {run_dir}")
                     continue
+
                 try:
                     df = pd.read_csv(csv_file)
                     if df.empty:
+                        logging.warning(f"      CSV file is empty: {csv_file}")
                         continue
-                    df['run_id'] = run_dir.name
-                    df['experiment_setup'] = exp_name
-                    run_dfs.append(df)
-                except Exception as e:
-                    logging.error(f"Failed to load {csv_file}: {e}")
 
+                    # Add identifying information to the DataFrame
+                    df['run_id'] = run_dir.name
+                    df['experiment_setup'] = combined_exp_key  # Use the combined key
+                    # Optional: Store original parts if needed later
+                    df['objective_name'] = objective_name
+                    df['experiment_id_part'] = experiment_id_part
+
+                    run_dfs.append(df)
+
+                except pd.errors.EmptyDataError:
+                    logging.warning(f"      CSV file is empty (pandas error): {csv_file}")
+                except Exception as e:
+                    logging.error(f"      Failed to load or process {csv_file}: {e}", exc_info=True)
+
+            if not run_dirs_found:
+                logging.warning(f"--> No 'run_*' directories found within experiment path: {exp_path}")
+
+            # 6. Add the collected run DataFrames to the main dictionary
             if run_dfs:
-                all_results[exp_name] = run_dfs
-            else:
-                logging.warning(f"No valid runs for experiment: {exp_name}")
+                # Handle potential (though unlikely) key collisions by extending list
+                if combined_exp_key in all_results:
+                    all_results[combined_exp_key].extend(run_dfs)
+                    logging.warning(
+                        f"--> Appended {len(run_dfs)} runs to existing key '{combined_exp_key}'. Check structure.")
+                else:
+                    all_results[combined_exp_key] = run_dfs
+                logging.info(f"--> Loaded {len(run_dfs)} runs for {combined_exp_key}")
+            elif run_dirs_found:  # Only log if runs were expected but failed to load
+                logging.warning(
+                    f"--> No valid CSVs loaded for experiment {combined_exp_key} despite finding run directories.")
 
     if not all_results:
-        logging.error("No experiments loaded.")
+        logging.warning(f"No experiment results loaded from {base_dir}. Check structure and objective filters.")
+    else:
+        logging.info(f"Finished loading data for {len(all_results)} unique experiment setups.")
+
     return all_results
 
 
@@ -106,7 +164,6 @@ def safe_literal_eval(val: Any) -> Any:
         except ValueError:
             return s
     return val
-
 
 
 def calculate_cost_of_convergence(df_run: pd.DataFrame, target_acc: float) -> Optional[float]:
