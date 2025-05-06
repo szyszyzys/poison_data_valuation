@@ -304,7 +304,7 @@ def generate_sybil_configs(output_dir):
     adv_rates = [0.3]  # Fix adversary rate
     aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
     amplify_factors = [1.0]  # Vary amplification
-    attack_modes = ["None", BACKDOOR, LABEL_FLIP]
+    attack_modes = ["None", BACKDOOR]
     for ds, rate, agg, amplify, attack_mode in itertools.product(datasets, adv_rates, aggregations, amplify_factors, attack_modes):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
         rate_pct = int(rate * 100)
