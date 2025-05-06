@@ -309,7 +309,7 @@ class DataMarketplaceFederated(DataMarketplace):
         logging.info(f"Outlier Sellers ({len(outlier_ids)}): {outlier_ids}")
         if aggregated_gradient and aggregated_gradient[0] is not None:
             # Use the pre-defined flatten_grads method
-            logging.info(f"Aggregated gradient norm: {np.linalg.norm(self.flatten_grads(aggregated_gradient))}")
+            logging.info(f"Aggregated gradient norm: {np.linalg.norm(flatten(aggregated_gradient))}")
 
         # --- 3. Update Global Model ---
         update_start_time = time.time()
