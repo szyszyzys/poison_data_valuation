@@ -2,14 +2,13 @@ import argparse
 import logging
 # log_utils.py (or results_logger.py)
 import os
-from pathlib import Path
-from typing import Dict, Optional, Any
-
 import torch
 import torch.backends.cudnn
 import torch.nn as nn
+from pathlib import Path
 from torch import nn
 from torch.utils.data import DataLoader
+from typing import Dict, Optional, Any
 
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorTextGenerator, LabelFlipAttackGenerator
@@ -418,7 +417,7 @@ def poisoning_attack_image(
             attack_mode=label_flip_mode,
             target_label=label_flip_target_label  # Pass the specific param
         )
-        gradient_manipulation_mode = 'passive'  # Label flip usually doesn't manipulate gradients directly
+        gradient_manipulation_mode = args.gradient_manipulation_mode
     else:
         attack_generator = None
 

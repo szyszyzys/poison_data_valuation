@@ -387,328 +387,588 @@ class SybilCoordinator:
         print("Coordinator: Global trigger updated.")
 
 
+# class GradientSeller(BaseSeller):
+#     """
+#     Seller that participates in federated learning by providing gradient updates
+#     instead of selling raw data.
+#     """
+#
+#     def __init__(self,
+#                  seller_id: str,
+#                  local_data: Dataset,
+#                  price_strategy: str = 'uniform',
+#                  dataset_name: str = 'dataset',
+#                  base_price: float = 1.0,
+#                  pad_idx=None,
+#                  price_variation: float = 0.2,
+#                  save_path="",
+#                  device="cpu",
+#                  vocab=None,
+#                  local_epochs=2, local_training_params=None):
+#         """.
+#         :param seller_id: Unique ID for the seller.
+#         :param local_data: The local dataset this seller holds for gradient computation.
+#         :param price_strategy: If needed, you can still keep a pricing concept or set to 'none'.
+#         :param base_price:  For some FL-based cost logic, or ignore if not used.
+#         :param price_variation: Variation factor for generating costs, if relevant.
+#         """
+#         super().__init__(
+#             seller_id=seller_id,
+#             dataset=local_data,  # We store the local dataset internally.
+#             price_strategy=price_strategy,
+#             base_price=base_price,
+#             price_variation=price_variation, save_path=save_path
+#             , device=device
+#         )
+#
+#         # Possibly store local model parameters or placeholders.
+#         # E.g., we might keep them in this field after each training round:
+#         self.dataset_name = dataset_name
+#         self.local_model_params: Optional[np.ndarray] = None
+#         self.current_round = 0
+#         self.selected_last_round = False
+#         self.local_epochs = local_epochs
+#         self.local_training_params = local_training_params
+#         self.recent_metrics = None
+#         self.cur_upload_gradient_flt = None
+#         self.cur_local_gradient = None
+#         self.vocab = vocab
+#         self.pad_idx = pad_idx
+#
+#     def set_local_model_params(self, params: np.ndarray):
+#         """Set (or update) local model parameters before computing gradient."""
+#         self.local_model_params = params
+#
+#     def get_gradient_for_upload(self, global_model=None) -> (torch.Tensor, int):
+#         """
+#         Compute the gradient that will be sent to the central server
+#
+#         :param global_model: Optional global model (will be deep copied)
+#         :return: Tuple (gradient, flattened_gradient, local_model, eval_results)
+#         """
+#         # 1. Determine the base model for local training
+#         if global_model is not None:
+#             # Deep copy the provided global model
+#             base_model = copy.deepcopy(global_model)
+#             print(f"[{self.seller_id}] Using provided global model.")
+#         else:
+#             try:
+#                 # Load previous local model if no global model provided
+#                 base_model = self.load_local_model()
+#                 print(f"[{self.seller_id}] Loaded previous local model.")
+#             except Exception as e:
+#                 print(f"[{self.seller_id}] No saved model found; using default initialization.")
+#                 base_model = get_image_model(self.dataset_name)  # Create a new model with default initialization
+#
+#         # Move the model to the correct device
+#         base_model = base_model.to(self.device)
+#
+#         # 2. Train locally and obtain the gradient update
+#         try:
+#             # Call the MODIFIED local training method
+#             gradient, gradient_flt, updated_model, local_eval_res, training_stats = self._compute_local_grad(
+#                 base_model, self.dataset  # Pass the actual dataset attribute
+#             )
+#
+#             # Ensure training_stats is a dict, even if _compute_local_grad fails partially
+#             if not isinstance(training_stats, dict):
+#                 logging.warning(f"Seller {self.seller_id}: _compute_local_grad did not return a valid stats dict.")
+#                 training_stats = {'train_loss': None, 'compute_time_ms': None}
+#
+#
+#         except Exception as e:
+#             logging.error(f"Seller {self.seller_id}: Error during _compute_local_grad: {e}", exc_info=True)
+#             # Return None gradient and empty stats on error? Or raise?
+#             # Returning None gradient signals failure to the marketplace loop
+#             return None, {'train_loss': None, 'compute_time_ms': None, 'upload_bytes': None}
+#
+#         # Update internal counter
+#         self.cur_upload_gradient_flt = gradient_flt
+#
+#         try:
+#             upload_bytes = estimate_byte_size(gradient)  # Use a helper to estimate size
+#         except Exception as e:
+#             logging.warning(f"Seller {self.seller_id}: Could not estimate gradient size: {e}")
+#             upload_bytes = None  # Indicate failure to estimate
+#
+#         # 4. Add upload_bytes to the stats dictionary
+#         training_stats['upload_bytes'] = upload_bytes
+#
+#         # 5. Return the gradient data and the completed stats dictionary
+#         #    Make sure the 'gradient' variable holds the data structure you intend to send
+#         #    (e.g., the dict of weight differences, NOT necessarily gradient_flt)
+#         return gradient, training_stats
+#
+#     def _create_zero_gradient(self):
+#         """Helper to create a zero gradient structure matching the model."""
+#         # Ensure model is initialized
+#         if not hasattr(self, 'global_model') or self.global_model is None:
+#             raise RuntimeError("Seller's global_model is not initialized.")
+#         zero_grad = {name: torch.zeros_like(param) for name, param in self.global_model.named_parameters() if
+#                      param.requires_grad}
+#         return zero_grad
+#
+#     def _compute_local_grad(self, base_model, dataset, batch_size=64) -> Tuple[Any, Any, Any, Dict, Dict]:
+#         """
+#         MODIFIED: Train local model, compute gradient, AND gather training stats.
+#
+#         Args:
+#             base_model: Initial model for local training (on correct device).
+#             dataset: Local data (expects structure usable by list_to_tensor_dataset).
+#
+#         Returns:
+#             Tuple (gradient, gradient_flt, updated_model, local_eval_res, training_stats):
+#                 gradient: Calculated gradient (e.g., weight diff).
+#                 gradient_flt: Flattened gradient.
+#                 updated_model: Model after local training.
+#                 local_eval_res: Evaluation results (potentially basic).
+#                 training_stats: {'train_loss': float|None, 'compute_time_ms': float|None}.
+#         """
+#         start_time = time.time()  # Start timing
+#
+#         if not dataset:
+#             logging.warning(f"Seller {self.seller_id}: Dataset is empty. Skipping gradient computation.")
+#             return self._create_zero_gradient()  # Need a way to return zero grad
+#
+#         # --- >> 1. Data Type Detection << ---
+#         try:
+#             first_item_data = dataset[0][0]
+#             first_item_label = dataset[0][1]  # Get label/second element too for better check
+#             # Image data: Expect (Tensor, int)
+#             is_image_data = isinstance(first_item_data, torch.Tensor) and isinstance(first_item_label, int)
+#             # Text data: Expect (int, list) - label first for our processed text
+#             is_text_data = isinstance(first_item_data, int) and isinstance(first_item_label, list)
+#
+#             if not is_image_data and not is_text_data:
+#                 # Handle ambiguous/unexpected format
+#                 raise TypeError(
+#                     f"Unrecognized data format in dataset item 0: type(item[0])={type(first_item_data)}, type(item[1])={type(first_item_label)}")
+#
+#         except Exception as e:
+#             logging.error(
+#                 f"Seller {self.seller_id}: Could not determine dataset type from first item: {dataset[0]}. Error: {e}")
+#             raise ValueError("Failed to determine dataset type.") from e
+#
+#         # --- >> 2. Create Appropriate DataLoader << ---
+#         data_loader = None
+#         try:
+#             if is_image_data:
+#                 logging.debug(f"Seller {self.seller_id}: Detected image data. Using TensorDataset.")
+#                 # Use the original function, assuming it works for images
+#                 tensor_dataset = list_to_tensor_dataset(dataset)
+#                 data_loader = DataLoader(tensor_dataset, batch_size=batch_size, shuffle=True)
+#
+#             elif is_text_data:
+#                 logging.debug(f"Seller {self.seller_id}: Detected text data. Using custom collate function.")
+#                 # Ensure pad_idx is available
+#                 pad_idx = getattr(self, 'pad_idx', None)  # Assumes pad_idx is stored in seller
+#                 if pad_idx is None:
+#                     # Try getting from vocab if available
+#                     vocab = getattr(self, 'vocab', None)
+#                     pad_token = getattr(self, 'pad_token', '<pad>')  # Assume pad token name
+#                     if vocab and pad_token in vocab.get_stoi():
+#                         pad_idx = vocab.get_stoi()[pad_token]
+#                     else:
+#                         raise ValueError(f"Seller {self.seller_id}: pad_idx not found, required for text data.")
+#                 logging.debug(f"Seller {self.seller_id}: Using pad_idx: {pad_idx}")
+#
+#                 pytorch_dataset = TextDataset(dataset)  # Wrap list in Dataset
+#                 custom_collate = partial(collate_batch, padding_value=pad_idx)
+#                 data_loader = DataLoader(
+#                     pytorch_dataset,
+#                     batch_size=batch_size,
+#                     shuffle=True,  # Shuffle for gradient computation epochs
+#                     collate_fn=custom_collate
+#                 )
+#             # No else needed due to check above
+#
+#         except Exception as e:
+#             data_type = "image" if is_image_data else "text"
+#             logging.error(f"Seller {self.seller_id}: Failed to create {data_type} DataLoader: {e}",
+#                           exc_info=True)  # Log traceback
+#             raise  # Re-raise the exception
+#
+#         if data_loader is None:
+#             # This case should ideally be prevented by the exceptions above
+#             logging.error(f"Seller {self.seller_id}: DataLoader is None after setup. Cannot compute gradient.")
+#             return self._create_zero_gradient()  # Or raise error
+#
+#         # Call the MODIFIED external training function which now returns avg_loss
+#         try:
+#             # Check if local_training_params are available
+#             if not hasattr(self, 'local_training_params') or not self.local_training_params:
+#                 raise ValueError("Missing 'local_training_params' attribute on seller.")
+#
+#             # Call the function - IT MUST NOW RETURN 5 VALUES
+#             grad_update, grad_update_flt, local_model, local_eval_res, avg_train_loss = local_training_and_get_gradient(
+#                 model=base_model,
+#                 train_loader=data_loader,  # Pass the converted dataset
+#                 batch_size=self.local_training_params.get('batch_size', 64),  # Use batch size from params
+#                 device=self.device,
+#                 # Ensure key names match your actual params dict
+#                 local_epochs=self.local_training_params.get("epochs",
+#                                                             self.local_training_params.get("local_epochs", 1)),
+#                 lr=self.local_training_params.get("learning_rate", self.local_training_params.get("lr", 0.01)),
+#                 # Pass other necessary params if local_training_and_get_gradient needs them
+#             )
+#
+#         except Exception as e:
+#             logging.error(f"Seller {self.seller_id}: Error during call to local_training_and_get_gradient: {e}",
+#                           exc_info=True)
+#             end_time_error = time.time()
+#             stats_error = {'train_loss': None, 'compute_time_ms': (end_time_error - start_time) * 1000}
+#             # Return None for gradient components, keep original model, empty eval, computed stats
+#             return None, None, base_model, {}, stats_error
+#
+#         # Calculate compute time
+#         end_time = time.time()
+#         compute_time_ms = (end_time - start_time) * 1000
+#
+#         # Package the stats
+#         training_stats = {
+#             'train_loss': avg_train_loss,  # Use the value returned by the training function
+#             'compute_time_ms': compute_time_ms
+#         }
+#
+#         # Clean up GPU memory (keep this if useful)
+#         torch.cuda.empty_cache()
+#
+#         # Return all original values PLUS the new stats dict
+#         return grad_update, grad_update_flt, local_model, local_eval_res, training_stats
+#
+#     def save_local_model(self, model: torch.nn.Module):
+#         """
+#         Save the local model parameters to disk for future rounds.
+#         """
+#         # Build the save path based on client_path and seller_id.
+#         save_path = f"{self.save_path}/local_model_{self.seller_id}.pt"
+#         torch.save(model.state_dict(), save_path)
+#         print(f"[{self.seller_id}] Saved local model to {save_path}.")
+#
+#     def load_local_model(self) -> Dict[str, torch.Tensor]:
+#         """
+#         Load the local model parameters from disk.
+#         """
+#         load_path = f"{self.save_path}/local_model_{self.seller_id}.pt"
+#         state_dict = torch.load(load_path, map_location=self.device)
+#         return state_dict
+#
+#     def record_federated_round(self,
+#                                round_number: int,
+#                                is_selected: bool,
+#                                final_model_params: Optional[Dict[str, torch.Tensor]] = None):
+#         """
+#         Record this seller's participation in a federated round.
+#         This may include whether it was selected, and (optionally) its final local model parameters.
+#
+#         :param round_number: The current round index.
+#         :param is_selected:  Whether this seller's update was selected.
+#         :param final_model_params: Optionally, the final local model parameters.
+#         """
+#         record = {
+#             'round_number': round_number,
+#             'timestamp': pd.Timestamp.now().isoformat(),
+#             'selected': is_selected,
+#             'gradient': self.cur_upload_gradient_flt,
+#         }
+#         self.selected_last_round = is_selected
+#         # if final_model_params is not None:
+#         #     # Convert state_dict tensors to lists (or use another serialization as needed).
+#         #     record['final_model_params'] = {k: v.cpu().numpy().tolist() for k, v in final_model_params.items()}
+#
+#     def round_end_process(self, round_number,
+#                           is_selected,
+#                           final_model_params=None):
+#         self.reset_current_local_gradient()
+#         self.record_federated_round(
+#             round_number,
+#             is_selected,
+#             final_model_params)
+#
+#     def reset_current_local_gradient(self):
+#         self.cur_local_gradient = None
+#
+#     # If you don't need the .get_data() returning "X" and "cost", you can override it:
+#     @property
+#     def get_data(self):
+#         """
+#         Overridden: Typically in FL, we might not 'sell' raw data.
+#         Return something if your code expects this method, or return empty.
+#         """
+#         return {
+#             "X": None,
+#             "cost": None,
+#         }
+#
+#     @property
+#     def get_federated_history(self):
+#         return self.federated_round_history
+#
+#     @property
+#     def local_model_path(self):
+#         return {self.exp_save_path}
+
+
 class GradientSeller(BaseSeller):
     """
-    Seller that participates in federated learning by providing gradient updates
-    instead of selling raw data.
+    Seller that participates in federated learning by providing gradient updates.
+    Revised for efficiency, assuming local_data in __init__ is a torch.utils.data.Dataset.
     """
 
     def __init__(self,
                  seller_id: str,
-                 local_data: Dataset,
+                 local_data: Dataset,  # CRITICAL: Assume this is already a torch.utils.data.Dataset
                  price_strategy: str = 'uniform',
-                 dataset_name: str = 'dataset',
+                 dataset_name: str = 'dataset',  # Used for get_image_model fallback
                  base_price: float = 1.0,
-                 pad_idx=None,
+                 pad_idx: Optional[int] = None,  # For text data
                  price_variation: float = 0.2,
-                 save_path="",
-                 device="cpu",
-                 vocab=None,
-                 local_epochs=2, local_training_params=None):
-        """.
-        :param seller_id: Unique ID for the seller.
-        :param local_data: The local dataset this seller holds for gradient computation.
-        :param price_strategy: If needed, you can still keep a pricing concept or set to 'none'.
-        :param base_price:  For some FL-based cost logic, or ignore if not used.
-        :param price_variation: Variation factor for generating costs, if relevant.
-        """
+                 save_path: str = "",
+                 device: str = "cpu",
+                 vocab: Optional[Any] = None,  # For text data, e.g., torchtext.vocab.Vocab
+                 local_epochs: int = 2,  # Default local epochs
+                 local_training_params: Optional[Dict[str, Any]] = None):
+
         super().__init__(
             seller_id=seller_id,
-            dataset=local_data,  # We store the local dataset internally.
+            dataset=local_data,  # BaseSeller stores this as self.dataset
             price_strategy=price_strategy,
             base_price=base_price,
-            price_variation=price_variation, save_path=save_path
-            , device=device
+            price_variation=price_variation,
+            save_path=save_path,
+            device=device
         )
 
-        # Possibly store local model parameters or placeholders.
-        # E.g., we might keep them in this field after each training round:
-        self.dataset_name = dataset_name
-        self.local_model_params: Optional[np.ndarray] = None
-        self.current_round = 0
+        self.dataset_name = dataset_name  # Used by get_image_model if loading fails
+        self.local_model_params: Optional[
+            np.ndarray] = None  # Kept for compatibility, but less used if models are PyTorch
+        self.current_round = 0  # Not actively used in provided methods, but can be for state
         self.selected_last_round = False
-        self.local_epochs = local_epochs
-        self.local_training_params = local_training_params
-        self.recent_metrics = None
-        self.cur_upload_gradient_flt = None
-        self.cur_local_gradient = None
+
+        # Consolidate local training parameters
+        self.local_training_params = local_training_params if local_training_params else {}
+        self.local_epochs = self.local_training_params.get('epochs', local_epochs)
+        self.batch_size = self.local_training_params.get('batch_size', 64)
+        self.learning_rate = self.local_training_params.get('lr',
+                                                            self.local_training_params.get('learning_rate', 0.01))
+        self.num_workers = self.local_training_params.get('num_workers', 0)
+        self.pin_memory = self.local_training_params.get('pin_memory', torch.cuda.is_available())
+
+        self.recent_metrics: Optional[Dict] = None
+        self.cur_upload_gradient_list_tensors: Optional[
+            List[torch.Tensor]] = None  # Stores unflattened gradient (list of tensors)
+        self.cur_local_gradient_list_tensors: Optional[List[torch.Tensor]] = None  # Cache for local gradient
+
         self.vocab = vocab
         self.pad_idx = pad_idx
+        if self.pad_idx is None and self.vocab:  # Try to get from vocab if not directly provided
+            pad_token = '<pad>'  # Common pad token
+            if hasattr(self.vocab, 'get_stoi') and pad_token in self.vocab.get_stoi():
+                self.pad_idx = self.vocab.get_stoi()[pad_token]
+            elif hasattr(self.vocab, 'stoi') and pad_token in self.vocab.stoi:  # For older torchtext
+                self.pad_idx = self.vocab.stoi[pad_token]
 
-    def set_local_model_params(self, params: np.ndarray):
-        """Set (or update) local model parameters before computing gradient."""
-        self.local_model_params = params
-
-    def get_gradient_for_upload(self, global_model=None) -> (torch.Tensor, int):
+    def get_gradient_for_upload(self, global_model: Optional[nn.Module] = None) -> Tuple[
+        Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
-        Compute the gradient that will be sent to the central server
-
-        :param global_model: Optional global model (will be deep copied)
-        :return: Tuple (gradient, flattened_gradient, local_model, eval_results)
+        Computes the gradient for upload. Returns a list of PyTorch tensors (gradient update) and training stats.
         """
-        # 1. Determine the base model for local training
+        base_model_for_training: nn.Module
         if global_model is not None:
-            # Deep copy the provided global model
-            base_model = copy.deepcopy(global_model)
-            print(f"[{self.seller_id}] Using provided global model.")
+            # OPTIMIZATION: Instead of deepcopy, load state_dict into a new instance.
+            # This is generally faster for large models.
+            try:
+                base_model_for_training = get_image_model(self.dataset_name,
+                                                          device=self.device)  # Get new model structure
+                base_model_for_training.load_state_dict(global_model.state_dict())
+                # logging.debug(f"[{self.seller_id}] Using provided global model by loading state_dict.")
+            except Exception as e:
+                logging.warning(
+                    f"[{self.seller_id}] Failed to load state_dict from global_model: {e}. Falling back to deepcopy.")
+                base_model_for_training = copy.deepcopy(global_model).to(self.device)
         else:
             try:
-                # Load previous local model if no global model provided
-                base_model = self.load_local_model()
-                print(f"[{self.seller_id}] Loaded previous local model.")
+                base_model_for_training = self.load_local_model()  # This now returns a model instance
+                # logging.debug(f"[{self.seller_id}] Loaded previous local model.")
             except Exception as e:
-                print(f"[{self.seller_id}] No saved model found; using default initialization.")
-                base_model = get_image_model(self.dataset_name)  # Create a new model with default initialization
+                # logging.warning(f"[{self.seller_id}] No saved local model found or error loading: {e}. Using new model.")
+                base_model_for_training = get_image_model(self.dataset_name, device=self.device)
 
-        # Move the model to the correct device
-        base_model = base_model.to(self.device)
+        # _compute_local_grad expects model on self.device, which base_model_for_training should be.
 
-        # 2. Train locally and obtain the gradient update
         try:
-            # Call the MODIFIED local training method
-            gradient, gradient_flt, updated_model, local_eval_res, training_stats = self._compute_local_grad(
-                base_model, self.dataset  # Pass the actual dataset attribute
+            gradient_list_tensors, _, _, local_eval_res, training_stats = self._compute_local_grad(
+                base_model_for_training, self.dataset  # self.dataset is the torch.utils.data.Dataset
             )
-
-            # Ensure training_stats is a dict, even if _compute_local_grad fails partially
             if not isinstance(training_stats, dict):
-                logging.warning(f"Seller {self.seller_id}: _compute_local_grad did not return a valid stats dict.")
+                logging.warning(f"Seller {self.seller_id}: _compute_local_grad returned invalid stats. Defaulting.")
                 training_stats = {'train_loss': None, 'compute_time_ms': None}
-
-
+            self.recent_metrics = local_eval_res  # Store metrics
         except Exception as e:
-            logging.error(f"Seller {self.seller_id}: Error during _compute_local_grad: {e}", exc_info=True)
-            # Return None gradient and empty stats on error? Or raise?
-            # Returning None gradient signals failure to the marketplace loop
+            logging.error(f"Seller {self.seller_id}: Error during _compute_local_grad: {e}", exc_info=False)
             return None, {'train_loss': None, 'compute_time_ms': None, 'upload_bytes': None}
 
-        # Update internal counter
-        self.cur_upload_gradient_flt = gradient_flt
+        self.cur_upload_gradient_list_tensors = gradient_list_tensors  # Store for potential later use/logging
 
         try:
-            upload_bytes = estimate_byte_size(gradient)  # Use a helper to estimate size
+            upload_bytes = estimate_byte_size(gradient_list_tensors)
         except Exception as e:
             logging.warning(f"Seller {self.seller_id}: Could not estimate gradient size: {e}")
-            upload_bytes = None  # Indicate failure to estimate
+            upload_bytes = None
 
-        # 4. Add upload_bytes to the stats dictionary
         training_stats['upload_bytes'] = upload_bytes
+        return gradient_list_tensors, training_stats
 
-        # 5. Return the gradient data and the completed stats dictionary
-        #    Make sure the 'gradient' variable holds the data structure you intend to send
-        #    (e.g., the dict of weight differences, NOT necessarily gradient_flt)
-        return gradient, training_stats
+    def _create_zero_gradient_tensors(self, model_to_match: nn.Module) -> List[torch.Tensor]:
+        """Helper to create a zero gradient (list of tensors) matching the model structure."""
+        return [torch.zeros_like(param, device=self.device) for param in model_to_match.parameters() if
+                param.requires_grad]
 
-    def _create_zero_gradient(self):
-        """Helper to create a zero gradient structure matching the model."""
-        # Ensure model is initialized
-        if not hasattr(self, 'global_model') or self.global_model is None:
-            raise RuntimeError("Seller's global_model is not initialized.")
-        zero_grad = {name: torch.zeros_like(param) for name, param in self.global_model.named_parameters() if
-                     param.requires_grad}
-        return zero_grad
-
-    def _compute_local_grad(self, base_model, dataset, batch_size=64) -> Tuple[Any, Any, Any, Dict, Dict]:
+    def _compute_local_grad(self, base_model: nn.Module, dataset: Dataset,
+                            ) -> Tuple[
+        Optional[List[torch.Tensor]], Optional[np.ndarray], Optional[nn.Module], Dict, Dict]:
         """
-        MODIFIED: Train local model, compute gradient, AND gather training stats.
-
-        Args:
-            base_model: Initial model for local training (on correct device).
-            dataset: Local data (expects structure usable by list_to_tensor_dataset).
-
-        Returns:
-            Tuple (gradient, gradient_flt, updated_model, local_eval_res, training_stats):
-                gradient: Calculated gradient (e.g., weight diff).
-                gradient_flt: Flattened gradient.
-                updated_model: Model after local training.
-                local_eval_res: Evaluation results (potentially basic).
-                training_stats: {'train_loss': float|None, 'compute_time_ms': float|None}.
+        Train local model, compute gradient, AND gather training stats.
+        Assumes 'dataset' is a torch.utils.data.Dataset.
+        Returns gradient as list of PyTorch Tensors.
         """
-        start_time = time.time()  # Start timing
+        start_time = time.time()
+        training_stats: Dict[str, Any] = {'train_loss': None, 'compute_time_ms': None}  # Initialize
 
-        if not dataset:
-            logging.warning(f"Seller {self.seller_id}: Dataset is empty. Skipping gradient computation.")
-            return self._create_zero_gradient()  # Need a way to return zero grad
+        if not dataset or len(dataset) == 0:  # Check if dataset has items
+            logging.warning(f"Seller {self.seller_id}: Dataset is empty. Returning zero gradient.")
+            zero_grad_tensors = self._create_zero_tensors(base_model)
+            training_stats['compute_time_ms'] = (time.time() - start_time) * 1000
+            return zero_grad_tensors, None, base_model, {}, training_stats
 
-        # --- >> 1. Data Type Detection << ---
+        # --- Data Type Detection (Simplified if dataset is always a PyTorch Dataset) ---
+        # We primarily rely on the structure of data items if we need to differentiate
+        # between image and text for collate_fn, but DataLoader creation is now more direct.
+        data_loader: DataLoader
         try:
-            first_item_data = dataset[0][0]
-            first_item_label = dataset[0][1]  # Get label/second element too for better check
-            # Image data: Expect (Tensor, int)
-            is_image_data = isinstance(first_item_data, torch.Tensor) and isinstance(first_item_label, int)
-            # Text data: Expect (int, list) - label first for our processed text
-            is_text_data = isinstance(first_item_data, int) and isinstance(first_item_label, list)
+            # Attempt to get the first item to infer structure for collate_fn if needed
+            # This assumes dataset[0] is representative.
+            first_item_sample = dataset[0]
+            # Example: Check if it's text data needing custom collation
+            # This check needs to be robust based on your actual data structure for text.
+            # For this example, let's assume if self.vocab or self.pad_idx is set, it's text.
+            is_text_data = self.vocab is not None or self.pad_idx is not None
 
-            if not is_image_data and not is_text_data:
-                # Handle ambiguous/unexpected format
-                raise TypeError(
-                    f"Unrecognized data format in dataset item 0: type(item[0])={type(first_item_data)}, type(item[1])={type(first_item_label)}")
+            if is_text_data:
+                # logging.debug(f"Seller {self.seller_id}: Assuming text data due to vocab/pad_idx. Using custom collate.")
+                if self.pad_idx is None:  # Ensure pad_idx is available
+                    raise ValueError(f"Seller {self.seller_id}: pad_idx not found, required for text data.")
+                custom_collate = partial(collate_batch, padding_value=self.pad_idx)
+                data_loader = DataLoader(
+                    dataset, batch_size=self.batch_size, shuffle=True,
+                    collate_fn=custom_collate, num_workers=self.num_workers, pin_memory=self.pin_memory
+                )
+            else:  # Assume image data or other data not needing special collation
+                # logging.debug(f"Seller {self.seller_id}: Assuming image/standard data. Using default collate.")
+                data_loader = DataLoader(
+                    dataset, batch_size=self.batch_size, shuffle=True,
+                    num_workers=self.num_workers, pin_memory=self.pin_memory
+                )
+        except Exception as e:
+            logging.error(f"Seller {self.seller_id}: Failed to create DataLoader: {e}", exc_info=True)
+            training_stats['compute_time_ms'] = (time.time() - start_time) * 1000
+            # Return structure indicating failure but with timings
+            return None, None, base_model, {}, training_stats
 
+        try:
+            grad_update_tensors, grad_update_flt_np, local_model, local_eval_res, avg_train_loss = local_training_and_get_gradient(
+                model=base_model,  # Already on self.device
+                train_loader=data_loader,
+                batch_size=self.batch_size,  # Already set in __init__
+                device=self.device,
+                local_epochs=self.local_epochs,  # Already set in __init__
+                lr=self.learning_rate,  # Already set in __init__
+            )
+        except Exception as e:
+            logging.error(f"Seller {self.seller_id}: Error in local_training_and_get_gradient: {e}", exc_info=True)
+            training_stats['compute_time_ms'] = (time.time() - start_time) * 1000
+            return None, None, base_model, {}, training_stats
+
+        compute_time_ms = (time.time() - start_time) * 1000
+        training_stats['train_loss'] = avg_train_loss
+        training_stats['compute_time_ms'] = compute_time_ms
+
+        # OPTIMIZATION: Avoid torch.cuda.empty_cache() unless proven necessary and carefully placed.
+        # torch.cuda.empty_cache()
+
+        return grad_update_tensors, grad_update_flt_np, local_model, local_eval_res, training_stats
+
+    def save_local_model(self, model_instance: nn.Module):  # Expect a model instance
+        save_file_path = f"{self.save_path}/local_model_{self.seller_id}.pt"
+        try:
+            torch.save(model_instance.state_dict(), save_file_path)
+            # logging.debug(f"[{self.seller_id}] Saved local model to {save_file_path}.")
+        except Exception as e:
+            logging.error(f"[{self.seller_id}] Failed to save local model to {save_file_path}: {e}")
+
+    def load_local_model(self) -> nn.Module:  # Returns a model instance
+        load_file_path = f"{self.save_path}/local_model_{self.seller_id}.pt"
+        model = get_image_model(self.dataset_name, device=self.device)  # Create model structure on correct device
+        try:
+            model.load_state_dict(torch.load(load_file_path, map_location=self.device))
+            # logging.debug(f"[{self.seller_id}] Loaded local model from {load_file_path}.")
+        except FileNotFoundError:
+            logging.warning(f"[{self.seller_id}] Local model file not found at {load_file_path}. Returning new model.")
+            # Model is already a new instance, so just pass
         except Exception as e:
             logging.error(
-                f"Seller {self.seller_id}: Could not determine dataset type from first item: {dataset[0]}. Error: {e}")
-            raise ValueError("Failed to determine dataset type.") from e
-
-        # --- >> 2. Create Appropriate DataLoader << ---
-        data_loader = None
-        try:
-            if is_image_data:
-                logging.debug(f"Seller {self.seller_id}: Detected image data. Using TensorDataset.")
-                # Use the original function, assuming it works for images
-                tensor_dataset = list_to_tensor_dataset(dataset)
-                data_loader = DataLoader(tensor_dataset, batch_size=batch_size, shuffle=True)
-
-            elif is_text_data:
-                logging.debug(f"Seller {self.seller_id}: Detected text data. Using custom collate function.")
-                # Ensure pad_idx is available
-                pad_idx = getattr(self, 'pad_idx', None)  # Assumes pad_idx is stored in seller
-                if pad_idx is None:
-                    # Try getting from vocab if available
-                    vocab = getattr(self, 'vocab', None)
-                    pad_token = getattr(self, 'pad_token', '<pad>')  # Assume pad token name
-                    if vocab and pad_token in vocab.get_stoi():
-                        pad_idx = vocab.get_stoi()[pad_token]
-                    else:
-                        raise ValueError(f"Seller {self.seller_id}: pad_idx not found, required for text data.")
-                logging.debug(f"Seller {self.seller_id}: Using pad_idx: {pad_idx}")
-
-                pytorch_dataset = TextDataset(dataset)  # Wrap list in Dataset
-                custom_collate = partial(collate_batch, padding_value=pad_idx)
-                data_loader = DataLoader(
-                    pytorch_dataset,
-                    batch_size=batch_size,
-                    shuffle=True,  # Shuffle for gradient computation epochs
-                    collate_fn=custom_collate
-                )
-            # No else needed due to check above
-
-        except Exception as e:
-            data_type = "image" if is_image_data else "text"
-            logging.error(f"Seller {self.seller_id}: Failed to create {data_type} DataLoader: {e}",
-                          exc_info=True)  # Log traceback
-            raise  # Re-raise the exception
-
-        if data_loader is None:
-            # This case should ideally be prevented by the exceptions above
-            logging.error(f"Seller {self.seller_id}: DataLoader is None after setup. Cannot compute gradient.")
-            return self._create_zero_gradient()  # Or raise error
-
-        # Call the MODIFIED external training function which now returns avg_loss
-        try:
-            # Check if local_training_params are available
-            if not hasattr(self, 'local_training_params') or not self.local_training_params:
-                raise ValueError("Missing 'local_training_params' attribute on seller.")
-
-            # Call the function - IT MUST NOW RETURN 5 VALUES
-            grad_update, grad_update_flt, local_model, local_eval_res, avg_train_loss = local_training_and_get_gradient(
-                model=base_model,
-                train_loader=data_loader,  # Pass the converted dataset
-                batch_size=self.local_training_params.get('batch_size', 64),  # Use batch size from params
-                device=self.device,
-                # Ensure key names match your actual params dict
-                local_epochs=self.local_training_params.get("epochs",
-                                                            self.local_training_params.get("local_epochs", 1)),
-                lr=self.local_training_params.get("learning_rate", self.local_training_params.get("lr", 0.01)),
-                # Pass other necessary params if local_training_and_get_gradient needs them
-            )
-
-        except Exception as e:
-            logging.error(f"Seller {self.seller_id}: Error during call to local_training_and_get_gradient: {e}",
-                          exc_info=True)
-            end_time_error = time.time()
-            stats_error = {'train_loss': None, 'compute_time_ms': (end_time_error - start_time) * 1000}
-            # Return None for gradient components, keep original model, empty eval, computed stats
-            return None, None, base_model, {}, stats_error
-
-        # Calculate compute time
-        end_time = time.time()
-        compute_time_ms = (end_time - start_time) * 1000
-
-        # Package the stats
-        training_stats = {
-            'train_loss': avg_train_loss,  # Use the value returned by the training function
-            'compute_time_ms': compute_time_ms
-        }
-
-        # Clean up GPU memory (keep this if useful)
-        torch.cuda.empty_cache()
-
-        # Return all original values PLUS the new stats dict
-        return grad_update, grad_update_flt, local_model, local_eval_res, training_stats
-
-    def save_local_model(self, model: torch.nn.Module):
-        """
-        Save the local model parameters to disk for future rounds.
-        """
-        # Build the save path based on client_path and seller_id.
-        save_path = f"{self.save_path}/local_model_{self.seller_id}.pt"
-        torch.save(model.state_dict(), save_path)
-        print(f"[{self.seller_id}] Saved local model to {save_path}.")
-
-    def load_local_model(self) -> Dict[str, torch.Tensor]:
-        """
-        Load the local model parameters from disk.
-        """
-        load_path = f"{self.save_path}/local_model_{self.seller_id}.pt"
-        state_dict = torch.load(load_path, map_location=self.device)
-        return state_dict
+                f"[{self.seller_id}] Error loading local model from {load_file_path}: {e}. Returning new model.")
+        return model  # Already on self.device
 
     def record_federated_round(self,
                                round_number: int,
                                is_selected: bool,
-                               final_model_params: Optional[Dict[str, torch.Tensor]] = None):
-        """
-        Record this seller's participation in a federated round.
-        This may include whether it was selected, and (optionally) its final local model parameters.
+                               final_model_params: Optional[
+                                   Dict[str, torch.Tensor]] = None):  # final_model_params not used here
 
-        :param round_number: The current round index.
-        :param is_selected:  Whether this seller's update was selected.
-        :param final_model_params: Optionally, the final local model parameters.
-        """
+        # For logging, convert the list of tensors to a more serializable format if needed (e.g., flattened numpy)
+        gradient_to_log_serializable = None
+        if self.cur_upload_gradient_list_tensors:
+            try:
+                # Example: flatten and convert to numpy for logging
+                gradient_to_log_serializable = torch.cat(
+                    [g.cpu().flatten() for g in self.cur_upload_gradient_list_tensors]).numpy()
+            except Exception as e:
+                logging.warning(f"[{self.seller_id}] Could not serialize gradient for logging: {e}")
+                gradient_to_log_serializable = "SerializationError"
+
         record = {
             'round_number': round_number,
-            'timestamp': pd.Timestamp.now().isoformat(),
+            'timestamp': time.time(),  # Simpler timestamp, can be formatted later
             'selected': is_selected,
-            'gradient': self.cur_upload_gradient_flt,
+            'gradient_logged': gradient_to_log_serializable,  # Log the serializable form
+            'recent_metrics': self.recent_metrics
         }
         self.selected_last_round = is_selected
-        # if final_model_params is not None:
-        #     # Convert state_dict tensors to lists (or use another serialization as needed).
-        #     record['final_model_params'] = {k: v.cpu().numpy().tolist() for k, v in final_model_params.items()}
+        # self.federated_round_history.append(record) # Uncomment if you want to store history
 
-    def round_end_process(self, round_number,
-                          is_selected,
-                          final_model_params=None):
+    def round_end_process(self, round_number: int, is_selected: bool, final_model_params=None):
+        self.record_federated_round(round_number, is_selected, final_model_params)  # Pass along final_model_params
         self.reset_current_local_gradient()
-        self.record_federated_round(
-            round_number,
-            is_selected,
-            final_model_params)
 
     def reset_current_local_gradient(self):
-        self.cur_local_gradient = None
+        self.cur_local_gradient_list_tensors = None
+        self.cur_upload_gradient_list_tensors = None  # Clear the version that might have been uploaded
+        self.recent_metrics = None
 
-    # If you don't need the .get_data() returning "X" and "cost", you can override it:
-    @property
+    @property  # Keep properties if they are part of the existing interface
     def get_data(self):
-        """
-        Overridden: Typically in FL, we might not 'sell' raw data.
-        Return something if your code expects this method, or return empty.
-        """
-        return {
-            "X": None,
-            "cost": None,
-        }
+        return {"X": None, "cost": None}  # Or raise NotImplementedError if not applicable
 
     @property
     def get_federated_history(self):
         return self.federated_round_history
 
     @property
-    def local_model_path(self):
-        return {self.exp_save_path}
-
-
+    def local_model_path(self) -> str:
+        # Ensure self.save_path is set and is a string path
+        base_save_path = self.save_path if isinstance(self.save_path, str) else "."
+        return f"{base_save_path}/local_model_{self.seller_id}.pt"
 class AdvancedPoisoningAdversarySeller(GradientSeller):
     def __init__(self,
                  seller_id: str,
@@ -1063,15 +1323,16 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
     #         else:
     #             clean_data.append((img, label))
     #     return backdoor_data, clean_data
-    def _inject_triggers(self, data: list, fraction: float): # Original, now likely unused but kept for reference
+    def _inject_triggers(self, data: list, fraction: float):  # Original, now likely unused but kept for reference
         # ... (original implementation as you provided, assuming it's for list input) ...
         # This method is superseded by the TriggeredSubsetDataset for 'single' mode if data is a Dataset
-        logging.warning("_inject_triggers (list input version) was called. Consider using TriggeredSubsetDataset for Dataset inputs.")
+        logging.warning(
+            "_inject_triggers (list input version) was called. Consider using TriggeredSubsetDataset for Dataset inputs.")
         n = len(data)
         n_trigger = int(n * fraction)
         idxs = np.random.choice(n, size=n_trigger, replace=False)
         backdoor_data_tuples, clean_data_tuples = [], []
-        for i, (img_tensor, label_int) in enumerate(data): # Expects (Tensor, int)
+        for i, (img_tensor, label_int) in enumerate(data):  # Expects (Tensor, int)
             img_tensor = img_tensor.to(self.device)
             if i in idxs:
                 if self.backdoor_generator is None:
@@ -1080,8 +1341,9 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 backdoor_data_tuples.append((triggered_img, self.target_label))
             else:
                 # clean_data_tuples.append((img_tensor, torch.tensor(label_int, dtype=torch.long).to(self.device)))
-                clean_data_tuples.append((img_tensor, label_int)) # Keep as (Tensor, int)
+                clean_data_tuples.append((img_tensor, label_int))  # Keep as (Tensor, int)
         return backdoor_data_tuples, clean_data_tuples
+
     # ============================
     # Adversary Behavior Methods
     # ============================
@@ -1406,6 +1668,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 f"Phase 2 - Step {step + 1}, GradDist: {gradient_distance.item():.4f}, BdoorLoss: {backdoor_loss_val.item():.4f}")
 
         return trigger.detach()
+
 
 def global_clip_np(arr, max_norm: float) -> np.ndarray:
     current_norm = np.linalg.norm(arr)

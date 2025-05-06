@@ -97,6 +97,35 @@ def collate_batch(batch: List[Tuple[int, List[int]]], vocab: Any) -> Tuple[torch
 
 
 # --- End Text Data Helper Functions ---
+def collate_batch_new(batch: List[Tuple[int, List[int]]], padding_value: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Collates a batch of text data (label, list_of_token_ids).
+    Pads sequences to the maximum length in the batch using the provided padding_value.
+
+    Args:
+        batch: A list of tuples, where each tuple contains (label, list_of_token_ids).
+        padding_value: The integer index to use for padding.
+
+    Returns:
+        A tuple containing:
+        - texts_padded (torch.Tensor): Tensor of padded text sequences (batch_size, max_seq_len).
+        - labels (torch.Tensor): Tensor of labels (batch_size).
+    """
+    label_list, text_list = [], []
+    for (_label, _text_list_ids) in batch:
+        label_list.append(_label)
+        # Convert list of token IDs to tensor
+        processed_text = torch.tensor(_text_list_ids, dtype=torch.int64)
+        text_list.append(processed_text)
+
+    labels = torch.tensor(label_list, dtype=torch.int64)
+
+    # Use the provided padding_value directly
+    texts_padded = torch.nn.utils.rnn.pad_sequence(
+        text_list, batch_first=True, padding_value=padding_value
+    )
+    # Consider returning in (data, label) order for convention
+    return texts_padded, labels
 
 
 def get_text_data_set(
@@ -438,7 +467,7 @@ def get_text_data_set(
     # --- Create DataLoaders ---
     # (DataLoader creation remains the same, using dynamic_collate_fn)
     logging.info("Creating DataLoaders...")
-    dynamic_collate_fn = lambda batch: collate_batch(batch, vocab)  # Captures vocab
+    dynamic_collate_fn = lambda batch: collate_batch_new(batch, pad_idx)  # Captures vocab
 
     buyer_loader: Optional[DataLoader] = None
     if buyer_indices is not None and len(buyer_indices) > 0:
