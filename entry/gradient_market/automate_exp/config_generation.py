@@ -98,7 +98,7 @@ BASE_CONFIG_TEMPLATE = {
         'poison_rate': 0.2,  # Portion of malicious client data poisoned
         'poison_strength': 1.0,  # Strength scaling
         'bkd_loc': 'bottom_right',  # From args.bkd_loc
-        'gradient_manipulation_mode': 'default',  # From args.gradient_manipulation_mode
+        'gradient_manipulation_mode': 'single',  # From args.gradient_manipulation_mode
         'label_flip_target_label': 0,
         'label_flip_mode': 'fixed_target',
     },

@@ -500,31 +500,6 @@ class GradientSeller(BaseSeller):
         #    (e.g., the dict of weight differences, NOT necessarily gradient_flt)
         return gradient, training_stats
 
-    # def _compute_local_grad(self, base_model, dataset):
-    #     """
-    #     Train a local model and compute the gradient update.
-    #
-    #     :param base_model: The initial model for local training (already on correct device)
-    #     :param dataset: Local data as a list of (image, label) tuples
-    #     :return: Tuple (gradient, flattened_gradient, updated_model, eval_results)
-    #     """
-    #     # The base_model is already initialized and on the correct device
-    #
-    #     # Perform local training and get the gradient update
-    #     # grad_update, grad_update_flt, local_model, local_eval_res, avg_train_loss
-    #     grad_update, grad_update_flt, local_model, local_eval_res, avg_train_loss = local_training_and_get_gradient(
-    #         base_model,
-    #         list_to_tensor_dataset(dataset),
-    #         batch_size=64,
-    #         device=self.device,
-    #         local_epochs=self.local_training_params["local_epochs"],
-    #         lr=self.local_training_params["learning_rate"],
-    #     )
-    #
-    #     # Clean up to help with memory
-    #     torch.cuda.empty_cache()
-    #
-    #     return grad_update, grad_update_flt, local_model, local_eval_res
     def _create_zero_gradient(self):
         """Helper to create a zero gradient structure matching the model."""
         # Ensure model is initialized
@@ -975,7 +950,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  local_epochs: int = 2,
                  dataset_name: str = "",
                  local_training_params: Optional[dict] = None,
-                 gradient_manipulation_mode: str = "cmd",
+                 gradient_manipulation_mode: str = "single",
                  is_sybil: bool = False,
                  benign_rounds=3,
                  vocab=None,

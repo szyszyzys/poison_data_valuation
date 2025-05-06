@@ -81,7 +81,7 @@ def poisoning_attack_text(
     n_adversaries = int(n_sellers * adv_rate)
     if args is None:  # Use default args if none provided
         from types import SimpleNamespace
-        args = SimpleNamespace(gradient_manipulation_mode='passive', is_sybil=False, clip=None, remove_baseline=False)
+        args = SimpleNamespace(gradient_manipulation_mode='single', is_sybil=False, clip=None, remove_baseline=False)
     gradient_manipulation_mode = args.gradient_manipulation_mode
     loss_fn = nn.CrossEntropyLoss()
     es_monitor = 'acc'
@@ -131,7 +131,7 @@ def poisoning_attack_text(
             attack_mode=label_flip_mode,
             target_label=label_flip_target_label
         )
-        gradient_manipulation_mode = 'passive'  # Label flip usually passive
+        gradient_manipulation_mode = 'single'  # Label flip usually passive
     elif attack_type == "None":
         attack_generator = None
     else:
@@ -374,7 +374,7 @@ def poisoning_attack_image(
     n_adversaries = int(n_sellers * adv_rate)
     if args is None:  # Use default args if none provided
         from types import SimpleNamespace
-        args = SimpleNamespace(gradient_manipulation_mode='passive', is_sybil=False, clip=None,
+        args = SimpleNamespace(gradient_manipulation_mode='single', is_sybil=False, clip=None,
                                remove_baseline=False)  # Example defaults
     gradient_manipulation_mode = args.gradient_manipulation_mode  # Assume passive if not backdoor
     loss_fn = nn.CrossEntropyLoss()
