@@ -660,7 +660,7 @@ def main():
     # 7. Loop for multiple runs (if n_samples > 1)
     print(f"Starting, dataset type: {dataset_domain}, {n_samples} run(s) for experiment: {experiment_id}")
     if config.get("exp_name", "None") != "None":
-        lower = 3
+        lower = 0
     else:
         lower = 0
     for i in range(lower, n_samples):
