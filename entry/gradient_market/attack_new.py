@@ -663,6 +663,7 @@ def main():
         lower = 0
     else:
         lower = 0
+    n_samples = 5
     for i in range(lower, n_samples):
         current_seed = initial_seed + i
         set_seed(current_seed)  # Set seed for this specific run
