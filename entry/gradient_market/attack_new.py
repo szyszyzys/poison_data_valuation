@@ -2,13 +2,14 @@ import argparse
 import logging
 # log_utils.py (or results_logger.py)
 import os
+from pathlib import Path
+from typing import Dict, Optional, Any
+
 import torch
 import torch.backends.cudnn
 import torch.nn as nn
-from pathlib import Path
 from torch import nn
 from torch.utils.data import DataLoader
-from typing import Dict, Optional, Any
 
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorTextGenerator, LabelFlipAttackGenerator
@@ -22,7 +23,7 @@ from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator, \
     AdvancedPoisoningAdversarySeller
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
-from marketplace.utils.gradient_market_utils.text_data_processor import get_text_data_set, collate_batch
+from marketplace.utils.gradient_market_utils.text_data_processor import get_text_data_set, collate_batch_new
 from model.utils import get_text_model, get_model_name, get_domain, get_image_model
 
 logger = logging.getLogger(__name__)
@@ -143,9 +144,7 @@ def poisoning_attack_text(
     print(f"Adversary IDs (indices): {adversary_ids}")
 
     # Define the collate function needed for text DataLoaders
-    dynamic_collate_fn = lambda batch: collate_batch(batch,
-                                                     vocab)  # Assumes collate_batch is available
-
+    dynamic_collate_fn = lambda batch: collate_batch_new(batch, padding_value=padding_idx)
     print("Setting up FL components...")
     # Get model instance using parameters from data loading
     model_structure_instance = get_text_model(
