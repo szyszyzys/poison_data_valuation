@@ -160,7 +160,7 @@ def poisoning_attack_text(
     buyer_dataset_list = buyer_loader.dataset
 
     buyer_loader_collated = DataLoader(buyer_dataset_list, batch_size=local_training_params.get('batch_size', 64),
-                                       shuffle=True, collate_fn=dynamic_collate_fn)
+                                       shuffle=True)
 
     buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader_collated.dataset,  # Pass underlying dataset list
                            dataset_name=dataset_name, save_path=save_path,
