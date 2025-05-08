@@ -241,55 +241,6 @@ def test_local_model(model: nn.Module,
     return {"loss": avg_loss, "accuracy": accuracy}
 
 
-# def local_training_and_get_gradient(model: nn.Module,
-#                                     train_dataset: TensorDataset,
-#                                     batch_size: int,
-#                                     device: torch.device,
-#                                     local_epochs: int = 1,
-#                                     lr: float = 0.01, opt="SGD", momentum=0.9, weight_decay=0.0005):
-#     """
-#     Perform local training on a copy of the given model using the provided dataset.
-#     Returns:
-#       - flat_update: a flattened numpy array representing the gradient update (trained - initial)
-#       - data_size: the number of samples in the train_dataset
-#
-#     This function is intended to be used by a seller in a federated learning setup.
-#     """
-#     # Create a local copy of the model for training
-#     local_model = copy.deepcopy(model)
-#     local_model.to(device)
-#
-#     # Create a DataLoader for the local dataset
-#     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-#
-#     # Use a standard loss function and optimizer
-#     criterion = nn.CrossEntropyLoss()
-#     if opt == "SGD":
-#         optimizer = optim.SGD(local_model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
-#     elif opt == "ADAM":
-#         optimizer = optim.Adam(local_model.parameters(), lr=lr)
-#     else:
-#         raise NotImplementedError(f"No such optimizer: {opt}")
-#     # Save a copy of the initial model parameters for computing the update
-#     initial_model = copy.deepcopy(local_model)
-#
-#     # Train the local model for a few epochs
-#     local_model = train_local_model(local_model, train_loader, criterion, optimizer, device, epochs=local_epochs)
-#
-#     # Compute the gradient update as (trained_model - initial_model)
-#     grad_update = compute_gradient_update(initial_model, local_model)
-#
-#     # Flatten the list of gradients into a single vector
-#     flat_update = flatten_gradients(grad_update)
-#
-#     # evaluate the model
-#     eval_res_o = test_local_model(initial_model, train_loader, criterion, device)
-#     eval_res = test_local_model(local_model, train_loader, criterion, device)
-#     print(f"evaluation_result before local train: {eval_res_o}")
-#     print(f"evaluation_result after local train: {eval_res}")
-#
-#     return grad_update, flat_update, local_model, eval_res
-
 def local_training_and_get_gradient(model: nn.Module,
                                     train_loader,
                                     batch_size: int,

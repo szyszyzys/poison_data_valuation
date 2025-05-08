@@ -555,7 +555,9 @@ def get_data_set(
         buyer_bias_type="dirichlet",  # Added: Specify how buyer bias is generated
         buyer_dirichlet_alpha=0.3,  # Added: Alpha specifically for buyer bias
         # --- Other Split Method Params ---
-        seller_dirichlet_alpha=0.7  # Alpha used in the default/other split method
+        seller_dirichlet_alpha=0.7,  # Alpha used in the default/other split method,
+        num_workers = 4,
+        pin_memory = False
 ):
     # Define transforms based on the dataset.
     # (Keep your transform definitions here)
@@ -631,16 +633,13 @@ def get_data_set(
                                                             output_dir=save_path)
 
     # Create DataLoaders.
-    dataloader_num_workers = 2  # START WITH 0 if using multiprocessing for clients, maybe 2-4 otherwise
-    use_pin_memory = torch.cuda.is_available()  # Only pin if using GPU
-
     buyer_loader = DataLoader(Subset(dataset, buyer_indices), batch_size=batch_size, shuffle=True,
-                              num_workers=dataloader_num_workers, pin_memory=use_pin_memory)
+                              num_workers=num_workers, pin_memory=pin_memory)
     seller_loaders = {i: DataLoader(Subset(dataset, indices), batch_size=batch_size, shuffle=True,
-                                    num_workers=dataloader_num_workers, pin_memory=use_pin_memory)
+                                    num_workers=num_workers, pin_memory=pin_memory)
                       for i, indices in seller_splits.items()}
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False,
-                             num_workers=dataloader_num_workers, pin_memory=use_pin_memory)
+                             num_workers=num_workers, pin_memory=pin_memory)
     print("DataLoaders created successfully.")
     return buyer_loader, seller_loaders, dataset, test_loader, class_names
 
@@ -817,11 +816,11 @@ def _extract_targets(dataset: Any) -> np.ndarray:
 
 
 def print_and_save_data_statistics(
-    dataset: Any,
-    buyer_indices: np.ndarray,
-    seller_splits: Dict[int, List[int]],
-    save_results: bool = True,
-    output_dir: str = './results'
+        dataset: Any,
+        buyer_indices: np.ndarray,
+        seller_splits: Dict[int, List[int]],
+        save_results: bool = True,
+        output_dir: str = './results'
 ) -> Dict[str, Any]:
     """
     Print and visualize the class distribution statistics for the buyer and each seller.

@@ -383,7 +383,10 @@ def poisoning_attack_image(
     if sybil_params is None: sybil_params = {'benign_rounds': 0, 'sybil_mode': 'passive', 'alpha': 1,
                                              'amplify_factor': 1, 'cost_scale': 1, 'trigger_mode': 'data'}
     if local_training_params is None: local_training_params = {'epochs': 1, 'lr': 0.01,
-                                                               'batch_size': 64}  # Example defaults
+                                                               'batch_size': 64,
+                                                               'num_workers': 4,
+                                                               'pin_memory': torch.cuda.is_available()
+                                                               }
     if dm_params is None: dm_params = {"discovery_quality": 0.3, "buyer_data_mode": "random"}
 
     if dataset_name == "FMNIST":
@@ -433,7 +436,9 @@ def poisoning_attack_image(
         n_adversaries=n_adversaries,  # Splitter might use this info
         save_path=save_path,
         discovery_quality=dm_params["discovery_quality"],
-        buyer_data_mode=dm_params["buyer_data_mode"]
+        buyer_data_mode=dm_params["buyer_data_mode"],
+    num_workers=dl_num_workers,         # <--- PASS IT TO get_data_set
+    pin_memory=dl_pin_memory          # <--- PASS IT TO get_data_set
     )
     num_classes = len(class_names)
     print(f"Data loaded. Num classes: {num_classes}")
