@@ -27,11 +27,10 @@ Usage Example:
     for cid, loader in client_loaders.items():
         print(f"Client {cid} has {len(loader.dataset)} samples.")
 """
-from collections import defaultdict
-from typing import Dict, List, Optional, Tuple, Any
-
 import numpy as np
 import torch
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple, Any
 
 
 def load_fmnist_dataset(train=True, download=True):

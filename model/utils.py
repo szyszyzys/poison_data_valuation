@@ -15,17 +15,16 @@ Usage (within a seller’s get_gradient method):
 
 import copy
 import logging
-import os
-import time
-from typing import List, Tuple, Any, Dict, Optional, Union
-
 import matplotlib.pyplot as plt
 import numpy as np
+import os
+import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision.utils as vutils
 from torch.utils.data import DataLoader
+from typing import List, Tuple, Any, Dict, Optional, Union
 
 # from model.text_model import TEXTCNN
 from model.vision_model import CNN_CIFAR, LeNet, TextCNN
@@ -36,125 +35,76 @@ def train_local_model(model: nn.Module,
                       criterion: nn.Module,
                       optimizer: optim.Optimizer,
                       device: torch.device,
-                      epochs: int = 1) -> Tuple[nn.Module, Union[float, None]]:  # Use float | None in Python 3.10+
-    """
-    Train the model on the given train_loader for a specified number of epochs,
-    handling both image (data, label) and text (label, data, lengths) batch formats.
-    Calculates and returns the average loss over all successfully processed batches.
+                      epochs: int = 1) -> Tuple[nn.Module, Union[float, None]]:
+    model.train()
+    batch_losses_all = []
 
-    Args:
-        model: The model to train (will be modified in place).
-        train_loader: DataLoader for the training data. Assumed to yield batches
-                      of format (features, labels) or (labels, sequences, lengths).
-        criterion: Loss function module.
-        optimizer: Optimizer instance.
-        device: The torch device ('cuda' or 'cpu').
-        epochs: Number of local epochs to train.
-
-    Returns:
-        Tuple (trained_model, average_loss):
-            trained_model: The model after training (same object as input model).
-            average_loss: The average loss across all successfully processed batches
-                          and epochs. Returns None if train_loader was empty or no
-                          batches completed successfully.
-    """
-    model.train()  # Set model to training mode
-    batch_losses_all = []  # Collect losses from ALL successfully processed batches across ALL epochs
-
-    if not train_loader:
+    if not train_loader or len(train_loader) == 0:  # More robust check for empty loader
         logging.warning("train_loader is empty or None. Skipping training.")
         return model, None
 
     logging.debug(f"Starting local training for {epochs} epochs on device {device}...")
-    global_batch_idx = 0  # Track total batches for logging context
     for epoch in range(epochs):
-        epoch_start_time = time.time()  # Optional: time epochs
+        epoch_start_time = time.time()
         num_batches_processed_epoch = 0
 
         for batch_idx, batch_data in enumerate(train_loader):
-            # --- >> 1. Unpack Batch Data Robustly << ---
             try:
                 if isinstance(batch_data, (list, tuple)):
                     if len(batch_data) == 3:
-                        # Assume text format: (labels, sequences, lengths) from our collate_fn
-                        # We need sequences (as 'data') and labels (as 'labels')
-                        labels, data, _ = batch_data  # Ignore lengths in this function
-                        data_type = "text"
+                        labels, data, _ = batch_data
                     elif len(batch_data) == 2:
-                        # Assume image format: (features, labels)
                         data, labels = batch_data
-                        data_type = "image"
                     else:
                         logging.warning(
                             f"Unexpected batch data format: tuple/list of length {len(batch_data)} "
                             f"in epoch {epoch + 1}, batch {batch_idx}. Skipping."
                         )
-                        continue  # Skip this batch
+                        continue
                 else:
-                    # Handle cases where batch is not a tuple/list (e.g., single tensor if batch_size=1 and no label)
-                    # This part depends heavily on expected loader behavior. For now, assume error.
                     logging.warning(f"Unexpected batch data type: {type(batch_data)}. Skipping.")
-                    continue  # Skip this batch
-
-            except Exception as unpack_e:
-                logging.error(f"Error unpacking batch {batch_idx} in epoch {epoch + 1}: {unpack_e}", exc_info=True)
-                continue  # Skip this batch
-
-            # --- >> 2. Core Training Step within Try-Except << ---
-            try:
-                # Move data to the designated device
-                # Check if data/labels are already tensors before moving
-                if isinstance(data, torch.Tensor) and isinstance(labels, torch.Tensor):
-                    data, labels = data.to(device), labels.to(device)
-                else:
-                    logging.warning(
-                        f"Batch {batch_idx} data or labels are not tensors (Data: {type(data)}, Labels: {type(labels)}). Skipping.")
                     continue
+            except Exception as unpack_e:
+                # Changed to WARNING for less log spam if such errors are occasional
+                logging.warning(f"Error unpacking batch {batch_idx} in epoch {epoch + 1}: {unpack_e}",
+                                exc_info=False)  # exc_info=False for less verbose logs
+                continue
 
-                # Zero gradients before forward pass
+            try:
+                # DataLoader should ideally always return tensors.
+                # If not, the problem might be in the Dataset or collate_fn.
+                # For robustness, we keep the check, but it's unusual to get non-tensors here.
+                if not (isinstance(data, torch.Tensor) and isinstance(labels, torch.Tensor)):
+                    logging.warning(
+                        f"Batch {batch_idx} data or labels are not tensors (Data: {type(data)}, Labels: {type(labels)}). Skipping."
+                    )
+                    continue
+                data, labels = data.to(device, non_blocking=True), labels.to(device,
+                                                                             non_blocking=True)  # Added non_blocking
+
                 optimizer.zero_grad()
-
-                # Forward pass - PASS THE CORRECT DATA TENSOR
-                # model's forward method must handle the shape of 'data' correctly
-                # logging.debug(f"Data shape going into model ({data_type}): {data.shape}") # Uncomment for deep debug
                 outputs = model(data)
-
-                # Calculate loss
                 loss = criterion(outputs, labels)
 
-                # Check for NaN or Inf loss BEFORE backward pass
                 if not torch.isfinite(loss):
                     logging.warning(
                         f"Non-finite loss ({loss.item()}) encountered in epoch {epoch + 1}, batch {batch_idx}. Skipping batch update."
                     )
-                    continue  # Skip backward and optimizer step
+                    continue
 
-                # Backward pass to compute gradients
                 loss.backward()
-
-                # Optional: Gradient Clipping (uncomment if needed)
-                # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-                # Optimizer step to update weights
                 optimizer.step()
-
-                # Record loss for averaging *after* successful step
                 batch_losses_all.append(loss.item())
                 num_batches_processed_epoch += 1
-                global_batch_idx += 1
-
-            # Catch errors during the forward/backward/step process
             except Exception as batch_e:
-                logging.error(
+                # Changed to WARNING for less log spam
+                logging.warning(
                     f"Error during training step for batch {batch_idx} in epoch {epoch + 1}: {batch_e}",
-                    exc_info=True  # Include traceback in log
+                    exc_info=False  # exc_info=False for less verbose logs
                 )
-                # Decide whether to continue to next batch or stop
-                continue  # Skip to next batch on error is usually safer
+                continue
 
-        # --- >> End of Epoch Logging (Optional) << ---
         epoch_duration = time.time() - epoch_start_time
-        # Calculate average loss *just for this epoch* for logging purposes
         avg_epoch_loss_display = np.mean(
             batch_losses_all[-num_batches_processed_epoch:]) if num_batches_processed_epoch > 0 else float('nan')
         logging.debug(
@@ -163,20 +113,18 @@ def train_local_model(model: nn.Module,
             f"Avg Loss (epoch): {avg_epoch_loss_display:.4f}"
         )
 
-    # --- >> 3. Calculate Overall Average Loss << ---
     if not batch_losses_all:
         logging.warning("No batches were successfully processed during the entire training.")
         overall_avg_loss = None
     else:
         overall_avg_loss = np.mean(batch_losses_all)
-        logging.info(  # Use INFO level for final summary loss
+        logging.info(
             f"Finished local training ({epochs} epochs). "
             f"Total successful batches: {len(batch_losses_all)}. "
             f"Overall Avg Loss: {overall_avg_loss:.4f}"
         )
-
-    # Model was trained in-place, return the same object
-    # You might want model.eval() here if the next step requires eval mode
+    # Caller should decide if model.eval() is needed.
+    # If always followed by evaluation, then model.eval() could be added here.
     return model, overall_avg_loss
 
 
@@ -205,127 +153,222 @@ def test_local_model(model: nn.Module,
                      test_loader: DataLoader,
                      criterion: nn.Module,
                      device: torch.device) -> dict:
-    """
-    Evaluate the model on the given test_loader.
-
-    Args:
-        model (nn.Module): The trained model.
-        test_loader (DataLoader): DataLoader for the test dataset.
-        criterion (nn.Module): Loss function (e.g., nn.CrossEntropyLoss).
-        device (torch.device): Device on which to perform evaluation.
-
-    Returns:
-        dict: A dictionary containing 'loss' and 'accuracy' for the test dataset.
-    """
-    model.eval()  # Set the model to evaluation mode
+    model.eval()
     total_loss = 0.0
     total_correct = 0
     total_samples = 0
+    num_valid_batches = 0  # To calculate average loss correctly
 
-    # Disable gradient calculation for evaluation
+    if not test_loader or len(test_loader) == 0:  # Check for empty loader
+        logging.warning("test_loader is empty or None. Returning NaN metrics.")
+        return {"loss": float('nan'), "accuracy": float('nan')}
+
     with torch.no_grad():
-        for batch_data, batch_labels in test_loader:
-            batch_data = batch_data.to(device)
-            batch_labels = batch_labels.to(device)
-            outputs = model(batch_data)
-            loss = criterion(outputs, batch_labels)
-            total_loss += loss.item() * batch_data.size(0)
+        for batch_idx, batch_items in enumerate(test_loader):  # Iterate and then unpack
+            try:
+                # Robust unpacking similar to train_local_model
+                if isinstance(batch_items, (list, tuple)):
+                    if len(batch_items) == 3:  # text: labels, data, _ (order matters based on collate_fn)
+                        batch_labels, batch_data, _ = batch_items  # Adjust order if your collate is (data, labels, lengths)
+                    elif len(batch_items) == 2:  # image: data, labels
+                        batch_data, batch_labels = batch_items
+                    else:
+                        logging.warning(
+                            f"Unexpected batch format in test_loader (batch {batch_idx}). Skipping batch."
+                        )
+                        continue
+                else:  # Should ideally not happen with standard DataLoaders
+                    logging.warning(
+                        f"Unexpected batch data type in test_loader (batch {batch_idx}): {type(batch_items)}. Skipping.")
+                    continue
 
-            # Compute the number of correct predictions
-            _, predicted = torch.max(outputs, dim=1)
-            total_correct += (predicted == batch_labels).sum().item()
-            total_samples += batch_data.size(0)
+                if not (isinstance(batch_data, torch.Tensor) and isinstance(batch_labels, torch.Tensor)):
+                    logging.warning(
+                        f"Test Batch {batch_idx} data or labels are not tensors (Data: {type(batch_data)}, Labels: {type(batch_labels)}). Skipping.")
+                    continue
+
+                batch_data = batch_data.to(device, non_blocking=True)
+                batch_labels = batch_labels.to(device, non_blocking=True)
+
+                outputs = model(batch_data)
+                loss = criterion(outputs, batch_labels)
+
+                if torch.isfinite(loss):  # Only account for valid losses
+                    total_loss += loss.item() * batch_data.size(0)  # loss.item() is avg loss for batch
+                    _, predicted = torch.max(outputs, dim=1)
+                    total_correct += (predicted == batch_labels).sum().item()
+                    total_samples += batch_data.size(0)
+                    num_valid_batches += 1
+                else:
+                    logging.warning(f"Non-finite loss encountered in test_local_model batch {batch_idx}. Skipping.")
+
+            except Exception as e:
+                logging.warning(f"Error processing test batch {batch_idx}: {e}. Skipping batch.", exc_info=False)
+                continue
+
+    if total_samples == 0:  # or num_valid_batches == 0
+        logging.warning("No samples were successfully processed during testing.")
+        return {"loss": float('nan'), "accuracy": float('nan')}
 
     avg_loss = total_loss / total_samples
     accuracy = total_correct / total_samples
     return {"loss": avg_loss, "accuracy": accuracy}
 
 
-def local_training_and_get_gradient(model: nn.Module,
-                                    train_loader,
-                                    batch_size: int,
-                                    device: torch.device,
-                                    local_epochs: int = 1,
-                                    lr: float = 0.01,
-                                    opt: str = "SGD",  # Changed opt typo to opt
-                                    momentum: float = 0.9,
-                                    weight_decay: float = 0.0005
-                                    ) -> Tuple[
-    Any, Any, nn.Module, Dict, float or None]:  # Added float|None for avg_loss
+def local_training_and_get_gradient(
+        model: nn.Module,  # Input model (e.g., global model state to start from)
+        train_loader: DataLoader,
+        device: torch.device,
+        local_epochs: int = 1,
+        lr: float = 0.01,
+        opt_str: str = "SGD",  # Renamed from 'opt' to avoid potential module conflict
+        momentum: float = 0.9,
+        weight_decay: float = 0.0005,
+        # Added for optional, less frequent full evaluation on training set
+        evaluate_on_full_train_set: bool = False
+) -> Tuple[Optional[List[torch.Tensor]], Optional[np.ndarray], Optional[nn.Module], Dict, Optional[float]]:
     """
-    MODIFIED: Perform local training and return gradient, model, eval results, AND avg loss.
-
-    Requires train_local_model to return (trained_model, average_loss).
+    Performs local training on a copy of the input model and returns the gradient update,
+    the trained local model, evaluation results, and average training loss.
+    The input model is not modified.
 
     Returns:
-        Tuple (gradient, flattened_gradient, updated_model, eval_results, avg_train_loss)
+        Tuple (gradient_tensors, flattened_gradient_np, trained_local_model, eval_results, avg_train_loss)
     """
-    # Create a local copy of the model for training
-    local_model = copy.deepcopy(model)
-    local_model.to(device)
-    initial_model = copy.deepcopy(local_model)  # Keep initial state for gradient calc
-
-    # Use a standard loss function and optimizer
-    criterion = nn.CrossEntropyLoss()
-    if opt.upper() == "SGD":  # Use .upper() for case-insensitivity
-        optimizer = optim.SGD(local_model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
-    elif opt.upper() == "ADAM":
-        optimizer = optim.Adam(local_model.parameters(), lr=lr, weight_decay=weight_decay)
-    else:
-        # Defaulting or raising error is better than NotImplementedError in except block later
-        logging.warning(f"Unsupported optimizer: {opt}. Defaulting to SGD.")
-        optimizer = optim.SGD(local_model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
-
-    # --- Call MODIFIED train_local_model ---
-    # It now returns the average training loss as the second value
+    # Create a local copy of the model for training.
+    # This is necessary to avoid modifying the original model instance (e.g., global model)
+    # and to have an initial state for gradient calculation.
+    # For maximal efficiency IF signature could change, one would reconstruct the model
+    # instead of deepcopying the nn.Module object.
     try:
-        local_model, avg_train_loss = train_local_model(
-            local_model, train_loader, criterion, optimizer, device, epochs=local_epochs
+        # This is the primary point where efficiency could be higher if not for strict signature.
+        local_model_for_training = copy.deepcopy(model)
+        local_model_for_training.to(device)
+
+        # Keep a representation of the initial model state for delta calculation.
+        # Deepcopying the state_dict is more efficient than deepcopying the nn.Module again.
+        initial_model_state_dict_for_delta = copy.deepcopy(model.state_dict())
+
+    except Exception as e:
+        logging.error(f"Failed to deepcopy/initialize model for local training: {e}", exc_info=True)
+        # Attempt to create zero gradients based on the input model structure
+        zero_grad_tensors: Optional[List[torch.Tensor]] = None
+        try:
+            zero_grad_tensors = [torch.zeros_like(p.detach().cpu()) for p in model.parameters()]
+        except Exception as e_zg:
+            logging.error(f"Could not create zero_grad_tensors on model copy error: {e_zg}")
+        zero_flat_np = flatten_gradients(zero_grad_tensors) if zero_grad_tensors else np.array([])
+        return zero_grad_tensors, zero_flat_np, None, {"loss": float('nan'), "accuracy": float('nan')}, None
+
+    criterion = nn.CrossEntropyLoss()
+    if opt_str.upper() == "SGD":
+        optimizer = optim.SGD(local_model_for_training.parameters(), lr=lr, momentum=momentum,
+                              weight_decay=weight_decay)
+    elif opt_str.upper() == "ADAM":
+        optimizer = optim.Adam(local_model_for_training.parameters(), lr=lr, weight_decay=weight_decay)
+    else:
+        logging.warning(f"Unsupported optimizer: {opt_str}. Defaulting to SGD.")
+        optimizer = optim.SGD(local_model_for_training.parameters(), lr=lr, momentum=momentum,
+                              weight_decay=weight_decay)
+
+    try:
+        # train_local_model trains 'local_model_for_training' in-place
+        _, avg_train_loss = train_local_model(  # Original model object is returned, but it's the trained one
+            local_model_for_training, train_loader, criterion, optimizer, device, epochs=local_epochs
         )
     except Exception as e:
         logging.error(f"Error during train_local_model call: {e}", exc_info=True)
-        # Return zero gradient and None loss on error
-        zero_grad = OrderedDict([(n, np.zeros_like(p.cpu().detach().numpy())) for n, p in model.named_parameters()])
-        zero_flat = flatten_gradients(zero_grad)
-        return zero_grad, zero_flat, local_model, {"acc": float('nan'), "loss": float('nan')}, None
-    # --------------------------------------
+        zero_grad_tensors: Optional[List[torch.Tensor]] = None
+        try:
+            zero_grad_tensors = [torch.zeros_like(p.detach().cpu()) for p in local_model_for_training.parameters()]
+        except Exception as e_zg:
+            logging.error(f"Could not create zero_grad_tensors on training error: {e_zg}")
+        zero_flat_np = flatten_gradients(zero_grad_tensors) if zero_grad_tensors else np.array([])
+        # Return the (partially trained or initial) local_model_for_training instance
+        return zero_grad_tensors, zero_flat_np, local_model_for_training, {"loss": float('nan'),
+                                                                           "accuracy": float('nan')}, None
 
     # Compute the gradient update as (trained_model - initial_model)
-    grad_update = compute_gradient_update(initial_model, local_model)
+    # We need to compare the state of local_model_for_training AFTER training
+    # with initial_model_state_dict_for_delta.
+    grad_update_tensors: List[torch.Tensor] = []
+    trained_state_dict = local_model_for_training.state_dict()
+    for name, initial_param_tensor_cpu in initial_model_state_dict_for_delta.items():
+        # Ensure initial_param_tensor_cpu is on CPU if it wasn't already
+        # (it should be if deepcopy(model.state_dict()) was from a CPU model or handled correctly)
+        trained_param_tensor_cpu = trained_state_dict[name].detach().cpu()
+        delta = trained_param_tensor_cpu - initial_param_tensor_cpu.cpu()  # Ensure both are CPU
+        grad_update_tensors.append(delta)
 
-    # Flatten the list of gradients into a single vector
-    flat_update = flatten_gradients(grad_update)
+    flat_update_np = flatten_gradients(grad_update_tensors)
 
-    # evaluate the model (optional, maybe use avg_train_loss instead?)
-    eval_res_o = test_local_model(initial_model, train_loader, criterion, device)
-    eval_res = test_local_model(local_model, train_loader, criterion, device)
-    print(f"evaluation_result before local train: {eval_res_o}")
-    print(f"evaluation_result after local train: {eval_res}")
+    eval_res = {"loss": float('nan'), "accuracy": float('nan')}
+    if evaluate_on_full_train_set:
+        logging.debug(f"Evaluating locally trained model on its training data (can be slow)...")
+        # Create a temporary model instance with initial_model_state_dict_for_delta for 'before' evaluation
+        # This still requires a deepcopy or reconstruction for a clean initial model eval.
+        # For simplicity here, we skip the "before" eval on train set as it's costly.
+        # If needed, the caller can do it.
+        eval_res = test_local_model(local_model_for_training, train_loader, criterion, device)
+        logging.debug(f"Evaluation result (after local train, on train_loader): {eval_res}")
+    elif avg_train_loss is not None:  # Use training loss as a proxy if full evaluation is skipped
+        eval_res = {"loss": avg_train_loss, "accuracy": float('nan')}
 
-    # Return original values PLUS the average training loss
-    return grad_update, flat_update, local_model, eval_res, avg_train_loss
+    # Return the list of gradient Tensors, the flattened NumPy array of gradients,
+    # the trained nn.Module instance, evaluation results, and the average training loss.
+    return grad_update_tensors, flat_update_np, local_model_for_training, eval_res, avg_train_loss
 
 
-def apply_gradient_update(initial_model: nn.Module, grad_update: List[torch.Tensor]) -> nn.Module:
+def apply_gradient_update(
+        initial_model: nn.Module,  # The model state to start from
+        grad_update: List[torch.Tensor]  # The delta: (trained_params - initial_params)
+) -> nn.Module:
     """
-    Create a new model by adding the computed gradient update to the initial model's parameters.
-    The gradient update is assumed to be computed as (trained_model_param - initial_model_param),
-    so adding it to the initial model should produce the trained model.
+    Create a new model by adding the computed gradient update to a copy of the
+    initial model's parameters.
+    The gradient update is assumed to be computed as (trained_model_param - initial_model_param).
 
-    Parameters:
+    Args:
         initial_model (nn.Module): The model before local training.
-        grad_update (List[torch.Tensor]): List of gradient update tensors.
+        grad_update (List[torch.Tensor]): List of gradient update tensors (deltas).
 
     Returns:
-        nn.Module: A new model with updated parameters.
+        nn.Module: A new model instance with updated parameters.
     """
-    # Create a deep copy of the initial model to avoid in-place modification.
-    updated_model = copy.deepcopy(initial_model)
+    # Create a deep copy of the initial model to avoid modifying it in-place.
+    # For maximal efficiency IF signature could change, one would reconstruct the model.
+    try:
+        updated_model = copy.deepcopy(initial_model)
+    except Exception as e:
+        logging.error(f"Failed to deepcopy initial_model in apply_gradient_update: {e}", exc_info=True)
+        raise  # Re-raise, as we can't proceed
 
-    # Iterate over model parameters and add the corresponding gradient update.
-    for param, delta in zip(updated_model.parameters(), grad_update):
-        # Make sure delta is on the same device as param
-        param.data.add_(delta.to(param.device))
+    # Ensure the model is on a device (if it's CPU, this does nothing; if CUDA, ensures params are there)
+    # This step might be redundant if initial_model is already on the target device.
+    # However, grad_update tensors are typically on CPU.
+    # We'll move deltas to the parameter's device.
+
+    num_model_params = len(list(updated_model.parameters()))
+    if len(grad_update) != num_model_params:
+        logging.error(
+            f"Parameter mismatch in apply_gradient_update: "
+            f"Model has {num_model_params} param groups, grad_update has {len(grad_update)}."
+        )
+        # Fallback: return the un-updated copy or raise error
+        # For safety, let's return the un-updated copy with a warning.
+        # A better approach might be to raise an error if strictness is required.
+        return updated_model  # or raise ValueError(...)
+
+    with torch.no_grad():  # Ensure operations are not tracked during parameter update
+        for param, delta_tensor_cpu in zip(updated_model.parameters(), grad_update):
+            if param.shape != delta_tensor_cpu.shape:
+                logging.error(
+                    f"Shape mismatch for parameter update: param shape {param.shape}, "
+                    f"delta shape {delta_tensor_cpu.shape}. Skipping this parameter."
+                )
+                continue
+            # Move delta to the same device as the parameter and add
+            param.add_(delta_tensor_cpu.to(param.device))
 
     return updated_model
 
@@ -375,71 +418,15 @@ def load_param(path: str, device: torch.device):
     return state_dict
 
 
-def get_text_model(
-        dataset_name: str,
-        num_classes: int,
-        vocab_size: Optional[int] = None,
-        padding_idx: Optional[int] = None,
-        **model_kwargs: Any  # Use kwargs for model-specific hyperparameters
-) -> nn.Module:
-    """
-    Gets an appropriate model instance based on the dataset name.
+# Original Snippet (get_image_model)
+# def get_image_model(dataset_name, model_structure_name=""):
+#     # ... model created on default device ...
+#     return model
 
-    Args:
-        dataset_name (str): Name of the dataset (e.g., "CIFAR", "FMNIST", "AG_NEWS", "TREC").
-        num_classes (int): The number of output classes required for the model.
-        vocab_size (Optional[int]): The vocabulary size. Required for text models.
-        padding_idx (Optional[int]): The padding index in the vocabulary. Required for text models.
-        model_structure_name (str): Optional name for specific model variants (currently unused).
-        **model_kwargs (Any): Additional keyword arguments passed directly to the model constructor.
-                              Used for hyperparameters like embed_dim, num_filters, etc.
-
-    Returns:
-        nn.Module: An instance of the appropriate neural network model.
-
-    Raises:
-        NotImplementedError: If no model is defined for the given dataset_name.
-        ValueError: If required arguments (like vocab_size for text) are missing.
-    """
-    print(f"Getting model for dataset: {dataset_name}")
-
-    model: nn.Module  # Type hint for the returned model
-
-    match dataset_name.lower():
-        case "ag_news" | "trec":
-            print(f"Initializing TextCNN for {num_classes} classes.")
-            # --- Text Model Configuration ---
-            if vocab_size is None:
-                raise ValueError("`vocab_size` is required for TextCNN model.")
-            if padding_idx is None:
-                raise ValueError("`padding_idx` is required for TextCNN model.")
-
-            # Extract hyperparameters from kwargs or use defaults
-            embed_dim = model_kwargs.get("embed_dim", 100)
-            num_filters = model_kwargs.get("num_filters", 100)
-            filter_sizes = model_kwargs.get("filter_sizes", [3, 4, 5])
-            dropout = model_kwargs.get("dropout", 0.5)
-
-            # Validate types if necessary (e.g., filter_sizes should be list)
-            if not isinstance(filter_sizes, list):
-                raise TypeError(f"Expected 'filter_sizes' to be a list, got {type(filter_sizes)}")
-
-            model = TextCNN(
-                vocab_size=vocab_size,
-                embed_dim=embed_dim,
-                num_filters=num_filters,
-                filter_sizes=filter_sizes,
-                num_class=num_classes,
-                dropout=dropout,
-                padding_idx=padding_idx
-            )
-        case _:
-            raise NotImplementedError(f"Cannot find a model for dataset {dataset_name}")
-
-    return model
-
-
-def get_image_model(dataset_name, model_structure_name=""):
+# --- Improved Snippet (get_image_model) ---
+def get_image_model(dataset_name: str,
+                    model_structure_name: str = "",
+                    device: Optional[Union[str, torch.device]] = None) -> nn.Module:
     match dataset_name.lower():
         case "cifar":
             model = CNN_CIFAR()
@@ -447,6 +434,44 @@ def get_image_model(dataset_name, model_structure_name=""):
             model = LeNet()
         case _:
             raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
+
+    if device:
+        model.to(torch.device(device) if isinstance(device, str) else device)
+    return model
+
+
+# --- Improved Snippet (get_text_model) ---
+def get_text_model(
+        dataset_name: str,
+        num_classes: int,
+        vocab_size: Optional[int] = None,
+        padding_idx: Optional[int] = None,
+        device: Optional[Union[str, torch.device]] = None,  # Added device
+        **model_kwargs: Any
+) -> nn.Module:
+    print(f"Getting model for dataset: {dataset_name}")
+    model: nn.Module
+    match dataset_name.lower():
+        case "ag_news" | "trec":
+            # ... (original TextCNN instantiation logic) ...
+            if vocab_size is None: raise ValueError("`vocab_size` is required for TextCNN model.")
+            if padding_idx is None: raise ValueError("`padding_idx` is required for TextCNN model.")
+            embed_dim = model_kwargs.get("embed_dim", 100)
+            num_filters = model_kwargs.get("num_filters", 100)
+            filter_sizes = model_kwargs.get("filter_sizes", [3, 4, 5])
+            dropout = model_kwargs.get("dropout", 0.5)
+            if not isinstance(filter_sizes, list): raise TypeError(
+                f"Expected 'filter_sizes' to be a list, got {type(filter_sizes)}")
+            model = TextCNN(
+                vocab_size=vocab_size, embed_dim=embed_dim, num_filters=num_filters,
+                filter_sizes=filter_sizes, num_class=num_classes, dropout=dropout,
+                padding_idx=padding_idx
+            )
+        case _:
+            raise NotImplementedError(f"Cannot find a model for dataset {dataset_name}")
+
+    if device:  # Apply device if specified
+        model.to(torch.device(device) if isinstance(device, str) else device)
     return model
 
 
