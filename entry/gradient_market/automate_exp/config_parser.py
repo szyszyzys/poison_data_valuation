@@ -56,6 +56,9 @@ def parse_config_for_attack_function(config: dict) -> dict:
     # Training parameters (from 'training' section)
     training_conf = config.get('training', {})
     parsed_args['local_training_params'] = training_conf.get('local_training_params')  # Pass dict or None
+    parsed_args['num_workers'] = 4
+    local_training_params["pin_memory"] = torch.cuda.is_available()
+
     # batch_size is used inside get_data_set or dataloaders, not directly by backdoor_attack
 
     # Federated Learning / Aggregation parameters (from 'federated_learning' section)

@@ -363,7 +363,8 @@ def poisoning_attack_image(
     print(f"--- Starting IMAGE Poisoning Attack ---")
     print(f"Dataset: {dataset_name}, Attack Type: {attack_type}")
     print(f"Sellers: {n_sellers}, Adversary Rate: {adv_rate}")
-
+    dl_num_workers = local_training_params.get('num_workers', 4)
+    dl_pin_memory = local_training_params.get('pin_memory', torch.cuda.is_available())
     sm_model_type = "None"
     if dataset_name == "FMNIST":
         sm_model_type = 'lenet'

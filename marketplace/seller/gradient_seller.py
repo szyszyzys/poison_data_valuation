@@ -751,7 +751,7 @@ class GradientSeller(BaseSeller):
         self.batch_size = self.local_training_params.get('batch_size', 64)
         self.learning_rate = self.local_training_params.get('lr',
                                                             self.local_training_params.get('learning_rate', 0.01))
-        self.num_workers = self.local_training_params.get('num_workers', 0)
+        self.num_workers = self.local_training_params.get('num_workers', 4)
         self.pin_memory = self.local_training_params.get('pin_memory', torch.cuda.is_available())
 
         self.recent_metrics: Optional[Dict] = None
