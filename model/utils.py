@@ -15,16 +15,17 @@ Usage (within a seller’s get_gradient method):
 
 import copy
 import logging
-import matplotlib.pyplot as plt
-import numpy as np
 import os
 import time
+from typing import List, Tuple, Any, Dict, Optional, Union
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision.utils as vutils
 from torch.utils.data import DataLoader
-from typing import List, Tuple, Any, Dict, Optional, Union
 
 # from model.text_model import TEXTCNN
 from model.vision_model import CNN_CIFAR, LeNet, TextCNN
@@ -224,6 +225,7 @@ def local_training_and_get_gradient(
         opt_str: str = "SGD",  # Renamed from 'opt' to avoid potential module conflict
         momentum: float = 0.9,
         weight_decay: float = 0.0005,
+        batch_size=64,
         # Added for optional, less frequent full evaluation on training set
         evaluate_on_full_train_set: bool = False
 ) -> Tuple[Optional[List[torch.Tensor]], Optional[np.ndarray], Optional[nn.Module], Dict, Optional[float]]:
