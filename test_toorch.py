@@ -220,7 +220,21 @@ def get_text_data_set(
     if use_cache and os.path.exists(vocab_cache_file):
         try:
             logging.info(f"Attempting to load vocabulary from cache: {vocab_cache_file}")
-            cached_data = torch.load(vocab_cache_file)
+            # --- MODIFICATION HERE ---
+            # For PyTorch versions that default weights_only=True (e.g., >=2.1 or a future version)
+            # and you are loading non-weights objects like a Vocab object.
+            try:
+                # Attempt with weights_only=False if an older PyTorch version doesn't have it or
+                # if you know the file is safe and contains pickled Python objects.
+                cached_data = torch.load(vocab_cache_file, weights_only=False)
+            except TypeError as te: # Older PyTorch versions might not have weights_only argument
+                if "weights_only" in str(te):
+                    logging.warning(f"torch.load does not support 'weights_only' argument in this PyTorch version ({torch.__version__}). Loading normally.")
+                    cached_data = torch.load(vocab_cache_file)
+                else:
+                    raise # Re-raise other TypeErrors
+            # --- END MODIFICATION ---
+
             if isinstance(cached_data, tuple) and len(cached_data) == 3:
                 vocab, pad_idx, unk_idx_val = cached_data
             elif isinstance(cached_data, Vocab): # Backward compatibility for older cache
@@ -228,15 +242,14 @@ def get_text_data_set(
                 if pad_token in vocab.stoi: pad_idx = vocab.stoi[pad_token]
                 else: logging.warning(f"'{pad_token}' not found in loaded vocab.stoi.")
                 if unk_token in vocab.stoi: unk_idx_val = vocab.stoi[unk_token]
-                elif '<unk>' in vocab.stoi: unk_idx_val = vocab.stoi['<unk>'] # Default fallback
+                elif '<unk>' in vocab.stoi: unk_idx_val = vocab.stoi['<unk>']
                 else: logging.warning(f"'{unk_token}' or '<unk>' not found in loaded vocab.stoi.")
             else:
                 raise TypeError("Cached vocab data has unexpected format.")
 
             if not isinstance(vocab, Vocab) or not (isinstance(pad_idx, int) and pad_idx >=0) or not (isinstance(unk_idx_val, int) and unk_idx_val >=0):
-                 # pad_idx and unk_idx_val must be valid non-negative indices
                 logging.warning(f"Problematic cached vocab/indices: pad_idx={pad_idx}, unk_idx_val={unk_idx_val}. Rebuilding.")
-                vocab = None # Force rebuild
+                vocab = None
             else:
                 logging.info(f"Vocabulary loaded from cache. Size: {len(vocab.itos)}, Pad index: {pad_idx}, Unk index: {unk_idx_val}")
         except Exception as e:
