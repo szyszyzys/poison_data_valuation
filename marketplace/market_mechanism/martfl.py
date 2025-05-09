@@ -301,26 +301,29 @@ class Aggregator:
                 logger.error(f"Unsupported parameter type at index {i} in list: {type(p)}. Skipping this param.")
         return processed_list
 
+
     def fltrust(self,
                 global_epoch: int,
-                seller_updates: Dict[str, List[Union[torch.Tensor, np.ndarray]]],  # Allow np.ndarray in input type hint
-                buyer_updates: List[Union[torch.Tensor, np.ndarray]],  # Allow np.ndarray in input type hint
-                clip: bool = True) -> Tuple[List[torch.Tensor], List[str], List[str]]:  # Return original seller IDs
+                seller_updates: Dict[str, List[Union[torch.Tensor, np.ndarray]]],
+                buyer_updates: List[Union[torch.Tensor, np.ndarray]],
+                clip: bool = True
+               ) -> Tuple[List[torch.Tensor], List[int], List[int]]: # Returns integer indices
         """
-        Performs FLTrust aggregation. Handles numpy arrays in inputs defensively.
+        Performs FLTrust aggregation.
         Returns:
             - aggregated_gradient: List of torch.Tensors
-            - selected_seller_ids: List of original string IDs of selected sellers
-            - outlier_seller_ids: List of original string IDs of outlier sellers
+            - selected_indices: List of original integer indices of selected sellers
+                                (relative to the order in seller_updates.values() / .keys())
+            - outlier_indices: List of original integer indices of outlier sellers
         """
         logger.info(f"--- Starting FLTrust Aggregation (Epoch {global_epoch}) ---")
 
+        # Maintain a consistent order of sellers and their original integer indices
         original_seller_ids_ordered = list(seller_updates.keys())
+        original_seller_updates_ordered = list(seller_updates.values())
         n_original_sellers = len(original_seller_ids_ordered)
 
-        # Get the structure (shapes and dtypes) for zero gradients from the stored model structure
-        param_structure = [p.data.clone() for p in
-                           self.model_structure.parameters()]  # Use .data to avoid grad tracking
+        param_structure = [p.data.clone() for p in self.model_structure.parameters()]
 
         if n_original_sellers == 0:
             logger.warning("FLTrust: No seller updates received.")
@@ -328,166 +331,118 @@ class Aggregator:
 
         logger.info(f"FLTrust: Processing {n_original_sellers} seller updates.")
 
-        # --- 1) Process, optionally clip, and flatten seller updates ---
-        logger.info("FLTrust: Processing, (optionally) clipping, and flattening seller gradients...")
+        valid_original_integer_indices = [] # Stores original integer index (0 to n_original_sellers-1)
+        valid_processed_unflattened_updates_for_agg = []
+        valid_flattened_updates_for_stacking = []
 
-        # These lists will store data ONLY for updates that are valid through all processing steps
-        valid_original_ids_for_stacking = []  # Original seller_ids corresponding to stacked updates
-        valid_processed_unflattened_updates_for_agg = []  # Unflattened, processed updates for these valid sellers
-        valid_flattened_updates_for_stacking = []  # Flattened updates for these valid sellers
-
-        for i in range(n_original_sellers):
+        for i in range(n_original_sellers): # i is the original integer index
             seller_id = original_seller_ids_ordered[i]
-            raw_update_list = seller_updates[seller_id]
+            raw_update_list = original_seller_updates_ordered[i]
 
-            # Step 1.1: Ensure tensors and on device
             update_as_tensors_on_device = self._ensure_tensor_on_device(raw_update_list)
             if len(update_as_tensors_on_device) != len(param_structure):
-                logger.warning(f"FLTrust: Seller {seller_id} update has {len(update_as_tensors_on_device)} layers, "
-                               f"expected {len(param_structure)}. Skipping this seller.")
+                logger.warning(f"FLTrust: Seller {seller_id} (orig_idx {i}) update has {len(update_as_tensors_on_device)} layers, "
+                                   f"expected {len(param_structure)}. Skipping.")
                 continue
 
-            # Step 1.2: Clone for further processing (clipping might be in-place or return new)
-            # Using .data.clone() to ensure we are working with data part and not affecting original grads
             current_processed_update_layers = [p.data.clone() for p in update_as_tensors_on_device]
 
-            # Step 1.3: Optional Clipping
             if clip:
                 try:
-                    # clip_gradient_update should return a new list of clipped tensors or modify in place and be careful
-                    # For safety, assume it returns a new list or we reassign.
-                    current_processed_update_layers = clip_gradient_update(current_processed_update_layers,
-                                                                           self.clip_norm)
-                    if len(current_processed_update_layers) != len(param_structure):  # Double check after clipping
-                        logger.error(f"FLTrust: Seller {seller_id} update length changed after clipping. "
-                                     f"Expected {len(param_structure)}, got {len(current_processed_update_layers)}. Skipping.")
+                    current_processed_update_layers = clip_gradient_update(current_processed_update_layers, self.clip_norm)
+                    if len(current_processed_update_layers) != len(param_structure):
+                        logger.error(f"FLTrust: Seller {seller_id} (orig_idx {i}) update length changed after clipping. Skipping.")
                         continue
                 except Exception as clip_e:
-                    logger.error(f"FLTrust: Error clipping gradient for seller {seller_id}: {clip_e}. Skipping.")
+                    logger.error(f"FLTrust: Error clipping gradient for seller {seller_id} (orig_idx {i}): {clip_e}. Skipping.")
                     continue
 
-            # Step 1.4: Flatten the processed update
-            flattened_update = flatten(current_processed_update_layers)
+            flattened_update = flatten(current_processed_update_layers) # Use self.flatten
             if flattened_update is None or flattened_update.numel() == 0:
-                logger.warning(
-                    f"FLTrust: Seller {seller_id} update resulted in None or empty flattened update. Skipping.")
+                logger.warning(f"FLTrust: Seller {seller_id} (orig_idx {i}) update resulted in None or empty flattened update. Skipping.")
                 continue
 
-            # If all checks pass, add to our lists of valid updates
-            valid_original_ids_for_stacking.append(seller_id)
+            valid_original_integer_indices.append(i) # Store the original integer index
             valid_processed_unflattened_updates_for_agg.append(current_processed_update_layers)
             valid_flattened_updates_for_stacking.append(flattened_update)
 
         if not valid_flattened_updates_for_stacking:
             logger.error("FLTrust: No valid flattened seller updates found after all processing steps.")
-            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], original_seller_ids_ordered)
+            # Return all original integer indices as outliers
+            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_original_sellers)))
 
         try:
-            # This stack now only contains valid, consistently processed updates
-            clients_stack = torch.stack(valid_flattened_updates_for_stacking)  # shape: (n_valid_sellers, d)
+            clients_stack = torch.stack(valid_flattened_updates_for_stacking)
         except RuntimeError as e:
             logger.error(f"FLTrust: Error stacking final list of flattened client updates: {e}")
-            for i, upd_s in enumerate(valid_flattened_updates_for_stacking):
-                logger.error(f"  Shape of valid update {i} (ID: {valid_original_ids_for_stacking[i]}): {upd_s.shape}")
-            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], original_seller_ids_ordered)
+            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_original_sellers)))
 
-        # --- 2) Process the buyer (server/root) update (baseline) ---
-        logger.info("FLTrust: Processing buyer (server) update...")
+        # --- Buyer update processing (same as before) ---
         buyer_updates_as_tensors_on_device = self._ensure_tensor_on_device(buyer_updates)
         if len(buyer_updates_as_tensors_on_device) != len(param_structure):
-            logger.error(f"FLTrust: Buyer update has {len(buyer_updates_as_tensors_on_device)} layers, "
-                         f"expected {len(param_structure)}. Cannot proceed with FLTrust.")
-            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], original_seller_ids_ordered)
-
-        # Clone buyer update if it will be modified (e.g. by clipping, though usually not done for buyer)
+            logger.error(f"FLTrust: Buyer update has incorrect number of layers. Cannot proceed.")
+            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_original_sellers)))
         buyer_update_processed_layers = [p.data.clone() for p in buyer_updates_as_tensors_on_device]
-
-        buyer_update_flattened = flatten(buyer_update_processed_layers)
+        buyer_update_flattened = self.flatten(buyer_update_processed_layers) # Use self.flatten
         if buyer_update_flattened is None or buyer_update_flattened.numel() == 0:
             logger.error("FLTrust: Buyer update is None or empty after flattening. Cannot proceed.")
-            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], original_seller_ids_ordered)
+            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_original_sellers)))
+        buyer_update_norm = torch.norm(buyer_update_flattened, p=2) + 1e-9
+        if buyer_update_norm.item() < 1e-8:
+            logger.warning("FLTrust: Buyer update norm is close to zero.")
+            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_original_sellers)))
+        # --- End Buyer Update Processing ---
 
-        buyer_update_norm = torch.norm(buyer_update_flattened, p=2) + 1e-9  # Add epsilon
-        logger.info(f"FLTrust: Buyer update norm: {buyer_update_norm.item():.4f}")
-
-        if buyer_update_norm.item() < 1e-8:  # Norm too small
-            logger.warning(
-                "FLTrust: Buyer update norm is close to zero. FLTrust may yield zero result or behave unexpectedly.")
-            # Return zero aggregate, all sellers as outliers
-            return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], original_seller_ids_ordered)
-
-        # --- 3) Compute cosine similarity with buyer update (baseline) ---
-        logger.info("FLTrust: Computing cosine similarities with buyer update...")
-        clients_norms = torch.norm(clients_stack, p=2, dim=1) + 1e-9  # Add epsilon
-        # Dot product: (N, D) x (D) -> (N)
+        clients_norms = torch.norm(clients_stack, p=2, dim=1) + 1e-9
         dot_products = torch.mv(clients_stack, buyer_update_flattened)
-        cosine_similarities = dot_products / (buyer_update_norm * clients_norms)
-        # Clamp to handle potential floating point inaccuracies leading to values slightly outside [-1, 1]
-        cosine_similarities = torch.clamp(cosine_similarities, -1.0, 1.0)
-        logger.debug(f"FLTrust: Cosine Similarities: {cosine_similarities.cpu().numpy()}")
-
-        # --- 4) Compute Trust Scores (ReLU of similarities) ---
+        cosine_similarities = torch.clamp(dot_products / (buyer_update_norm * clients_norms), -1.0, 1.0)
         trust_scores = torch.relu(cosine_similarities)
-        logger.debug(f"FLTrust: Trust Scores (ReLU): {trust_scores.cpu().numpy()}")
-
-        # --- 5) Normalize Trust Scores to get weights ---
         total_trust = torch.sum(trust_scores)
         logger.info(f"FLTrust: Total Trust Score: {total_trust.item():.4f}")
 
-        selected_final_seller_ids: List[str] = []
-        outlier_final_seller_ids: List[str] = list(original_seller_ids_ordered)  # Assume all are outliers initially
+        selected_final_original_integer_indices: List[int] = []
+        # Initialize outlier_indices with all *original integer indices*
+        outlier_final_original_integer_indices: List[int] = list(range(n_original_sellers))
 
-        aggregation_weights_for_valid_updates = torch.zeros_like(trust_scores)  # Same size as trust_scores
+        aggregation_weights_for_valid_updates = torch.zeros_like(trust_scores)
 
-        if total_trust.item() > 1e-9:  # Avoid division by zero if all trust scores are zero
+        if total_trust.item() > 1e-9:
             aggregation_weights_for_valid_updates = trust_scores / total_trust
-            for i, weight in enumerate(aggregation_weights_for_valid_updates):
-                original_seller_id_for_this_weight = valid_original_ids_for_stacking[i]
-                if weight.item() > 1e-9:  # If weight is non-negligible
-                    selected_final_seller_ids.append(original_seller_id_for_this_weight)
-                    if original_seller_id_for_this_weight in outlier_final_seller_ids:
-                        outlier_final_seller_ids.remove(original_seller_id_for_this_weight)
+            for i, weight_val in enumerate(aggregation_weights_for_valid_updates): # i is index into valid_... lists
+                original_integer_idx_of_this_valid_seller = valid_original_integer_indices[i]
+                if weight_val.item() > 1e-9:
+                    selected_final_original_integer_indices.append(original_integer_idx_of_this_valid_seller)
+                    if original_integer_idx_of_this_valid_seller in outlier_final_original_integer_indices:
+                        outlier_final_original_integer_indices.remove(original_integer_idx_of_this_valid_seller)
         else:
-            logger.warning(
-                "FLTrust: Total trust score is (close to) zero. No clients will be selected for aggregation.")
-            # selected_final_seller_ids remains empty, outlier_final_seller_ids contains all original IDs
+            logger.warning("FLTrust: Total trust score is (close to) zero. No clients selected.")
+            # selected_final_original_integer_indices remains empty
+            # outlier_final_original_integer_indices remains all original integer indices
 
-        logger.info(
-            f"FLTrust: Aggregation Weights (for valid updates): {aggregation_weights_for_valid_updates.cpu().numpy()}")
-        logger.info(f"FLTrust: Selected seller IDs ({len(selected_final_seller_ids)}): {selected_final_seller_ids}")
-        logger.info(f"FLTrust: Outlier seller IDs ({len(outlier_final_seller_ids)}): {outlier_final_seller_ids}")
+        logger.info(f"FLTrust: Aggregation Weights (for valid updates): {aggregation_weights_for_valid_updates.cpu().numpy()}")
+        logger.info(f"FLTrust: Selected original integer indices ({len(selected_final_original_integer_indices)}): {selected_final_original_integer_indices}")
+        logger.info(f"FLTrust: Outlier original integer indices ({len(outlier_final_original_integer_indices)}): {outlier_final_original_integer_indices}")
 
-        # --- 6) Perform weighted aggregation ---
-        # Initialize with zeros based on the model structure
-        aggregated_gradient_layers = [
-            torch.zeros_like(param, device=self.device) for param in param_structure
-        ]
-
-        if selected_final_seller_ids:  # Only aggregate if there are selected sellers
-            logger.info(f"FLTrust: Aggregating updates from {len(selected_final_seller_ids)} selected sellers...")
-            for i, weight in enumerate(aggregation_weights_for_valid_updates):
-                if weight.item() > 1e-9:  # If this update contributes
-                    # 'i' is the index into valid_processed_unflattened_updates_for_agg and aggregation_weights_for_valid_updates
+        aggregated_gradient_layers = [torch.zeros_like(param, device=self.device) for param in param_structure]
+        if selected_final_original_integer_indices: # Check if any sellers were selected
+            logger.info(f"FLTrust: Aggregating updates from {len(selected_final_original_integer_indices)} selected sellers...")
+            for i, weight_val in enumerate(aggregation_weights_for_valid_updates): # Iterate through weights of valid updates
+                if weight_val.item() > 1e-9:
+                    # 'i' is the index into valid_processed_unflattened_updates_for_agg
                     unflattened_update_to_add = valid_processed_unflattened_updates_for_agg[i]
-                    # add_gradient_updates will now receive lists of tensors of the correct length
-                    add_gradient_updates(aggregated_gradient_layers, unflattened_update_to_add, weight=weight.item())
+                    add_gradient_updates(aggregated_gradient_layers, unflattened_update_to_add, weight=weight_val.item())
 
-            # --- 7) Scale the final aggregated gradient by the norm of the buyer update ---
-            scaling_factor = buyer_update_norm.item()  # This is a scalar
+            scaling_factor = buyer_update_norm.item()
             logger.info(f"FLTrust: Scaling final aggregated gradient by buyer norm: {scaling_factor:.4f}")
-            # Ensure aggregated_gradient_layers contains tensors before scaling
             if all(isinstance(p, torch.Tensor) for p in aggregated_gradient_layers):
                 aggregated_gradient_layers = [p.data * scaling_factor for p in aggregated_gradient_layers]
             else:
-                logger.error(
-                    "FLTrust: aggregated_gradient_layers contains non-tensor elements before scaling. Skipping scaling.")
+                logger.error("FLTrust: aggregated_gradient_layers contains non-tensor elements before scaling. Skipping scaling.")
         else:
             logger.info("FLTrust: No clients selected based on trust scores. Returning zero gradient.")
-            # aggregated_gradient_layers remains list of zero tensors
 
         logger.info("--- FLTrust Aggregation Finished ---")
-        return aggregated_gradient_layers, selected_final_seller_ids, outlier_final_seller_ids
-
+        return aggregated_gradient_layers, selected_final_original_integer_indices, outlier_final_original_integer_indices
     # def fltrust(self,
     #             global_epoch: int,
     #             seller_updates: Dict[str, List[torch.Tensor]],  # Hint still assumes tensor, but code handles numpy
