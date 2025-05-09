@@ -225,6 +225,7 @@ def local_training_and_get_gradient(  # Actually returns weight deltas, not grad
         opt_str: str = "SGD",
         momentum: float = 0.9,
         weight_decay: float = 0.0005,
+        batch_size = 64,
         # batch_size is part of train_loader, not needed as separate arg here
         evaluate_on_full_train_set: bool = False
 ) -> Tuple[Optional[List[torch.Tensor]], Optional[np.ndarray], Optional[nn.Module], Dict, Optional[float]]:
