@@ -5,24 +5,26 @@
 import collections
 import copy
 import logging
-import numpy as np
-import pandas as pd
 import sys
 import time
-import torch
-import torch.nn.functional as F
 from collections import abc  # abc.Mapping for general dicts
 from functools import partial
-from torch import optim, nn
-from torch.utils.data import DataLoader, Dataset
 from typing import Any
 from typing import Dict
 from typing import List, Optional, Union
 from typing import Tuple
 
-from general_utils.data_utils import list_to_tensor_dataset, TextDataset, collate_batch
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn.functional as F
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
+
+from general_utils.data_utils import collate_batch
 from marketplace.seller.seller import BaseSeller
 from model.utils import get_image_model, local_training_and_get_gradient
+from model.vision_model import TextCNN
 
 
 def estimate_byte_size(data: Any) -> int:
@@ -727,7 +729,8 @@ class GradientSeller(BaseSeller):
                  device: str = "cpu",
                  vocab: Optional[Any] = None,  # For text data, e.g., torchtext.vocab.Vocab
                  local_epochs: int = 2,  # Default local epochs
-                 local_training_params: Optional[Dict[str, Any]] = None):
+                 local_training_params: Optional[Dict[str, Any]] = None,
+                 initial_model=None):
 
         super().__init__(
             seller_id=seller_id,
@@ -738,6 +741,8 @@ class GradientSeller(BaseSeller):
             save_path=save_path,
             device=device
         )
+        self._base_model_structure = initial_model  # This is just the architecture
+        self._base_model_structure.to(device)  # Ensure the structure is on device
 
         self.dataset_name = dataset_name  # Used by get_image_model if loading fails
         self.local_model_params: Optional[
@@ -768,6 +773,51 @@ class GradientSeller(BaseSeller):
             elif hasattr(self.vocab, 'stoi') and pad_token in self.vocab.stoi:  # For older torchtext
                 self.pad_idx = self.vocab.stoi[pad_token]
 
+    def _create_new_model_instance_from_base(self) -> nn.Module:
+        """
+        Creates a new model instance with the same architecture as the base model,
+        but with fresh (randomly initialized) weights.
+        This is used to load the global state_dict into a clean slate.
+        """
+        # We need to instantiate a new model of the same class as self._base_model_structure.
+        # This requires knowing how _base_model_structure was created.
+        # If _base_model_structure is, e.g., TextCNN, we need its init args.
+        # This is the tricky part if we only pass the instance.
+        #
+        # SAFER APPROACH: The Seller should receive the *means* to create a model,
+        # OR the global model itself (as an instance) to then load_state_dict.
+        #
+        # For the "pass instance" pattern, the simplest for FL is to always work on
+        # a copy of the model that's then updated.
+        # Let's refine get_gradient_for_upload to use the base structure.
+
+        # This method creates a new model instance of the same type as self._base_model_structure
+        # It's crucial that self._base_model_structure can be "re-created" or that we have its class and init args.
+        # For simplicity, if we just copy the structure:
+        model_copy = type(self._base_model_structure)(**self._get_init_args_for_base_model()) # This is the hard part
+        return model_copy.to(self.device)
+
+    def _get_init_args_for_base_model(self) -> Dict[str, Any]:
+        # This is a placeholder and THE MOST DIFFICULT PART of this approach.
+        # You need to introspect self._base_model_structure or have stored its init args.
+        # Example for TextCNN (highly model-specific):
+        if isinstance(self._base_model_structure, TextCNN):
+            # This assumes TextCNN stores these or you can access them.
+            # This is fragile and not recommended.
+            # It's better if Seller receives a factory or all init_args.
+            # For example, if TextCNN had: self.vocab_size = vocab_size, etc.
+            return {
+                "vocab_size": getattr(self._base_model_structure, 'embedding').num_embeddings, # Hacky
+                "embed_dim": getattr(self._base_model_structure, 'embedding').embedding_dim, # Hacky
+                "num_filters": len(getattr(self._base_model_structure, 'convs')), # Even more hacky if num_filters is not stored
+                "filter_sizes": [conv.kernel_size[0] for conv in getattr(self._base_model_structure, 'convs')], # Super hacky
+                "num_class": getattr(self._base_model_structure, 'fc').out_features, # Hacky
+                "dropout": getattr(self._base_model_structure, 'dropout').p, # Hacky
+                "padding_idx": getattr(self._base_model_structure, 'embedding').padding_idx # Hacky
+            }
+        # Add other model types if needed
+        raise NotImplementedError(f"Don't know how to get init_args for model type {type(self._base_model_structure)}")
+
     def get_gradient_for_upload(self, global_model: Optional[nn.Module] = None) -> Tuple[
         Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
@@ -776,26 +826,30 @@ class GradientSeller(BaseSeller):
         base_model_for_training: nn.Module
         if global_model is not None:
             # OPTIMIZATION: Instead of deepcopy, load state_dict into a new instance.
-            # This is generally faster for large models.
             try:
-                base_model_for_training = get_image_model(self.dataset_name,
-                                                          device=self.device)  # Get new model structure
+                # Use the new helper method to get the correct model structure
+                base_model_for_training = self._get_new_model_instance() # Creates on self.device
                 base_model_for_training.load_state_dict(global_model.state_dict())
-                # logging.debug(f"[{self.seller_id}] Using provided global model by loading state_dict.")
+                logging.debug(f"[{self.seller_id}] Using provided global model by loading its state_dict into a new local instance.")
             except Exception as e:
                 logging.warning(
-                    f"[{self.seller_id}] Failed to load state_dict from global_model: {e}. Falling back to deepcopy.")
+                    f"[{self.seller_id}] Failed to load state_dict from global_model into new instance: {e}. "
+                    f"Falling back to deepcopy of global_model.")
                 base_model_for_training = copy.deepcopy(global_model).to(self.device)
         else:
+            # No global model provided, use a local model.
+            # `load_local_model` here should ideally return a model ready for training,
+            # potentially a fresh instance or a previously saved one.
             try:
-                base_model_for_training = self.load_local_model()  # This now returns a model instance
-                # logging.debug(f"[{self.seller_id}] Loaded previous local model.")
+                base_model_for_training = self.load_local_model() # Returns a fresh instance on self.device
+                logging.debug(f"[{self.seller_id}] No global model, using model from load_local_model().")
             except Exception as e:
-                # logging.warning(f"[{self.seller_id}] No saved local model found or error loading: {e}. Using new model.")
-                base_model_for_training = get_image_model(self.dataset_name, device=self.device)
+                logging.error(f"[{self.seller_id}] Error in load_local_model() or _get_new_model_instance() when no global model: {e}. Cannot proceed.", exc_info=True)
+                return None, {'error': str(e), 'train_loss': None, 'compute_time_ms': None, 'upload_bytes': None}
+
 
         # _compute_local_grad expects model on self.device, which base_model_for_training should be.
-
+        base_model_for_training.to(self.device)
         try:
             gradient_list_tensors, _, _, local_eval_res, training_stats = self._compute_local_grad(
                 base_model_for_training, self.dataset  # self.dataset is the torch.utils.data.Dataset
@@ -969,6 +1023,8 @@ class GradientSeller(BaseSeller):
         # Ensure self.save_path is set and is a string path
         base_save_path = self.save_path if isinstance(self.save_path, str) else "."
         return f"{base_save_path}/local_model_{self.seller_id}.pt"
+
+
 class AdvancedPoisoningAdversarySeller(GradientSeller):
     def __init__(self,
                  seller_id: str,
@@ -983,12 +1039,12 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
                  local_training_params: Optional[dict] = None,
                  is_sybil: bool = False,
                  benign_rounds=3,
-                 vocab=None,
+                 vocab=None, initial_model=None,
                  pad_idx=None,
                  sybil_coordinator: Optional['SybilCoordinator'] = None):
         super().__init__(seller_id, local_data, save_path=save_path, device=device,
                          local_epochs=local_epochs, dataset_name=dataset_name,
-                         local_training_params=local_training_params)
+                         local_training_params=local_training_params, initial_model=initial_model)
 
         self.flip_target_label = target_label
         self.poison_generator = poison_generator
@@ -1266,10 +1322,11 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  benign_rounds=3,
                  vocab=None,
                  pad_idx=None,
+                 initial_model=None,
                  sybil_coordinator: Optional['SybilCoordinator'] = None):
         super().__init__(seller_id, local_data, save_path=save_path, device=device,
                          local_epochs=local_epochs, dataset_name=dataset_name,
-                         local_training_params=local_training_params)
+                         local_training_params=local_training_params, initial_model=initial_model)
 
         self.target_label = target_label
         self.alpha_align = alpha_align
