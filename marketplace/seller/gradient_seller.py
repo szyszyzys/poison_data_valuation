@@ -730,7 +730,8 @@ class GradientSeller(BaseSeller):
                  vocab: Optional[Any] = None,  # For text data, e.g., torchtext.vocab.Vocab
                  local_epochs: int = 2,  # Default local epochs
                  local_training_params: Optional[Dict[str, Any]] = None,
-                 model_type = "image",
+                 model_type="image",
+                 model_init_config=None,
                  initial_model=None):
 
         super().__init__(
@@ -745,7 +746,7 @@ class GradientSeller(BaseSeller):
         self.model_type = model_type
         self._base_model_structure = initial_model  # This is just the architecture
         self._base_model_structure.to(device)  # Ensure the structure is on device
-
+        self.model_init_config = model_init_config
         self.dataset_name = dataset_name  # Used by get_image_model if loading fails
         self.local_model_params: Optional[
             np.ndarray] = None  # Kept for compatibility, but less used if models are PyTorch
@@ -775,58 +776,73 @@ class GradientSeller(BaseSeller):
             elif hasattr(self.vocab, 'stoi') and pad_token in self.vocab.stoi:  # For older torchtext
                 self.pad_idx = self.vocab.stoi[pad_token]
 
-    def _create_new_model_instance_from_base(self) -> nn.Module:
-        """
-        Creates a new model instance with the same architecture as the base model,
-        but with fresh (randomly initialized) weights.
-        This is used to load the global state_dict into a clean slate.
-        """
-        # We need to instantiate a new model of the same class as self._base_model_structure.
-        # This requires knowing how _base_model_structure was created.
-        # If _base_model_structure is, e.g., TextCNN, we need its init args.
-        # This is the tricky part if we only pass the instance.
-        #
-        # SAFER APPROACH: The Seller should receive the *means* to create a model,
-        # OR the global model itself (as an instance) to then load_state_dict.
-        #
-        # For the "pass instance" pattern, the simplest for FL is to always work on
-        # a copy of the model that's then updated.
-        # Let's refine get_gradient_for_upload to use the base structure.
-
-        # This method creates a new model instance of the same type as self._base_model_structure
-        # It's crucial that self._base_model_structure can be "re-created" or that we have its class and init args.
-        # For simplicity, if we just copy the structure:
-        model_copy = type(self._base_model_structure)(**self._get_init_args_for_base_model())  # This is the hard part
-        return model_copy.to(self.device)
-
     def _get_new_model_instance(self) -> nn.Module:
-        """
-        Creates a new, uninitialized model instance based on the seller's configuration.
-        The model is created on self.device.
-        """
-        logging.debug(
-            f"[{self.seller_id}] Creating new model instance of type '{self.model_type}'")
-        # Use self.model_type to decide which factory function to call
-        # self.dataset_name can also be used if model_type is generic (e.g., "cnn", "transformer")
-
-        if "text" in self.model_type.lower():  # Or more specific e.g., self.model_type == "text_cnn"
-
-            return get_text_model(
-                dataset_name=self.dataset_name,  # Or a more specific model name mapping
-                num_classes=num_classes,
-                vocab_size=vocab_size,
-                padding_idx=padding_idx,
-                device=self.device,
-                **model_specific_kwargs
+            """
+            Creates a new, uninitialized model instance based on the seller's stored configuration.
+            The model is created on self.device.
+            Relies on self.model_type and self.model_init_config.
+            """
+            logging.debug(
+                f"[{self.seller_id}] Creating new model instance of type '{self.model_type}' "
+                f"using stored config."
             )
-        # Example for image models
-        elif "image" in self.model_type.lower() or self.model_type in ["resnet18", "simple_cnn_cifar",
-                                                                       "simple_cnn_mnist"]:
-            return get_image_model(
-                dataset_name=self.dataset_name,  # Or a specific model name
-            )
-        else:
-            raise ValueError(f"[{self.seller_id}] Unsupported model_type: {self.model_type}")
+
+            # Always add/override device from self.device to ensure consistency
+            current_model_config = {**self.model_init_config, "device": self.device}
+
+            # Optional: dataset_name can also be part of model_init_config or passed if distinct
+            # If get_text_model/get_image_model always need dataset_name, ensure it's in current_model_config
+            if "dataset_name" not in current_model_config:
+                current_model_config["dataset_name"] = self.dataset_name
+
+
+            # Dispatch based on a more robust model_type or a prefix/suffix
+            # For example, if model_type is "text_cnn_agnews" or "text_transformer_trec"
+            if "text" in self.model_type.lower():
+                # get_text_model should be designed to take all its necessary args from a dict
+                # or specific named arguments present in current_model_config.
+                # Example: get_text_model(**current_model_config)
+                # Ensure all required keys (num_classes, vocab_size, padding_idx) are in current_model_config
+                required_text_keys = ["num_classes", "vocab_size", "padding_idx"]
+                if not all(key in current_model_config for key in required_text_keys):
+                    missing_keys = [key for key in required_text_keys if key not in current_model_config]
+                    raise ValueError(
+                        f"[{self.seller_id}] Missing required keys in model_init_config for text model: {missing_keys}. "
+                        f"Config provided: {current_model_config}"
+                    )
+
+                # If get_text_model takes specific args and then **kwargs for others:
+                return get_text_model(
+                    dataset_name=current_model_config.get("dataset_name", self.dataset_name), # Prioritize config
+                    num_classes=current_model_config["num_classes"],
+                    vocab_size=current_model_config["vocab_size"],
+                    padding_idx=current_model_config["padding_idx"],
+                    device=current_model_config["device"], # Explicitly from seller's device
+                    # Pass any other params from model_init_config as kwargs if get_text_model supports it
+                    # This requires get_text_model to be structured to accept **kwargs
+                    # and internally pick out what it needs (e.g., embed_dim, num_filters)
+                    **current_model_config.get("model_kwargs", {}) # If you have a nested 'model_kwargs'
+                                                                   # OR pass current_model_config directly if flat
+                )
+
+            elif "image" in self.model_type.lower() or \
+                 self.model_type.lower() in ["resnet18", "simple_cnn_cifar", "simple_cnn_mnist"]: # More specific types
+                # Ensure all required keys for get_image_model are present
+                # (e.g., num_classes might be needed, others might have defaults)
+                if "num_classes" not in current_model_config:
+                     # Try to infer from dataset_name or raise error if necessary for get_image_model
+                    if self.dataset_name.lower() == "cifar10": current_model_config["num_classes"] = 10
+                    elif self.dataset_name.lower() == "mnist": current_model_config["num_classes"] = 10
+                    # else: pass None and let get_image_model handle it or raise error
+
+                # If get_image_model takes specific args and then **kwargs:
+                return get_image_model(
+                    dataset_name=current_model_config.get("dataset_name", self.dataset_name), # Prioritize config
+                    device=current_model_config["device"],
+                )
+            else:
+                raise ValueError(f"[{self.seller_id}] Unsupported model_type: '{self.model_type}' for creating new instance.")
+
 
     def _get_init_args_for_base_model(self) -> Dict[str, Any]:
         # This is a placeholder and THE MOST DIFFICULT PART of this approach.
@@ -1073,13 +1089,14 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
                  local_training_params: Optional[dict] = None,
                  is_sybil: bool = False,
                  benign_rounds=3,
-                 model_type = "image",
+                 model_type="image",
                  vocab=None, initial_model=None,
-                 pad_idx=None,
+                 pad_idx=None, model_init_config=None,
                  sybil_coordinator: Optional['SybilCoordinator'] = None):
         super().__init__(seller_id, local_data, save_path=save_path, device=device,
                          local_epochs=local_epochs, dataset_name=dataset_name,
-                         local_training_params=local_training_params, initial_model=initial_model, model_type = model_type)
+                         local_training_params=local_training_params, initial_model=initial_model,
+                         model_type=model_type, model_init_config=model_init_config)
 
         self.flip_target_label = target_label
         self.poison_generator = poison_generator
@@ -1207,18 +1224,33 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
         If Sybil and not selected last round, query the coordinator to update the gradient.
         """
         if global_model is not None:
-            base_model = copy.deepcopy(global_model)
-            print(f"[{self.seller_id}] Using provided global model.")
-        else:
+            # OPTIMIZATION: Instead of deepcopy, load state_dict into a new instance.
             try:
-                base_model = self.load_local_model()
-                print(f"[{self.seller_id}] Loaded previous local model.")
+                # Use the new helper method to get the correct model structure
+                base_model_for_training = self._get_new_model_instance()  # Creates on self.device
+                base_model_for_training.load_state_dict(global_model.state_dict())
+                logging.debug(
+                    f"[{self.seller_id}] Using provided global model by loading its state_dict into a new local instance.")
             except Exception as e:
-                print(f"[{self.seller_id}] No saved model found; using default initialization.")
-                base_model = get_image_model(self.dataset_name)
+                logging.warning(
+                    f"[{self.seller_id}] Failed to load state_dict from global_model into new instance: {e}. "
+                    f"Falling back to deepcopy of global_model.")
+                base_model_for_training = copy.deepcopy(global_model).to(self.device)
+        else:
+            # No global model provided, use a local model.
+            # `load_local_model` here should ideally return a model ready for training,
+            # potentially a fresh instance or a previously saved one.
+            try:
+                base_model_for_training = self.load_local_model()  # Returns a fresh instance on self.device
+                logging.debug(f"[{self.seller_id}] No global model, using model from load_local_model().")
+            except Exception as e:
+                logging.error(
+                    f"[{self.seller_id}] Error in load_local_model() or _get_new_model_instance() when no global model: {e}. Cannot proceed.",
+                    exc_info=True)
+                return None, {'error': str(e), 'train_loss': None, 'compute_time_ms': None, 'upload_bytes': None}
 
-        base_model = base_model.to(self.device)
-        local_grad = self.get_local_gradient(base_model)
+        base_model_for_training.to(self.device)
+        local_grad = self.get_local_gradient(base_model_for_training)
         self.cur_upload_gradient_flt = local_grad
 
         if not self.is_sybil:
@@ -1356,13 +1388,14 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  is_sybil: bool = False,
                  benign_rounds=3,
                  vocab=None,
-                 pad_idx=None,
+                 pad_idx=None, model_init_config=None,
                  initial_model=None,
-                  model_type = "image",
+                 model_type="image",
                  sybil_coordinator: Optional['SybilCoordinator'] = None):
         super().__init__(seller_id, local_data, save_path=save_path, device=device,
                          local_epochs=local_epochs, dataset_name=dataset_name,
-                         local_training_params=local_training_params, initial_model=initial_model, model_type = model_type)
+                         local_training_params=local_training_params, initial_model=initial_model,
+                         model_type=model_type, model_init_config=model_init_config)
 
         self.target_label = target_label
         self.alpha_align = alpha_align
@@ -1542,20 +1575,36 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         return local_gradient_list_np_or_tensor
 
     def get_gradient_for_upload(self, global_model=None):
+        base_model_for_training: nn.Module
         if global_model is not None:
-            # _compute_local_grad in the behavior functions will use a copy if it modifies
-            # or just use it as is. For get_local_gradient, we pass it directly.
-            # The deepcopy here is more about ensuring the base_model state for THIS seller's computation
-            # is isolated if this function is called multiple times with the same global_model object.
-            # However, get_local_gradient already handles model loading/selection.
-            # The primary model passed to behavior_func is from get_local_gradient's logic.
-            # So, this deepcopy might be redundant if get_local_gradient handles model state well.
-            # For safety, keeping it if global_model is directly passed to _compute_local_grad somewhere later.
-            # Let's assume get_local_gradient correctly sets up the base_model.
-            pass  # base_model will be set by get_local_gradient
+            # OPTIMIZATION: Instead of deepcopy, load state_dict into a new instance.
+            try:
+                # Use the new helper method to get the correct model structure
+                base_model_for_training = self._get_new_model_instance()  # Creates on self.device
+                base_model_for_training.load_state_dict(global_model.state_dict())
+                logging.debug(
+                    f"[{self.seller_id}] Using provided global model by loading its state_dict into a new local instance.")
+            except Exception as e:
+                logging.warning(
+                    f"[{self.seller_id}] Failed to load state_dict from global_model into new instance: {e}. "
+                    f"Falling back to deepcopy of global_model.")
+                base_model_for_training = copy.deepcopy(global_model).to(self.device)
+        else:
+            # No global model provided, use a local model.
+            # `load_local_model` here should ideally return a model ready for training,
+            # potentially a fresh instance or a previously saved one.
+            try:
+                base_model_for_training = self.load_local_model()  # Returns a fresh instance on self.device
+                logging.debug(f"[{self.seller_id}] No global model, using model from load_local_model().")
+            except Exception as e:
+                logging.error(
+                    f"[{self.seller_id}] Error in load_local_model() or _get_new_model_instance() when no global model: {e}. Cannot proceed.",
+                    exc_info=True)
+                return None, {'error': str(e), 'train_loss': None, 'compute_time_ms': None, 'upload_bytes': None}
+        base_model_for_training.to(self.device)
 
         # Call get_local_gradient, which handles model loading/selection and device placement
-        local_grad_list_np_or_tensor = self.get_local_gradient(global_model)  # Pass global_model hint
+        local_grad_list_np_or_tensor = self.get_local_gradient(base_model_for_training)  # Pass global_model hint
 
         # Convert to list of Tensors on self.device if it's list of np arrays,
         # as this is likely the more common format for internal processing/aggregation.
