@@ -696,13 +696,22 @@ class Aggregator:
 
         return aggregated_gradient, [i for i in range(self.n_seller)], []
 
-    def ensure_tensor_on_device(self, param_list):
-        if not param_list: return []
-        # Convert numpy to tensor FIRST, then move to device
-        return [
-            (torch.from_numpy(p) if isinstance(p, np.ndarray) else p).to(self.device)
-            for p in param_list
-        ]
+    def ensure_tensor_on_device(self, update_data, model_param_structure_cpu):
+        if isinstance(update_data, list): # Already a list of tensors (hopefully)
+            return [p.clone().to(self.device) for p in update_data]
+        elif torch.is_tensor(update_data) and update_data.ndim == 1: # Potentially a flattened tensor
+            unflattened_updates = []
+            current_idx = 0
+            for ref_param in model_param_structure_cpu: # e.g., self.datalist_structure
+                num_elements = ref_param.numel()
+                param_update_flat = update_data[current_idx : current_idx + num_elements]
+                unflattened_updates.append(param_update_flat.reshape(ref_param.shape).to(self.device))
+                current_idx += num_elements
+            if current_idx != update_data.numel():
+                raise ValueError("Flattened update tensor size mismatch with model structure")
+            return unflattened_updates
+        else:
+            raise TypeError(f"Unsupported update_data type: {type(update_data)}")
     # --------------------------------------------------------
 
     def skymask(self,
@@ -715,7 +724,6 @@ class Aggregator:
 
         logger.info(f"--- Starting SkyMask (Recreate MaskNet) Aggregation (Epoch {global_epoch}) ---")
 
-        # Use current model state for structure reference and base params
         # Detach to avoid interfering with autograd if model is used elsewhere
         global_params_base = [p.data.clone().to(self.device) for p in self.global_model.parameters()]
         datalist_structure = [p.cpu() for p in global_params_base] # Structure reference
@@ -753,11 +761,6 @@ class Aggregator:
         # **FIX:** Ensure buyer update is list of tensors on device
         buyer_updates_tensor = self.ensure_tensor_on_device(buyer_updates)
         buyer_update_on_device = [p.clone() for p in buyer_updates_tensor] # Start with a clone
-
-        # Optional clipping for buyer? (Assume not for now)
-        # if clip_buyer: buyer_update_on_device = clip_gradient_update(buyer_update_on_device, self.clip_norm)
-
-        flat_buyer_update = flatten(buyer_update_on_device)
 
         # 1. Prepare Updated Parameter Lists for MaskNet Input
         logger.info("Preparing inputs for MaskNet...")
