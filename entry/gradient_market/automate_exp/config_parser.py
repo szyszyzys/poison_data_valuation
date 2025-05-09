@@ -2,6 +2,8 @@
 import logging
 from argparse import Namespace  # Used to mimic the args object
 
+from safetensors import torch
+
 from entry.constant.constant import LABEL_FLIP, BACKDOOR
 
 # Configure logging for the parser itself (optional)
@@ -57,7 +59,6 @@ def parse_config_for_attack_function(config: dict) -> dict:
     training_conf = config.get('training', {})
     parsed_args['local_training_params'] = training_conf.get('local_training_params')  # Pass dict or None
     parsed_args['num_workers'] = 4
-    local_training_params["pin_memory"] = torch.cuda.is_available()
 
     # batch_size is used inside get_data_set or dataloaders, not directly by backdoor_attack
 
