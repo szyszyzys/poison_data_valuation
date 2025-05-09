@@ -730,6 +730,7 @@ class GradientSeller(BaseSeller):
                  vocab: Optional[Any] = None,  # For text data, e.g., torchtext.vocab.Vocab
                  local_epochs: int = 2,  # Default local epochs
                  local_training_params: Optional[Dict[str, Any]] = None,
+                 model_type = "image",
                  initial_model=None):
 
         super().__init__(
@@ -741,6 +742,7 @@ class GradientSeller(BaseSeller):
             save_path=save_path,
             device=device
         )
+        self.model_type = model_type
         self._base_model_structure = initial_model  # This is just the architecture
         self._base_model_structure.to(device)  # Ensure the structure is on device
 
@@ -803,23 +805,11 @@ class GradientSeller(BaseSeller):
         The model is created on self.device.
         """
         logging.debug(
-            f"[{self.seller_id}] Creating new model instance of type '{self.model_type}' with params {self.model_init_params}")
+            f"[{self.seller_id}] Creating new model instance of type '{self.model_type}'")
         # Use self.model_type to decide which factory function to call
         # self.dataset_name can also be used if model_type is generic (e.g., "cnn", "transformer")
 
-        # Consolidate model_kwargs extraction
-        model_specific_kwargs = self.model_init_params.get("model_kwargs", {})
-
-        # It's good practice for model_init_params to directly contain keys like 'num_classes'
-        # rather than nesting them all under 'model_kwargs' if they are top-level args for the factory.
-        num_classes = self.model_init_params.get("num_classes")  # Common parameter
-
         if "text" in self.model_type.lower():  # Or more specific e.g., self.model_type == "text_cnn"
-            vocab_size = self.model_init_params.get("vocab_size")
-            padding_idx = self.model_init_params.get("padding_idx")
-            if num_classes is None or vocab_size is None or padding_idx is None:
-                raise ValueError(
-                    f"[{self.seller_id}] Missing num_classes, vocab_size, or padding_idx in model_init_params for text model.")
 
             return get_text_model(
                 dataset_name=self.dataset_name,  # Or a more specific model name mapping
@@ -832,20 +822,8 @@ class GradientSeller(BaseSeller):
         # Example for image models
         elif "image" in self.model_type.lower() or self.model_type in ["resnet18", "simple_cnn_cifar",
                                                                        "simple_cnn_mnist"]:
-            if num_classes is None:
-                # Try to infer from dataset_name or raise error
-                if self.dataset_name.lower() == "cifar10":
-                    num_classes = 10
-                elif self.dataset_name.lower() == "mnist":
-                    num_classes = 10
-                else:
-                    raise ValueError(
-                        f"[{self.seller_id}] Missing num_classes in model_init_params for image model and cannot infer.")
-
             return get_image_model(
                 dataset_name=self.dataset_name,  # Or a specific model name
-                device=self.device,
-                **model_specific_kwargs
             )
         else:
             raise ValueError(f"[{self.seller_id}] Unsupported model_type: {self.model_type}")
@@ -1095,12 +1073,13 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
                  local_training_params: Optional[dict] = None,
                  is_sybil: bool = False,
                  benign_rounds=3,
+                 model_type = "image",
                  vocab=None, initial_model=None,
                  pad_idx=None,
                  sybil_coordinator: Optional['SybilCoordinator'] = None):
         super().__init__(seller_id, local_data, save_path=save_path, device=device,
                          local_epochs=local_epochs, dataset_name=dataset_name,
-                         local_training_params=local_training_params, initial_model=initial_model)
+                         local_training_params=local_training_params, initial_model=initial_model, model_type = model_type)
 
         self.flip_target_label = target_label
         self.poison_generator = poison_generator
@@ -1379,10 +1358,11 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  vocab=None,
                  pad_idx=None,
                  initial_model=None,
+                  model_type = "image",
                  sybil_coordinator: Optional['SybilCoordinator'] = None):
         super().__init__(seller_id, local_data, save_path=save_path, device=device,
                          local_epochs=local_epochs, dataset_name=dataset_name,
-                         local_training_params=local_training_params, initial_model=initial_model)
+                         local_training_params=local_training_params, initial_model=initial_model, model_type = model_type)
 
         self.target_label = target_label
         self.alpha_align = alpha_align

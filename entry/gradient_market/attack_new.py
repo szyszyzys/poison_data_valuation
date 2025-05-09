@@ -267,7 +267,7 @@ def poisoning_attack_text(
             round_number=gr,
             buyer=buyer,
             n_adv=n_adversaries,
-            test_dataloader_buyer_local=buyer_loader_collated,  # Use collated loader
+            test_dataloader_buyer_local=buyer_loader,  # Use collated loader
             test_dataloader_global=test_loader,  # Ensure test loader has collate_fn
             loss_fn=loss_fn,
             # Pass info needed for text ASR eval inside the round function
