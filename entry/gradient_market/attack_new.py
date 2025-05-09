@@ -416,7 +416,8 @@ def poisoning_attack_image(
     model_structure_instance = get_image_model(
         dataset_name=dataset_name,
     )
-
+    for i, p in enumerate(model_structure_instance.parameters()):
+        logger.debug(f"  Aggregator structure - Param {i}: shape {p.shape}")
     image_seller_model_config = {
         "dataset_name": dataset_name,
     }
