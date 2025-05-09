@@ -251,10 +251,18 @@ def local_training_and_get_gradient(
         # This is the primary point where efficiency could be higher if not for strict signature.
         local_model_for_training = copy.deepcopy(model)
         local_model_for_training.to(device)
+        print("_________model local train params____________________")
+        print(len([p.data.clone() for p in
+                   local_model_for_training.parameters()])
+              )
 
         # Keep a representation of the initial model state for delta calculation.
         # Deepcopying the state_dict is more efficient than deepcopying the nn.Module again.
         initial_model_state_dict_for_delta = copy.deepcopy(model.state_dict())
+        print("_________model init params____________________")
+        print(len([p.data.clone() for p in
+                   initial_model_state_dict_for_delta.parameters()])
+              )
 
     except Exception as e:
         logging.error(f"Failed to deepcopy/initialize model for local training: {e}", exc_info=True)
