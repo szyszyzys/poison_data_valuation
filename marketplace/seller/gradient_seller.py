@@ -1006,7 +1006,6 @@ class GradientSeller(BaseSeller):
 
         # OPTIMIZATION: Avoid torch.cuda.empty_cache() unless proven necessary and carefully placed.
         # torch.cuda.empty_cache()
-        print(training_stats)
         return grad_update_tensors, grad_update_flt_np, local_model, local_eval_res, training_stats
 
     def save_local_model(self, model_instance: nn.Module):  # Expect a model instance
