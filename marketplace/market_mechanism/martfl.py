@@ -383,7 +383,7 @@ class Aggregator:
             logger.error(f"FLTrust: Buyer update has incorrect number of layers. Cannot proceed.")
             return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_original_sellers)))
         buyer_update_processed_layers = [p.data.clone() for p in buyer_updates_as_tensors_on_device]
-        buyer_update_flattened = self.flatten(buyer_update_processed_layers) # Use self.flatten
+        buyer_update_flattened = flatten(buyer_update_processed_layers) # Use self.flatten
         if buyer_update_flattened is None or buyer_update_flattened.numel() == 0:
             logger.error("FLTrust: Buyer update is None or empty after flattening. Cannot proceed.")
             return ([torch.zeros_like(p, device=self.device) for p in param_structure], [], list(range(n_original_sellers)))
