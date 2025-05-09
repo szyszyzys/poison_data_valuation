@@ -671,7 +671,6 @@ def get_text_data_set(
 
         vocab = build_vocab_from_iterator(
             yield_tokens_for_vocab(lambda: hf_iterator(train_ds_hf, text_field)),
-            min_freq=min_freq,
             specials=[unk_token, pad_token],
             special_first=True
         )
