@@ -1,5 +1,5 @@
 # Import Optional for type hinting
-
+import collections
 import hashlib  # For generating cache keys
 import logging
 import os
@@ -7,10 +7,9 @@ import pickle  # For saving/loading generic python objects
 from typing import Generator, Callable
 
 import torch
-import torchtext
 from torch.utils.data import DataLoader, Subset
 from torchtext.data.utils import get_tokenizer
-from torchtext.vocab import build_vocab_from_iterator, Vocab
+from torchtext.vocab import Vocab
 
 from marketplace.utils.gradient_market_utils.data_processor import split_dataset_discovery, \
     print_and_save_data_statistics
@@ -563,16 +562,15 @@ def get_text_data_set(
         unk_token: str = "<unk>",
         pad_token: str = "<pad>",
 ) -> Tuple[Optional[DataLoader], Dict[int, Optional[DataLoader]], Optional[DataLoader], List[str], Vocab, int]:
-
     if not (0.0 <= buyer_percentage <= 1.0):
         raise ValueError("buyer_percentage must be between 0 and 1.")
     if num_sellers < 0:
         raise ValueError("num_sellers must be non-negative.")
     if batch_size <= 0:
         raise ValueError("batch_size must be positive.")
-    if buyer_bias_type == "dirichlet" and buyer_dirichlet_alpha <= 0 :
+    if buyer_bias_type == "dirichlet" and buyer_dirichlet_alpha <= 0:
         raise ValueError("buyer_dirichlet_alpha must be positive for dirichlet bias.")
-    if min_freq <=0:
+    if min_freq <= 0:
         raise ValueError("min_freq for vocabulary must be positive.")
 
     random.seed(seed)
@@ -606,7 +604,7 @@ def get_text_data_set(
         if not hf_datasets_available:
             raise ImportError("HuggingFace 'datasets' library required for TREC but not installed.")
         logging.info(f"Loading TREC dataset (raw data cache_dir: {data_root})...")
-        ds = hf_load("trec", cache_dir=data_root) # Removed "default" name as it's often not needed or can cause issues
+        ds = hf_load("trec", cache_dir=data_root)  # Removed "default" name as it's often not needed or can cause issues
         train_ds_hf = ds["train"]
         test_ds_hf = ds["test"]
         num_classes = 6
@@ -626,101 +624,108 @@ def get_text_data_set(
                 if isinstance(ex.get(text_fld), str):
                     yield ex[text_fld]
 
-    vocab_cache_params = (dataset_name, min_freq, unk_token, pad_token, torchtext.__version__) # Add torchtext version to cache key
+    vocab_cache_params = (dataset_name, min_freq, unk_token, pad_token, "torchtext_0.6_compat")
     vocab_cache_file = get_cache_path(app_cache_dir, "vocab", vocab_cache_params)
-    vocab: Optional[Vocab] = None
+    vocab: Optional[Vocab] = None  # Vocab type hint
     pad_idx = -1
+    unk_idx_val = -1  # To store the index of unk_token
 
     if use_cache and os.path.exists(vocab_cache_file):
         try:
             logging.info(f"Attempting to load vocabulary from cache: {vocab_cache_file}")
-            # Vocab is a torch.nn.Module, pad_idx is int. Save as tuple.
             cached_data = torch.load(vocab_cache_file)
-            if isinstance(cached_data, tuple) and len(cached_data) == 2:
-                vocab, pad_idx = cached_data
-            elif isinstance(cached_data, Vocab): # Older cache might only have vocab
+            if isinstance(cached_data, tuple) and len(cached_data) == 3:  # Expect vocab, pad_idx, unk_idx_val
+                vocab, pad_idx, unk_idx_val = cached_data
+            elif isinstance(cached_data, Vocab):  # Older cache might only have vocab
                 vocab = cached_data
-                # Attempt to get pad_idx if vocab is loaded and pad_token is standard
-                if pad_token in vocab:
-                    pad_idx = vocab[pad_token]
-                else: # Should not happen if saved correctly with pad_token in specials
-                    logging.warning(f"Loaded vocab from old cache, but '{pad_token}' not found. Rebuilding might be necessary if padding fails.")
-                    pad_idx = -1 # Sentinel
+                if pad_token in vocab.stoi: pad_idx = vocab.stoi[pad_token]
+                if unk_token in vocab.stoi:
+                    unk_idx_val = vocab.stoi[unk_token]
+                else:  # If unk_token was not default '<unk>', it might be missing
+                    logging.warning(
+                        f"Loaded vocab from old cache, unk_token '{unk_token}' might not be configured correctly.")
             else:
                 raise TypeError("Cached vocab data has unexpected format.")
 
-            if not isinstance(vocab, Vocab) or not isinstance(pad_idx, int): # pad_idx can be 0
-                raise TypeError("Cached vocab or pad_idx has incorrect type after loading.")
-            logging.info(f"Vocabulary loaded from cache. Size: {len(vocab)}, Pad index: {pad_idx}")
-            # Verify UNK token handling for loaded vocab
-            if unk_token not in vocab: # This would be very unusual if unk_token was in specials
-                 logging.warning(f"UNK token '{unk_token}' not found in cached vocab. OOV may not work as expected.")
-            elif vocab[unk_token] != vocab['THIS_TOKEN_SHOULD_REALLY_NOT_EXIST_IN_VOCAB_EVER_FRFR']: # Check OOV behavior
-                 logging.warning(f"Cached vocab OOV behavior might not map to '{unk_token}'. Default index: {vocab.get_default_index() if hasattr(vocab, 'get_default_index') else 'N/A'}")
-
-
+            if not isinstance(vocab, Vocab) or not isinstance(pad_idx, int) or not isinstance(unk_idx_val, int):
+                raise TypeError("Cached vocab or indices have incorrect type after loading.")
+            logging.info(
+                f"Vocabulary loaded from cache. Size: {len(vocab.itos)}, Pad index: {pad_idx}, Unk index: {unk_idx_val}")
+            # For torchtext 0.6.0, Vocab handles OOV by default using unk_token if it was in specials during creation.
+            # The vocab object itself becomes callable and maps OOV to unk_idx.
         except Exception as e:
             logging.warning(f"Failed to load vocab from cache ({vocab_cache_file}): {e}. Rebuilding.")
             vocab = None
 
     if vocab is None:
-        logging.info("Building vocabulary...")
-        def yield_tokens_for_vocab(text_iterator_func: Callable[[], Generator[str, None, None]]):
-            for text_sample in text_iterator_func():
-                yield tokenizer(text_sample)
+        logging.info(f"Building vocabulary for torchtext 0.6.0 compatibility with min_freq={min_freq}...")
 
-        vocab = build_vocab_from_iterator(
-            yield_tokens_for_vocab(lambda: hf_iterator(train_ds_hf, text_field)),
+        # Step 1: Iterate through all tokens and count frequencies
+        # yield_tokens_for_vocab should just yield lists of tokens
+        def yield_tokens_for_vocab_0_6(text_iterator_func: Callable[[], Generator[str, None, None]]):
+            for text_sample in text_iterator_func():
+                yield tokenizer(text_sample)  # This yields a list of tokens for each doc
+
+        token_counter = collections.Counter()
+        logging.info("Counting token frequencies from dataset...")
+        # The progress bar you saw was likely from this iteration part
+        # The hf_iterator itself is what iterates 120,000 times
+        num_docs_processed_for_vocab = 0
+        for tokens_list in yield_tokens_for_vocab_0_6(lambda: hf_iterator(train_ds_hf, text_field)):
+            token_counter.update(tokens_list)
+            num_docs_processed_for_vocab += 1
+            if num_docs_processed_for_vocab % 10000 == 0:
+                logging.info(f"Processed {num_docs_processed_for_vocab} documents for vocab frequency counting...")
+        logging.info(
+            f"Finished counting token frequencies from {num_docs_processed_for_vocab} documents. Total unique tokens before min_freq: {len(token_counter)}")
+
+        # Step 2: Create Vocab object with min_freq and specials
+        # In torchtext 0.6.0, Vocab constructor takes the counter.
+        # `specials` are added first. `unk_token` is usually the default for OOV.
+        vocab = Vocab(
+            counter=token_counter,
+            min_freq=min_freq,
+            specials=[unk_token, pad_token],
+            # For torchtext 0.6.0, the Vocab object itself sets its unk_index
+            # to the index of unk_token if it's provided in specials.
+            # If unk_token is not in specials, it might default to '<unk>'.
         )
 
-        # Ensure unk_token exists (it should, as it's in specials)
-        if unk_token not in vocab:
-            # This case is highly unlikely if specials are handled correctly by build_vocab_from_iterator
-            raise RuntimeError(f"Specified unk_token '{unk_token}' not found in generated vocabulary. This should not happen.")
-
-        unk_idx_val = vocab[unk_token]
-
-        try:
-            vocab.set_default_index(unk_idx_val)
-            logging.info(f"Default index for OOV tokens explicitly set to index of '{unk_token}' ({unk_idx_val}).")
-        except AttributeError:
+        if unk_token in vocab.stoi:
+            unk_idx_val = vocab.stoi[unk_token]
+            # In 0.6.0, the Vocab object implicitly uses this for OOV if unk_token was in specials
+        elif '<unk>' in vocab.stoi:  # Fallback if custom unk_token wasn't found but default was created
+            unk_idx_val = vocab.stoi['<unk>']
             logging.warning(
-                f"The 'Vocab' object (from torchtext version {getattr(torchtext, '__version__', 'unknown')}) "
-                f"does not have 'set_default_index' method."
-            )
-            # For older torchtext, if unk_token is '<unk>', it's usually handled by default.
-            # If unk_token is custom, OOV handling might fall back to literal '<unk>' or be undefined.
-            # We rely on build_vocab_from_iterator having set up OOV correctly based on 'specials'.
-            # We can verify by checking a truly OOV token.
-            test_oov_token = "THIS_TOKEN_SHOULD_REALLY_NOT_EXIST_IN_VOCAB_EVER_FRFR"
-            retrieved_oov_idx = vocab[test_oov_token]
-            if retrieved_oov_idx == unk_idx_val:
-                logging.info(
-                    f"OOV tokens appear to be correctly mapped to '{unk_token}' (index {unk_idx_val}) "
-                    f"by the Vocab's default mechanism."
-                )
-            else:
-                logging.warning(
-                    f"OOV token test: '{test_oov_token}' mapped to index {retrieved_oov_idx}, "
-                    f"but expected index of '{unk_token}' ({unk_idx_val}). "
-                    f"OOV handling might be incorrect for this torchtext version if '{unk_token}' is not the literal '<unk>' "
-                    f"or if the Vocab's internal default OOV is different."
-                )
-        except Exception as e: # Other errors during set_default_index
-            logging.error(f"Error setting default index for vocab: {e}. UNK token behavior might be affected.")
-            # Depending on severity, you might re-raise
+                f"Custom unk_token '{unk_token}' not found in vocab.stoi, but default '<unk>' is. Using index of '<unk>' ({unk_idx_val}) for OOV.")
+        else:  # This should not happen if specials are handled.
+            unk_idx_val = -1  # Should be an error or a default value that causes issues
+            logging.error(f"Neither '{unk_token}' nor '<unk>' found in vocab.stoi. OOV handling will be problematic!")
+            raise RuntimeError("Could not establish a valid UNK token index in the vocabulary.")
 
-        pad_idx = vocab[pad_token] # Should exist as it's in specials
-        logging.info(f"Vocabulary built. Size: {len(vocab)}. UNK index for '{unk_token}' is {unk_idx_val}, PAD index for '{pad_token}' is {pad_idx}.")
+        if pad_token in vocab.stoi:
+            pad_idx = vocab.stoi[pad_token]
+        else:
+            pad_idx = -1  # Should not happen if pad_token is in specials
+            logging.error(f"'{pad_token}' not found in vocab.stoi! Padding will fail.")
+            raise RuntimeError("Could not establish a valid PAD token index in the vocabulary.")
+
+        logging.info(
+            f"Vocabulary built. Size: {len(vocab.itos)}. UNK index ('{unk_token}' or fallback): {unk_idx_val}, PAD index ('{pad_token}'): {pad_idx}.")
+        logging.info(f"Top 10 most frequent tokens (after min_freq): {vocab.itos[:10]}")  # itos is sorted by freq
 
         if use_cache:
             try:
-                torch.save((vocab, pad_idx), vocab_cache_file)
-                logging.info(f"Vocabulary (and pad_idx) saved to cache: {vocab_cache_file}")
+                torch.save((vocab, pad_idx, unk_idx_val), vocab_cache_file)
+                logging.info(f"Vocabulary (and pad_idx, unk_idx_val) saved to cache: {vocab_cache_file}")
             except Exception as e:
                 logging.error(f"Failed to save vocabulary to cache: {e}")
 
-    text_pipeline = lambda text_string: vocab(tokenizer(text_string))
+    # For text_pipeline, Vocab objects in 0.6.0 are directly callable or use .numericalize
+    # vocab([token1, token2]) or vocab.numericalize([token1, token2])
+    # Your existing text_pipeline should still work as vocab(tokenizer(text_string))
+    # because tokenizer(text_string) returns a list of tokens.
+    text_pipeline = lambda text_string: vocab(tokenizer(text_string))  # This should work with 0.6.0 Vocab
 
     # --- Numericalize or Load Numericalized Data ---
     # Vocab object's identity can be complex for caching. Using vocab_cache_file in key.
@@ -749,15 +754,17 @@ def get_text_data_set(
         for lbl, txt in data_iterator_func():
             try:
                 ids = text_pipeline(txt)
-                if ids: # Ensure ids is not empty
+                if ids:  # Ensure ids is not empty
                     processed_data_list.append((lbl - label_offset, ids))
                     processed_count += 1
                 else:
                     skipped_count += 1
             except Exception as e:
-                logging.warning(f"Error processing {split_name} item: (label: {lbl}, text: {txt[:50]}...). Error: {e}. Skipping.")
+                logging.warning(
+                    f"Error processing {split_name} item: (label: {lbl}, text: {txt[:50]}...). Error: {e}. Skipping.")
                 skipped_count += 1
-        logging.info(f"Finished numericalizing {split_name} data. Processed: {processed_count}, Skipped: {skipped_count}")
+        logging.info(
+            f"Finished numericalizing {split_name} data. Processed: {processed_count}, Skipped: {skipped_count}")
 
         if use_cache and processed_data_list:
             try:
@@ -779,8 +786,8 @@ def get_text_data_set(
         raise ValueError("Processed training dataset is empty. Check data or processing logic.")
 
     # --- Split Data or Load Split Indices ---
-    split_params_tuple = numericalized_cache_key_base + ( # Ensures split changes if numericalized data changes
-        "train_splits", # Specific to identify this cache item
+    split_params_tuple = numericalized_cache_key_base + (  # Ensures split changes if numericalized data changes
+        "train_splits",  # Specific to identify this cache item
         seed, buyer_percentage, num_sellers, split_method,
         discovery_quality if split_method == "discovery" else None,
         buyer_data_mode if split_method == "discovery" else None,
@@ -790,7 +797,6 @@ def get_text_data_set(
     # Filter out None values from tuple for cleaner cache key
     split_params_tuple_cleaned = tuple(p for p in split_params_tuple if p is not None)
     split_indices_cache_file = get_cache_path(app_cache_dir, "split_indices", split_params_tuple_cleaned)
-
 
     buyer_indices: Optional[np.ndarray] = None
     seller_splits: Dict[int, List[int]] = {}
@@ -803,20 +809,21 @@ def get_text_data_set(
             # Ensure backward compatibility if only buyer_indices was saved or different structure
             if isinstance(loaded_splits, tuple) and len(loaded_splits) == 2:
                 buyer_indices, seller_splits = loaded_splits
-            elif isinstance(loaded_splits, np.ndarray): # Very old cache might only have buyer_indices
+            elif isinstance(loaded_splits, np.ndarray):  # Very old cache might only have buyer_indices
                 buyer_indices = loaded_splits
-                seller_splits = {} # Force re-calc of seller_splits
-                logging.warning("Loaded only buyer_indices from old cache; seller_splits will be recalculated if needed.")
+                seller_splits = {}  # Force re-calc of seller_splits
+                logging.warning(
+                    "Loaded only buyer_indices from old cache; seller_splits will be recalculated if needed.")
             else:
                 raise TypeError("Cached split indices have an unexpected format.")
 
             if not isinstance(buyer_indices, (np.ndarray, type(None))) or not isinstance(seller_splits, dict):
-                 raise TypeError("Cached split indices have incorrect type after loading.")
-            logging.info(f"Split indices loaded from cache. Buyer samples: {len(buyer_indices if buyer_indices is not None else [])}")
+                raise TypeError("Cached split indices have incorrect type after loading.")
+            logging.info(
+                f"Split indices loaded from cache. Buyer samples: {len(buyer_indices if buyer_indices is not None else [])}")
         except Exception as e:
             logging.warning(f"Failed to load split indices from cache ({split_indices_cache_file}): {e}. Re-splitting.")
             buyer_indices, seller_splits = None, {}
-
 
     # Resplit if buyer_indices is None (cache miss/error) OR if num_sellers > 0 and seller_splits is empty (incomplete cache/partial load)
     # The second condition handles cases where an old cache might only have buyer_indices.
@@ -824,10 +831,9 @@ def get_text_data_set(
     if not needs_resplit and num_sellers > 0 and not seller_splits:
         logging.info("Seller splits not found in cache or empty, forcing re-split even if buyer_indices were loaded.")
         needs_resplit = True
-    if not needs_resplit and num_sellers == 0 and seller_splits: # if num_sellers is 0, seller_splits should be empty
+    if not needs_resplit and num_sellers == 0 and seller_splits:  # if num_sellers is 0, seller_splits should be empty
         logging.info("num_sellers is 0, but cached seller_splits is not empty. Clearing seller_splits.")
         seller_splits = {}
-
 
     if needs_resplit:
         logging.info(f"Splitting data using method: '{split_method}'")
@@ -871,7 +877,7 @@ def get_text_data_set(
     # ... (same sanity checks as before) ...
     assigned_indices = set(buyer_indices.tolist() if buyer_indices is not None else [])
     total_seller_samples_assigned = 0
-    valid_seller_splits = {} # To store only non-empty, valid splits
+    valid_seller_splits = {}  # To store only non-empty, valid splits
     for seller_id, indices_list in seller_splits.items():
         if indices_list is None or not isinstance(indices_list, (list, np.ndarray)) or len(indices_list) == 0:
             # logging.debug(f"Seller {seller_id} has no data or invalid data format in split results.")
@@ -885,7 +891,7 @@ def get_text_data_set(
         total_seller_samples_assigned += len(indices_list)
         valid_seller_splits[seller_id] = indices_list
 
-    seller_splits = valid_seller_splits # Update seller_splits to only contain valid ones.
+    seller_splits = valid_seller_splits  # Update seller_splits to only contain valid ones.
 
     logging.info(
         f"Splitting complete. Buyer samples: {len(buyer_indices if buyer_indices is not None else [])}, "
@@ -897,12 +903,12 @@ def get_text_data_set(
         logging.warning(f"{unassigned_count} samples were not assigned to buyer or any seller.")
     elif unassigned_count < 0:
         # This indicates an issue with index generation or overlap not caught.
-        logging.error(f"Error in index accounting: {abs(unassigned_count)} MORE indices assigned than available samples. Possible duplication in splits.")
-
+        logging.error(
+            f"Error in index accounting: {abs(unassigned_count)} MORE indices assigned than available samples. Possible duplication in splits.")
 
     # --- Create DataLoaders ---
     logging.info("Creating DataLoaders...")
-    if pad_idx == -1: # Should have been set during vocab loading/building
+    if pad_idx == -1:  # Should have been set during vocab loading/building
         if vocab and pad_token in vocab:
             pad_idx = vocab[pad_token]
             logging.warning(f"pad_idx was -1, re-fetched from vocab for '{pad_token}': {pad_idx}")
@@ -920,37 +926,37 @@ def get_text_data_set(
                                       collate_fn=collate_fn, drop_last=False)
             logging.info(f"Buyer DataLoader created with {len(buyer_indices)} samples.")
         except Exception as e:
-             raise RuntimeError(f"Buyer DataLoader creation failed: {e}") from e
+            raise RuntimeError(f"Buyer DataLoader creation failed: {e}") from e
     else:
         logging.info("Buyer has no data samples assigned. Buyer DataLoader will be None.")
 
     seller_loaders: Dict[int, Optional[DataLoader]] = {}
     actual_sellers_with_data = 0
-    for i in range(num_sellers): # Ensure all seller IDs up to num_sellers are in the dict
-        indices = seller_splits.get(i) # Use .get() as some sellers might not have data from split
+    for i in range(num_sellers):  # Ensure all seller IDs up to num_sellers are in the dict
+        indices = seller_splits.get(i)  # Use .get() as some sellers might not have data from split
         if indices is not None and len(indices) > 0:
             try:
-                seller_subset = Subset(processed_train_data, list(indices)) # Ensure list for Subset
+                seller_subset = Subset(processed_train_data, list(indices))  # Ensure list for Subset
                 seller_loaders[i] = DataLoader(seller_subset, batch_size=batch_size, shuffle=True,
                                                collate_fn=collate_fn, drop_last=False)
                 actual_sellers_with_data += 1
             except Exception as e:
-                logging.error(f"Failed to create DataLoader for seller {i} (with {len(indices)} indices): {e}. Setting to None.")
+                logging.error(
+                    f"Failed to create DataLoader for seller {i} (with {len(indices)} indices): {e}. Setting to None.")
                 seller_loaders[i] = None
         else:
-            seller_loaders[i] = None # No data for this seller or not in seller_splits
+            seller_loaders[i] = None  # No data for this seller or not in seller_splits
 
     logging.info(
         f"Seller DataLoaders created. {actual_sellers_with_data}/{num_sellers} sellers have data. "
         f"Total seller samples in loaders: {total_seller_samples_assigned}"
     )
 
-
     test_loader: Optional[DataLoader] = None
     if processed_test_data:
         try:
             test_loader = DataLoader(processed_test_data, batch_size=batch_size, shuffle=False,
-                                    collate_fn=collate_fn)
+                                     collate_fn=collate_fn)
             logging.info(f"Test DataLoader created with {len(processed_test_data)} samples.")
         except Exception as e:
             raise RuntimeError(f"Test DataLoader creation failed: {e}") from e
@@ -964,13 +970,14 @@ def get_text_data_set(
         data_distribution_info = print_and_save_data_statistics(
             dataset=processed_train_data,
             buyer_indices=buyer_indices,
-            seller_splits=seller_splits, # Pass the potentially filtered valid_seller_splits
+            seller_splits=seller_splits,  # Pass the potentially filtered valid_seller_splits
             save_results=True,
             output_dir=save_path
         )
         logging.info(f"Data statistics processed. Info: {data_distribution_info}")
 
     return buyer_loader, seller_loaders, test_loader, class_names, vocab, pad_idx
+
 
 # --- Helper Function: Calculate Target Counts (likely unchanged) ---
 # This function is generic and usually doesn't depend on data format
