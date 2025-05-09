@@ -43,7 +43,10 @@ def train_local_model(model: nn.Module,
     if not train_loader or len(train_loader) == 0:  # More robust check for empty loader
         logging.warning("train_loader is empty or None. Skipping training.")
         return model, None
-
+    print("_________model params____________________")
+    print(len([p.data.clone() for p in
+               model.parameters()])
+          )
     logging.debug(f"Starting local training for {epochs} epochs on device {device}...")
     for epoch in range(epochs):
         epoch_start_time = time.time()
