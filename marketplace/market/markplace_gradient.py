@@ -48,8 +48,10 @@ class DataMarketplaceFederated(DataMarketplace):
         self.attack_save_dir = privacy_attack.get("privacy_attack_path", './result')
         # Dict like {'type': 'index', 'value': 0} or {'type': 'id', 'value': 'seller_X'}
         all_seller_ids = list(self.sellers.keys())
-        self._adv_ids_set = {sid for sid in all_seller_ids if sid.startswith('adv_')} # Or your method of identifying adversaries
+        self._adv_ids_set = {sid for sid in all_seller_ids if
+                             sid.startswith('adv_')}  # Or your method of identifying adversaries
         self._benign_ids_set = {sid for sid in all_seller_ids if not sid.startswith('adv_')}
+
     def register_seller(self, seller_id: str, seller: BaseSeller):
         """
         Register a new seller that can provide gradients.
@@ -293,6 +295,7 @@ class DataMarketplaceFederated(DataMarketplace):
                         self.attack_results_list.append(gradient_inversion_log)
                 else:
                     logging.warning(f"GIA: Missing input_shape or num_classes for attack. Skipping.")
+
 
         # --- 2. Perform Aggregation ---
         agg_start_time = time.time()

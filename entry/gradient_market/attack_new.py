@@ -422,6 +422,7 @@ def poisoning_attack_image(
         "dataset_name": dataset_name,
     }
 
+
     # --- Initialize Attack Generator ---
     if attack_type == BACKDOOR:
         print(
@@ -478,6 +479,11 @@ def poisoning_attack_image(
     # --- Prepare Client Loaders (Apply Poisoning if Label Flip) ---
     client_loaders = {}
     adversary_ids = list(client_loaders_clean_data.keys())[:n_adversaries]  # Assume first n are adversaries
+
+    print("_____________________________")
+    print(len([p.data.clone() for p in
+               model_structure_instance.parameters()])
+          )
 
     # --- Setup FL Components ---
     print("Setting up FL components...")
