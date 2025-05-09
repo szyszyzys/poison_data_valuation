@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from general_utils.data_utils import collate_batch
 from marketplace.seller.seller import BaseSeller
-from model.utils import get_image_model, local_training_and_get_gradient
+from model.utils import get_image_model, local_training_and_get_gradient, get_text_model
 from model.vision_model import TextCNN
 
 
@@ -794,8 +794,61 @@ class GradientSeller(BaseSeller):
         # This method creates a new model instance of the same type as self._base_model_structure
         # It's crucial that self._base_model_structure can be "re-created" or that we have its class and init args.
         # For simplicity, if we just copy the structure:
-        model_copy = type(self._base_model_structure)(**self._get_init_args_for_base_model()) # This is the hard part
+        model_copy = type(self._base_model_structure)(**self._get_init_args_for_base_model())  # This is the hard part
         return model_copy.to(self.device)
+
+    def _get_new_model_instance(self) -> nn.Module:
+        """
+        Creates a new, uninitialized model instance based on the seller's configuration.
+        The model is created on self.device.
+        """
+        logging.debug(
+            f"[{self.seller_id}] Creating new model instance of type '{self.model_type}' with params {self.model_init_params}")
+        # Use self.model_type to decide which factory function to call
+        # self.dataset_name can also be used if model_type is generic (e.g., "cnn", "transformer")
+
+        # Consolidate model_kwargs extraction
+        model_specific_kwargs = self.model_init_params.get("model_kwargs", {})
+
+        # It's good practice for model_init_params to directly contain keys like 'num_classes'
+        # rather than nesting them all under 'model_kwargs' if they are top-level args for the factory.
+        num_classes = self.model_init_params.get("num_classes")  # Common parameter
+
+        if "text" in self.model_type.lower():  # Or more specific e.g., self.model_type == "text_cnn"
+            vocab_size = self.model_init_params.get("vocab_size")
+            padding_idx = self.model_init_params.get("padding_idx")
+            if num_classes is None or vocab_size is None or padding_idx is None:
+                raise ValueError(
+                    f"[{self.seller_id}] Missing num_classes, vocab_size, or padding_idx in model_init_params for text model.")
+
+            return get_text_model(
+                dataset_name=self.dataset_name,  # Or a more specific model name mapping
+                num_classes=num_classes,
+                vocab_size=vocab_size,
+                padding_idx=padding_idx,
+                device=self.device,
+                **model_specific_kwargs
+            )
+        # Example for image models
+        elif "image" in self.model_type.lower() or self.model_type in ["resnet18", "simple_cnn_cifar",
+                                                                       "simple_cnn_mnist"]:
+            if num_classes is None:
+                # Try to infer from dataset_name or raise error
+                if self.dataset_name.lower() == "cifar10":
+                    num_classes = 10
+                elif self.dataset_name.lower() == "mnist":
+                    num_classes = 10
+                else:
+                    raise ValueError(
+                        f"[{self.seller_id}] Missing num_classes in model_init_params for image model and cannot infer.")
+
+            return get_image_model(
+                dataset_name=self.dataset_name,  # Or a specific model name
+                device=self.device,
+                **model_specific_kwargs
+            )
+        else:
+            raise ValueError(f"[{self.seller_id}] Unsupported model_type: {self.model_type}")
 
     def _get_init_args_for_base_model(self) -> Dict[str, Any]:
         # This is a placeholder and THE MOST DIFFICULT PART of this approach.
@@ -807,13 +860,15 @@ class GradientSeller(BaseSeller):
             # It's better if Seller receives a factory or all init_args.
             # For example, if TextCNN had: self.vocab_size = vocab_size, etc.
             return {
-                "vocab_size": getattr(self._base_model_structure, 'embedding').num_embeddings, # Hacky
-                "embed_dim": getattr(self._base_model_structure, 'embedding').embedding_dim, # Hacky
-                "num_filters": len(getattr(self._base_model_structure, 'convs')), # Even more hacky if num_filters is not stored
-                "filter_sizes": [conv.kernel_size[0] for conv in getattr(self._base_model_structure, 'convs')], # Super hacky
-                "num_class": getattr(self._base_model_structure, 'fc').out_features, # Hacky
-                "dropout": getattr(self._base_model_structure, 'dropout').p, # Hacky
-                "padding_idx": getattr(self._base_model_structure, 'embedding').padding_idx # Hacky
+                "vocab_size": getattr(self._base_model_structure, 'embedding').num_embeddings,  # Hacky
+                "embed_dim": getattr(self._base_model_structure, 'embedding').embedding_dim,  # Hacky
+                "num_filters": len(getattr(self._base_model_structure, 'convs')),
+                # Even more hacky if num_filters is not stored
+                "filter_sizes": [conv.kernel_size[0] for conv in getattr(self._base_model_structure, 'convs')],
+                # Super hacky
+                "num_class": getattr(self._base_model_structure, 'fc').out_features,  # Hacky
+                "dropout": getattr(self._base_model_structure, 'dropout').p,  # Hacky
+                "padding_idx": getattr(self._base_model_structure, 'embedding').padding_idx  # Hacky
             }
         # Add other model types if needed
         raise NotImplementedError(f"Don't know how to get init_args for model type {type(self._base_model_structure)}")
@@ -828,9 +883,10 @@ class GradientSeller(BaseSeller):
             # OPTIMIZATION: Instead of deepcopy, load state_dict into a new instance.
             try:
                 # Use the new helper method to get the correct model structure
-                base_model_for_training = self._get_new_model_instance() # Creates on self.device
+                base_model_for_training = self._get_new_model_instance()  # Creates on self.device
                 base_model_for_training.load_state_dict(global_model.state_dict())
-                logging.debug(f"[{self.seller_id}] Using provided global model by loading its state_dict into a new local instance.")
+                logging.debug(
+                    f"[{self.seller_id}] Using provided global model by loading its state_dict into a new local instance.")
             except Exception as e:
                 logging.warning(
                     f"[{self.seller_id}] Failed to load state_dict from global_model into new instance: {e}. "
@@ -841,12 +897,13 @@ class GradientSeller(BaseSeller):
             # `load_local_model` here should ideally return a model ready for training,
             # potentially a fresh instance or a previously saved one.
             try:
-                base_model_for_training = self.load_local_model() # Returns a fresh instance on self.device
+                base_model_for_training = self.load_local_model()  # Returns a fresh instance on self.device
                 logging.debug(f"[{self.seller_id}] No global model, using model from load_local_model().")
             except Exception as e:
-                logging.error(f"[{self.seller_id}] Error in load_local_model() or _get_new_model_instance() when no global model: {e}. Cannot proceed.", exc_info=True)
+                logging.error(
+                    f"[{self.seller_id}] Error in load_local_model() or _get_new_model_instance() when no global model: {e}. Cannot proceed.",
+                    exc_info=True)
                 return None, {'error': str(e), 'train_loss': None, 'compute_time_ms': None, 'upload_bytes': None}
-
 
         # _compute_local_grad expects model on self.device, which base_model_for_training should be.
         base_model_for_training.to(self.device)
@@ -949,7 +1006,7 @@ class GradientSeller(BaseSeller):
 
         # OPTIMIZATION: Avoid torch.cuda.empty_cache() unless proven necessary and carefully placed.
         # torch.cuda.empty_cache()
-
+        print(training_stats)
         return grad_update_tensors, grad_update_flt_np, local_model, local_eval_res, training_stats
 
     def save_local_model(self, model_instance: nn.Module):  # Expect a model instance
