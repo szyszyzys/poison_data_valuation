@@ -242,6 +242,10 @@ def local_training_and_get_gradient(
     # and to have an initial state for gradient calculation.
     # For maximal efficiency IF signature could change, one would reconstruct the model
     # instead of deepcopying the nn.Module object.
+    print("_________model params____________________")
+    print(len(model)
+          )
+
     try:
         # This is the primary point where efficiency could be higher if not for strict signature.
         local_model_for_training = copy.deepcopy(model)
