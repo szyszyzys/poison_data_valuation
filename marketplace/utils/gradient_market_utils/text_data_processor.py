@@ -12,7 +12,7 @@ from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import Vocab  # Explicit import
 
 from marketplace.utils.gradient_market_utils.data_processor import split_dataset_discovery, \
-    print_and_save_data_statistics
+    print_and_save_data_statistics, split_dataset_discovery_text
 
 # --- HuggingFace datasets dynamic import ---
 try:
@@ -455,7 +455,7 @@ def get_text_data_set(
                 bias_type=buyer_bias_type,
                 alpha=buyer_dirichlet_alpha
             )
-            current_buyer_indices_np, current_seller_splits = split_dataset_discovery(
+            current_buyer_indices_np, current_seller_splits = split_dataset_discovery_text(
                 dataset=processed_train_data,
                 buyer_count=buyer_count,
                 num_clients=num_sellers,
