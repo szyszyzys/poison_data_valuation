@@ -72,7 +72,8 @@ class TextCNN(nn.Module):
                  filter_sizes: List[int],
                  num_class: int,
                  dropout: float = 0.5,
-                 padding_idx: int = 1  # Default assumes <pad> is often index 1, but should be passed correctly
+                 padding_idx: int = 1, # Default assumes <pad> is often index 1, but should be passed correctly
+                 concise = True,
                  ):
         super(TextCNN, self).__init__()
 
@@ -105,16 +106,16 @@ class TextCNN(nn.Module):
         # Fully connected layer: input size is total number of filters across all kernel sizes
         total_output_filters = num_filters * len(filter_sizes)
         self.fc = nn.Linear(total_output_filters, num_class)
-
-        print(f"Initialized TextCNN:")
-        print(f"  Vocab Size: {vocab_size}")
-        print(f"  Embed Dim: {embed_dim}")
-        print(f"  Num Filters per Size: {num_filters}")
-        print(f"  Filter Sizes: {filter_sizes}")
-        print(f"  Total Output Filters: {total_output_filters}")
-        print(f"  Num Classes: {num_class}")
-        print(f"  Dropout: {dropout}")
-        print(f"  Padding Index: {padding_idx}")
+        if not concise:
+            print(f"Initialized TextCNN:")
+            print(f"  Vocab Size: {vocab_size}")
+            print(f"  Embed Dim: {embed_dim}")
+            print(f"  Num Filters per Size: {num_filters}")
+            print(f"  Filter Sizes: {filter_sizes}")
+            print(f"  Total Output Filters: {total_output_filters}")
+            print(f"  Num Classes: {num_class}")
+            print(f"  Dropout: {dropout}")
+            print(f"  Padding Index: {padding_idx}")
 
     def forward(self, text: torch.Tensor) -> torch.Tensor:
         embedded = self.embedding(text)
