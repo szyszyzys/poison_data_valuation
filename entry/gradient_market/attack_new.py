@@ -330,6 +330,7 @@ def poisoning_attack_image(
         local_training_params: Optional[Dict] = None,
         change_base: bool = True,
         data_split_mode: str = "NonIID",
+        num_workers = 4,
         dm_params: Optional[Dict] = None, local_attack_params=None, privacy_attack={}
 ):
     """
