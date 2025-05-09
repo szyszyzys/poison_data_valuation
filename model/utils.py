@@ -216,63 +216,50 @@ def test_local_model(model: nn.Module,
     return {"loss": avg_loss, "accuracy": accuracy}
 
 
-def local_training_and_get_gradient(
+def local_training_and_get_gradient(  # Actually returns weight deltas, not gradients
         model: nn.Module,  # Input model (e.g., global model state to start from)
         train_loader: DataLoader,
         device: torch.device,
         local_epochs: int = 1,
         lr: float = 0.01,
-        opt_str: str = "SGD",  # Renamed from 'opt' to avoid potential module conflict
+        opt_str: str = "SGD",
         momentum: float = 0.9,
         weight_decay: float = 0.0005,
-        batch_size=64,
-        # Added for optional, less frequent full evaluation on training set
+        # batch_size is part of train_loader, not needed as separate arg here
         evaluate_on_full_train_set: bool = False
 ) -> Tuple[Optional[List[torch.Tensor]], Optional[np.ndarray], Optional[nn.Module], Dict, Optional[float]]:
     """
-    Performs local training on a copy of the input model and returns the gradient update,
+    Performs local training on a copy of the input model and returns the WEIGHT DELTA (not gradient),
     the trained local model, evaluation results, and average training loss.
-    The input model is not modified.
+    The input model (passed as `model`) is not modified.
 
     Returns:
-        Tuple (gradient_tensors, flattened_gradient_np, trained_local_model, eval_results, avg_train_loss)
+        Tuple (weight_delta_tensors, flattened_delta_np, trained_local_model, eval_results, avg_train_loss)
     """
-    # Create a local copy of the model for training.
-    # This is necessary to avoid modifying the original model instance (e.g., global model)
-    # and to have an initial state for gradient calculation.
-    # For maximal efficiency IF signature could change, one would reconstruct the model
-    # instead of deepcopying the nn.Module object.
-    print("_________model ssssparams____________________")
-    print(len([p.data.clone() for p in
-               model.parameters()])
-          )
+    # For debugging parameter counts
+    # initial_model_param_count = sum(1 for _ in model.parameters())
+    # logging.debug(f"Input 'model' to local_training_and_get_gradient has {initial_model_param_count} parameter groups.")
 
     try:
-        # This is the primary point where efficiency could be higher if not for strict signature.
         local_model_for_training = copy.deepcopy(model)
         local_model_for_training.to(device)
-        print("_________model local train params____________________")
-        print(len([p.data.clone() for p in
-                   local_model_for_training.parameters()])
-              )
+        # trained_model_param_count = sum(1 for _ in local_model_for_training.parameters())
+        # logging.debug(f"'local_model_for_training' (after deepcopy) has {trained_model_param_count} parameter groups.")
 
-        # Keep a representation of the initial model state for delta calculation.
-        # Deepcopying the state_dict is more efficient than deepcopying the nn.Module again.
-        initial_model_state_dict_for_delta = copy.deepcopy(model.state_dict())
-        print("_________model init params____________________")
-        print(len([p.data.clone() for p in
-                   initial_model_state_dict_for_delta.parameters()])
-              )
+        # Store the initial parameters (weights) of the model *before* training
+        # These should correspond to model.parameters(), not the full state_dict
+        initial_params_for_delta: List[torch.Tensor] = []
+        for param in model.parameters():  # Iterate over parameters of the *original* input model
+            initial_params_for_delta.append(param.data.clone().detach().cpu())  # Store on CPU
 
     except Exception as e:
         logging.error(f"Failed to deepcopy/initialize model for local training: {e}", exc_info=True)
-        # Attempt to create zero gradients based on the input model structure
         zero_grad_tensors: Optional[List[torch.Tensor]] = None
         try:
             zero_grad_tensors = [torch.zeros_like(p.detach().cpu()) for p in model.parameters()]
         except Exception as e_zg:
             logging.error(f"Could not create zero_grad_tensors on model copy error: {e_zg}")
-        zero_flat_np = flatten_gradients(zero_grad_tensors) if zero_grad_tensors else np.array([])
+        zero_flat_np = flatten_gradients(zero_grad_tensors) if zero_grad_tensors else None
         return zero_grad_tensors, zero_flat_np, None, {"loss": float('nan'), "accuracy": float('nan')}, None
 
     criterion = nn.CrossEntropyLoss()
@@ -287,8 +274,8 @@ def local_training_and_get_gradient(
                               weight_decay=weight_decay)
 
     try:
-        # train_local_model trains 'local_model_for_training' in-place
-        _, avg_train_loss = train_local_model(  # Original model object is returned, but it's the trained one
+        # train_local_model trains 'local_model_for_training' in-place AND optimizer.step() is called
+        _, avg_train_loss = train_local_model(
             local_model_for_training, train_loader, criterion, optimizer, device, epochs=local_epochs
         )
     except Exception as e:
@@ -298,45 +285,56 @@ def local_training_and_get_gradient(
             zero_grad_tensors = [torch.zeros_like(p.detach().cpu()) for p in local_model_for_training.parameters()]
         except Exception as e_zg:
             logging.error(f"Could not create zero_grad_tensors on training error: {e_zg}")
-        zero_flat_np = flatten_gradients(zero_grad_tensors) if zero_grad_tensors else np.array([])
-        # Return the (partially trained or initial) local_model_for_training instance
+        zero_flat_np = flatten_gradients(zero_grad_tensors) if zero_grad_tensors else None
         return zero_grad_tensors, zero_flat_np, local_model_for_training, {"loss": float('nan'),
                                                                            "accuracy": float('nan')}, None
 
-    # Compute the gradient update as (trained_model - initial_model)
-    # We need to compare the state of local_model_for_training AFTER training
-    # with initial_model_state_dict_for_delta.
-    grad_update_tensors: List[torch.Tensor] = []
-    trained_state_dict = local_model_for_training.state_dict()
-    print("_________model params____________________")
-    print(len(initial_model_state_dict_for_delta)
-          )
-    for name, initial_param_tensor_cpu in initial_model_state_dict_for_delta.items():
-        # Ensure initial_param_tensor_cpu is on CPU if it wasn't already
-        # (it should be if deepcopy(model.state_dict()) was from a CPU model or handled correctly)
-        trained_param_tensor_cpu = trained_state_dict[name].detach().cpu()
-        delta = trained_param_tensor_cpu - initial_param_tensor_cpu.cpu()  # Ensure both are CPU
-        grad_update_tensors.append(delta)
+    # Compute the weight delta: (trained_model_params - initial_model_params)
+    weight_delta_tensors: List[torch.Tensor] = []
 
-    flat_update_np = flatten_gradients(grad_update_tensors)
+    # Iterate through the parameters of the *trained local model*
+    # The order from .parameters() should be consistent if the architecture is the same.
+    for i, trained_param in enumerate(local_model_for_training.parameters()):
+        if i < len(initial_params_for_delta):
+            initial_param_tensor_cpu = initial_params_for_delta[i]
+            trained_param_tensor_cpu = trained_param.data.detach().cpu()  # Get current data from trained model
 
-    eval_res = {"loss": float('nan'), "accuracy": float('nan')}
+            if initial_param_tensor_cpu.shape != trained_param_tensor_cpu.shape:
+                logging.error(
+                    f"Shape mismatch for parameter {i}: initial {initial_param_tensor_cpu.shape}, trained {trained_param_tensor_cpu.shape}. Cannot compute delta.")
+                # Handle this error, e.g., append zeros or raise
+                weight_delta_tensors.append(torch.zeros_like(trained_param_tensor_cpu))  # Or initial_param_tensor_cpu
+                continue
+
+            delta = trained_param_tensor_cpu - initial_param_tensor_cpu
+            weight_delta_tensors.append(delta)
+        else:
+            # This should not happen if local_model_for_training is a deepcopy of model
+            logging.error(
+                f"Mismatch in number of parameters when calculating delta. Trained model has more params than initial. Index: {i}")
+            break
+
+    if len(weight_delta_tensors) != len(initial_params_for_delta):
+        logging.error(
+            f"Length mismatch in calculated deltas ({len(weight_delta_tensors)}) vs initial params ({len(initial_params_for_delta)}). "
+            "This indicates a structural problem or error in delta calculation.")
+        # Fallback or error handling, e.g., return zero deltas based on initial structure
+        # This part needs careful thought on how to recover or signal failure.
+        # For now, let's try to create zero deltas matching the *expected* structure (initial_params_for_delta)
+        weight_delta_tensors = [torch.zeros_like(p.cpu()) for p in initial_params_for_delta]
+
+    flat_delta_np = flatten_gradients(weight_delta_tensors)
+
+    eval_res = {"loss": float('nan'), "accuracy": float('nan')}  # Default
     if evaluate_on_full_train_set:
-        logging.debug(f"Evaluating locally trained model on its training data (can be slow)...")
-        # Create a temporary model instance with initial_model_state_dict_for_delta for 'before' evaluation
-        # This still requires a deepcopy or reconstruction for a clean initial model eval.
-        # For simplicity here, we skip the "before" eval on train set as it's costly.
-        # If needed, the caller can do it.
+        logging.debug(f"Evaluating locally trained model on its training data...")
         eval_res = test_local_model(local_model_for_training, train_loader, criterion, device)
         logging.debug(f"Evaluation result (after local train, on train_loader): {eval_res}")
-    elif avg_train_loss is not None:  # Use training loss as a proxy if full evaluation is skipped
-        eval_res = {"loss": avg_train_loss, "accuracy": float('nan')}
-    print("grade params____________________")
-    print(len(grad_update_tensors)
-          )
-    # Return the list of gradient Tensors, the flattened NumPy array of gradients,
-    # the trained nn.Module instance, evaluation results, and the average training loss.
-    return grad_update_tensors, flat_update_np, local_model_for_training, eval_res, avg_train_loss
+    elif avg_train_loss is not None:
+        eval_res["loss"] = avg_train_loss  # Use training loss as a proxy
+
+    # logging.debug(f"local_training_and_get_gradient: Returning {len(weight_delta_tensors)} delta tensors.")
+    return weight_delta_tensors, flat_delta_np, local_model_for_training, eval_res, avg_train_loss
 
 
 def apply_gradient_update(
