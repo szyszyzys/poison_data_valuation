@@ -886,6 +886,157 @@ def print_and_save_data_statistics(
 
     return results
 
+
+def print_and_save_data_statistics_text(
+        dataset: Any, # Original dataset (e.g., processed_train_data which might be ListDatasetWithTargets or raw list)
+        buyer_indices: np.ndarray,
+        seller_splits: Dict[int, List[int]],
+        save_results: bool = True,
+        output_dir: str = './results'
+) -> Dict[str, Any]:
+    """
+    Print and visualize the class distribution statistics for the buyer and each seller.
+    Also compute and print the distribution alignment metrics and save to JSON.
+    Adapts for text data format before calling _extract_targets.
+    """
+    logger = logging.getLogger(__name__) # Use standard logging
+
+    # --- MODIFICATION FOR TEXT DATA ---
+    dataset_for_targets = dataset # Default to original
+    is_likely_text_data_format = False
+
+    # Heuristic: If the 'dataset' object itself is NOT ListDatasetWithTargets,
+    # but its first element looks like our raw text data format, then wrap it.
+    # If 'dataset' is ALREADY a ListDatasetWithTargets instance (passed from get_text_data_set),
+    # then _extract_targets will correctly use its .targets attribute.
+    if not isinstance(dataset, ListDatasetWithTargets) and dataset and len(dataset) > 0:
+        first_item = dataset[0]
+        # Check if it's the raw list of (label, ids_list) tuples
+        if isinstance(first_item, (list, tuple)) and len(first_item) == 2:
+            if isinstance(first_item[0], int) and isinstance(first_item[1], list):
+                is_likely_text_data_format = True
+                logger.debug("print_and_save_data_statistics: Detected raw text data format. Will use temporary wrapper for _extract_targets.")
+
+    if is_likely_text_data_format:
+        # Ensure 'dataset' is a list before passing to ListDatasetWithTargets constructor
+        if isinstance(dataset, list):
+            try:
+                # This dataset should be List[Tuple[int, List[int]]]
+                dataset_for_targets = ListDatasetWithTargets(dataset) # type: ignore
+            except ValueError as e:
+                logger.error(f"Error creating ListDatasetWithTargets wrapper in print_and_save_data_statistics: {e}. Proceeding with original dataset for target extraction, which might fail.")
+                # dataset_for_targets remains 'dataset'
+        else:
+            logger.warning("print_and_save_data_statistics: Detected text format, but 'dataset' is not a list. Cannot safely wrap for _extract_targets. Proceeding with original, which might fail.")
+            # dataset_for_targets remains 'dataset'
+
+    # --- END MODIFICATION ---
+
+
+    # 1) Extract all labels robustly using the (potentially wrapped) dataset
+    try:
+        targets = _extract_targets(dataset_for_targets)
+    except Exception as e:
+        logger.error(f"Failed to extract targets in print_and_save_data_statistics: {e}")
+        # Fallback or re-raise: what to do if targets cannot be extracted?
+        # For now, create a dummy result and return, or raise the error.
+        return {
+            "error": f"Failed to extract targets: {e}",
+            "buyer_stats": {"total_samples": 0, "class_distribution": {}},
+            "seller_stats": {}
+        }
+
+
+    if len(targets) == 0:
+        logger.warning("No targets extracted or dataset was effectively empty for statistics.")
+        unique_classes = np.array([])
+    else:
+        unique_classes = np.unique(targets)
+        if len(unique_classes) == 0 and len(targets) > 0: # All targets are the same or an issue
+            logger.warning(f"Targets extracted but np.unique(targets) is empty. Targets sample: {targets[:5]}")
+
+
+    # 2) Buyer stats
+    # Ensure buyer_indices are valid for the extracted targets array
+    valid_buyer_indices = buyer_indices
+    if buyer_indices is not None and len(buyer_indices) > 0 and len(targets) > 0:
+        if buyer_indices.max() >= len(targets):
+            logger.error(f"Max buyer index ({buyer_indices.max()}) exceeds target array length ({len(targets)}). Clamping or erroring.")
+            # Option: Filter out invalid indices or raise error. For now, log and proceed, might crash.
+            # valid_buyer_indices = buyer_indices[buyer_indices < len(targets)]
+            # If valid_buyer_indices becomes empty, handle downstream.
+    elif buyer_indices is None or len(buyer_indices) == 0:
+        valid_buyer_indices = np.array([], dtype=int) # Ensure it's an array for indexing
+
+
+    if len(valid_buyer_indices) > 0 and len(targets) > 0:
+        buyer_targets = targets[valid_buyer_indices]
+        buyer_counts = {str(int(c)): int(np.sum(buyer_targets == c)) for c in unique_classes}
+    else:
+        buyer_targets = np.array([])
+        buyer_counts = {str(int(c)): 0 for c in unique_classes}
+
+    buyer_stats = {
+        "total_samples": int(len(valid_buyer_indices)),
+        "class_distribution": buyer_counts
+    }
+
+    logger.info("Buyer Data Statistics:") # Changed print to logger.info
+    logger.info(f"  Total Samples: {buyer_stats['total_samples']}")
+    if unique_classes.size > 0:
+        for c_val in unique_classes:
+            logger.info(f"  Class {int(c_val)}: {buyer_counts.get(str(int(c_val)), 0)}")
+    logger.info("\n" + "=" * 40 + "\n")
+
+
+    # 3) Seller stats
+    seller_stats_dict: Dict[str, Dict[str, Any]] = {} # Changed key to str for JSON serializability
+    for seller_id_int, indices in seller_splits.items():
+        seller_id_str = str(seller_id_int) # Use string key for seller_id in results
+        valid_seller_indices = np.array(indices, dtype=int) # Ensure it's an array
+
+        if len(valid_seller_indices) > 0 and len(targets) > 0:
+            if valid_seller_indices.max() >= len(targets):
+                logger.error(f"Max seller {seller_id_str} index ({valid_seller_indices.max()}) exceeds target array length ({len(targets)}).")
+                # valid_seller_indices = valid_seller_indices[valid_seller_indices < len(targets)]
+                # If this results in empty, counts will be zero.
+
+            seller_targets_arr = targets[valid_seller_indices]
+            current_seller_counts = {str(int(c)): int(np.sum(seller_targets_arr == c)) for c in unique_classes}
+        else:
+            seller_targets_arr = np.array([])
+            current_seller_counts = {str(int(c)): 0 for c in unique_classes}
+
+        seller_stats_dict[seller_id_str] = {
+            "total_samples": int(len(valid_seller_indices)),
+            "class_distribution": current_seller_counts
+        }
+        logger.info(f"Seller {seller_id_str} Data Statistics:")
+        logger.info(f"  Total Samples: {seller_stats_dict[seller_id_str]['total_samples']}")
+        if unique_classes.size > 0:
+            for c_val in unique_classes:
+                logger.info(f"  Class {int(c_val)}: {current_seller_counts.get(str(int(c_val)), 0)}")
+        logger.info("-" * 30)
+
+
+    # 4) Package results
+    results = {
+        "buyer_stats": buyer_stats,
+        "seller_stats": seller_stats_dict # Use dict with string keys
+    }
+
+    # 5) Save JSON if desired
+    if save_results:
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            stats_file = os.path.join(output_dir, 'data_statistics.json')
+            with open(stats_file, 'w') as f:
+                json.dump(results, f, indent=2)
+            logger.info(f"Statistics saved to {stats_file}")
+        except Exception as e:
+            logger.error(f"Failed to save statistics JSON to {output_dir}: {e}")
+
+    return results
     # # Visualize Buyer Distribution.
     # plt.figure(figsize=(8, 4))
     # plt.bar([str(c) for c in unique_classes], [buyer_counts[str(c)] for c in unique_classes])
