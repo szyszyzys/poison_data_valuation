@@ -671,8 +671,6 @@ def get_text_data_set(
 
         vocab = build_vocab_from_iterator(
             yield_tokens_for_vocab(lambda: hf_iterator(train_ds_hf, text_field)),
-            specials=[unk_token, pad_token],
-            special_first=True
         )
 
         # Ensure unk_token exists (it should, as it's in specials)
