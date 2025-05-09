@@ -123,7 +123,6 @@ def poisoning_attack_text(
             target_label=backdoor_target_label,
             trigger_content=backdoor_trigger_content,
             location=backdoor_trigger_location
-            # max_seq_len could be added if needed
         )
         gradient_manipulation_mode = args.gradient_manipulation_mode  # Allow gradient manipulation for backdoor
     elif attack_type == LABEL_FLIP:

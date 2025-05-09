@@ -544,35 +544,41 @@ class LabelFlipAttackGenerator:
             logging.info(f"Label flipping complete. {num_actually_flipped} labels were actually changed out of {num_poison} selected samples.")
         return poisoned_dataset_list, original_labels_list
 
+import logging
+import random
+from typing import List, Optional, Tuple, Any # Ensure Any for vocab type hint
+
+import numpy as np # For random.seed
+import torch # Only if used explicitly, not directly in this class for now
+
+# Assume torchtext.vocab.Vocab from 0.6.0 is the type of 'vocab'
+# from torchtext.vocab import Vocab # If you want to type hint Vocab explicitly
+
 class BackdoorTextGenerator:
     """
     Generates simple backdoor attacks for text data by inserting trigger words/phrases.
     Operates on sequences of token IDs.
+    Compatible with torchtext 0.6.0 Vocab.
     """
 
     def __init__(self,
-                 vocab,
+                 vocab: Any, # Use Any or torchtext.vocab.Vocab if imported
                  target_label: int,
-                 trigger_type: str = "word_insert",  # e.g., "word_insert", "phrase_insert"
-                 trigger_content: str = "cf",  # The actual word(s) to insert
-                 location: str = "end",  # "start", "end", "middle", "random_word"
-                 max_seq_len: Optional[int] = None  # Optional: truncate poisoned sequence if needed
+                 trigger_type: str = "word_insert",
+                 trigger_content: str = "cf",
+                 location: str = "end",
+                 max_seq_len: Optional[int] = None
                  ):
-        """
-        Initialize the text backdoor generator.
+        # --- Compatibility Check for torchtext 0.6.0 Vocab ---
+        # In 0.6.0, Vocab has 'stoi' (string-to-int) and 'itos' (int-to-string)
+        # and is callable like vocab[token] or vocab[[token1, token2]]
+        if not hasattr(vocab, 'stoi') or not hasattr(vocab, 'itos'):
+            raise TypeError(
+                "Provided vocab object does not have 'stoi' or 'itos' attributes. "
+                "Expected a torchtext 0.6.0 Vocab object."
+            )
+        # --- End Compatibility Check ---
 
-        Args:
-            vocab (Vocab): The torchtext vocabulary object used for tokenization.
-                           Needed to convert trigger_content to token IDs.
-            target_label (int): The target label to assign to poisoned samples.
-            trigger_type (str): Currently supports 'word_insert' or 'phrase_insert'.
-            trigger_content (str): The word or phrase to insert as the trigger.
-            location (str): Where to insert the trigger: "start", "end", "middle", "random_word".
-            max_seq_len (Optional[int]): If provided, truncate sequences exceeding this length
-                                        *after* inserting the trigger.
-        """
-        if not hasattr(vocab, 'lookup_indices'):
-            raise TypeError("Provided vocab object does not have 'lookup_indices' method. Is it a torchtext Vocab?")
         if not isinstance(target_label, int):
             raise TypeError("target_label must be an integer.")
         if not trigger_content or not isinstance(trigger_content, str):
@@ -583,47 +589,57 @@ class BackdoorTextGenerator:
 
         self.vocab = vocab
         self.target_label = target_label
-        self.trigger_type = trigger_type  # Store for potential future use
+        self.trigger_type = trigger_type
         self.trigger_content = trigger_content
         self.location = location
         self.max_seq_len = max_seq_len
 
-        # --- Convert trigger string to token IDs using the vocab ---
-        # Use basic_english tokenizer logic (split by space) or a passed tokenizer if needed
-        # For simplicity, we assume space-separated words here.
-        trigger_words = self.trigger_content.split()
-        try:
-            # Use lookup_indices to get IDs, handles multiple words if trigger is a phrase
-            self.trigger_token_ids: List[int] = self.vocab.lookup_indices(trigger_words)
-        except KeyError as e:
-            logging.error(f"Error looking up trigger words '{trigger_words}' in vocab: {e}. "
-                          f"Make sure trigger words exist in the vocabulary.")
-            raise ValueError(f"Trigger content '{self.trigger_content}' contains words not in vocabulary.") from e
+        # --- Convert trigger string to token IDs using the vocab (0.6.0 style) ---
+        trigger_words = self.trigger_content.split() # Simple space-based tokenization for trigger
 
-        # Check if any trigger words mapped to <unk> (optional, but good practice)
-        unk_idx = self.vocab.get_stoi().get(self.vocab.get_default_index(),
-                                            None)  # Check based on default index if possible
-        # Or explicitly check for '<unk>' if it's always the token name
-        unk_idx_explicit = self.vocab.get_stoi().get('<unk>', -999)  # Use a clearly invalid index if not found
+        self.trigger_token_ids: List[int] = []
+        unk_token_string_from_vocab = self.vocab.unk_token # Get the actual UNK token string (e.g., '<unk>')
+                                                          # In 0.6.0, vocab.unk_index is usually index of '<unk>'
 
-        found_unk = False
-        for token_id in self.trigger_token_ids:
-            if (unk_idx is not None and token_id == unk_idx) or token_id == unk_idx_explicit:
-                found_unk = True
-                break
-        if found_unk:
-            logging.warning(f"Trigger content '{self.trigger_content}' contains words mapping to UNK token. "
+        if unk_token_string_from_vocab not in self.vocab.stoi:
+            # This should not happen if vocab was built with specials including an unk token
+            logging.warning(f"The vocab.unk_token '{unk_token_string_from_vocab}' is not in vocab.stoi. UNK checks might be unreliable.")
+            unk_idx_val = -1 # Sentinel, indicates UNK handling might be off
+        else:
+            unk_idx_val = self.vocab.stoi[unk_token_string_from_vocab]
+
+        for word in trigger_words:
+            try:
+                # For 0.6.0 Vocab, use __getitem__ or stoi.get for safety
+                # token_id = self.vocab[word] # This would use the unk_index if word is OOV
+                # Using stoi.get is safer to explicitly check if it's UNK vs. a real error
+                if word in self.vocab.stoi:
+                    self.trigger_token_ids.append(self.vocab.stoi[word])
+                else: # Word is OOV
+                    self.trigger_token_ids.append(unk_idx_val) # Map OOV to unk_idx_val
+                    logging.warning(f"Trigger word '{word}' not in vocabulary, mapped to UNK index {unk_idx_val}.")
+            except KeyError: # Should be caught by `word in self.vocab.stoi` but defensive
+                self.trigger_token_ids.append(unk_idx_val)
+                logging.error(f"Unexpected KeyError for trigger word '{word}' (should be OOV). Mapped to UNK.")
+
+
+        # Check if any trigger words mapped to the actual UNK index
+        if unk_idx_val != -1 and any(token_id == unk_idx_val for token_id in self.trigger_token_ids):
+            logging.warning(f"Trigger content '{self.trigger_content}' contains words that mapped to UNK token (index {unk_idx_val}). "
                             f"Resulting trigger IDs: {self.trigger_token_ids}")
-        elif not self.trigger_token_ids:
-            raise ValueError("Trigger content resulted in empty token ID list. Check content and vocab.")
 
-        logging.info(f"Initialized BackdoorTextGenerator:")
+        if not self.trigger_token_ids and trigger_words: # If trigger_words was not empty but IDs are
+            raise ValueError(f"Trigger content '{self.trigger_content}' resulted in empty token ID list, possibly all OOV and no valid UNK. Check content and vocab.")
+
+        logging.info(f"Initialized BackdoorTextGenerator (torchtext 0.6.0 compatible):")
         logging.info(f"  Target Label: {self.target_label}")
-        logging.info(f"  Trigger Content: '{self.trigger_content}'")
+        logging.info(f"  Trigger Content: '{self.trigger_content}' (words: {trigger_words})")
         logging.info(f"  Trigger Token IDs: {self.trigger_token_ids}")
         logging.info(f"  Location: {self.location}")
         logging.info(f"  Max Seq Len: {self.max_seq_len}")
 
+    # ... rest of your BackdoorTextGenerator class (apply_trigger_sequence, etc.) ...
+    # The other methods should be fine as they operate on lists of token IDs.
     def apply_trigger_sequence(self, token_ids: List[int]) -> List[int]:
         """
         Applies the trigger (inserts token IDs) into a single sequence of token IDs.
@@ -634,11 +650,10 @@ class BackdoorTextGenerator:
         Returns:
             List[int]: The modified sequence with the trigger inserted.
         """
-        # Make a copy to avoid modifying the original list in place
-        poisoned_ids = list(token_ids)  # Ensure it's a list copy
+        poisoned_ids = list(token_ids)
 
-        if not self.trigger_token_ids:
-            logging.warning("Trigger token IDs are empty, returning original sequence.")
+        if not self.trigger_token_ids: # If trigger is empty (e.g. all OOV and no unk mapping)
+            # logging.warning("Trigger token IDs are empty, returning original sequence.")
             return poisoned_ids
 
         insert_pos = -1
@@ -649,22 +664,31 @@ class BackdoorTextGenerator:
         elif self.location == "middle":
             insert_pos = len(poisoned_ids) // 2
         elif self.location == "random_word":
-            # Insert at a random position *within* the existing sequence boundaries
-            if len(poisoned_ids) == 0:
-                insert_pos = 0  # Insert at start if sequence is empty
-            else:
-                insert_pos = random.randint(0, len(poisoned_ids))  # Allow insertion at very end too
+            if len(poisoned_ids) == 0: insert_pos = 0
+            else: insert_pos = random.randint(0, len(poisoned_ids))
         else:
-            # Should be caught by __init__, but safeguard
             logging.warning(f"Unknown location '{self.location}', defaulting to 'end'.")
             insert_pos = len(poisoned_ids)
 
-        # Perform insertion using list slicing/concatenation
         poisoned_ids = poisoned_ids[:insert_pos] + self.trigger_token_ids + poisoned_ids[insert_pos:]
 
-        # Apply max sequence length if specified
         if self.max_seq_len is not None and len(poisoned_ids) > self.max_seq_len:
-            poisoned_ids = poisoned_ids[:self.max_seq_len]
+            if self.location == "start": # If trigger is at start, truncate from end
+                poisoned_ids = poisoned_ids[:self.max_seq_len]
+            elif self.location == "end": # If trigger is at end, ensure trigger is preserved
+                                         # This means truncating original content more aggressively
+                len_trigger = len(self.trigger_token_ids)
+                if self.max_seq_len < len_trigger: # Trigger itself is too long
+                    poisoned_ids = self.trigger_token_ids[:self.max_seq_len]
+                    logging.warning(f"Trigger ({len_trigger} tokens) longer than max_seq_len ({self.max_seq_len}). Truncating trigger itself.")
+                else:
+                    len_original_content_allowed = self.max_seq_len - len_trigger
+                    # Reconstruct: original part + trigger
+                    original_part_truncated = token_ids[:len_original_content_allowed] # Take from original
+                    poisoned_ids = original_part_truncated + self.trigger_token_ids
+            else: # Middle or random, simple truncation from end is most common
+                poisoned_ids = poisoned_ids[:self.max_seq_len]
+
 
         return poisoned_ids
 
@@ -674,79 +698,56 @@ class BackdoorTextGenerator:
             poison_rate: float = 0.1,
             seed: int = 42
     ) -> Tuple[List[Tuple[int, List[int]]], List[int]]:
-        """
-        Creates a poisoned dataset by modifying a fraction of samples from the original dataset.
-
-        Args:
-            original_dataset (List[Tuple[int, List[int]]]): The clean dataset, where each
-                element is a tuple (original_label, token_ids_list).
-            poison_rate (float): The fraction of the dataset to poison (e.g., 0.1 for 10%).
-            seed (int): Random seed for selecting samples to poison.
-
-        Returns:
-            Tuple[List[Tuple[int, List[int]]], List[int]]:
-            - poisoned_dataset: A new list containing both clean and poisoned samples.
-                                Poisoned samples have the trigger applied and the target label.
-                                Clean samples remain unchanged.
-            - original_labels: A list containing the original labels for *all* samples
-                               in the returned `poisoned_dataset`, maintaining the order.
-                               Useful for evaluation.
-        """
         random.seed(seed)
-        np.random.seed(seed)
+        np.random.seed(seed) # For numpy related randomness if any
 
         num_samples = len(original_dataset)
         num_poison = int(poison_rate * num_samples)
-        if num_poison == 0 and poison_rate > 0:
-            logging.warning(
-                f"Poison rate {poison_rate} resulted in 0 samples to poison for dataset size {num_samples}.")
-        elif num_poison > 0:
-            logging.info(f"Poisoning {num_poison}/{num_samples} samples ({poison_rate * 100:.2f}%).")
 
-        # Get indices to poison
+        if num_poison == 0 and poison_rate > 0 and num_samples > 0:
+            logging.warning(f"Poison rate {poison_rate} resulted in 0 samples to poison for dataset size {num_samples}. Consider increasing poison_rate or dataset size.")
+        elif num_poison > 0 :
+             logging.info(f"Poisoning {num_poison}/{num_samples} samples ({poison_rate * 100:.2f}%). Target label: {self.target_label}")
+
+
         all_indices = list(range(num_samples))
-        random.shuffle(all_indices)  # Shuffle to pick random indices
+        random.shuffle(all_indices)
         indices_to_poison = set(all_indices[:num_poison])
 
         poisoned_dataset_list = []
         original_labels_list = []
 
         for idx in range(num_samples):
+            # Ensure items in original_dataset are as expected
+            if not (isinstance(original_dataset[idx], (list, tuple)) and len(original_dataset[idx]) == 2):
+                logging.error(f"Item at index {idx} in original_dataset is malformed: {original_dataset[idx]}. Skipping.")
+                original_labels_list.append(None) # Or some placeholder
+                continue
+
             original_label, original_token_ids = original_dataset[idx]
 
+            if not isinstance(original_label, int) or not isinstance(original_token_ids, list):
+                logging.error(f"Item at index {idx} has malformed label or token_ids: label type {type(original_label)}, token_ids type {type(original_token_ids)}. Skipping.")
+                original_labels_list.append(original_label if isinstance(original_label, int) else None)
+                continue
+
+
             if idx in indices_to_poison:
-                # Apply trigger and change label
                 poisoned_token_ids = self.apply_trigger_sequence(original_token_ids)
                 poisoned_dataset_list.append((self.target_label, poisoned_token_ids))
             else:
-                # Keep original sample
                 poisoned_dataset_list.append((original_label, original_token_ids))
-
-            # Always store the original label for evaluation purposes
             original_labels_list.append(original_label)
 
         return poisoned_dataset_list, original_labels_list
 
     def generate_poisoned_samples(self, clean_sequences: List[List[int]]) -> List[List[int]]:
-        """
-        Applies the trigger to a list of clean token sequences.
-        Useful for testing the attack success rate on clean data with the trigger added.
-
-        Args:
-            clean_sequences (List[List[int]]): A list where each element is a clean token ID sequence.
-
-        Returns:
-            List[List[int]]: A list containing the corresponding triggered sequences.
-        """
         if not isinstance(clean_sequences, list):
             raise TypeError("Input clean_sequences must be a list of lists.")
-
         poisoned_sequences = []
         for seq in clean_sequences:
             if not isinstance(seq, list):
                 logging.warning(f"Item in clean_sequences is not a list: {type(seq)}. Skipping.")
-                # Or raise error depending on strictness needed
                 continue
             poisoned_sequences.append(self.apply_trigger_sequence(seq))
-
         return poisoned_sequences
