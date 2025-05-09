@@ -190,9 +190,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
         # --- Conditionally Get Buyer Gradient (Baseline) ---
         # Assumes aggregator has a way to indicate if it needs a baseline
-        if hasattr(self.aggregator, 'requires_baseline_gradient') and self.aggregator.requires_baseline_gradient:
-            # Or check: self.aggregator.aggregation_method in ["MartFL", "FedMGDA+"] etc.
-            baseline_gradient, _ = buyer.get_gradient_for_upload(self.aggregator.global_model)
+        baseline_gradient, _ = buyer.get_gradient_for_upload(self.aggregator.global_model)
 
         # --- 1. Get Gradients & Stats from Sellers ---
         seller_gradients_dict, seller_ids, seller_stats = self.get_current_market_gradients(
