@@ -130,8 +130,8 @@ BASE_CONFIG_TEMPLATE = {
     }
 }
 
-# DATASETS = ['AG_NEWS', 'TREC', 'CIFAR', 'FMNIST']
-DATASETS = ['CIFAR', 'FMNIST']
+DATASETS = ['AG_NEWS', 'TREC']
+# DATASETS = ['CIFAR', 'FMNIST']
 AGGREGATIONS = ['fedavg', 'martfl', "skymask", "fltrust"]
 # --- Model Configs per Dataset (Simplified) ---
 # You might need more details (layers, etc.) depending on model structure definition
@@ -443,7 +443,7 @@ if __name__ == "__main__":
         # Manually set device in template if torch is unavailable
         BASE_CONFIG_TEMPLATE['device'] = 'cpu'
 
-    CONFIG_OUTPUT_DIRECTORY = "./configs_generated_img"  # Directory to save generated configs
+    CONFIG_OUTPUT_DIRECTORY = "./configs_generated_text"  # Directory to save generated configs
 
     print(f"Generating configuration files in: {CONFIG_OUTPUT_DIRECTORY}")
 
