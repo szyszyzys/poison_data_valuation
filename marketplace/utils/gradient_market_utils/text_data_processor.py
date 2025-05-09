@@ -334,10 +334,6 @@ def get_text_data_set(
             except Exception as e:
                 logging.error(f"Failed to save vocabulary to cache: {e}")
 
-    # For text_pipeline, Vocab objects in 0.6.0 are directly callable or use .numericalize
-    # vocab([token1, token2]) or vocab.numericalize([token1, token2])
-    # Your existing text_pipeline should still work as vocab(tokenizer(text_string))
-    # because tokenizer(text_string) returns a list of tokens.
     text_pipeline = lambda text_string: vocab(tokenizer(text_string))  # This should work with 0.6.0 Vocab
 
     # --- Numericalize or Load Numericalized Data ---
