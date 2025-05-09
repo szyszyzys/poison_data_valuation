@@ -519,14 +519,14 @@ def get_text_data_set(
 
     if save_path: # Ensure save_path exists for stats
         os.makedirs(save_path, exist_ok=True)
-        # data_distribution_info = print_and_save_data_statistics(
-        #     dataset=processed_train_data,
-        #     buyer_indices=buyer_indices_np,
-        #     seller_splits=seller_splits,
-        #     save_results=True,
-        #     output_dir=save_path
-        # )
-        # logging.info(f"Data statistics processed. Info: {data_distribution_info}")
+        data_distribution_info = print_and_save_data_statistics(
+            dataset=processed_train_data,
+            buyer_indices=buyer_indices_np,
+            seller_splits=seller_splits,
+            save_results=True,
+            output_dir=save_path
+        )
+        logging.info(f"Data statistics processed. Info: {data_distribution_info}")
 
     return buyer_loader, seller_loaders, test_loader, class_names, vocab, pad_idx
 
@@ -543,7 +543,7 @@ if __name__ == "__main__":
     try:
         # Using a higher min_freq to avoid very long vocab building times
         b_loader, s_loaders, t_loader, c_names, voc, p_idx = get_text_data_set(
-            dataset_name="AG_NEWS",
+            dataset_name="TREC",
             buyer_percentage=0.02,
             num_sellers=2,
             batch_size=16,
