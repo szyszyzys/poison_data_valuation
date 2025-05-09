@@ -56,7 +56,7 @@ def poisoning_attack_text(
         sybil_params: Optional[Dict] = None,
         local_training_params: Optional[Dict] = None,
         change_base: bool = True,
-        num_workers = 4,
+        num_workers=4,
         data_split_mode: str = "NonIID",
         dm_params: Optional[Dict] = None, local_attack_params=None, privacy_attack={}
 ):
@@ -76,6 +76,7 @@ def poisoning_attack_text(
     print(f"Sellers: {n_sellers}, Adversary Rate: {adv_rate}")
 
     # --- Basic Setup ---
+    model_type = "text"
     if aggregation_method == "skymask":
         print(f"return, not implemented: {aggregation_method} for text data")
     n_adversaries = int(n_sellers * adv_rate)
@@ -154,6 +155,17 @@ def poisoning_attack_text(
         padding_idx=padding_idx,
         **text_model_hyperparams
     )
+    text_model_specific_hyperparams = {"embed_dim": 128, "num_filters": 64, "dropout": 0.3}
+
+    text_seller_model_config = {
+        "dataset_name": dataset_name,  # Optional if model_type is very specific
+        "num_classes": num_classes,
+        "vocab_size": vocab_size,
+        "padding_idx": padding_idx,
+        **text_model_specific_hyperparams  # Merges the specific hyperparams
+        # Or if you used a nested "model_kwargs" structure in _get_new_model_instance:
+        # "model_kwargs": text_model_specific_hyperparams
+    }
 
     # Buyer (operates on its clean data loader)
     # Ensure buyer loader also uses the correct collate function if not already done
@@ -164,7 +176,8 @@ def poisoning_attack_text(
 
     buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader_collated.dataset,  # Pass underlying dataset list
                            dataset_name=dataset_name, save_path=save_path, initial_model=model_structure_instance,
-                           local_training_params=local_training_params, pad_idx=padding_idx)
+                           local_training_params=local_training_params, pad_idx=padding_idx, model_type=model_type,
+                           model_init_config=text_seller_model_config)
 
     # Aggregator (needs the actual model instance now)
     aggregator = Aggregator(save_path=save_path, n_seller=n_sellers,
@@ -214,7 +227,7 @@ def poisoning_attack_text(
                     is_sybil=args.is_sybil,
                     sybil_coordinator=sybil_coordinator,
                     benign_rounds=sybil_params['benign_rounds'],
-                    vocab=vocab,
+                    vocab=vocab, model_init_config=text_seller_model_config,model_type=model_type,
                     pad_idx=padding_idx, initial_model=model_structure_instance
                 )
                 sybil_coordinator.register_seller(current_seller)
@@ -233,8 +246,8 @@ def poisoning_attack_text(
                     is_sybil=args.is_sybil,
                     sybil_coordinator=sybil_coordinator,
                     benign_rounds=sybil_params['benign_rounds'],
-                    vocab=vocab,
-                    pad_idx=padding_idx,initial_model=model_structure_instance
+                    vocab=vocab, model_init_config=text_seller_model_config, model_type=model_type,
+                    pad_idx=padding_idx, initial_model=model_structure_instance
                 )
                 malicious_sellers_list.append(current_seller)
             else:
@@ -242,14 +255,16 @@ def poisoning_attack_text(
                 current_seller = GradientSeller(seller_id=cur_id, local_data=seller_dataset,
                                                 dataset_name=dataset_name, save_path=save_path, device=device,
                                                 local_training_params=local_training_params, vocab=vocab,
-                                                pad_idx=padding_idx, initial_model=model_structure_instance
+                                                pad_idx=padding_idx, initial_model=model_structure_instance,model_type=model_type,
+                                                model_init_config=text_seller_model_config
                                                 )
         else:  # Benign seller
             print(f"  Configuring BN seller {cur_id}")
             current_seller = GradientSeller(seller_id=cur_id, local_data=seller_dataset,
                                             dataset_name=dataset_name, save_path=save_path, device=device,
                                             local_training_params=local_training_params, vocab=vocab,
-                                            pad_idx=padding_idx, initial_model=model_structure_instance
+                                            pad_idx=padding_idx, initial_model=model_structure_instance,model_type=model_type,
+                                            model_init_config=text_seller_model_config
                                             )
 
         marketplace.register_seller(cur_id, current_seller)
@@ -367,6 +382,7 @@ def poisoning_attack_image(
     dl_num_workers = local_training_params.get('num_workers', 4)
     dl_pin_memory = local_training_params.get('pin_memory', torch.cuda.is_available())
     sm_model_type = "None"
+    model_type='image'
     if dataset_name == "FMNIST":
         sm_model_type = 'lenet'
     elif dataset_name == "CIFAR":
@@ -400,6 +416,10 @@ def poisoning_attack_image(
     model_structure_instance = get_image_model(
         dataset_name=dataset_name,
     )
+
+    image_seller_model_config = {
+        "dataset_name": dataset_name,
+    }
 
     # --- Initialize Attack Generator ---
     if attack_type == BACKDOOR:
@@ -462,7 +482,8 @@ def poisoning_attack_image(
     print("Setting up FL components...")
     # Buyer
     buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader.dataset, dataset_name=dataset_name,
-                           save_path=save_path, local_training_params=local_training_params)
+                           save_path=save_path, local_training_params=local_training_params,model_type=model_type,
+                           initial_model=model_structure_instance, model_init_config=image_seller_model_config)
 
     # Aggregator
     aggregator = Aggregator(save_path=save_path,
@@ -515,8 +536,9 @@ def poisoning_attack_image(
                     local_training_params=local_training_params,
                     gradient_manipulation_mode=gradient_manipulation_mode,
                     is_sybil=args.is_sybil,
-                    sybil_coordinator=sybil_coordinator,
-                    benign_rounds=sybil_params['benign_rounds'], initial_model=model_structure_instance
+                    sybil_coordinator=sybil_coordinator,model_type=model_type,
+                    benign_rounds=sybil_params['benign_rounds'], initial_model=model_structure_instance,
+                    model_init_config=image_seller_model_config
                 )
                 sybil_coordinator.register_seller(current_seller)  # Register with coordinator
                 malicious_sellers_list.append(current_seller)
@@ -533,21 +555,25 @@ def poisoning_attack_image(
                     local_training_params=local_training_params,
                     is_sybil=args.is_sybil,
                     sybil_coordinator=sybil_coordinator,
-                    benign_rounds=sybil_params['benign_rounds'],
-                    initial_model=model_structure_instance
+                    benign_rounds=sybil_params['benign_rounds'],model_type=model_type,
+                    initial_model=model_structure_instance, model_init_config=image_seller_model_config
                 )
                 malicious_sellers_list.append(current_seller)
             else:
                 print(f"  Configuring BN seller {cur_id}")
                 current_seller = GradientSeller(seller_id=cur_id, local_data=loader.dataset,
                                                 dataset_name=dataset_name, save_path=save_path, device=device,
-                                                local_training_params=local_training_params, initial_model=model_structure_instance)
+                                                local_training_params=local_training_params,
+                                                initial_model=model_structure_instance,model_type=model_type,
+                                                model_init_config=image_seller_model_config)
 
         else:  # Benign seller
             print(f"  Configuring BN seller {cur_id}")
             current_seller = GradientSeller(seller_id=cur_id, local_data=loader.dataset,
                                             dataset_name=dataset_name, save_path=save_path, device=device,
-                                            local_training_params=local_training_params, initial_model=model_structure_instance)
+                                            local_training_params=local_training_params,
+                                            initial_model=model_structure_instance,model_type=model_type,
+                                            model_init_config=image_seller_model_config)
 
         marketplace.register_seller(cur_id, current_seller)
     # --- Run Federated Training ---
