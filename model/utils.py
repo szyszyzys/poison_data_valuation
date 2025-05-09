@@ -43,10 +43,7 @@ def train_local_model(model: nn.Module,
     if not train_loader or len(train_loader) == 0:  # More robust check for empty loader
         logging.warning("train_loader is empty or None. Skipping training.")
         return model, None
-    print("_________model params____________________")
-    print(len([p.data.clone() for p in
-               model.parameters()])
-          )
+
     logging.debug(f"Starting local training for {epochs} epochs on device {device}...")
     for epoch in range(epochs):
         epoch_start_time = time.time()
@@ -298,6 +295,9 @@ def local_training_and_get_gradient(
     # with initial_model_state_dict_for_delta.
     grad_update_tensors: List[torch.Tensor] = []
     trained_state_dict = local_model_for_training.state_dict()
+    print("_________model params____________________")
+    print(len(initial_model_state_dict_for_delta)
+          )
     for name, initial_param_tensor_cpu in initial_model_state_dict_for_delta.items():
         # Ensure initial_param_tensor_cpu is on CPU if it wasn't already
         # (it should be if deepcopy(model.state_dict()) was from a CPU model or handled correctly)
@@ -318,7 +318,9 @@ def local_training_and_get_gradient(
         logging.debug(f"Evaluation result (after local train, on train_loader): {eval_res}")
     elif avg_train_loss is not None:  # Use training loss as a proxy if full evaluation is skipped
         eval_res = {"loss": avg_train_loss, "accuracy": float('nan')}
-
+    print("grade params____________________")
+    print(len(grad_update_tensors)
+          )
     # Return the list of gradient Tensors, the flattened NumPy array of gradients,
     # the trained nn.Module instance, evaluation results, and the average training loss.
     return grad_update_tensors, flat_update_np, local_model_for_training, eval_res, avg_train_loss
