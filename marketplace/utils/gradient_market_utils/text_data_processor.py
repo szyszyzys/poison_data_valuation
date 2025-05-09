@@ -668,10 +668,15 @@ def get_text_data_set(
             for text_sample in text_iterator_func():  # Call the function to get a fresh iterator
                 yield tokenizer(text_sample)
 
+        # vocab = build_vocab_from_iterator(
+        #     yield_tokens_for_vocab(lambda: hf_iterator(train_ds_hf, text_field)),
+        #     min_freq=min_freq,
+        #     specials=[unk_token, pad_token]  # Let torchtext handle specials
+        # )
+        token_iterator_for_builder = yield_tokens_for_vocab(lambda: hf_iterator(train_ds_hf, text_field)),
         vocab = build_vocab_from_iterator(
-            yield_tokens_for_vocab(lambda: hf_iterator(train_ds_hf, text_field)),
-            min_freq=min_freq,
-            specials=[unk_token, pad_token]  # Let torchtext handle specials
+            token_iterator_for_builder
+            # NO ARGUMENTS like min_freq or specials here
         )
         vocab.set_default_index(vocab[unk_token])  # Set default for OOV tokens
         pad_idx = vocab[pad_token]
