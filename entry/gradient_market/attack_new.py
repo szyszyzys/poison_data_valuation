@@ -7,7 +7,6 @@ from typing import Dict, Optional, Any
 
 import torch
 import torch.backends.cudnn
-import torch.nn as nn
 from torch import nn
 from torch.utils.data import DataLoader
 
@@ -330,7 +329,7 @@ def poisoning_attack_image(
         local_training_params: Optional[Dict] = None,
         change_base: bool = True,
         data_split_mode: str = "NonIID",
-        num_workers = 4,
+        num_workers=4,
         dm_params: Optional[Dict] = None, local_attack_params=None, privacy_attack={}
 ):
     """
@@ -438,8 +437,8 @@ def poisoning_attack_image(
         save_path=save_path,
         discovery_quality=dm_params["discovery_quality"],
         buyer_data_mode=dm_params["buyer_data_mode"],
-    num_workers=dl_num_workers,         # <--- PASS IT TO get_data_set
-    pin_memory=dl_pin_memory          # <--- PASS IT TO get_data_set
+        num_workers=dl_num_workers,  # <--- PASS IT TO get_data_set
+        pin_memory=dl_pin_memory  # <--- PASS IT TO get_data_set
     )
     num_classes = len(class_names)
     print(f"Data loaded. Num classes: {num_classes}")

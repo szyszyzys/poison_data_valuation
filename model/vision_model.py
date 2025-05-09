@@ -275,7 +275,7 @@ def flatten_gradients(grad_list: list) -> np.ndarray:
 def local_training_and_get_gradient(model: nn.Module,
                                     train_loader: DataLoader,
                                     device: torch.device,
-                                    local_epochs: int = 1,
+                                    local_epochs: int = 1, batch_size=64,
                                     lr: float = 0.01) -> tuple:
     """
     Perform local training on a copy of the model using the provided DataLoader.
