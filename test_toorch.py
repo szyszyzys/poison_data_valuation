@@ -3,7 +3,7 @@ import logging # Assuming you have logging configured
 
 # --- Your existing tokenizer and yield_tokens_for_vocab setup (simplified) ---
 from torchtext.data.utils import get_tokenizer
-
+import torch
 # Dummy hf_iterator for this test
 def dummy_hf_iterator_text_only(limit=None):
     sample_texts = [
