@@ -95,6 +95,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
             round_num = record.get('round_number', i)
 
             selected_clients = record.get("used_sellers", [])  # These are seller IDs (strings)
+
             adversary_selections = [cid for cid in selected_clients if int(cid) < num_adversaries]
             benign_selections = [cid for cid in selected_clients if int(cid) >= num_adversaries]
 
@@ -123,7 +124,8 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
 
             # Calculate distribution similarities
             similarities = []
-            for cid_str in selected_clients:  # cid from selected_clients is already a string
+            for cid_ in selected_clients:  # cid from selected_clients is already a string
+                cid_str = str(cid_)
                 if cid_str in seller_distributions:
                     seller_dist = seller_distributions[cid_str]['class_distribution']
                     similarities.append(calculate_distribution_similarity(buyer_distribution, seller_dist))
