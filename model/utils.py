@@ -437,12 +437,6 @@ def load_param(path: str, device: torch.device):
     return state_dict
 
 
-# Original Snippet (get_image_model)
-# def get_image_model(dataset_name, model_structure_name=""):
-#     # ... model created on default device ...
-#     return model
-
-# --- Improved Snippet (get_image_model) ---
 def get_image_model(dataset_name: str,
                     model_structure_name: str = "",
                     device: Optional[Union[str, torch.device]] = None) -> nn.Module:
