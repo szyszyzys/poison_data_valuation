@@ -109,19 +109,44 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                     print(f"Warning: Selected seller_id {seller_id} not in payment tracking. Initializing.")
                     total_payments_per_seller[str(seller_id)] = 1
 
-            round_data = {
-                'run': cur_run,
-                'round': round_num,
-                **attack_params,
-                **market_params,
-                'n_selected_clients': len(selected_clients),
-                'selected_clients': selected_clients,
-                'adversary_selection_rate': len(adversary_selections) / len(
-                    selected_clients) if selected_clients else 0,
-                'benign_selection_rate': len(benign_selections) / len(selected_clients) if selected_clients else 0,
-                'cost_per_round': cost_per_round  # New metric
-            }
+            selected_clients_int = [int(cid) for cid in selected_clients]  # Ensure integer IDs if not already
+            benign_selected_in_round = [cid_str for cid_str in selected_clients if int(cid_str) >= num_adversaries]
+            malicious_selected_in_round = [cid_str for cid_str in selected_clients if int(cid_str) < num_adversaries]
 
+            # 2. Calculate Benign Seller Selection Rate for the round
+            num_total_benign_sellers = num_total_sellers - num_adversaries
+            if num_total_benign_sellers > 0 and selected_clients:  # Avoid division by zero
+                round_benign_selection_rate = len(benign_selected_in_round) / num_total_benign_sellers
+                # Note: This is rate of selection *among available benign sellers*.
+                # Another version could be: len(benign_selected_in_round) / len(selected_clients)
+                # Choose the definition that makes most sense for your analysis.
+                # The one above seems more aligned with "are benign sellers getting a fair chance?".
+            else:
+                round_benign_selection_rate = 0.0 if selected_clients else np.nan  # Or just 0.0
+
+            # (You already have 'adversary_selection_rate' which is good for malicious selection rate)
+            # Ensure its definition is consistent:
+            # round_adversary_selection_rate = len(malicious_selected_in_round) / num_adversaries if num_adversaries > 0 and selected_clients else 0.0
+
+            # 3. Calculate Gini Coefficient for payments ONLY to BENIGN sellers in this round
+            # This assumes you have payment information per round or can infer it.
+            # If payment is uniform (e.g., 1 per selected seller):
+            payments_to_benign_this_round = {seller_id_str: 0 for seller_id_str in
+                                             map(str, range(num_adversaries, num_total_sellers))}
+            for seller_id_str in benign_selected_in_round:
+                payments_to_benign_this_round[seller_id_str] = 1  # Or actual payment value
+
+            all_benign_payments_array = np.array(list(payments_to_benign_this_round.values()))
+            round_benign_gini_coefficient = calculate_gini(all_benign_payments_array)  # Use your existing Gini function
+
+            round_data = {'run': cur_run, 'round': round_num, **attack_params, **market_params,
+                          'n_selected_clients': len(selected_clients), 'selected_clients': selected_clients,
+                          'adversary_selection_rate': len(adversary_selections) / len(
+                              selected_clients) if selected_clients else 0,
+                          'benign_selection_rate': len(benign_selections) / len(
+                              selected_clients) if selected_clients else 0, 'cost_per_round': cost_per_round,
+                          'benign_selection_rate_in_round': round_benign_selection_rate,
+                          'benign_gini_coefficient_in_round': round_benign_gini_coefficient}
             # Calculate distribution similarities
             similarities = []
             for cid_ in selected_clients:  # cid from selected_clients is already a string
@@ -198,34 +223,32 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                 # Option 2: Leave as None or set to a specific indicator like np.nan
                 cost_of_convergence = np.nan  # Or final_cumulative_cost if you prefer that interpretation
 
-            summary = {
-                "run": cur_run,
-                **market_params,
-                **attack_params,
-                'MAX_ASR': max(asr_values) if asr_values else 0,
-                'FINAL_ASR': final_record.get('asr'),
-                'FINAL_MAIN_ACC': final_record.get('main_acc'),
-                'FINAL_CLEAN_ACC': final_record.get('clean_acc'),
-                'FINAL_TRIGGERED_ACC': final_record.get('triggered_acc'),
-                'AVG_SELECTED_DISTRIBUTION_SIMILARITY': np.mean(
-                    [r['avg_selected_data_distribution_similarity'] for r in sorted_records if
-                     'avg_selected_data_distribution_similarity' in r]),
-                'AVG_UNSELECTED_DISTRIBUTION_SIMILARITY': np.mean(
-                    [r['avg_unselected_data_distribution_similarity'] for r in sorted_records if
-                     'avg_unselected_data_distribution_similarity' in r]),
-                'AVG_ADVERSARY_SELECTION_RATE': np.mean(
-                    [r['adversary_selection_rate'] for r in sorted_records if 'adversary_selection_rate' in r]),
-                'AVG_BENIGN_SELECTION_RATE': np.mean(
-                    [r['benign_selection_rate'] for r in sorted_records if 'benign_selection_rate' in r]),
-                'AVG_COST_PER_ROUND': np.mean([r['cost_per_round'] for r in sorted_records if 'cost_per_round' in r]),
-                # New
-                'COST_OF_CONVERGENCE': cost_of_convergence,  # New
-                'TARGET_ACC_FOR_COC': target_accuracy_for_coc,  # New
-                'COC_TARGET_REACHED_ROUND': target_accuracy_reached_round,  # New
-                'PAYMENT_GINI_COEFFICIENT': payment_gini_coefficient,  # New
-                'TOTAL_COST': final_cumulative_cost,  # Total cost over all rounds
-                'TOTAL_ROUNDS': len(sorted_records)
-            }
+            summary = {"run": cur_run, **market_params, **attack_params,
+                       'MAX_ASR': max(asr_values) if asr_values else 0, 'FINAL_ASR': final_record.get('asr'),
+                       'FINAL_MAIN_ACC': final_record.get('main_acc'), 'FINAL_CLEAN_ACC': final_record.get('clean_acc'),
+                       'FINAL_TRIGGERED_ACC': final_record.get('triggered_acc'),
+                       'AVG_SELECTED_DISTRIBUTION_SIMILARITY': np.mean(
+                           [r['avg_selected_data_distribution_similarity'] for r in sorted_records if
+                            'avg_selected_data_distribution_similarity' in r]),
+                       'AVG_UNSELECTED_DISTRIBUTION_SIMILARITY': np.mean(
+                           [r['avg_unselected_data_distribution_similarity'] for r in sorted_records if
+                            'avg_unselected_data_distribution_similarity' in r]),
+                       'AVG_ADVERSARY_SELECTION_RATE': np.mean(
+                           [r['adversary_selection_rate'] for r in sorted_records if 'adversary_selection_rate' in r]),
+                       'AVG_BENIGN_SELECTION_RATE': np.mean(
+                           [r['benign_selection_rate'] for r in sorted_records if 'benign_selection_rate' in r]),
+                       'AVG_COST_PER_ROUND': np.mean(
+                           [r['cost_per_round'] for r in sorted_records if 'cost_per_round' in r]),
+                       'COST_OF_CONVERGENCE': cost_of_convergence, 'TARGET_ACC_FOR_COC': target_accuracy_for_coc,
+                       'COC_TARGET_REACHED_ROUND': target_accuracy_reached_round,
+                       'PAYMENT_GINI_COEFFICIENT': payment_gini_coefficient, 'TOTAL_COST': final_cumulative_cost,
+                       'TOTAL_ROUNDS': len(sorted_records), 'AVG_BENIGN_SELLER_SELECTION_RATE': np.mean(
+                    [r['benign_selection_rate_in_round'] for r in sorted_records if
+                     'benign_selection_rate_in_round' in r and pd.notna(r['benign_selection_rate_in_round'])]),
+                       'AVG_BENIGN_PAYMENT_GINI': np.mean(
+                           [r['benign_gini_coefficient_in_round'] for r in sorted_records if
+                            'benign_gini_coefficient_in_round' in r and pd.notna(
+                                r['benign_gini_coefficient_in_round'])])}
             return processed_data, summary
         return [], {}
 
