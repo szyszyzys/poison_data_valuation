@@ -129,6 +129,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                     similarities.append(calculate_distribution_similarity(buyer_distribution, seller_dist))
                 else:
                     print(f"Warning: Seller {cid_str} not found in data_statistics for similarity calculation.")
+                    print(seller_distributions.keys())
                     similarities.append(0)  # Or handle as NaN or skip
 
             round_data['avg_selected_data_distribution_similarity'] = np.mean(similarities) if similarities else 0
