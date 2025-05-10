@@ -17,49 +17,96 @@ def load_json(json_path):
 
 
 def calculate_distribution_similarity(buyer_distribution, seller_distribution):
-    buyer_dist_array = np.array(list(buyer_distribution.values()))
-    seller_dist_array = np.array(list(seller_distribution.values()))
-    similarity = np.dot(buyer_dist_array, seller_dist_array) / (
-            np.linalg.norm(buyer_dist_array) * np.linalg.norm(seller_dist_array)
-    )
-    return similarity
+    # Ensure distributions are valid (non-empty and contain numbers)
+    if not buyer_distribution or not seller_distribution:
+        return 0.0
+    try:
+        buyer_dist_array = np.array(list(buyer_distribution.values()), dtype=float)
+        seller_dist_array = np.array(list(seller_distribution.values()), dtype=float)
+
+        # Handle potential zero vectors to avoid division by zero
+        norm_buyer = np.linalg.norm(buyer_dist_array)
+        norm_seller = np.linalg.norm(seller_dist_array)
+
+        if norm_buyer == 0 or norm_seller == 0:
+            return 0.0  # Or handle as appropriate, e.g., if one is zero and other isn't, similarity is 0
+
+        similarity = np.dot(buyer_dist_array, seller_dist_array) / (norm_buyer * norm_seller)
+        return similarity
+    except Exception as e:
+        print(f"Error in calculate_distribution_similarity: {e}")
+        print(f"Buyer dist: {buyer_distribution}, Seller dist: {seller_distribution}")
+        return 0.0  # Return a default value or raise
 
 
-def process_single_experiment(file_path, attack_params, market_params, data_statistics_path, adv_rate, cur_run):
+def calculate_gini(payments):
+    """Calculate the Gini coefficient of a numpy array."""
+    # ensure payments is a numpy array
+    payments = np.asarray(payments, dtype=float)
+    # Values must be non-negative
+    if np.any(payments < 0):
+        # Or handle as an error, Gini is typically for non-negative quantities like income
+        payments[payments < 0] = 0  # Cap at zero for simplicity
+        # raise ValueError("Payments Gini coefficient requires non-negative values.")
+    # Array must not be empty
+    if payments.size == 0:
+        return 0.0  # Or handle as an error / NaN
+    # Values cannot all be zero
+    if not np.any(payments):
+        return 0.0  # Perfect equality if all payments are zero
+
+    # Sort payments in ascending order
+    sorted_payments = np.sort(payments)
+    n = len(payments)
+    cum_payments = np.cumsum(sorted_payments, dtype=float)
+    # Gini coefficient
+    gini = (n + 1 - 2 * np.sum(cum_payments) / cum_payments[-1]) / n
+    return gini
+
+
+def process_single_experiment(file_path, attack_params, market_params, data_statistics_path, adv_rate, cur_run,
+                              target_accuracy_for_coc=0.8):
     """
-    Process a single experiment file and extract metrics, incorporating data distribution similarity.
-
-    Args:
-        file_path: Path to the market_log.ckpt file
-        attack_params: Dictionary containing attack parameters
-        market_params: Dictionary containing market parameters
-        data_statistics_path: Path to the data_statistics.json file
-        adv_rate: Proportion of sellers considered adversaries
-
-    Returns:
-        processed_data: List of dictionaries with processed round data
-        summary_data: Dictionary with summary metrics
+    Process a single experiment file and extract metrics, incorporating data distribution similarity and payment simulation.
     """
     try:
         experiment_data = torch.load(file_path, map_location='cpu', weights_only=False)
         data_stats = load_json(data_statistics_path)
 
         buyer_distribution = data_stats['buyer_stats']['class_distribution']
-        seller_distributions = data_stats['seller_stats']
+        seller_distributions = data_stats['seller_stats']  # Dict of seller_id_str -> stats
 
         if not experiment_data:
             print(f"Warning: No round records found in {file_path}")
             return [], {}
 
         processed_data = []
-        num_adversaries = int(len(seller_distributions) * adv_rate)
+        num_total_sellers = market_params["N_CLIENTS"]  # Get total number of sellers from market_params
+        num_adversaries = int(num_total_sellers * adv_rate)
+
+        # --- Payment/Incentive Simulation Variables ---
+        total_payments_per_seller = {str(i): 0 for i in range(num_total_sellers)}  # Store total payment for each seller
+        cost_of_convergence = None
+        target_accuracy_reached_round = -1
+        cumulative_cost_for_coc = 0
+        # ---
 
         for i, record in enumerate(experiment_data):
             round_num = record.get('round_number', i)
 
-            selected_clients = record.get("used_sellers", [])
+            selected_clients = record.get("used_sellers", [])  # These are seller IDs (strings)
             adversary_selections = [cid for cid in selected_clients if int(cid) < num_adversaries]
             benign_selections = [cid for cid in selected_clients if int(cid) >= num_adversaries]
+
+            # --- Payment Calculation for the current round ---
+            cost_per_round = len(selected_clients)  # Since payment_per_selected_gradient is 1
+            for seller_id in selected_clients:
+                if str(seller_id) in total_payments_per_seller:  # Ensure seller_id is a string for dict key
+                    total_payments_per_seller[str(seller_id)] += 1  # Payment of 1
+                else:
+                    # This case should ideally not happen if total_payments_per_seller is initialized correctly
+                    print(f"Warning: Selected seller_id {seller_id} not in payment tracking. Initializing.")
+                    total_payments_per_seller[str(seller_id)] = 1
 
             round_data = {
                 'run': cur_run,
@@ -70,27 +117,53 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                 'selected_clients': selected_clients,
                 'adversary_selection_rate': len(adversary_selections) / len(
                     selected_clients) if selected_clients else 0,
-                'benign_selection_rate': len(benign_selections) / len(selected_clients) if selected_clients else 0
+                'benign_selection_rate': len(benign_selections) / len(selected_clients) if selected_clients else 0,
+                'cost_per_round': cost_per_round  # New metric
             }
-            similarities = [
-                calculate_distribution_similarity(buyer_distribution,
-                                                  seller_distributions[str(cid)]['class_distribution'])
-                for cid in selected_clients
-            ]
+
+            # Calculate distribution similarities
+            similarities = []
+            for cid_str in selected_clients:  # cid from selected_clients is already a string
+                if cid_str in seller_distributions:
+                    seller_dist = seller_distributions[cid_str]['class_distribution']
+                    similarities.append(calculate_distribution_similarity(buyer_distribution, seller_dist))
+                else:
+                    print(f"Warning: Seller {cid_str} not found in data_statistics for similarity calculation.")
+                    similarities.append(0)  # Or handle as NaN or skip
 
             round_data['avg_selected_data_distribution_similarity'] = np.mean(similarities) if similarities else 0
 
-            un_selected_similarities = [
-                calculate_distribution_similarity(buyer_distribution,
-                                                  seller_distributions[str(cid)]['class_distribution'])
-                for cid in range(market_params["N_CLIENTS"]) if cid not in selected_clients
-            ]
+            un_selected_similarities = []
+            all_seller_ids_str = [str(k) for k in
+                                  range(num_total_sellers)]  # Generate all possible seller IDs as strings
+            unselected_seller_ids_str = [sid for sid in all_seller_ids_str if sid not in selected_clients]
+
+            for cid_str in unselected_seller_ids_str:
+                if cid_str in seller_distributions:
+                    seller_dist = seller_distributions[cid_str]['class_distribution']
+                    un_selected_similarities.append(calculate_distribution_similarity(buyer_distribution, seller_dist))
+                else:
+                    # This might happen if N_CLIENTS in market_params is larger than actual sellers in data_stats
+                    # Or if seller IDs are not contiguous from 0.
+                    # print(f"Warning: Unselected seller {cid_str} not found in data_statistics for similarity.")
+                    pass  # Or append a default value if needed
+
             round_data['avg_unselected_data_distribution_similarity'] = np.mean(
                 un_selected_similarities) if un_selected_similarities else 0
 
             final_perf = record.get('final_perf_global', {})
-            round_data['main_acc'] = final_perf.get('acc')
+            current_accuracy = final_perf.get('acc')
+            round_data['main_acc'] = current_accuracy
             round_data['main_loss'] = final_perf.get('loss')
+
+            # --- Cost of Convergence (CoC) Calculation ---
+            if current_accuracy is not None and cost_of_convergence is None:
+                cumulative_cost_for_coc += cost_per_round
+                if current_accuracy >= target_accuracy_for_coc:
+                    cost_of_convergence = cumulative_cost_for_coc
+                    target_accuracy_reached_round = round_num
+            elif cost_of_convergence is None:  # If accuracy is None but CoC not yet met
+                cumulative_cost_for_coc += cost_per_round
 
             poison_metrics = record.get('extra_info', {}).get('poison_metrics', {})
             round_data.update({
@@ -107,32 +180,207 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
             asr_values = [r.get('asr') or 0 for r in sorted_records]
             final_record = sorted_records[-1]
 
+            # --- Gini Coefficient Calculation ---
+            # Ensure all potential sellers are included, even if they received 0 payment
+            all_seller_payments = [total_payments_per_seller.get(str(i), 0) for i in range(num_total_sellers)]
+            payment_gini_coefficient = calculate_gini(np.array(all_seller_payments))
+
+            # If target accuracy was never reached, CoC remains None or could be set to total cost
+            final_cumulative_cost = sum(r['cost_per_round'] for r in sorted_records)
+            if cost_of_convergence is None:
+                print(
+                    f"Warning: Target accuracy {target_accuracy_for_coc} for CoC not reached in {file_path}. CoC will be total cost or NaN.")
+                # Option 1: Set CoC to total cost if not met (indicates high cost)
+                # cost_of_convergence = final_cumulative_cost
+                # Option 2: Leave as None or set to a specific indicator like np.nan
+                cost_of_convergence = np.nan  # Or final_cumulative_cost if you prefer that interpretation
+
             summary = {
                 "run": cur_run,
                 **market_params,
                 **attack_params,
-                'MAX_ASR': max(asr_values),
+                'MAX_ASR': max(asr_values) if asr_values else 0,
                 'FINAL_ASR': final_record.get('asr'),
                 'FINAL_MAIN_ACC': final_record.get('main_acc'),
                 'FINAL_CLEAN_ACC': final_record.get('clean_acc'),
                 'FINAL_TRIGGERED_ACC': final_record.get('triggered_acc'),
                 'AVG_SELECTED_DISTRIBUTION_SIMILARITY': np.mean(
-                    [r['avg_selected_data_distribution_similarity'] for r in sorted_records]),
+                    [r['avg_selected_data_distribution_similarity'] for r in sorted_records if
+                     'avg_selected_data_distribution_similarity' in r]),
                 'AVG_UNSELECTED_DISTRIBUTION_SIMILARITY': np.mean(
-                    [r['avg_unselected_data_distribution_similarity'] for r in sorted_records]),
-                'AVG_ADVERSARY_SELECTION_RATE': np.mean([r['adversary_selection_rate'] for r in sorted_records]),
-                'AVG_BENIGN_SELECTION_RATE': np.mean([r['benign_selection_rate'] for r in sorted_records]),
+                    [r['avg_unselected_data_distribution_similarity'] for r in sorted_records if
+                     'avg_unselected_data_distribution_similarity' in r]),
+                'AVG_ADVERSARY_SELECTION_RATE': np.mean(
+                    [r['adversary_selection_rate'] for r in sorted_records if 'adversary_selection_rate' in r]),
+                'AVG_BENIGN_SELECTION_RATE': np.mean(
+                    [r['benign_selection_rate'] for r in sorted_records if 'benign_selection_rate' in r]),
+                'AVG_COST_PER_ROUND': np.mean([r['cost_per_round'] for r in sorted_records if 'cost_per_round' in r]),
+                # New
+                'COST_OF_CONVERGENCE': cost_of_convergence,  # New
+                'TARGET_ACC_FOR_COC': target_accuracy_for_coc,  # New
+                'COC_TARGET_REACHED_ROUND': target_accuracy_reached_round,  # New
+                'PAYMENT_GINI_COEFFICIENT': payment_gini_coefficient,  # New
+                'TOTAL_COST': final_cumulative_cost,  # Total cost over all rounds
                 'TOTAL_ROUNDS': len(sorted_records)
             }
-
             return processed_data, summary
-
         return [], {}
 
     except Exception as e:
         print(f"Error processing {file_path}: {e}")
         traceback.print_exc()
         return [], {}
+
+
+# --- Helper function for Gini, already defined above ---
+
+# ... (rest of your script: get_save_path, load_attack_params, average_dicts, process_all_experiments, analyze_client_level_selection, main block)
+# Make sure to update `average_dicts` if you want to average the new economic metrics.
+# For Gini, CoC, it might make more sense to report the individual run values or their distribution rather than a simple mean.
+
+def average_dicts(dict_list):
+    if not dict_list:
+        return {}
+
+    averaged_dict = {}
+    # Attempt to get keys from the first dictionary, handle if it's empty
+    if not dict_list[0]: return {}
+    keys = dict_list[0].keys()
+
+    for key in keys:
+        values = [d.get(key) for d in dict_list if
+                  d is not None and d.get(key) is not None]  # Filter out None values for the key
+
+        if not values:  # If no valid values for this key, skip or set to None
+            averaged_dict[key] = None
+            continue
+
+        if key == "run":  # Or other non-numeric identifiers
+            averaged_dict[key] = values[0]  # Keep the first (assuming they should be identical or run is an ID)
+            continue
+        # Add other string/categorical keys that should not be averaged
+        if key in ['AGGREGATION_METHOD', 'DATA_SPLIT_MODE', 'ATTACK_METHOD', 'IS_SYBIL', 'CHANGE_BASE', 'TRIGGER_MODE',
+                   'buyer_data_mode', 'TARGET_ACC_FOR_COC']:
+            averaged_dict[key] = values[0]  # Assume these are constant per group being averaged
+            continue
+
+        if isinstance(values[0], (int, float, np.number)):
+            averaged_dict[key] = np.nanmean(values)  # Use nanmean to ignore NaNs (e.g., for CoC if not reached)
+        else:
+            # For lists or other types, you might want different aggregation
+            # For now, just take the first if not numeric
+            averaged_dict[key] = values[0]
+    return averaged_dict
+
+
+# def process_single_experiment(file_path, attack_params, market_params, data_statistics_path, adv_rate, cur_run):
+#     """
+#     Process a single experiment file and extract metrics, incorporating data distribution similarity.
+#
+#     Args:
+#         file_path: Path to the market_log.ckpt file
+#         attack_params: Dictionary containing attack parameters
+#         market_params: Dictionary containing market parameters
+#         data_statistics_path: Path to the data_statistics.json file
+#         adv_rate: Proportion of sellers considered adversaries
+#
+#     Returns:
+#         processed_data: List of dictionaries with processed round data
+#         summary_data: Dictionary with summary metrics
+#     """
+#     try:
+#         experiment_data = torch.load(file_path, map_location='cpu', weights_only=False)
+#         data_stats = load_json(data_statistics_path)
+#
+#         buyer_distribution = data_stats['buyer_stats']['class_distribution']
+#         seller_distributions = data_stats['seller_stats']
+#
+#         if not experiment_data:
+#             print(f"Warning: No round records found in {file_path}")
+#             return [], {}
+#
+#         processed_data = []
+#         num_adversaries = int(len(seller_distributions) * adv_rate)
+#
+#         for i, record in enumerate(experiment_data):
+#             round_num = record.get('round_number', i)
+#
+#             selected_clients = record.get("used_sellers", [])
+#             adversary_selections = [cid for cid in selected_clients if int(cid) < num_adversaries]
+#             benign_selections = [cid for cid in selected_clients if int(cid) >= num_adversaries]
+#
+#             round_data = {
+#                 'run': cur_run,
+#                 'round': round_num,
+#                 **attack_params,
+#                 **market_params,
+#                 'n_selected_clients': len(selected_clients),
+#                 'selected_clients': selected_clients,
+#                 'adversary_selection_rate': len(adversary_selections) / len(
+#                     selected_clients) if selected_clients else 0,
+#                 'benign_selection_rate': len(benign_selections) / len(selected_clients) if selected_clients else 0
+#             }
+#             similarities = [
+#                 calculate_distribution_similarity(buyer_distribution,
+#                                                   seller_distributions[str(cid)]['class_distribution'])
+#                 for cid in selected_clients
+#             ]
+#
+#             round_data['avg_selected_data_distribution_similarity'] = np.mean(similarities) if similarities else 0
+#
+#             un_selected_similarities = [
+#                 calculate_distribution_similarity(buyer_distribution,
+#                                                   seller_distributions[str(cid)]['class_distribution'])
+#                 for cid in range(market_params["N_CLIENTS"]) if cid not in selected_clients
+#             ]
+#             round_data['avg_unselected_data_distribution_similarity'] = np.mean(
+#                 un_selected_similarities) if un_selected_similarities else 0
+#
+#             final_perf = record.get('final_perf_global', {})
+#             round_data['main_acc'] = final_perf.get('acc')
+#             round_data['main_loss'] = final_perf.get('loss')
+#
+#             poison_metrics = record.get('extra_info', {}).get('poison_metrics', {})
+#             round_data.update({
+#                 'clean_acc': poison_metrics.get('clean_accuracy'),
+#                 'triggered_acc': poison_metrics.get('triggered_accuracy'),
+#                 'asr': poison_metrics.get('attack_success_rate')
+#             })
+#
+#             processed_data.append(round_data)
+#
+#         sorted_records = sorted(processed_data, key=lambda x: x['round'])
+#
+#         if sorted_records:
+#             asr_values = [r.get('asr') or 0 for r in sorted_records]
+#             final_record = sorted_records[-1]
+#
+#             summary = {
+#                 "run": cur_run,
+#                 **market_params,
+#                 **attack_params,
+#                 'MAX_ASR': max(asr_values),
+#                 'FINAL_ASR': final_record.get('asr'),
+#                 'FINAL_MAIN_ACC': final_record.get('main_acc'),
+#                 'FINAL_CLEAN_ACC': final_record.get('clean_acc'),
+#                 'FINAL_TRIGGERED_ACC': final_record.get('triggered_acc'),
+#                 'AVG_SELECTED_DISTRIBUTION_SIMILARITY': np.mean(
+#                     [r['avg_selected_data_distribution_similarity'] for r in sorted_records]),
+#                 'AVG_UNSELECTED_DISTRIBUTION_SIMILARITY': np.mean(
+#                     [r['avg_unselected_data_distribution_similarity'] for r in sorted_records]),
+#                 'AVG_ADVERSARY_SELECTION_RATE': np.mean([r['adversary_selection_rate'] for r in sorted_records]),
+#                 'AVG_BENIGN_SELECTION_RATE': np.mean([r['benign_selection_rate'] for r in sorted_records]),
+#                 'TOTAL_ROUNDS': len(sorted_records)
+#             }
+#
+#             return processed_data, summary
+#
+#         return [], {}
+#
+#     except Exception as e:
+#         print(f"Error processing {file_path}: {e}")
+#         traceback.print_exc()
+#         return [], {}
 
 
 def get_save_path(n_sellers, local_epoch, local_lr, gradient_manipulation_mode,
