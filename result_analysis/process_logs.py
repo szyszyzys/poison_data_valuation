@@ -150,7 +150,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                             selected_from_hypo_group_count += 1
 
                     # Rate: count selected from group / size of group
-                    rate_for_hypo_group_this_round = selected_from_hypo_group_count / selected_clients if selected_clients else 0.0
+                    rate_for_hypo_group_this_round = selected_from_hypo_group_count / len(selected_clients) if selected_clients else 0.0
 
                     hypo_adv_rate_key = f"{hypo_adv_rate:.1f}"  # e.g., "0.1"
                     if hypo_adv_rate_key not in baseline_designated_group_selection_rates_this_run:
