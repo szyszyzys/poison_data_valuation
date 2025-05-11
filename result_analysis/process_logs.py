@@ -80,7 +80,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
             print(f"Warning: No round records found in {file_path}")
             return [], {}
         if convergence_milestones is None:
-            convergence_milestones = [0.8, 0.85, 0.9]  # Default to a single 80% milestone if not provided
+            convergence_milestones = [0.70, 0.75, 0.8, 0.85, 0.9]  # Default to a single 80% milestone if not provided
         milestone_convergence_info = {acc: None for acc in convergence_milestones}
         cumulative_cost_for_milestones_tracker = 0  # Single cumulative cost tracker for all milestones
         processed_data = []
