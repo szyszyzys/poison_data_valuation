@@ -141,27 +141,6 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
             else:  # No active attack in this run
                 benign_selected_in_round_actual = list(selected_clients)
 
-            # --- NEW: Calculate Baseline Selection Rates for Designated Groups (if this is a "No Attack" run) ---
-            if current_attack_method == 'None' or current_attack_method == 'No Attack':
-                for hypo_adv_rate in hypothetical_adv_rates_for_baselines:
-                    num_hypo_designated_malicious = int(num_total_sellers * hypo_adv_rate)
-                    if num_hypo_designated_malicious == 0: continue
-
-                    selected_from_hypo_group_count = 0
-                    for cid_str in selected_clients:
-                        if int(cid_str) < num_hypo_designated_malicious:
-                            selected_from_hypo_group_count += 1
-
-                    # Rate: count selected from group / size of group
-                    rate_for_hypo_group_this_round = selected_from_hypo_group_count / len(
-                        selected_clients) if selected_clients else 0.0
-
-                    hypo_adv_rate_key = f"{hypo_adv_rate:.1f}"  # e.g., "0.1"
-                    if hypo_adv_rate_key not in baseline_designated_group_selection_rates_this_run:
-                        baseline_designated_group_selection_rates_this_run[hypo_adv_rate_key] = []
-                    baseline_designated_group_selection_rates_this_run[hypo_adv_rate_key].append(
-                        rate_for_hypo_group_this_round)
-
             # 3. Calculate Gini Coefficient for payments ONLY to BENIGN sellers in this round
             # This assumes you have payment information per round or can infer it.
             # If payment is uniform (e.g., 1 per selected seller):
