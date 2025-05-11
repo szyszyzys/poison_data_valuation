@@ -90,7 +90,11 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
         target_accuracy_reached_round = -1
         cumulative_cost_for_coc = 0
         # ---
-
+        # For "No Attack" runs, we'll store selection counts for different hypothetical adversary group sizes
+        # Key: hypothetical_adv_rate_for_baseline (e.g., 0.1, 0.2), Value: list of per-round selection rates for that group
+        baseline_designated_group_selection_rates_this_run = {}
+        hypothetical_adv_rates_for_baselines = [0.1, 0.2, 0.3, 0.4]
+        run_attack_method = attack_params.get('ATTACK_METHOD', 'None')  # Or 'single', etc.
         for i, record in enumerate(experiment_data):
             round_num = record.get('round_number', i)
 
@@ -117,16 +121,41 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
             num_total_benign_sellers = num_total_sellers - num_adversaries
             if num_total_benign_sellers > 0 and selected_clients:  # Avoid division by zero
                 round_benign_selection_rate = len(benign_selected_in_round) / num_total_benign_sellers
-                # Note: This is rate of selection *among available benign sellers*.
-                # Another version could be: len(benign_selected_in_round) / len(selected_clients)
-                # Choose the definition that makes most sense for your analysis.
-                # The one above seems more aligned with "are benign sellers getting a fair chance?".
             else:
                 round_benign_selection_rate = 0.0 if selected_clients else np.nan  # Or just 0.0
 
-            # (You already have 'adversary_selection_rate' which is good for malicious selection rate)
-            # Ensure its definition is consistent:
-            # round_adversary_selection_rate = len(malicious_selected_in_round) / num_adversaries if num_adversaries > 0 and selected_clients else 0.0
+            current_attack_method = attack_params.get('ATTACK_METHOD', 'None')  # Get from params like 'single', 'None'
+
+            malicious_selected_in_round_actual = []
+            benign_selected_in_round_actual = []
+            if current_attack_method != 'None' and current_attack_method != 'No Attack':  # If an attack is active
+                for cid_str in selected_clients:
+                    if int(cid_str) < num_adversaries:
+                        malicious_selected_in_round_actual.append(cid_str)
+                    else:
+                        benign_selected_in_round_actual.append(cid_str)
+            else:  # No active attack in this run
+                benign_selected_in_round_actual = list(selected_clients)
+
+            # --- NEW: Calculate Baseline Selection Rates for Designated Groups (if this is a "No Attack" run) ---
+            if current_attack_method == 'None' or current_attack_method == 'No Attack':
+                for hypo_adv_rate in hypothetical_adv_rates_for_baselines:
+                    num_hypo_designated_malicious = int(num_total_sellers * hypo_adv_rate)
+                    if num_hypo_designated_malicious == 0: continue
+
+                    selected_from_hypo_group_count = 0
+                    for cid_str in selected_clients:
+                        if int(cid_str) < num_hypo_designated_malicious:
+                            selected_from_hypo_group_count += 1
+
+                    # Rate: count selected from group / size of group
+                    rate_for_hypo_group_this_round = selected_from_hypo_group_count / num_hypo_designated_malicious if selected_clients else 0.0
+
+                    hypo_adv_rate_key = f"{hypo_adv_rate:.1f}"  # e.g., "0.1"
+                    if hypo_adv_rate_key not in baseline_designated_group_selection_rates_this_run:
+                        baseline_designated_group_selection_rates_this_run[hypo_adv_rate_key] = []
+                    baseline_designated_group_selection_rates_this_run[hypo_adv_rate_key].append(
+                        rate_for_hypo_group_this_round)
 
             # 3. Calculate Gini Coefficient for payments ONLY to BENIGN sellers in this round
             # This assumes you have payment information per round or can infer it.
@@ -138,7 +167,6 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
 
             all_benign_payments_array = np.array(list(payments_to_benign_this_round.values()))
             round_benign_gini_coefficient = calculate_gini(all_benign_payments_array)  # Use your existing Gini function
-
             round_data = {'run': cur_run, 'round': round_num, **attack_params, **market_params,
                           'n_selected_clients': len(selected_clients), 'selected_clients': selected_clients,
                           'adversary_selection_rate': len(adversary_selections) / len(
@@ -146,8 +174,10 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                           'benign_selection_rate': len(benign_selections) / len(
                               selected_clients) if selected_clients else 0, 'cost_per_round': cost_per_round,
                           'benign_selection_rate_in_round': round_benign_selection_rate,
-                          'benign_gini_coefficient_in_round': round_benign_gini_coefficient}
+                          'benign_gini_coefficient_in_round': round_benign_gini_coefficient,
+                          }
             # Calculate distribution similarities
+
             similarities = []
             for cid_ in selected_clients:  # cid from selected_clients is already a string
                 cid_str = str(cid_)
@@ -249,6 +279,29 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                            [r['benign_gini_coefficient_in_round'] for r in sorted_records if
                             'benign_gini_coefficient_in_round' in r and pd.notna(
                                 r['benign_gini_coefficient_in_round'])])}
+
+            # Add the NEW baseline selection rates to the summary
+            # These will only have meaningful (non-NaN) values if it was a "No Attack" run
+            # and data was collected in baseline_designated_group_selection_rates_this_run
+            for hypo_adv_rate_float, rates_list in baseline_designated_group_selection_rates_this_run.items():
+                # hypo_adv_rate_float is already a string like "0.1" from the dict key
+                summary_key = f'NO_ATTACK_DESIG_MAL_SEL_RATE_{hypo_adv_rate_float}'  # e.g., NO_ATTACK_DESIG_MAL_SEL_RATE_0.1
+                if rates_list:  # Only calculate mean if list is not empty
+                    summary[summary_key] = np.mean(rates_list)
+                else:
+                    # If it's a "No Attack" run but this list is empty (e.g., no clients selected), store NaN or 0
+                    # If it's an "Attack" run, this dict was empty, so these keys won't be added unless explicitly set to NaN
+                    summary[summary_key] = np.nan  # Default to NaN if not calculated
+
+            # Ensure all potential baseline columns exist in all summaries, even if NaN
+            # This helps pandas create consistent columns when averaging across runs.
+            if run_attack_method != 'None' and run_attack_method != 'No Attack':  # If it was an ATTACK run
+                for hypo_adv_rate in hypothetical_adv_rates_for_baselines:
+                    hypo_adv_rate_key_str = f"{hypo_adv_rate:.1f}"
+                    summary_key = f'NO_ATTACK_DESIG_MAL_SEL_RATE_{hypo_adv_rate_key_str}'
+                    if summary_key not in summary:  # Ensure column exists for attack runs too (as NaN)
+                        summary[summary_key] = np.nan
+
             return processed_data, summary
         return [], {}
 
