@@ -65,7 +65,7 @@ def calculate_gini(payments):
 
 
 def process_single_experiment(file_path, attack_params, market_params, data_statistics_path, adv_rate, cur_run,
-                              target_accuracy_for_coc=0.8):
+                              target_accuracy_for_coc=0.8, convergence_milestones=None):
     """
     Process a single experiment file and extract metrics, incorporating data distribution similarity and payment simulation.
     """
@@ -79,7 +79,10 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
         if not experiment_data:
             print(f"Warning: No round records found in {file_path}")
             return [], {}
-
+        if convergence_milestones is None:
+            convergence_milestones = [0.8, 0.85, 0.9]  # Default to a single 80% milestone if not provided
+        milestone_convergence_info = {acc: None for acc in convergence_milestones}
+        cumulative_cost_for_milestones_tracker = 0  # Single cumulative cost tracker for all milestones
         processed_data = []
         num_total_sellers = market_params["N_CLIENTS"]  # Get total number of sellers from market_params
         num_adversaries = int(num_total_sellers * adv_rate)
@@ -113,7 +116,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                     # This case should ideally not happen if total_payments_per_seller is initialized correctly
                     print(f"Warning: Selected seller_id {seller_id} not in payment tracking. Initializing.")
                     total_payments_per_seller[str(seller_id)] = 1
-
+            cumulative_cost_for_milestones_tracker += cost_per_round  # Update before checking milestones
             selected_clients_int = [int(cid) for cid in selected_clients]  # Ensure integer IDs if not already
             benign_selected_in_round = [cid_str for cid_str in selected_clients if int(cid_str) >= num_adversaries]
             malicious_selected_in_round = [cid_str for cid_str in selected_clients if int(cid_str) < num_adversaries]
@@ -210,6 +213,24 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                 else:  # If it's an ATTACK run, these per-round baseline metrics are not applicable
                     round_data[round_data_key] = np.nan  # Store NaN in the per-round log
             # Calculate distribution similarities
+
+            # --- Accuracy, ASR, and Convergence Milestone Check ---
+            final_perf = record.get('final_perf_global', {})
+            current_accuracy = final_perf.get('acc')
+            round_data['main_acc'] = current_accuracy
+            round_data['main_loss'] = final_perf.get('loss')
+            poison_metrics = record.get('extra_info', {}).get('poison_metrics', {})
+            round_data['clean_acc'] = poison_metrics.get('clean_accuracy')
+            round_data['triggered_acc'] = poison_metrics.get('triggered_accuracy')
+            round_data['asr'] = poison_metrics.get('attack_success_rate')
+
+            if current_accuracy is not None:
+                for target_acc in convergence_milestones:
+                    if milestone_convergence_info[target_acc] is None and current_accuracy >= target_acc:
+                        milestone_convergence_info[target_acc] = {
+                            'round': round_num + 1,  # Record 1-indexed round
+                            'cost': cumulative_cost_for_milestones_tracker
+                        }
 
             similarities = []
             for cid_ in selected_clients:  # cid from selected_clients is already a string
@@ -314,16 +335,22 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                                 r['benign_gini_coefficient_in_round'])])}
             for hypo_adv_rate_key_str, rates_list in baseline_designated_group_selection_rates_summary_collector.items():
                 summary_key = f'NO_ATTACK_DESIG_MAL_SEL_RATE_{hypo_adv_rate_key_str}'
-                if rates_list: # If list has rates (i.e., was a No Attack run and clients were selected)
+                if rates_list:  # If list has rates (i.e., was a No Attack run and clients were selected)
                     summary[summary_key] = np.mean(rates_list)
-                else: # Could be an attack run, or No Attack run with no selections/no group
+                else:  # Could be an attack run, or No Attack run with no selections/no group
                     summary[summary_key] = np.nan
+
+            # Add convergence milestone info to summary
+            for target_acc_ms, info_ms in milestone_convergence_info.items():
+                acc_label = f"{int(target_acc_ms * 100)}"
+                summary[f'ROUNDS_TO_{acc_label}ACC'] = info_ms['round'] if info_ms else np.nan
+                summary[f'COST_TO_{acc_label}ACC'] = info_ms['cost'] if info_ms else np.nan
 
             # Ensure all potential baseline columns exist in all summaries, even if NaN (for Attack runs)
             if run_attack_method != 'None' and run_attack_method != 'No Attack':
                 for hypo_adv_rate in hypothetical_adv_rates_for_baselines:
                     summary_key = f'NO_ATTACK_DESIG_MAL_SEL_RATE_{hypo_adv_rate:.1f}'
-                    if summary_key not in summary: # If not added because it was an attack run
+                    if summary_key not in summary:  # If not added because it was an attack run
                         summary[summary_key] = np.nan
             return processed_data, summary
         return [], {}
