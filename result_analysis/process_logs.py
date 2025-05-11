@@ -150,7 +150,8 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                             selected_from_hypo_group_count += 1
 
                     # Rate: count selected from group / size of group
-                    rate_for_hypo_group_this_round = selected_from_hypo_group_count / len(selected_clients) if selected_clients else 0.0
+                    rate_for_hypo_group_this_round = selected_from_hypo_group_count / len(
+                        selected_clients) if selected_clients else 0.0
 
                     hypo_adv_rate_key = f"{hypo_adv_rate:.1f}"  # e.g., "0.1"
                     if hypo_adv_rate_key not in baseline_designated_group_selection_rates_this_run:
@@ -166,8 +167,6 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
             for seller_id_str in benign_selected_in_round:
                 payments_to_benign_this_round[seller_id_str] = 1  # Or actual payment value
 
-
-
             all_benign_payments_array = np.array(list(payments_to_benign_this_round.values()))
             round_benign_gini_coefficient = calculate_gini(all_benign_payments_array)  # Use your existing Gini function
             round_data = {'run': cur_run, 'round': round_num, **attack_params, **market_params,
@@ -179,16 +178,15 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                           'benign_selection_rate_in_round': round_benign_selection_rate,
                           'benign_gini_coefficient_in_round': round_benign_gini_coefficient,
                           }
-            # Calculate distribution similarities
 
             for hypo_adv_rate in hypothetical_adv_rates_for_baselines:
                 hypo_adv_rate_key_str = f"{hypo_adv_rate:.1f}"
-                round_data_key = f'NO_ATTACK_DESIG_MAL_SEL_RATE_{hypo_adv_rate_key_str}_ROUND' # New key for per-round log
+                round_data_key = f'NO_ATTACK_DESIG_MAL_SEL_RATE_{hypo_adv_rate_key_str}_ROUND'  # New key for per-round log
 
                 if run_attack_method == 'None' or run_attack_method == 'No Attack':
                     num_hypo_designated_malicious = int(num_total_sellers * hypo_adv_rate)
                     if num_hypo_designated_malicious == 0:
-                        round_data[round_data_key] = 0.0 # Or np.nan if preferred for no group
+                        round_data[round_data_key] = 0.0  # Or np.nan if preferred for no group
                         # Also collect for summary (will be averaged later)
                         if hypo_adv_rate_key_str not in baseline_designated_group_selection_rates_summary_collector:
                             baseline_designated_group_selection_rates_summary_collector[hypo_adv_rate_key_str] = []
@@ -200,15 +198,18 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                         if int(cid_str) < num_hypo_designated_malicious:
                             selected_from_hypo_group_count += 1
 
-                    rate_for_hypo_group_this_round = selected_from_hypo_group_count / num_hypo_designated_malicious if selected_clients else 0.0
+                    rate_for_hypo_group_this_round = selected_from_hypo_group_count / len(
+                        selected_clients) if selected_clients else 0.0
                     round_data[round_data_key] = rate_for_hypo_group_this_round
 
                     # Collect for summary average calculation
                     if hypo_adv_rate_key_str not in baseline_designated_group_selection_rates_summary_collector:
                         baseline_designated_group_selection_rates_summary_collector[hypo_adv_rate_key_str] = []
-                    baseline_designated_group_selection_rates_summary_collector[hypo_adv_rate_key_str].append(rate_for_hypo_group_this_round)
-                else: # If it's an ATTACK run, these per-round baseline metrics are not applicable
-                    round_data[round_data_key] = np.nan # Store NaN in the per-round log
+                    baseline_designated_group_selection_rates_summary_collector[hypo_adv_rate_key_str].append(
+                        rate_for_hypo_group_this_round)
+                else:  # If it's an ATTACK run, these per-round baseline metrics are not applicable
+                    round_data[round_data_key] = np.nan  # Store NaN in the per-round log
+            # Calculate distribution similarities
 
             similarities = []
             for cid_ in selected_clients:  # cid from selected_clients is already a string
@@ -311,8 +312,19 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                            [r['benign_gini_coefficient_in_round'] for r in sorted_records if
                             'benign_gini_coefficient_in_round' in r and pd.notna(
                                 r['benign_gini_coefficient_in_round'])])}
+            for hypo_adv_rate_key_str, rates_list in baseline_designated_group_selection_rates_summary_collector.items():
+                summary_key = f'NO_ATTACK_DESIG_MAL_SEL_RATE_{hypo_adv_rate_key_str}'
+                if rates_list: # If list has rates (i.e., was a No Attack run and clients were selected)
+                    summary[summary_key] = np.mean(rates_list)
+                else: # Could be an attack run, or No Attack run with no selections/no group
+                    summary[summary_key] = np.nan
 
-
+            # Ensure all potential baseline columns exist in all summaries, even if NaN (for Attack runs)
+            if run_attack_method != 'None' and run_attack_method != 'No Attack':
+                for hypo_adv_rate in hypothetical_adv_rates_for_baselines:
+                    summary_key = f'NO_ATTACK_DESIG_MAL_SEL_RATE_{hypo_adv_rate:.1f}'
+                    if summary_key not in summary: # If not added because it was an attack run
+                        summary[summary_key] = np.nan
             return processed_data, summary
         return [], {}
 
