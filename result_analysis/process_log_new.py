@@ -619,7 +619,7 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                     continue
 
                 # Standard log file names
-                market_log_file = os.path.join(run_dir_path, "market_log.ckpt")
+                market_log_file = os.path.join(run_dir_path, "market_log_final.ckpt")
                 data_stats_file = os.path.join(run_dir_path, "data_statistics.json")
 
                 if not os.path.exists(market_log_file):
