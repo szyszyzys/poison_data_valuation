@@ -425,7 +425,7 @@ def generate_privacy_attack(output_dir):
             'iterations': 2000 if ds == 'CIFAR' else 1000, # More complex datasets might need more iterations initially
             'lr': 0.01,  # Starting low, common for Adam with Cosine Loss in GIA. **Tune this!**
             'loss_type': 'cosine', # Generally preferred for gradient matching
-            'label_type': 'optimize', # Assume labels are unknown unless debugging
+            'label_type': 'ground_truth', # Assume labels are unknown unless debugging
 
             # --- Regularization ---
             'regularization_weight': 1e-4, # TV Loss weight. **Tune this carefully!** (e.g., 1e-3, 1e-5, 0.0)

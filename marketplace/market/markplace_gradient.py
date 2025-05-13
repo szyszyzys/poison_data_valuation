@@ -23,7 +23,8 @@ class DataMarketplaceFederated(DataMarketplace):
                  selection_method: str = "fedavg",
                  learning_rate: float = 1.0,
                  broadcast_local=False, save_path='',
-                 privacy_attack={}
+                 privacy_attack={},
+                 dataset_name=""
                  ):
         """
         A marketplace for federated learning where each seller provides gradient updates.
@@ -33,6 +34,7 @@ class DataMarketplaceFederated(DataMarketplace):
         :param selection_method: e.g. "fedavg", "krum", "median", etc.
         :param learning_rate: Step size for updating global model parameters.
         """
+        self.dataset_name = dataset_name
         self.aggregator = aggregator
         self.selection_method = selection_method
         self.learning_rate = learning_rate
@@ -310,6 +312,7 @@ class DataMarketplaceFederated(DataMarketplace):
                         # Perform the attack with the current LR
                         try:
                             gradient_inversion_log = perform_and_evaluate_inversion_attack(
+                                dataset_name= self.dataset_name,
                                 target_gradient=target_gradient,  # Pass original gradient each time
                                 model_template=self.aggregator.global_model,
                                 input_shape=input_shape_gia,

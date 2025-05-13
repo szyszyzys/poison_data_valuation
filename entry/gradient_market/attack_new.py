@@ -518,7 +518,7 @@ def poisoning_attack_image(
     privacy_attack["batch_size"] = local_training_params.get('batch_size', 64)
     marketplace = DataMarketplaceFederated(aggregator,
                                            selection_method=aggregation_method, save_path=save_path,
-                                           privacy_attack=privacy_attack)
+                                           privacy_attack=privacy_attack, dataset_name=dataset_name)
 
     # --- Configure Sellers ---
     print("Configuring sellers...")

@@ -1,33 +1,148 @@
 import copy
 import logging
+import time
+import warnings
+# ... (other necessary imports: numpy, time, copy, logging, warnings, pandas, Path, typing, skimage, matplotlib)
+from pathlib import Path
+from typing import List, Dict, Optional, Any
+
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import warnings
-# ... (other necessary imports: numpy, time, copy, logging, warnings, pandas, Path, typing, skimage, matplotlib)
-from collections import OrderedDict
-from pathlib import Path
+import torchvision.transforms as transforms  # Import transforms
 from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 from skimage.metrics import structural_similarity as compare_ssim
-from typing import List, Tuple, Dict, Optional, Type, Union, Any
 
 
-def gradient_inversion_attack(target_gradient, model, input_shape, num_classes, device, num_images=1, iterations=500,
+# def gradient_inversion_attack(target_gradient, model, input_shape, num_classes, device, num_images=1, iterations=500,
+#                               lr=0.1, label_type='optimize', ground_truth_labels=None, **kwargs):
+#     optimizer_class = kwargs.get('optimizer_class', optim.Adam)
+#     loss_type = kwargs.get('loss_type', 'l2')
+#     init_type = kwargs.get('init_type', 'gaussian')
+#     log_interval = kwargs.get('log_interval')
+#     regularization_weight = kwargs.get('regularization_weight', 0.001)
+#     return_best = kwargs.get('return_best', True)
+#     model.eval()
+#     model = model.to(device)
+#     target_gradient = [g.to(device) for g in target_gradient]
+#     if label_type == 'ground_truth':
+#         if ground_truth_labels is None or len(ground_truth_labels) != num_images: raise ValueError(
+#             "GT labels needed for label_type='ground_truth'")
+#         fixed_labels = ground_truth_labels.to(device)
+#     elif label_type == 'random':
+#         fixed_labels = torch.randint(0, num_classes, (num_images,), device=device)
+#     elif label_type != 'optimize':
+#         raise ValueError(f"Unknown label_type: {label_type}")
+#     if init_type == 'gaussian':
+#         dummy_data = torch.randn(num_images, *input_shape, device=device, requires_grad=True)
+#     elif init_type == 'random':
+#         dummy_data = torch.rand(num_images, *input_shape, device=device, requires_grad=True)
+#     else:
+#         raise ValueError(f"Unknown init_type: {init_type}")
+#     if label_type == 'optimize':
+#         dummy_labels_param = torch.randn(num_images, num_classes, device=device,
+#                                          requires_grad=True)
+#         params_to_optimize = [dummy_data, dummy_labels_param]
+#     else:
+#         params_to_optimize = [dummy_data]
+#     optimizer = optimizer_class(params_to_optimize, lr=lr)
+#     criterion = nn.CrossEntropyLoss()
+#     best_loss = float('inf')
+#     best_dummy_data = dummy_data.detach().clone()
+#     best_dummy_labels = None
+#     if log_interval is not None: logging.info(f"Starting GIA ({iterations} iter, lr={lr}, labels='{label_type}')...")
+#     start_time = time.time()
+#     for it in range(iterations):
+#         optimizer.zero_grad()
+#         model.zero_grad()
+#         if label_type == 'optimize':
+#             current_labels_prob = F.softmax(dummy_labels_param, dim=-1)
+#             current_labels_idx = torch.argmax(
+#                 current_labels_prob, dim=-1)
+#             output = model(dummy_data)
+#             task_loss = criterion(output,
+#                                   current_labels_idx)
+#         else:
+#             current_labels_idx = fixed_labels
+#             output = model(dummy_data)
+#             task_loss = criterion(output,
+#                                   current_labels_idx)
+#         dummy_gradient = torch.autograd.grad(task_loss, model.parameters(), create_graph=False)
+#         grad_loss = 0
+#         if loss_type == 'l2':
+#             grad_loss = sum(
+#                 ((dummy_g - target_g) ** 2).sum() for dummy_g, target_g in zip(dummy_gradient, target_gradient))
+#         elif loss_type == 'cosine':
+#             flat_dummy = torch.cat([g.reshape(-1) for g in dummy_gradient])
+#             flat_target = torch.cat(
+#                 [g.reshape(-1) for g in target_gradient])
+#             grad_loss = 1 - F.cosine_similarity(flat_dummy, flat_target,
+#                                                 dim=0, eps=1e-8)
+#         else:
+#             raise ValueError(f"Unknown loss_type: {loss_type}")
+#         tv_loss = 0
+#         if regularization_weight > 0: diff1 = dummy_data[:, :, :, :-1] - dummy_data[:, :, :, 1:]
+#         diff2 = dummy_data[:, :, :-1, :] - dummy_data[:, :, 1:, :]
+#         tv_loss = torch.norm(diff1) + torch.norm(diff2)
+#         total_loss = grad_loss + regularization_weight * tv_loss
+#         total_loss.backward()
+#         optimizer.step()
+#         with torch.no_grad():
+#             dummy_data.clamp_(0, 1)
+#         current_loss = grad_loss.item()
+#         if return_best and current_loss < best_loss: best_loss = current_loss
+#         best_dummy_data = dummy_data.detach().clone()
+#         if label_type == 'optimize':
+#             best_dummy_labels = torch.argmax(F.softmax(dummy_labels_param.detach(), dim=-1), dim=-1)
+#         else:
+#             best_dummy_labels = current_labels_idx
+#         if log_interval is not None and (it % log_interval == 0 or it == iterations - 1): logging.info(
+#             f"  Iter: {it:5d}/{iterations} | Grad Loss: {current_loss:.4f} | TV Loss: {tv_loss.item() if isinstance(tv_loss, torch.Tensor) else tv_loss:.2f} | Best Loss: {best_loss:.4f}")
+#     end_time = time.time()
+#     if log_interval is not None: logging.info(
+#         f"Attack finished in {end_time - start_time:.2f}s. Final Grad Loss: {current_loss:.4f}, Best Grad Loss: {best_loss:.4f}")
+#     if return_best:
+#         final_labels = best_dummy_labels if best_dummy_labels is not None else torch.argmax(
+#             F.softmax(dummy_labels_param.detach(), dim=-1),
+#             dim=-1) if label_type == 'optimize' else fixed_labels
+#         final_images = best_dummy_data
+#     else:
+#         final_images = dummy_data.detach().clone()
+#         final_labels = torch.argmax(
+#             F.softmax(dummy_labels_param.detach(), dim=-1), dim=-1) if label_type == 'optimize' else fixed_labels
+#     return final_images, final_labels
+
+
+def gradient_inversion_attack(target_gradient, model, input_shape, num_classes, device,
+                              # --- NEW: Pass normalization info ---
+                              dataset_mean, dataset_std,
+                              # --- End NEW ---
+                              num_images=1, iterations=500,
                               lr=0.1, label_type='optimize', ground_truth_labels=None, **kwargs):
     optimizer_class = kwargs.get('optimizer_class', optim.Adam)
-    loss_type = kwargs.get('loss_type', 'l2')
+    loss_type = kwargs.get('loss_type', 'cosine')  # Defaulting to cosine seems better based on previous discussion
     init_type = kwargs.get('init_type', 'gaussian')
     log_interval = kwargs.get('log_interval')
-    regularization_weight = kwargs.get('regularization_weight', 0.001)
+    regularization_weight = kwargs.get('regularization_weight', 1e-4)  # Adjusted default based on discussion
     return_best = kwargs.get('return_best', True)
+
+    # --- Create the normalization transform ---
+    try:
+        normalize = transforms.Normalize(mean=dataset_mean, std=dataset_std)
+    except Exception as e:
+        logging.error(f"Failed to create normalization transform with mean={dataset_mean}, std={dataset_std}: {e}")
+        # Option: proceed without normalization (will likely fail), or raise error
+        raise ValueError("Invalid dataset_mean or dataset_std provided for normalization.") from e
+    # --- End create normalization ---
+
     model.eval()
     model = model.to(device)
     target_gradient = [g.to(device) for g in target_gradient]
+
+    # --- Label setup (unchanged) ---
     if label_type == 'ground_truth':
         if ground_truth_labels is None or len(ground_truth_labels) != num_images: raise ValueError(
             "GT labels needed for label_type='ground_truth'")
@@ -36,83 +151,128 @@ def gradient_inversion_attack(target_gradient, model, input_shape, num_classes, 
         fixed_labels = torch.randint(0, num_classes, (num_images,), device=device)
     elif label_type != 'optimize':
         raise ValueError(f"Unknown label_type: {label_type}")
+
+    # --- Initialization (unchanged) ---
     if init_type == 'gaussian':
         dummy_data = torch.randn(num_images, *input_shape, device=device, requires_grad=True)
     elif init_type == 'random':
+        # Initialize in [0, 1] if using random, makes clamping intuitive
         dummy_data = torch.rand(num_images, *input_shape, device=device, requires_grad=True)
     else:
         raise ValueError(f"Unknown init_type: {init_type}")
+
     if label_type == 'optimize':
-        dummy_labels_param = torch.randn(num_images, num_classes, device=device,
-                                         requires_grad=True)
+        dummy_labels_param = torch.randn(num_images, num_classes, device=device, requires_grad=True)
         params_to_optimize = [dummy_data, dummy_labels_param]
     else:
         params_to_optimize = [dummy_data]
+
     optimizer = optimizer_class(params_to_optimize, lr=lr)
     criterion = nn.CrossEntropyLoss()
+
     best_loss = float('inf')
     best_dummy_data = dummy_data.detach().clone()
     best_dummy_labels = None
-    if log_interval is not None: logging.info(f"Starting GIA ({iterations} iter, lr={lr}, labels='{label_type}')...")
+
+    if log_interval is not None: logging.info(
+        f"Starting GIA ({iterations} iter, lr={lr}, labels='{label_type}', loss='{loss_type}')...")
     start_time = time.time()
+
     for it in range(iterations):
         optimizer.zero_grad()
-        model.zero_grad()
+        model.zero_grad()  # Good practice, though maybe not strictly necessary here
+
+        # --- Apply normalization BEFORE model forward pass ---
+        normalized_dummy_data = normalize(dummy_data)
+        # --- End Apply normalization ---
+
         if label_type == 'optimize':
             current_labels_prob = F.softmax(dummy_labels_param, dim=-1)
-            current_labels_idx = torch.argmax(
-                current_labels_prob, dim=-1)
-            output = model(dummy_data)
-            task_loss = criterion(output,
-                                  current_labels_idx)
+            current_labels_idx = torch.argmax(current_labels_prob, dim=-1)
+            # Use normalized data
+            output = model(normalized_dummy_data)
+            task_loss = criterion(output, current_labels_idx)
         else:
             current_labels_idx = fixed_labels
-            output = model(dummy_data)
-            task_loss = criterion(output,
-                                  current_labels_idx)
+            # Use normalized data
+            output = model(normalized_dummy_data)
+            task_loss = criterion(output, current_labels_idx)
+
+        # Calculate gradients w.r.t. model parameters based on the loss from normalized data
         dummy_gradient = torch.autograd.grad(task_loss, model.parameters(), create_graph=False)
+
+        # --- Gradient Loss Calculation (unchanged logic, but using gradients derived correctly) ---
         grad_loss = 0
         if loss_type == 'l2':
+            # Consider using the vectorized version for efficiency if preferred
             grad_loss = sum(
                 ((dummy_g - target_g) ** 2).sum() for dummy_g, target_g in zip(dummy_gradient, target_gradient))
         elif loss_type == 'cosine':
             flat_dummy = torch.cat([g.reshape(-1) for g in dummy_gradient])
-            flat_target = torch.cat(
-                [g.reshape(-1) for g in target_gradient])
-            grad_loss = 1 - F.cosine_similarity(flat_dummy, flat_target,
-                                                dim=0, eps=1e-8)
+            flat_target = torch.cat([g.reshape(-1) for g in target_gradient])
+            # Optional gradient normalization could be added here (see previous suggestions)
+            grad_loss = 1 - F.cosine_similarity(flat_dummy, flat_target, dim=0, eps=1e-8)
         else:
             raise ValueError(f"Unknown loss_type: {loss_type}")
+
+        # --- TV Loss (operates on original dummy_data range, which is fine) ---
         tv_loss = 0
-        if regularization_weight > 0: diff1 = dummy_data[:, :, :, :-1] - dummy_data[:, :, :, 1:]
-        diff2 = dummy_data[:, :, :-1, :] - dummy_data[:, :, 1:, :]
-        tv_loss = torch.norm(diff1) + torch.norm(diff2)
+        if regularization_weight > 0:
+            # Use dummy_data directly for TV loss
+            if dummy_data.dim() == 4:  # Ensure it's image data CHW
+                diff1 = dummy_data[:, :, :, :-1] - dummy_data[:, :, :, 1:]
+                diff2 = dummy_data[:, :, :-1, :] - dummy_data[:, :, 1:, :]
+                # Optional: Use L1 norm: torch.norm(diff1, p=1) + torch.norm(diff2, p=1)
+                tv_loss = torch.norm(diff1, p=2) + torch.norm(diff2, p=2)
+            else:
+                logging.warning(f"TV loss skipped for non-4D tensor shape: {dummy_data.shape}")
+                tv_loss = torch.tensor(0.0, device=device)  # Ensure tv_loss is a tensor
+
         total_loss = grad_loss + regularization_weight * tv_loss
+
+        # Backward pass computes gradients for params_to_optimize (dummy_data, dummy_labels_param)
         total_loss.backward()
         optimizer.step()
+
+        # --- Clamp the base dummy_data (e.g., to [0, 1]) AFTER the step ---
+        # This keeps the data being optimized well-behaved.
         with torch.no_grad():
             dummy_data.clamp_(0, 1)
+        # --- End clamp ---
+
+        # --- Logging and Best Model Tracking (unchanged) ---
         current_loss = grad_loss.item()
-        if return_best and current_loss < best_loss: best_loss = current_loss
-        best_dummy_data = dummy_data.detach().clone()
-        if label_type == 'optimize':
-            best_dummy_labels = torch.argmax(F.softmax(dummy_labels_param.detach(), dim=-1), dim=-1)
-        else:
-            best_dummy_labels = current_labels_idx
-        if log_interval is not None and (it % log_interval == 0 or it == iterations - 1): logging.info(
-            f"  Iter: {it:5d}/{iterations} | Grad Loss: {current_loss:.4f} | TV Loss: {tv_loss.item() if isinstance(tv_loss, torch.Tensor) else tv_loss:.2f} | Best Loss: {best_loss:.4f}")
+        if return_best and current_loss < best_loss:
+            best_loss = current_loss
+            best_dummy_data = dummy_data.detach().clone()  # Store the unclamped data before normalization
+            if label_type == 'optimize':
+                best_dummy_labels = torch.argmax(F.softmax(dummy_labels_param.detach(), dim=-1), dim=-1)
+            else:
+                best_dummy_labels = current_labels_idx.detach().clone()
+
+        if log_interval is not None and (it % log_interval == 0 or it == iterations - 1):
+            tv_loss_item = tv_loss.item() if isinstance(tv_loss, torch.Tensor) else tv_loss
+            logging.info(
+                f"  Iter: {it:5d}/{iterations} | Grad Loss: {current_loss:.4f} | "
+                f"TV Loss: {tv_loss_item:.4f} | Best Loss: {best_loss:.4f}"
+            )
+
     end_time = time.time()
     if log_interval is not None: logging.info(
         f"Attack finished in {end_time - start_time:.2f}s. Final Grad Loss: {current_loss:.4f}, Best Grad Loss: {best_loss:.4f}")
+
+    # --- Return Results ---
+    # The returned 'final_images' (best_dummy_data or dummy_data) are in the [0, 1] range
     if return_best:
-        final_labels = best_dummy_labels if best_dummy_labels is not None else torch.argmax(
-            F.softmax(dummy_labels_param.detach(), dim=-1),
-            dim=-1) if label_type == 'optimize' else fixed_labels
+        final_labels = best_dummy_labels if best_dummy_labels is not None else \
+            (torch.argmax(F.softmax(dummy_labels_param.detach(), dim=-1),
+                          dim=-1) if label_type == 'optimize' else fixed_labels)
         final_images = best_dummy_data
     else:
         final_images = dummy_data.detach().clone()
-        final_labels = torch.argmax(
-            F.softmax(dummy_labels_param.detach(), dim=-1), dim=-1) if label_type == 'optimize' else fixed_labels
+        final_labels = torch.argmax(F.softmax(dummy_labels_param.detach(), dim=-1),
+                                    dim=-1) if label_type == 'optimize' else fixed_labels
+
     return final_images, final_labels
 
 
@@ -228,6 +388,7 @@ def visualize_and_save_attack(reconstructed_images, ground_truth_images, reconst
 # == Attack Wrapper Function (Encapsulates Attack+Eval+Viz) ==
 # ======================================================================
 def perform_and_evaluate_inversion_attack(
+        dataset_name,
         target_gradient: List[torch.Tensor],
         model_template: torch.nn.Module,
         input_shape: tuple,  # e.g., (C, H, W)
@@ -274,11 +435,18 @@ def perform_and_evaluate_inversion_attack(
                 label_type = 'optimize'
             else:
                 current_gt_labels_for_attack = ground_truth_labels[:num_images].clone().to(device)
+        if dataset_name == 'FMNIST': # Assuming you have dataset_name available
+            ds_mean, ds_std = (0.5,), (0.5,)
+        elif dataset_name == 'CIFAR': # Or 'CIFAR10'
+            ds_mean, ds_std = (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
+        else:
+            # Handle other datasets or raise error
+            raise ValueError(f"Unknown dataset for GIA normalization: {dataset_name}")
 
         reconstructed_images, reconstructed_labels = gradient_inversion_attack(
             target_gradient=[g.clone().to(device) for g in target_gradient], model=attack_model,
             input_shape=input_shape, num_classes=num_classes, device=device, num_images=num_images,
-            iterations=iterations, lr=lr, label_type=label_type, ground_truth_labels=current_gt_labels_for_attack,
+            iterations=iterations, lr=lr, label_type=label_type, ground_truth_labels=current_gt_labels_for_attack, dataset_mean = ds_mean, dataset_std = ds_std
             **atk_kwargs)
 
         attack_duration_sec = time.time() - attack_start_time
