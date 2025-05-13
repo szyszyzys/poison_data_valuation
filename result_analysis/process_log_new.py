@@ -114,6 +114,28 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
         baseline_designated_group_selection_rates_summary_collector = {}
         run_attack_method = attack_params.get('ATTACK_METHOD', 'None')  # Or 'single', etc.
         for i, record in enumerate(experiment_data):
+
+            selected_clients = (
+                    record.get("used_sellers")  # old name
+                    or record.get("selected_sellers")  # new name
+                    or []
+            )
+
+            perf_global = (
+                    record.get("final_perf_global")  # old name
+                    or record.get("perf_global")  # new name
+                    or {}
+            )
+
+            poison_metrics = (
+                    record.get("extra_info", {}).get("poison_metrics")  # old structure
+                    or {  # new structure: ASR is inside perf_global
+                        "attack_success_rate": perf_global.get("attack_success_rate"),
+                        "clean_accuracy": None,  # you removed these in new logs
+                        "triggered_accuracy": None,
+                    }
+            )
+
             round_num = record.get('round_number', i)
 
             selected_clients = record.get("used_sellers", [])  # These are seller IDs (strings)
@@ -208,14 +230,18 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
             # Calculate distribution similarities
 
             # --- Accuracy, ASR, and Convergence Milestone Check ---
-            final_perf = record.get('final_perf_global', {})
-            current_accuracy = final_perf.get('acc')
+            # final_perf = record.get('final_perf_global', {})
+            # current_accuracy = final_perf.get('acc')
+            # round_data['main_acc'] = current_accuracy
+            # round_data['main_loss'] = final_perf.get('loss')
+            current_accuracy = perf_global.get('accuracy')  # instead of final_perf['acc']
             round_data['main_acc'] = current_accuracy
-            round_data['main_loss'] = final_perf.get('loss')
+            round_data['main_loss'] = perf_global.get('loss')
+            round_data['asr'] = poison_metrics.get('attack_success_rate')
+
             poison_metrics = record.get('extra_info', {}).get('poison_metrics', {})
             round_data['clean_acc'] = poison_metrics.get('clean_accuracy')
             round_data['triggered_acc'] = poison_metrics.get('triggered_accuracy')
-            round_data['asr'] = poison_metrics.get('attack_success_rate')
 
             if current_accuracy is not None:
                 for target_acc in convergence_milestones:
@@ -275,6 +301,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                 'clean_acc': poison_metrics.get('clean_accuracy'),
                 'triggered_acc': poison_metrics.get('triggered_accuracy'),
                 'asr': poison_metrics.get('attack_success_rate')
+
             })
 
             processed_data.append(round_data)
@@ -301,9 +328,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                 cost_of_convergence = np.nan  # Or final_cumulative_cost if you prefer that interpretation
 
             summary = {"run": cur_run, **market_params, **attack_params,
-                       'MAX_ASR': max(asr_values) if asr_values else 0, 'FINAL_ASR': final_record.get('asr'),
-                       'FINAL_MAIN_ACC': final_record.get('main_acc'), 'FINAL_CLEAN_ACC': final_record.get('clean_acc'),
-                       'FINAL_TRIGGERED_ACC': final_record.get('triggered_acc'),
+                       'MAX_ASR': max(asr_values) if asr_values else 0,
                        'AVG_SELECTED_DISTRIBUTION_SIMILARITY': np.mean(
                            [r['avg_selected_data_distribution_similarity'] for r in sorted_records if
                             'avg_selected_data_distribution_similarity' in r]),
@@ -325,7 +350,12 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                        'AVG_BENIGN_PAYMENT_GINI': np.mean(
                            [r['benign_gini_coefficient_in_round'] for r in sorted_records if
                             'benign_gini_coefficient_in_round' in r and pd.notna(
-                                r['benign_gini_coefficient_in_round'])])}
+                                r['benign_gini_coefficient_in_round'])]),
+                       'FINAL_MAIN_ACC': final_record.get('main_acc'),
+                       'FINAL_CLEAN_ACC': final_record.get('clean_acc'),  # will be None for new logs
+                       'FINAL_TRIGGERED_ACC': final_record.get('triggered_acc'),  # None for new logs
+                       'FINAL_ASR': final_record.get('asr'),
+                       }
             for hypo_adv_rate_key_str, rates_list in baseline_designated_group_selection_rates_summary_collector.items():
                 summary_key = f'NO_ATTACK_DESIG_MAL_SEL_RATE_{hypo_adv_rate_key_str}'
                 if rates_list:  # If list has rates (i.e., was a No Attack run and clients were selected)
@@ -832,11 +862,11 @@ def process_all_experiments_revised(
 
         # Determine ATTACK_METHOD exactly like before
         if not attack_enabled or gradient_manip_mode.lower() in ("none", ""):
-            attack_method  = "None"          # <- must be the string your downstream code expects
-            trigger_rate   = 0.0
+            attack_method = "None"  # <- must be the string your downstream code expects
+            trigger_rate = 0.0
         else:
-            attack_method  = gradient_manip_mode   # e.g. "single"
-            trigger_rate   = poison_rate
+            attack_method = gradient_manip_mode  # e.g. "single"
+            trigger_rate = poison_rate
 
         # ----------------------- optional filters --------------------- #
         if filter_params:
@@ -877,15 +907,15 @@ def process_all_experiments_revised(
         #     "trigger_mode": trigger_mode,  # (exact duplicate key kept for B/C)
         # }
         attack_params_dict = {
-            "ATTACK_METHOD": attack_method,            # now "None" for baselines
-            "TRIGGER_RATE" : trigger_rate,
-            "IS_SYBIL"     : sybil_mode if is_sybil_bool else "False",
-            "ADV_RATE"     : effective_adv_rate,
-            "CHANGE_BASE"  : _get(full_cfg, "data_split.change_base", "False"),
-            "TRIGGER_MODE" : trigger_mode,
+            "ATTACK_METHOD": attack_method,  # now "None" for baselines
+            "TRIGGER_RATE": trigger_rate,
+            "IS_SYBIL": sybil_mode if is_sybil_bool else "False",
+            "ADV_RATE": effective_adv_rate,
+            "CHANGE_BASE": _get(full_cfg, "data_split.change_base", "False"),
+            "TRIGGER_MODE": trigger_mode,
             "benign_rounds": benign_rounds,
-            "trigger_mode" : trigger_mode,
-            "attack_objective": attack_objective# kept for backward compatibility
+            "trigger_mode": trigger_mode,
+            "attack_objective": attack_objective  # kept for backward compatibility
         }
 
         # -------------------- 2️⃣  market_params ----------------------- #

@@ -435,7 +435,6 @@ class DataMarketplaceFederated(DataMarketplace):
         defense_metrics = {}
         if hasattr(self.aggregator, 'get_specific_metrics'):
             defense_metrics = self.aggregator.get_specific_metrics(round_number)
-        # Example: elif self.aggregator.aggregation_method == 'MartFL': ...
 
         # --- 9. Construct Final Round Record ---
         round_end_time = time.time()
