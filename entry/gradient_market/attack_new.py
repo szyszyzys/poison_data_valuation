@@ -789,4 +789,17 @@ def main():
 
 
 if __name__ == "__main__":
+    import torch.multiprocessing as mp
+
+    # Set the start method for multiprocessing to 'spawn'
+    # This is crucial for CUDA + multiprocessing to work correctly.
+    # It should be done once, at the beginning of your program.
+    try:
+        mp.set_start_method('spawn', force=True)
+        print("Multiprocessing start method set to 'spawn'.")
+    except RuntimeError as e:
+        # This can happen if the context is already set,
+        # which might be okay if it's already 'spawn' or 'forkserver'.
+        print(f"Note: Could not set multiprocessing start method (may be already set): {e}")
+
     main()
