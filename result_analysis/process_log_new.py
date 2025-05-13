@@ -66,26 +66,46 @@ def calculate_gini(payments):
 # Example placeholder for average_dicts
 def average_dicts(dicts):
     """
-    Return the entry‑wise average of a list of dicts.
-    • Works for numbers; non‑numeric values are ignored when averaging.
-    • If a key is missing in some dicts, np.nan is used for those rows.
-    """
-    if not dicts:
-        return {}
+    Entry‑wise “average” of a list of dictionaries.
 
+    • Numeric values (int, float, numpy number‑types)  -> arithmetic mean
+    • Non‑numeric values (str, bool, list, dict, None) -> first non‑null value
+    • Missing keys in some dicts                       -> np.nan
+
+    Returns a dict with the union of keys across inputs.
+    """
     import numpy as np
     import pandas as pd
 
-    # union of keys across all run‑summaries
+    if not dicts:
+        return {}
+
     all_keys = set().union(*dicts)
     out = {}
 
     for k in all_keys:
-        vals = [d[k] for d in dicts if k in d and pd.notna(d[k])]
-        out[k] = np.mean(vals) if vals else np.nan
+        raw_vals = [d.get(k) for d in dicts if k in d]
+
+        # split into numeric vs. everything else
+        numeric_vals = []
+        first_non_null = None
+        for v in raw_vals:
+            if pd.isna(v):
+                continue
+            if isinstance(v, (int, float, np.number)):
+                numeric_vals.append(float(v))
+            else:
+                if first_non_null is None:
+                    first_non_null = v
+
+        if numeric_vals:                     # there is something to average
+            out[k] = float(np.mean(numeric_vals))
+        elif first_non_null is not None:     # only categorical/constant values
+            out[k] = first_non_null
+        else:                                # nothing recorded for this key
+            out[k] = np.nan
 
     return out
-
 
 # ----------------------------------------------------------------------
 # Helper utils   (drop these near the top of the module, or inside the
