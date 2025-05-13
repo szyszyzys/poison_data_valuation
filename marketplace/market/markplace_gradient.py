@@ -1,3 +1,4 @@
+import copy
 import logging
 import time
 from collections import OrderedDict
@@ -281,29 +282,94 @@ class DataMarketplaceFederated(DataMarketplace):
                     logging.warning(f"GIA: Victim '{victim_seller_id}' or their data not found. Skipping GT.")
 
                 if input_shape_gia and num_classes_gia:  # Check if we have necessary info
-                    # from privacy_attack import perform_and_evaluate_inversion_attack # Ensure it's imported
-                    gradient_inversion_log = perform_and_evaluate_inversion_attack(
-                        target_gradient=target_gradient,
-                        model_template=self.aggregator.global_model,
-                        input_shape=input_shape_gia,
-                        num_classes=num_classes_gia,
-                        device=self.aggregator.device,
-                        attack_config=gia_params,
-                        ground_truth_images=gt_images,  # Can be None if not available
-                        ground_truth_labels=gt_labels,  # Can be None
-                        save_visuals=self.attack_config.get('save_attack_visuals_flag', True),
-                        save_dir=self.attack_save_dir,
-                        round_num=round_number,
-                        victim_id=victim_seller_id
-                    )
-                    if gradient_inversion_log:
-                        gradient_inversion_log[
-                            'victim_seller_idx_in_round'] = victim_idx  # Store the index within the current round's seller list
-                        gradient_inversion_log['aggregation_method'] = self.aggregator.aggregation_method
-                        self.attack_results_list.append(gradient_inversion_log)
+
+                    # Define the learning rates to try for this specific gradient
+                    # NOTE: Get this list from config or define it here
+                    lrs_to_try = self.attack_config.get('gradient_inversion_lrs_to_try', [0.05, 0.01, 0.005])
+                    if not lrs_to_try:  # Ensure list is not empty
+                        lrs_to_try = [gia_params.get('lr', 0.01)]  # Fallback to original lr
+
+                    best_log = None
+                    # Choose metric to optimize: 'psnr' (higher is better), 'ssim' (higher is better),
+                    # or could adapt to use internal gradient loss if returned by the function.
+                    primary_metric = 'psnr'
+                    best_metric_value = -float('inf')  # Initialize for maximization
+
+                    logging.info(
+                        f"GIA: Tuning LR for victim '{victim_seller_id}' (Round {round_number}) over {lrs_to_try}")
+
+                    for current_lr in lrs_to_try:
+                        logging.debug(f"  Trying GIA with LR: {current_lr}")
+
+                        # Create a deep copy of the params to modify LR safely
+                        current_gia_params = copy.deepcopy(gia_params)
+                        current_gia_params['lr'] = current_lr
+
+                        current_save_dir = f"{self.attack_save_dir}/{current_lr}"
+                        Path(current_save_dir).mkdir(exist_ok=True, parents=True)
+                        # Perform the attack with the current LR
+                        try:
+                            gradient_inversion_log = perform_and_evaluate_inversion_attack(
+                                target_gradient=target_gradient,  # Pass original gradient each time
+                                model_template=self.aggregator.global_model,
+                                input_shape=input_shape_gia,
+                                num_classes=num_classes_gia,
+                                device=self.aggregator.device,
+                                attack_config=current_gia_params,  # Use the modified config
+                                ground_truth_images=gt_images,
+                                ground_truth_labels=gt_labels,
+                                save_visuals=self.attack_config.get('save_attack_visuals_flag', True),
+                                save_dir=current_save_dir,  # Pass save dir
+                                round_num=round_number,
+                                victim_id=f"{victim_seller_id}_lr{current_lr}"
+                                # Modify victim_id slightly for logs/filenames if needed
+                            )
+                        except Exception as e_inner:
+                            logging.error(f"  GIA failed for LR={current_lr}: {e_inner}", exc_info=True)
+                            gradient_inversion_log = {"error": str(e_inner)}  # Create basic log for failure
+
+                        # Check if the run was successful and has metrics
+                        if gradient_inversion_log and 'metrics' in gradient_inversion_log and \
+                                isinstance(gradient_inversion_log['metrics'], dict) and \
+                                primary_metric in gradient_inversion_log['metrics']:
+
+                            current_metric_value = gradient_inversion_log['metrics'][primary_metric]
+
+                            # Handle potential None values in metric
+                            if current_metric_value is not None:
+                                # Compare with the best metric found so far
+                                if current_metric_value > best_metric_value:
+                                    logging.info(
+                                        f"  New best {primary_metric}: {current_metric_value:.4f} found with LR={current_lr}")
+                                    best_metric_value = current_metric_value
+                                    best_log = gradient_inversion_log
+                                    # Store the LR that produced the best result
+                                    best_log['best_tuned_lr'] = current_lr
+                                    # Restore original victim_id if modified above
+                                    best_log['victim_id'] = victim_seller_id
+                            else:
+                                logging.warning(
+                                    f"  GIA run with LR={current_lr} produced None for metric '{primary_metric}'.")
+                        elif gradient_inversion_log and 'error' in gradient_inversion_log:
+                            logging.warning(
+                                f"  GIA run with LR={current_lr} resulted in an error: {gradient_inversion_log['error']}")
+                        else:
+                            logging.warning(f"  GIA run with LR={current_lr} did not produce expected metrics.")
+
+                    # After trying all LRs, append the best result found (if any)
+                    if best_log:
+                        logging.info(
+                            f"GIA: Best result for victim '{victim_seller_id}' (Round {round_number}) achieved with LR={best_log.get('best_tuned_lr', 'N/A')} ({primary_metric}: {best_metric_value:.4f})")
+                        # Add standard metadata
+                        best_log['victim_seller_idx_in_round'] = victim_idx
+                        best_log['aggregation_method'] = self.aggregator.aggregation_method
+                        self.attack_results_list.append(best_log)
+                    else:
+                        logging.warning(
+                            f"GIA: No successful run found for victim '{victim_seller_id}' (Round {round_number}) across LRs {lrs_to_try}.")
+
                 else:
                     logging.warning(f"GIA: Missing input_shape or num_classes for attack. Skipping.")
-
         # --- 2. Perform Aggregation ---
         agg_start_time = time.time()
         aggregated_gradient, selected_indices, outlier_indices = self.aggregator.aggregate(
