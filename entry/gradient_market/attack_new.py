@@ -384,7 +384,7 @@ def poisoning_attack_image(
     print(f"Dataset: {dataset_name}, Attack Type: {attack_type}")
     print(f"Sellers: {n_sellers}, Adversary Rate: {adv_rate}")
     dl_num_workers = local_training_params.get('num_workers', 4)
-    dl_pin_memory = local_training_params.get('pin_memory', torch.cuda.is_available())
+    dl_pin_memory = local_training_params.get('pin_memory', False)
     sm_model_type = "None"
     model_type = 'image'
     if dataset_name == "FMNIST":
@@ -406,7 +406,7 @@ def poisoning_attack_image(
     if local_training_params is None: local_training_params = {'epochs': 1, 'lr': 0.01,
                                                                'batch_size': 64,
                                                                'num_workers': 4,
-                                                               'pin_memory': torch.cuda.is_available()
+                                                               'pin_memory': False
                                                                }
     if dm_params is None: dm_params = {"discovery_quality": 0.3, "buyer_data_mode": "random"}
 
