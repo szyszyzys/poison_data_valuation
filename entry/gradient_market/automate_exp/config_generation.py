@@ -392,16 +392,17 @@ def generate_discovery_configs(output_dir):
 
 
 def generate_privacy_attack(output_dir):
-    """Compare discovery split method."""
-    print("\n--- Generating Discovery Split Configs ---")
-    datasets = ['CIFAR', 'FMNIST']  # Discovery might be more interesting with complex data
-    qualities = [0.3]  # Low, Medium, High quality simulation
-    buyer_modes = ['unbiased']  # Add 'biased' if construct_buyer_set supports it well
-    aggregations = ['fedavg']  # Compare how Sybil affects different aggregators
+    """Generate configs for Gradient Inversion experiments."""
+    print("\n--- Generating Gradient Inversion Attack Configs ---")
+    # Use datasets relevant to GIA (often image datasets)
+    datasets = ['FMNIST', 'CIFAR']
+    # Add any other parameters you want to vary for GIA here
+    # For now, keeping other settings fixed from BASE_CONFIG_TEMPLATE
+    aggregations = ['fedavg']
 
-    for ds, quality, buyer_mode, agg in itertools.product(datasets, qualities, buyer_modes, aggregations):
+    for ds, agg in itertools.product(datasets, aggregations):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
-        exp_id = f"gradient_inversion_{ds.lower()}_q{quality}_{buyer_mode}"
+        exp_id = f"gradient_inversion_{ds.lower()}_{agg}" # Simplified ID
 
         config['experiment_id'] = exp_id
         config['dataset_name'] = ds
@@ -409,29 +410,48 @@ def generate_privacy_attack(output_dir):
         config['training']['local_training_params']['learning_rate'] = DEFAULT_LRS.get(ds, 0.001)
         config['data_split']['normalize_data'] = (DATASET_CHANNELS[ds] is not None)
         config['aggregation_method'] = agg
-        # Set split method to discovery
-        config['data_split']['data_split_mode'] = 'discovery'
-        config['data_split']['dm_params']['discovery_quality'] = quality
-        config['data_split']['dm_params']['buyer_data_mode'] = buyer_mode
-        # Remove dirichlet_alpha if not used by discovery split
-        if 'dirichlet_alpha' in config['data_split']: del config['data_split']['dirichlet_alpha']
-        # Ensure buyer percentage is set if needed by discovery logic
-        config['data_split']['buyer_percentage'] = 0.02  # Example
 
-        # No attack for this comparison
-        config['attack']['enabled'] = False
-        config['sybil']['is_sybil'] = False
-
+        # --- GIA Specific Setup ---
         config['privacy_attack']['perform_gradient_inversion'] = True
 
-        # Configure results path
+        # Automatically configure gradient_inversion_params
+        client_training_batch_size = config['training']['batch_size']
+
+        # Define sensible starting points for GIA hyperparameters
+        # **NOTE:** These are STARTING POINTS and likely require tuning per dataset/model!
+        gia_default_params = {
+            # --- Core Attack Params ---
+            'num_images': client_training_batch_size, # Crucial: Match client batch size
+            'iterations': 2000 if ds == 'CIFAR' else 1000, # More complex datasets might need more iterations initially
+            'lr': 0.01,  # Starting low, common for Adam with Cosine Loss in GIA. **Tune this!**
+            'loss_type': 'cosine', # Generally preferred for gradient matching
+            'label_type': 'optimize', # Assume labels are unknown unless debugging
+
+            # --- Regularization ---
+            'regularization_weight': 1e-4, # TV Loss weight. **Tune this carefully!** (e.g., 1e-3, 1e-5, 0.0)
+
+            # --- Initialization & Optimization ---
+            # Defaults below might already be handled by your gradient_inversion_attack function,
+            # but explicitly setting them here makes the config complete.
+            'optimizer_class': 'Adam', # Or 'SGD', 'LBFGS'. Adam is a common default.
+            'init_type': 'gaussian', # 'gaussian' (randn) or 'random' (rand)
+
+            # --- Logging & Output ---
+            'log_interval': 200, # How often to log progress during attack
+            'return_best': True, # Almost always want the best reconstruction found
+        }
+
+        # Assign the generated params
+        config['privacy_attack']['gradient_inversion_params'] = gia_default_params
+
+        # Configure paths
         results_path = os.path.join(config['output']['save_path_base'], "privacy", exp_id)
         config['output']['final_save_path'] = results_path
-        config['privacy_attack']['privacy_attack_path'] = results_path
+        config['privacy_attack']['privacy_attack_path'] = results_path # Use same path for attack artifacts
 
+        # Save the configuration file
         file_path = os.path.join(output_dir, "privacy", f"{exp_id}.yaml")
         save_config(config, file_path)
-
 
 # --- Main Execution ---
 if __name__ == "__main__":
