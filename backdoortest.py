@@ -1,9 +1,10 @@
+import os
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torchvision
 import torchvision.transforms as transforms
-import matplotlib.pyplot as plt
-import numpy as np
-import os
 
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
 
@@ -42,6 +43,7 @@ def load_dataset_samples(dataset_name, num_samples):
     images, labels = next(iter(dataloader))
     return images, labels, channels, class_names
 
+
 # --- Helper function to visualize and save ---
 def visualize_and_save(images_clean, images_poisoned, labels_clean,
                        dataset_name, trigger_type, target_label, class_names,
@@ -71,18 +73,19 @@ def visualize_and_save(images_clean, images_poisoned, labels_clean,
         ax_poisoned.set_title(f"Backdoored (Target: {class_names[target_label]})")
         ax_poisoned.axis('off')
 
-    plt.tight_layout(rect=[0, 0, 1, 0.96]) # Adjust layout to make space for suptitle
+    plt.tight_layout(rect=[0, 0, 1, 0.96])  # Adjust layout to make space for suptitle
     filename = f"{dataset_name.lower()}_{trigger_type}_target{target_label}.png"
     filepath = os.path.join(save_dir, filename)
     plt.savefig(filepath)
     print(f"Saved visualization to {filepath}")
-    plt.close(fig) # Close the figure to free memory
+    plt.close(fig)  # Close the figure to free memory
+
 
 # --- Main script ---
 def main():
     datasets_to_visualize = ["FMNIST", "CIFAR10"]
-    trigger_types_to_visualize = ["blended_patch", "checkerboard", "noise", "gradient"]
-    trigger_locations = ["bottom_right", "top_left", "center"] # You can loop through these too
+    backdoor_trigger_type = "blended_patch"
+    backdoor_trigger_location = "bottom_right"
 
     for dataset_name in datasets_to_visualize:
         print(f"\n--- Processing {dataset_name} ---")
@@ -90,65 +93,63 @@ def main():
 
         trigger_size = FMNIST_TRIGGER_SIZE if dataset_name == "FMNIST" else CIFAR_TRIGGER_SIZE
 
-        for trigger_type in trigger_types_to_visualize:
-            for location in trigger_locations: # Iterate through locations
-                print(f"  Generating for trigger: {trigger_type}, location: {location}")
+        print(f"  Generating for trigger: {backdoor_trigger_type}, location: {backdoor_trigger_location}")
 
-                # Initialize backdoor generator
-                backdoor_gen = BackdoorImageGenerator(
-                    trigger_type=trigger_type,
-                    target_label=TARGET_LABEL,
-                    channels=channels,
-                    trigger_size=trigger_size,
-                    alpha=VIS_ALPHA,
-                    location=location, # Use the current location
-                    randomize_location=False # Set to True if you want to test randomization
-                )
+        # Initialize backdoor generator
+        backdoor_gen = BackdoorImageGenerator(
+            trigger_type=backdoor_trigger_type,
+            target_label=0,
+            channels=channels,
+            location=backdoor_trigger_location  # Use the specific param
+        )
 
-                # Apply trigger to the clean images
-                # generate_poisoned_samples expects a batch of images (N, C, H, W)
-                images_poisoned = backdoor_gen.generate_poisoned_samples(images_clean)
+        # Apply trigger to the clean images
+        # generate_poisoned_samples expects a batch of images (N, C, H, W)
+        images_poisoned = backdoor_gen.generate_poisoned_samples(images_clean)
 
-                # Create a version of the filename that includes location
-                filename_suffix = f"{dataset_name.lower()}_{trigger_type}_loc_{location}_target{TARGET_LABEL}.png"
+        # Create a version of the filename that includes location
+        filename_suffix = f"{dataset_name.lower()}_{backdoor_trigger_type}_loc_{backdoor_trigger_location}_target{TARGET_LABEL}.png"
 
-                # Visualize and save
-                # For visualization, the title will reflect the generator's config
-                # The filename should be unique for each setting
+        # Visualize and save
+        # For visualization, the title will reflect the generator's config
+        # The filename should be unique for each setting
 
-                # For visualization, we need to pass the correct target label for display
-                # The labels_clean are for the original images
-                # The *effective* target label for poisoned images is backdoor_gen.target_label
+        # For visualization, we need to pass the correct target label for display
+        # The labels_clean are for the original images
+        # The *effective* target label for poisoned images is backdoor_gen.target_label
 
-                # Simplified call to visualize_and_save for clarity
-                num_fig_samples = images_clean.shape[0]
-                fig, axes = plt.subplots(num_fig_samples, 2, figsize=(6, 2 * num_fig_samples))
-                title = f"{dataset_name} - {trigger_type} @ {location}\nTarget: {class_names[backdoor_gen.target_label]}"
-                fig.suptitle(title, fontsize=12)
+        # Simplified call to visualize_and_save for clarity
+        num_fig_samples = images_clean.shape[0]
+        fig, axes = plt.subplots(num_fig_samples, 2, figsize=(6, 2 * num_fig_samples))
+        title = f"{dataset_name} - {backdoor_trigger_type} @ {backdoor_trigger_location}\nTarget: {class_names[backdoor_gen.target_label]}"
+        fig.suptitle(title, fontsize=12)
 
+        for i in range(num_fig_samples):
+            # Clean image
+            ax_clean = axes[i, 0]
+            img_c = images_clean[i].cpu().numpy()
+            if img_c.shape[0] == 1:
+                ax_clean.imshow(np.squeeze(img_c), cmap='gray')
+            else:
+                ax_clean.imshow(np.transpose(img_c, (1, 2, 0)))
+            ax_clean.set_title(f"Orig: {class_names[labels_clean[i].item()]}")
+            ax_clean.axis('off')
 
-                for i in range(num_fig_samples):
-                    # Clean image
-                    ax_clean = axes[i, 0]
-                    img_c = images_clean[i].cpu().numpy()
-                    if img_c.shape[0] == 1: ax_clean.imshow(np.squeeze(img_c), cmap='gray')
-                    else: ax_clean.imshow(np.transpose(img_c, (1, 2, 0)))
-                    ax_clean.set_title(f"Orig: {class_names[labels_clean[i].item()]}")
-                    ax_clean.axis('off')
+            # Poisoned image
+            ax_poisoned = axes[i, 1]
+            img_p = images_poisoned[i].cpu().numpy()
+            if img_p.shape[0] == 1:
+                ax_poisoned.imshow(np.squeeze(img_p), cmap='gray')
+            else:
+                ax_poisoned.imshow(np.transpose(img_p, (1, 2, 0)))
+            ax_poisoned.set_title(f"Backdoor (Target: {class_names[backdoor_gen.target_label]})")
+            ax_poisoned.axis('off')
 
-                    # Poisoned image
-                    ax_poisoned = axes[i, 1]
-                    img_p = images_poisoned[i].cpu().numpy()
-                    if img_p.shape[0] == 1: ax_poisoned.imshow(np.squeeze(img_p), cmap='gray')
-                    else: ax_poisoned.imshow(np.transpose(img_p, (1, 2, 0)))
-                    ax_poisoned.set_title(f"Backdoor (Target: {class_names[backdoor_gen.target_label]})")
-                    ax_poisoned.axis('off')
-
-                plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust for suptitle
-                filepath = os.path.join(SAVE_DIR, filename_suffix)
-                plt.savefig(filepath)
-                print(f"Saved visualization to {filepath}")
-                plt.close(fig)
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust for suptitle
+        filepath = os.path.join(SAVE_DIR, filename_suffix)
+        plt.savefig(filepath)
+        print(f"Saved visualization to {filepath}")
+        plt.close(fig)
 
 
 if __name__ == "__main__":
