@@ -51,6 +51,7 @@ class DataMarketplaceFederated(DataMarketplace):
         self._adv_ids_set = {sid for sid in all_seller_ids if
                              sid.startswith('adv_')}  # Or your method of identifying adversaries
         self._benign_ids_set = {sid for sid in all_seller_ids if not sid.startswith('adv_')}
+        self.input_shape_for_attack, self.num_classes_for_attack = None, None
 
     def register_seller(self, seller_id: str, seller: BaseSeller):
         """
@@ -205,17 +206,15 @@ class DataMarketplaceFederated(DataMarketplace):
 
         # --- 1.5 Gradient Inversion Attack Logic ---
         gradient_inversion_log = None
-        print(self.attack_config)
-        attack_conf = self.attack_config.get('gradient_inversion', {})  # Group GIA params
-        perform_attack_flag = attack_conf.get('perform_gradient_inversion', False)
+        perform_attack_flag = self.attack_config.get('perform_gradient_inversion', False)
 
-        if perform_attack_flag and seller_ids and (round_number % attack_conf.get('frequency', 50) == 0):
+        if perform_attack_flag and seller_ids and (round_number % self.attack_config.get('frequency', 10) == 0):
             victim_seller_id = None
             target_gradient = None
 
-            victim_strategy = attack_conf.get('victim_strategy', 'fixed')
+            victim_strategy = self.attack_config.get('attack_victim_strategy', 'fixed')
             if victim_strategy == 'fixed':
-                victim_idx = attack_conf.get('fixed_victim_idx', 0)
+                victim_idx = self.attack_config.get('attack_fixed_victim_idx', 0)
             elif victim_strategy == 'random':
                 victim_idx = np.random.randint(0, len(seller_ids))
             else:
@@ -238,7 +237,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
                 # For GIA, we need ground truth images and labels.
                 # The attack typically reconstructs `num_images`. We need a GT batch of this size.
-                gia_params = attack_conf.get('params', {})
+                gia_params = self.attack_config.get('params', {})
                 num_images_for_attack = gia_params.get('num_images', 1)
 
                 gt_images, gt_labels = None, None
@@ -260,10 +259,12 @@ class DataMarketplaceFederated(DataMarketplace):
                             # Derive shape/classes if not pre-configured (less efficient)
                             if not input_shape_gia:
                                 input_shape_gia = gt_images[0].shape
+                                self.input_shape_for_attack = input_shape_gia
                             if not num_classes_gia:
                                 # This can be slow if gt_labels is large and not on GPU
                                 unique_labels = torch.unique(gt_labels.cpu())
                                 num_classes_gia = len(unique_labels)
+                                self.num_classes_for_attack = num_classes_gia
                         except Exception as e:
                             logging.error(f"GIA: Error loading data for victim {victim_seller_id}: {e}")
                             gt_images, gt_labels = None, None  # Ensure they are None if loading fails
@@ -284,7 +285,7 @@ class DataMarketplaceFederated(DataMarketplace):
                         attack_config=gia_params,
                         ground_truth_images=gt_images,  # Can be None if not available
                         ground_truth_labels=gt_labels,  # Can be None
-                        save_visuals=attack_conf.get('save_visuals', True),
+                        save_visuals=self.attack_config.get('save_attack_visuals_flag', True),
                         save_dir=self.attack_save_dir,
                         round_num=round_number,
                         victim_id=victim_seller_id
@@ -296,7 +297,6 @@ class DataMarketplaceFederated(DataMarketplace):
                         self.attack_results_list.append(gradient_inversion_log)
                 else:
                     logging.warning(f"GIA: Missing input_shape or num_classes for attack. Skipping.")
-
 
         # --- 2. Perform Aggregation ---
         agg_start_time = time.time()
