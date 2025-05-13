@@ -534,10 +534,11 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                 # Determine final ATTACK_METHOD and related params
                 if not attack_enabled_fc or gradient_manipulation_mode_fc.lower() in ['none', '']:
                     final_attack_method = 'NoAttack'
+                    attack_objective = 'None'
                     local_poison_rate = 0.0
                     final_adv_rate_for_processing = 0.0  # For passing to process_single_experiment if NoAttack
                 else:
-                    final_attack_method = gradient_manipulation_mode_fc
+                    final_attack_method = "local_poison"
                     local_poison_rate = trigger_rate_fc
                     final_adv_rate_for_processing = adv_rate_for_attack_params  # Use the determined adv_rate for active attacks
 
