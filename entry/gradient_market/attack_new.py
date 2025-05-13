@@ -82,7 +82,7 @@ def poisoning_attack_text(
     n_adversaries = int(n_sellers * adv_rate)
     if args is None:  # Use default args if none provided
         from types import SimpleNamespace
-        args = SimpleNamespace(gradient_manipulation_mode='single', is_sybil=False, clip=None, remove_baseline=False)
+        args = SimpleNamespace(gradient_manipulation_mode='single', is_sybil=False, clip=None, remove_baseline=True)
     gradient_manipulation_mode = args.gradient_manipulation_mode
     loss_fn = nn.CrossEntropyLoss()
     es_monitor = 'acc'
@@ -291,7 +291,7 @@ def poisoning_attack_text(
             backdoor_target_label=backdoor_target_label if attack_type == 'backdoor' else None,
             # Other params
             clip=args.clip,
-            remove_baseline=args.remove_baseline
+            remove_baseline=True
         )
 
         print(f"Round {gr + 1} results: {round_record.get('perf_global', 'N/A')}")

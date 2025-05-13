@@ -822,7 +822,6 @@ class Aggregator:
 
                 print(f"Seller {seller_id} Kappa score: {kappa:.4f}")
 
-                # Keep track of the best seller
                 if kappa > max_kappa:
                     max_kappa = kappa
                     best_seller = seller_id

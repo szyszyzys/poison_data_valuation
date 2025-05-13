@@ -185,7 +185,7 @@ class DataMarketplaceFederated(DataMarketplace):
                               backdoor_target_label=0,
                               backdoor_generator=None,
                               clip=False,
-                              remove_baseline=False,
+                              remove_baseline=True,
                               # perform_gradient_inversion is now part of self.attack_config
                               ):
         round_start_time = time.time()

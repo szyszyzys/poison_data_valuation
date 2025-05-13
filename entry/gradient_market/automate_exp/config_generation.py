@@ -86,7 +86,7 @@ BASE_CONFIG_TEMPLATE = {
     # --- Federated Learning / Aggregation Params ---
     'federated_learning': {
         'change_base': True,
-        'remove_baseline': False,
+        'remove_baseline': True,
     },
 
     # --- Attack Params ---
