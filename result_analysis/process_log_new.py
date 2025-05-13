@@ -86,6 +86,39 @@ def average_dicts(dicts):
     return out
 
 
+# ----------------------------------------------------------------------
+# Helper utils   (drop these near the top of the module, or inside the
+#                function before you start looping over rounds)
+# ----------------------------------------------------------------------
+def numeric_part(cid):
+    """
+    Return the integer part of a seller‑ID string.
+
+        'adv_0' -> 0
+        'bn_12' -> 12
+        '7'     -> 7
+    """
+    if isinstance(cid, int):
+        return cid
+    if "_" in cid:
+        tail = cid.split("_")[-1]
+        return int(tail) if tail.isdigit() else None
+    return int(cid)  # may still raise ValueError if not numeric
+
+
+def is_adversary(cid, n_adv):
+    """
+    Decide if `cid` should be treated as malicious.
+    • Any ID that starts with 'adv'  is malicious.
+    • Otherwise fall back to the numeric index < n_adv rule
+      so old logs continue to work.
+    """
+    if isinstance(cid, str) and cid.startswith("adv"):
+        return True
+    idx = numeric_part(cid)
+    return idx is not None and idx < n_adv
+
+
 def process_single_experiment(
         file_path, attack_params, market_params, data_statistics_path,
         adv_rate, cur_run, target_accuracy_for_coc=0.8,
@@ -149,11 +182,14 @@ def process_single_experiment(
                     }
             )
 
+            all_seller_ids = list(seller_distributions.keys())  # new
+            total_payments_per_seller = {sid: 0 for sid in all_seller_ids}
+            num_total_sellers = len(all_seller_ids)
+
             # ---------------------------------------------------- #
             #        adversary / benign bookkeeping                #
-            adversary_selections = [cid for cid in selected_clients if int(cid) < num_adversaries]
-            benign_selections = [cid for cid in selected_clients if int(cid) >= num_adversaries]
-
+            adversary_selections = [cid for cid in selected_clients if is_adversary(cid, num_adversaries)]
+            benign_selections = [cid for cid in selected_clients if not is_adversary(cid, num_adversaries)]
             cost_per_round = len(selected_clients)
             cumulative_cost_for_milestones += cost_per_round
 
@@ -164,6 +200,13 @@ def process_single_experiment(
             round_benign_sel_rate = (
                 len(benign_selections) / num_benign if num_benign else np.nan
             )
+
+            payments_to_benign = {
+                sid: 1 if sid in benign_selections else 0
+                for sid in total_payments_per_seller.keys()
+                if not is_adversary(sid, num_adversaries)
+            }
+            round_benign_gini = calculate_gini(np.array(list(payments_to_benign.values())))
 
             # ---------- per‑round   dict -------------------------
             round_data = {
@@ -177,11 +220,7 @@ def process_single_experiment(
                                          len(selected_clients) if selected_clients else 0,
                 "cost_per_round": cost_per_round,
                 "benign_selection_rate_in_round": round_benign_sel_rate,
-                "benign_gini_coefficient_in_round": calculate_gini(
-                    np.array([1 if (int(cid) >= num_adversaries) else 0
-                              for cid in selected_clients] +
-                             [0] * (num_benign - len(benign_selections)))
-                ),
+                "benign_gini_coefficient_in_round": round_benign_gini,
             }
 
             # ---------- baseline‑only metrics --------------------
@@ -193,7 +232,10 @@ def process_single_experiment(
                         round_data[key_round] = 0.0
                         baseline_rate_collector[f"{hypo_adv_rate:.1f}"].append(0.0)
                     else:
-                        sel_from_hypo = sum(1 for cid in selected_clients if int(cid) < n_hypo)
+                        sel_from_hypo = sum(
+                            1 for cid in selected_clients
+                            if numeric_part(cid) is not None and numeric_part(cid) < n_hypo
+                        )
                         rate = sel_from_hypo / len(selected_clients) if selected_clients else 0.0
                         round_data[key_round] = rate
                         baseline_rate_collector[f"{hypo_adv_rate:.1f}"].append(rate)
