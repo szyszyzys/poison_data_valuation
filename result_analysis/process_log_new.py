@@ -658,29 +658,18 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Process all experiments
-    all_rounds_df, summary_df = process_all_experiments_revised(
+    all_df, avg_df, summary_df = process_all_experiments_revised(
         base_results_dir=args.result_path,
         output_dir=args.output_dir
     )
 
-    # Print summary statistics
-    if not summary_df.empty:
-        print("\nSummary Statistics:")
-        print(f"Total experiments processed: {len(summary_df)}")
-        print(f"Average Final ASR: {summary_df['FINAL_ASR'].mean():.4f}")
-        print(f"Average Main Accuracy: {summary_df['FINAL_MAIN_ACC'].mean():.4f}")
-
-        # Group by aggregation method
-        for agg_method in summary_df['AGGREGATION_METHOD'].unique():
-            agg_data = summary_df[summary_df['AGGREGATION_METHOD'] == agg_method]
-            print(f"\nAggregation Method: {agg_method}")
-            print(f"  Average ASR: {agg_data['FINAL_ASR'].mean():.4f}")
-            print(f"  Average Main Accuracy: {agg_data['FINAL_MAIN_ACC'].mean():.4f}")
-
-            # Group by gradient mode within each aggregation method
-            for grad_mode in agg_data['ATTACK_METHOD'].unique():
-                grad_data = agg_data[agg_data['ATTACK_METHOD'] == grad_mode]
-                print(f"    Gradient Mode: {grad_mode}")
-                print(f"      Average ASR: {grad_data['FINAL_ASR'].mean():.4f}")
-                print(f"      Average Main Accuracy: {grad_data['FINAL_MAIN_ACC'].mean():.4f}")
+    print("\n--- Processing Complete ---")
+    if all_df is not None:
+        print("\nAll Rounds DataFrame Head:")
+        print(all_df.head())
+    if avg_df is not None:
+        print("\nAverage Summary DataFrame:")
+        print(avg_df)
+    if summary_df is not None:
+        print("\nIndividual Run Summary DataFrame Head:")
+        print(summary_df.head())
