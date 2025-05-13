@@ -345,7 +345,6 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                     summary_key = f'NO_ATTACK_DESIG_MAL_SEL_RATE_{hypo_adv_rate:.1f}'
                     if summary_key not in summary:  # If not added because it was an attack run
                         summary[summary_key] = np.nan
-            print(summary)
             return processed_data, summary
         return [], {}
 
@@ -353,6 +352,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
         print(f"Error processing {file_path}: {e}")
         traceback.print_exc()
         return [], {}
+
 
 # Assume process_single_experiment exists and has this signature:
 # def process_single_experiment(file_path, attack_params, market_params, data_statistics_path, adv_rate, cur_run):
@@ -803,7 +803,6 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                 # Determine final adv_rate for attack_params
                 adv_rate_for_attack_params = get_param(full_config, 'data_split.adv_rate', 0.3)
 
-
                 # Determine final ATTACK_METHOD and related params
                 if not attack_enabled_fc or gradient_manipulation_mode_fc.lower() in ['none', '']:
                     final_attack_method = 'NoAttack'
@@ -874,28 +873,80 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                         break
                 if skip_experiment: continue
 
-            if verbose: print(f"  Processing experiment: {root}")
+            if verbose:
+                print(f"  Processing experiment: {root}")
 
-            # --- Construct parameter dicts (matching your "old" structure's expectations) ---
+            adv_rate_for_internal_use = adv_rate_fc_datasplit  # This is 'ADV_RATE' that goes into attack_params
+
+            # --- Determine final ATTACK_METHOD, TRIGGER_RATE, and effective ADV_RATE for processing ---
+            attack_enabled_fc = get_param(full_config, 'attack.enabled', False)
+            gradient_manipulation_mode_fc = get_param(full_config, 'attack.gradient_manipulation_mode', 'None')
+            trigger_rate_from_attack_config_fc = get_param(full_config, 'attack.poison_rate', 0.0)
+
+            if not attack_enabled_fc or gradient_manipulation_mode_fc.lower() in ['none', '']:
+                final_attack_method_for_dict = 'NoAttack'  # Standardized
+                final_trigger_rate_for_dict = 0.0
+                # Effective adv_rate for 'NoAttack' scenario when passing to process_single_experiment
+                effective_adv_rate_for_processing = 0.0
+            else:
+                # Your old code used params["local_attack_params"]["gradient_manipulation_mode"]
+                # In new JSON, this is full_config.attack.gradient_manipulation_mode
+                final_attack_method_for_dict = gradient_manipulation_mode_fc
+                final_trigger_rate_for_dict = trigger_rate_from_attack_config_fc
+                effective_adv_rate_for_processing = adv_rate_for_internal_use
+
+            # --- Construct parameter dicts for process_single_experiment ---
             attack_params_dict = {
-                'ATTACK_METHOD': final_attack_method,  # This comes from gradient_manipulation_mode_fc
-                'LOCAL_POISON_RATE': local_poison_rate,  # This comes from trigger_rate_fc
-                'IS_SYBIL': is_sybil_fc_str,
-                'ADV_RATE': adv_rate_for_attack_params,  # Reflects sybil override if applicable
-                'TRIGGER_MODE': "fixed",
-                'ATTACK_OBJECTIVE': attack_objective
+                'ATTACK_METHOD': final_attack_method_for_dict,
+                'TRIGGER_RATE': final_trigger_rate_for_dict,
+                # Corresponds to old params["local_attack_params"]["trigger_rate"]
+                'IS_SYBIL': get_param(full_config, 'sybil.sybil_mode', 'default') if get_param(full_config,
+                                                                                               'sybil.is_sybil',
+                                                                                               False) else "False",
+                # Matches old logic
+                'ADV_RATE': adv_rate_for_internal_use,
+                # This is the adv_rate reflecting the population, possibly overridden by sybil if you add that logic
+                'CHANGE_BASE': str(get_param(full_config, 'federated_learning.change_base', False)),
+                # From federated_learning config
+                'TRIGGER_MODE': get_param(full_config, 'sybil.trigger_mode', 'always_on'),  # From sybil config
+                "benign_rounds": get_param(full_config, 'sybil.benign_rounds', 0),  # From sybil config
+                "poison_strength": get_param(full_config, 'attack.poison_strength', 0.0)  # From attack config
+                # Note: Old code had "trigger_mode" twice, assuming one was sufficient.
             }
 
             market_params_dict = {
-                'AGGREGATION_METHOD': aggregation_method_fc,
-                'DATA_SPLIT_MODE': data_split_mode_fc,
-                'N_CLIENTS': n_sellers_fc,
-                'LOCAL_EPOCH': local_epoch_fc,  # Added from your new config
-                'DATASET': dataset_name_fc,  # Added from your new config
+                'AGGREGATION_METHOD': get_param(full_config, 'aggregation_method', 'N/A'),
+                'DATA_SPLIT_MODE': get_param(full_config, 'data_split.data_split_mode', 'N/A'),
+                'N_CLIENTS': get_param(full_config, 'data_split.num_sellers', 100),
+                'LOCAL_EPOCH': get_param(full_config, 'training.local_training_params.local_epochs', 1),
+                'DATASET': get_param(full_config, 'dataset_name', 'UnknownDataset'),
             }
-            if data_split_mode_fc == "discovery":
-                market_params_dict["discovery_quality"] = discovery_quality_fc
-                market_params_dict["buyer_data_mode"] = buyer_data_mode_fc
+            if market_params_dict['DATA_SPLIT_MODE'] == "discovery":
+                market_params_dict["discovery_quality"] = str(
+                    get_param(full_config, 'data_split.dm_params.discovery_quality', 'N/A'))
+                market_params_dict["buyer_data_mode"] = get_param(full_config, 'data_split.dm_params.buyer_data_mode',
+                                                                  'N/A')
+
+            # # --- Construct parameter dicts (matching your "old" structure's expectations) ---
+            # attack_params_dict = {
+            #     'ATTACK_METHOD': final_attack_method,  # This comes from gradient_manipulation_mode_fc
+            #     'LOCAL_POISON_RATE': local_poison_rate,  # This comes from trigger_rate_fc
+            #     'IS_SYBIL': is_sybil_fc_str,
+            #     'ADV_RATE': adv_rate_for_attack_params,  # Reflects sybil override if applicable
+            #     'TRIGGER_MODE': "fixed",
+            #     'ATTACK_OBJECTIVE': attack_objective
+            # }
+            #
+            # market_params_dict = {
+            #     'AGGREGATION_METHOD': aggregation_method_fc,
+            #     'DATA_SPLIT_MODE': data_split_mode_fc,
+            #     'N_CLIENTS': n_sellers_fc,
+            #     'LOCAL_EPOCH': local_epoch_fc,  # Added from your new config
+            #     'DATASET': dataset_name_fc,  # Added from your new config
+            # }
+            # if data_split_mode_fc == "discovery":
+            #     market_params_dict["discovery_quality"] = discovery_quality_fc
+            #     market_params_dict["buyer_data_mode"] = buyer_data_mode_fc
 
             # --- Find and Process Runs ---
             run_paths = sorted(glob.glob(os.path.join(root, "run_*")))
@@ -969,7 +1020,6 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                     traceback.print_exc()
             if current_exp_processed_data:
                 all_processed_data.extend(current_exp_processed_data)
-
 
     if not experiment_found_flag:
         print("No 'experiment_params.json' files found.")
