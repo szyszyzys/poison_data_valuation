@@ -516,7 +516,7 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                 adv_rate_fc_datasplit = get_param(full_config, 'data_split.adv_rate', 0.0)  # Primary adv_rate source
 
                 attack_enabled_fc = get_param(full_config, 'attack.enabled', False)
-                attack_objective = get_param(full_config, 'attack.scenario', "backdoor")
+                attack_objective = get_param(full_config, 'attack.attack_type', "backdoor")
                 gradient_manipulation_mode_fc = get_param(full_config, 'attack.gradient_manipulation_mode', 'None')
                 trigger_rate_fc = get_param(full_config, 'attack.poison_rate', 0.0)
 
