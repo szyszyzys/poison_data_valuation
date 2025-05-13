@@ -828,7 +828,7 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
             current_exp_processed_data, current_exp_summaries = [], []
             for run_idx, run_dir_path in enumerate(run_paths):
                 if not os.path.isdir(run_dir_path): continue
-                market_log_file = os.path.join(run_dir_path, "market_log.ckpt")  # OR "market_log_final.ckpt"
+                market_log_file = os.path.join(run_dir_path, "market_log_final.ckpt")  # OR "market_log_final.ckpt"
                 data_stats_file = os.path.join(run_dir_path, "data_statistics.json")
                 if not os.path.exists(market_log_file):
                     if verbose: print(f"      Log file missing: {market_log_file}")
