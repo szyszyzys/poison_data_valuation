@@ -405,7 +405,7 @@ def poisoning_attack_image(
                                              'amplify_factor': 1, 'cost_scale': 1, 'trigger_mode': 'data'}
     if local_training_params is None: local_training_params = {'epochs': 1, 'lr': 0.01,
                                                                'batch_size': 64,
-                                                               'num_workers': 4,
+                                                               'num_workers': 0,
                                                                'pin_memory': False
                                                                }
     if dm_params is None: dm_params = {"discovery_quality": 0.3, "buyer_data_mode": "random"}

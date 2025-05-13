@@ -566,7 +566,7 @@ def get_data_set(
         buyer_dirichlet_alpha=0.3,  # Added: Alpha specifically for buyer bias
         # --- Other Split Method Params ---
         seller_dirichlet_alpha=0.7,  # Alpha used in the default/other split method,
-        num_workers=4,
+        num_workers=0,
         pin_memory=False
 ):
     pin_memory = False
