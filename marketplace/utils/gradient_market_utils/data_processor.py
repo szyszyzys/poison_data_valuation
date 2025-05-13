@@ -569,6 +569,7 @@ def get_data_set(
         num_workers=4,
         pin_memory=False
 ):
+    pin_memory = False
     # Define transforms based on the dataset.
     # (Keep your transform definitions here)
     transform = get_transforms(dataset_name, normalize_data=normalize_data)

@@ -384,7 +384,7 @@ def poisoning_attack_image(
     print(f"Dataset: {dataset_name}, Attack Type: {attack_type}")
     print(f"Sellers: {n_sellers}, Adversary Rate: {adv_rate}")
     dl_num_workers = local_training_params.get('num_workers', 4)
-    dl_pin_memory = local_training_params.get('pin_memory', False)
+    dl_pin_memory = False
     sm_model_type = "None"
     model_type = 'image'
     if dataset_name == "FMNIST":
@@ -463,8 +463,8 @@ def poisoning_attack_image(
         save_path=save_path,
         discovery_quality=dm_params["discovery_quality"],
         buyer_data_mode=dm_params["buyer_data_mode"],
-        num_workers=dl_num_workers,  # <--- PASS IT TO get_data_set
-        pin_memory=dl_pin_memory  # <--- PASS IT TO get_data_set
+        num_workers=dl_num_workers,
+        pin_memory=dl_pin_memory
     )
     num_classes = len(class_names)
     print(f"Data loaded. Num classes: {num_classes}")

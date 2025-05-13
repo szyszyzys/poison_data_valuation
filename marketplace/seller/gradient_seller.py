@@ -760,7 +760,7 @@ class GradientSeller(BaseSeller):
         self.learning_rate = self.local_training_params.get('lr',
                                                             self.local_training_params.get('learning_rate', 0.01))
         self.num_workers = self.local_training_params.get('num_workers', 4)
-        self.pin_memory = self.local_training_params.get('pin_memory', torch.cuda.is_available())
+        self.pin_memory = self.local_training_params.get('pin_memory', False)
 
         self.recent_metrics: Optional[Dict] = None
         self.cur_upload_gradient_list_tensors: Optional[
