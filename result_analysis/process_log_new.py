@@ -832,11 +832,11 @@ def process_all_experiments_revised(
 
         # Determine ATTACK_METHOD exactly like before
         if not attack_enabled or gradient_manip_mode.lower() in ("none", ""):
-            attack_method = "NoAttack"
-            trigger_rate = 0.0
+            attack_method  = "None"          # <- must be the string your downstream code expects
+            trigger_rate   = 0.0
         else:
-            attack_method = gradient_manip_mode
-            trigger_rate = poison_rate
+            attack_method  = gradient_manip_mode   # e.g. "single"
+            trigger_rate   = poison_rate
 
         # ----------------------- optional filters --------------------- #
         if filter_params:
@@ -866,15 +866,26 @@ def process_all_experiments_revised(
             print(f"  Processing experiment: {root}")
 
         # -------------------- 1️⃣  attack_params ----------------------- #
+        # attack_params_dict = {
+        #     "ATTACK_METHOD": attack_method,
+        #     "TRIGGER_RATE": trigger_rate,
+        #     "IS_SYBIL": sybil_mode if is_sybil_bool else "False",
+        #     "ADV_RATE": effective_adv_rate,
+        #     "CHANGE_BASE": _get(full_cfg, "data_split.change_base", "False"),
+        #     "TRIGGER_MODE": trigger_mode,
+        #     "benign_rounds": benign_rounds,
+        #     "trigger_mode": trigger_mode,  # (exact duplicate key kept for B/C)
+        # }
         attack_params_dict = {
-            "ATTACK_METHOD": attack_method,
-            "TRIGGER_RATE": trigger_rate,
-            "IS_SYBIL": sybil_mode if is_sybil_bool else "False",
-            "ADV_RATE": effective_adv_rate,
-            "CHANGE_BASE": _get(full_cfg, "data_split.change_base", "False"),
-            "TRIGGER_MODE": trigger_mode,
+            "ATTACK_METHOD": attack_method,            # now "None" for baselines
+            "TRIGGER_RATE" : trigger_rate,
+            "IS_SYBIL"     : sybil_mode if is_sybil_bool else "False",
+            "ADV_RATE"     : effective_adv_rate,
+            "CHANGE_BASE"  : _get(full_cfg, "data_split.change_base", "False"),
+            "TRIGGER_MODE" : trigger_mode,
             "benign_rounds": benign_rounds,
-            "trigger_mode": trigger_mode,  # (exact duplicate key kept for B/C)
+            "trigger_mode" : trigger_mode,
+            "attack_objective": attack_objective# kept for backward compatibility
         }
 
         # -------------------- 2️⃣  market_params ----------------------- #
@@ -944,6 +955,7 @@ def process_all_experiments_revised(
                 "N_CLIENTS": n_clients,
                 "LOCAL_EPOCH": local_epoch,
                 "exp_path": root,
+                "attack_objective": attack_objective,
             })
             avg_summary.pop("run", None)  # per‑run field not relevant here
             all_summary_data_avg.append(avg_summary)
