@@ -205,8 +205,9 @@ class DataMarketplaceFederated(DataMarketplace):
 
         # --- 1.5 Gradient Inversion Attack Logic ---
         gradient_inversion_log = None
+        print(self.attack_config)
         attack_conf = self.attack_config.get('gradient_inversion', {})  # Group GIA params
-        perform_attack_flag = attack_conf.get('perform', False)
+        perform_attack_flag = attack_conf.get('perform_gradient_inversion', False)
 
         if perform_attack_flag and seller_ids and (round_number % attack_conf.get('frequency', 50) == 0):
             victim_seller_id = None
