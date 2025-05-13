@@ -653,12 +653,15 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Process federated learning backdoor attack logs")
     parser.add_argument("--output_dir", default="./processed_data", help="Output directory for processed data")
+    parser.add_argument("--result_path", default="./experiment_results_revised",
+                        help="Output directory for processed data")
 
     args = parser.parse_args()
 
     # Process all experiments
     all_rounds_df, summary_df = process_all_experiments_revised(
-        output_dir=args.output_dir,
+        base_results_dir=args.result_path,
+        output_dir=args.output_dir
     )
 
     # Print summary statistics
