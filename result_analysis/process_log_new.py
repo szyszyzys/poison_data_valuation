@@ -1,3 +1,10 @@
+import glob
+import json
+import os
+import traceback
+
+import numpy as np
+import pandas as pd
 import torch
 
 
@@ -635,107 +642,6 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
 #         return [], {}
 
 
-import os
-import json
-import glob
-import pandas as pd
-import numpy as np  # For average_dicts if used
-import traceback  # For detailed error printing
-
-
-# --- Placeholder for process_single_experiment and average_dicts ---
-# You need to have these functions defined or imported.
-# For this example, I'll create dummy versions.
-
-def process_single_experiment(file_path, attack_params, market_params, data_statistics_path, adv_rate, cur_run,
-                              target_accuracy_for_coc=0.8, convergence_milestones=None):
-    """
-    DUMMY process_single_experiment. Replace with your actual function.
-    """
-    # print(f"    [DUMMY] Processing run {cur_run} from {file_path} with params: A={attack_params}, M={market_params}")
-    if not os.path.exists(file_path):
-        # print(f"    [DUMMY] File not found: {file_path}")
-        return [], {}
-
-    # Simulate some data processing
-    round_data_example = {
-        'run': cur_run, 'round': 0, **attack_params, **market_params,
-        'main_acc': np.random.rand(), 'asr': np.random.rand() * adv_rate,
-        'cost_per_round': 10, 'adversary_selection_rate': adv_rate * np.random.rand(),
-        # Add all columns expected by all_rounds_df
-    }
-    # Add milestone data
-    if convergence_milestones is None:
-        convergence_milestones = [0.7, 0.8, 0.9]
-    for acc_thresh in convergence_milestones:
-        round_data_example[f'ROUNDS_TO_{int(acc_thresh * 100)}ACC'] = np.random.randint(10, 50) if round_data_example[
-                                                                                                       'main_acc'] > acc_thresh else np.nan
-        round_data_example[f'COST_TO_{int(acc_thresh * 100)}ACC'] = round_data_example[
-                                                                        f'ROUNDS_TO_{int(acc_thresh * 100)}ACC'] * 10 if pd.notna(
-            round_data_example[f'ROUNDS_TO_{int(acc_thresh * 100)}ACC']) else np.nan
-
-    summary_example = {
-        'run': cur_run, **market_params, **attack_params,  # market_params and attack_params are dicts
-        'FINAL_MAIN_ACC': round_data_example['main_acc'],
-        'FINAL_ASR': round_data_example['asr'],
-        'AVG_ADVERSARY_SELECTION_RATE': round_data_example['adversary_selection_rate'],
-        'COST_OF_CONVERGENCE': np.random.randint(100, 500) if round_data_example[
-                                                                  'main_acc'] > target_accuracy_for_coc else np.nan,
-        'TOTAL_COST': 500,
-        'exp_path': os.path.dirname(os.path.dirname(file_path))  # Grandparent dir for exp path
-    }
-    # Add milestone data to summary
-    for acc_thresh in convergence_milestones:
-        summary_example[f'ROUNDS_TO_{int(acc_thresh * 100)}ACC'] = round_data_example[
-            f'ROUNDS_TO_{int(acc_thresh * 100)}ACC']
-        summary_example[f'COST_TO_{int(acc_thresh * 100)}ACC'] = round_data_example[
-            f'COST_TO_{int(acc_thresh * 100)}ACC']
-
-    return [round_data_example], summary_example
-
-
-def average_dicts(list_of_dicts):
-    """
-    DUMMY average_dicts. Averages numeric values for common keys.
-    Non-numeric values from the first dict are preserved if keys match.
-    """
-    if not list_of_dicts:
-        return {}
-
-    # Initialize with non-numeric data from the first dictionary
-    # and prepare for summing numeric data.
-    avg_dict = {}
-    sum_dict = {}
-    count_dict = {}
-
-    first_dict = list_of_dicts[0]
-    for key, value in first_dict.items():
-        if isinstance(value, (int, float, np.number)) and not isinstance(value, bool):  # Exclude bools from averaging
-            sum_dict[key] = 0
-            count_dict[key] = 0
-        else:
-            avg_dict[key] = value  # Preserve non-numeric or bool
-
-    # Aggregate sums and counts for numeric values
-    for d in list_of_dicts:
-        for key, value in d.items():
-            if key in sum_dict:  # If it's a key we decided to average
-                if pd.notna(value) and isinstance(value, (int, float, np.number)) and not isinstance(value, bool):
-                    sum_dict[key] += value
-                    count_dict[key] += 1
-
-    # Calculate averages
-    for key in sum_dict:
-        if count_dict[key] > 0:
-            avg_dict[key] = sum_dict[key] / count_dict[key]
-        else:
-            avg_dict[key] = np.nan  # Or some other placeholder like None or first_dict[key]
-
-    return avg_dict
-
-
-# --- End of Placeholder Functions ---
-
 def process_all_experiments_revised(base_results_dir='./experiment_results_revised',
                                     output_dir='./processed_data_revised',
                                     filter_params=None,
@@ -758,275 +664,224 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
 
             try:
                 with open(exp_params_path, 'r') as f:
-                    params_from_file = json.load(f)  # Renamed to avoid confusion
+                    params_from_file = json.load(f)
             except Exception as e:
-                print(f"  ERROR loading {exp_params_path}: {e}. Skipping.")
+                print(f"  ERROR loading {exp_params_path}: {e}. Skipping.");
                 continue
 
-            # --- Use full_config as the primary source ---
             full_config = params_from_file.get('full_config', params_from_file)
 
             def get_param(config_dict, path, default_val='N/A'):
                 current = config_dict
-                for key in path.split('.'):
-                    if not isinstance(current, dict) or key not in current:
+                for key_part in path.split('.'):
+                    if not isinstance(current, dict) or key_part not in current:
                         return default_val
-                    current = current.get(key)
+                    current = current.get(key_part)
                 return current
 
-            # --- Extract Parameters from full_config based on your "old" logic's needs ---
             try:
-                # For market_params
+                # --- Extract All Necessary Parameters from full_config ---
                 aggregation_method_fc = get_param(full_config, 'aggregation_method', 'N/A')
                 dataset_name_fc = get_param(full_config, 'dataset_name', 'UnknownDataset')
                 n_sellers_fc = get_param(full_config, 'data_split.num_sellers', 100)
                 data_split_mode_fc = get_param(full_config, 'data_split.data_split_mode', 'N/A')
                 local_epoch_fc = get_param(full_config, 'training.local_training_params.local_epochs', 1)
 
-                # For discovery mode in market_params
                 discovery_quality_fc_raw = get_param(full_config, 'data_split.dm_params.discovery_quality', 'N/A')
-                discovery_quality_fc = str(discovery_quality_fc_raw)  # Consistent string
+                discovery_quality_fc = str(discovery_quality_fc_raw)
                 buyer_data_mode_fc = get_param(full_config, 'data_split.dm_params.buyer_data_mode', 'N/A')
 
-                # For attack_params
-                adv_rate_fc_datasplit = get_param(full_config, 'data_split.adv_rate', 0.0)  # Primary adv_rate source
+                adv_rate_from_datasplit_fc = get_param(full_config, 'data_split.adv_rate', 0.0)
 
                 attack_enabled_fc = get_param(full_config, 'attack.enabled', False)
-                attack_objective = get_param(full_config, 'attack.attack_type', "backdoor")
                 gradient_manipulation_mode_fc = get_param(full_config, 'attack.gradient_manipulation_mode', 'None')
-                trigger_rate_fc = get_param(full_config, 'attack.poison_rate', 0.0)
+                trigger_rate_from_attack_config_fc = get_param(full_config, 'attack.poison_rate', 0.0)
+                poison_strength_fc = get_param(full_config, 'attack.poison_strength', 0.0)
+                # attack_objective_fc = get_param(full_config, 'attack.attack_type', "backdoor") # From your newer snippet
 
                 is_sybil_fc_bool = get_param(full_config, 'sybil.is_sybil', False)
-                # Replicate your old logic for IS_SYBIL string:
-                is_sybil_fc_str = "True" if is_sybil_fc_bool else "False"
+                sybil_mode_from_config_fc = get_param(full_config, 'sybil.sybil_mode', 'default')
+                is_sybil_fc_str = sybil_mode_from_config_fc if is_sybil_fc_bool else "False"
 
-                # Determine final adv_rate for attack_params
-                adv_rate_for_attack_params = get_param(full_config, 'data_split.adv_rate', 0.3)
+                # ADV_RATE logic (sybil override if sybil.adv_rate > 0 and is_sybil)
+                adv_rate_from_sybil_config_fc = get_param(full_config, 'sybil.adv_rate',
+                                                          0.0)  # Check if this key exists
+                adv_rate_for_attack_construction = adv_rate_from_sybil_config_fc if adv_rate_from_sybil_config_fc > 0 and is_sybil_fc_bool else adv_rate_from_datasplit_fc
 
-                # Determine final ATTACK_METHOD and related params
+                change_base_fc_bool = get_param(full_config, 'federated_learning.change_base', False)
+                change_base_fc_str = str(change_base_fc_bool)
+                trigger_mode_from_sybil_fc = get_param(full_config, 'sybil.trigger_mode', 'always_on')
+                benign_rounds_from_sybil_fc = get_param(full_config, 'sybil.benign_rounds', 0)
+
+                # --- Determine final effective parameters for processing and storage ---
                 if not attack_enabled_fc or gradient_manipulation_mode_fc.lower() in ['none', '']:
-                    final_attack_method = 'NoAttack'
-                    attack_objective = 'None'
-                    local_poison_rate = 0.0
-                    final_adv_rate_for_processing = 0.0  # For passing to process_single_experiment if NoAttack
+                    eff_attack_method = 'NoAttack'
+                    eff_trigger_rate = 0.0
+                    eff_adv_rate_processing = 0.0  # For process_single_experiment
+                    # eff_attack_objective = 'None' # From your newer snippet
                 else:
-                    final_attack_method = "local_poison"
-                    local_poison_rate = trigger_rate_fc
-                    final_adv_rate_for_processing = adv_rate_for_attack_params  # Use the determined adv_rate for active attacks
+                    eff_attack_method = gradient_manipulation_mode_fc
+                    eff_trigger_rate = trigger_rate_from_attack_config_fc
+                    eff_adv_rate_processing = adv_rate_for_attack_construction
+                    # eff_attack_objective = attack_objective_fc
 
-                if verbose and processed_experiment_count == 0:
-                    print(f"    Extracted Params (New Config): AGG={aggregation_method_fc}, "
-                          f"DS_ADV_RATE={adv_rate_fc_datasplit}, SYBIL_ADV_RATE={adv_rate_for_attack_params}, "
-                          f"FINAL_ADV_RATE_FOR_PROCESSING={final_adv_rate_for_processing}, "
-                          f"ATTACK_METHOD={final_attack_method}, TRIGGER_RATE={local_poison_rate}, "
+                if verbose and processed_experiment_count < 1:
+                    print(f"    Extracted & Effective Params: AGG={aggregation_method_fc}, "
+                          f"DATA_SPLIT_ADV_RATE={adv_rate_from_datasplit_fc}, "
+                          f"SYBIL_ADV_RATE_CONFIG={adv_rate_from_sybil_config_fc}, "  # If you have this key
+                          f"ADV_RATE_FOR_ATTACK_CONSTRUCTION={adv_rate_for_attack_construction}, "
+                          f"EFFECTIVE_ADV_RATE_PROCESSING={eff_adv_rate_processing}, \n"
+                          f"    ATTACK_METHOD={eff_attack_method}, TRIGGER_RATE={eff_trigger_rate}, "
+                          # f"ATTACK_OBJECTIVE={eff_attack_objective}, "
                           f"IS_SYBIL={is_sybil_fc_str}, DQ={discovery_quality_fc}, BM={buyer_data_mode_fc}, DS={dataset_name_fc}")
 
-
             except Exception as e:
-                print(f"  ERROR: Extracting parameters via get_param from {exp_params_path}: {e}. Skipping.")
-                traceback.print_exc()
+                print(f"  ERROR: Extracting parameters from {exp_params_path}: {e}. Skipping.")
+                traceback.print_exc();
                 continue
 
-            # --- Apply Filters (using extracted _fc values) ---
+            # --- Apply Filters ---
             if filter_params:
-                skip_experiment = False
                 param_map_for_filter = {
                     'aggregation_method': aggregation_method_fc,
-                    'adv_rate': final_adv_rate_for_processing,
-                    # Filter based on the effective adv_rate for the scenario
-                    'attack_method': final_attack_method,  # Filter based on standardized attack method
-                    'local_poison_rate': local_poison_rate,  # Filter based on effective trigger rate
+                    'adv_rate': eff_adv_rate_processing,  # Filter on the effective adv rate
+                    'attack_method': eff_attack_method,
+                    'trigger_rate': eff_trigger_rate,  # Renamed from local_poison_rate
                     'is_sybil': is_sybil_fc_str,
-                    'attack_objective': attack_objective,
+                    # 'attack_objective': eff_attack_objective, # If you want to filter by this
                     'dataset_name': dataset_name_fc,
                     'discovery_quality': discovery_quality_fc,
                     'buyer_data_mode': buyer_data_mode_fc,
                     'data_split_mode': data_split_mode_fc,
-                    # Add other filterable params here if needed
+                    'change_base': change_base_fc_str,  # Add if filterable
                 }
-                # (Filter logic as before, using param_map_for_filter)
-                for key, allowed_values in filter_params.items():
+                # (Filter logic - slightly refined for clarity in type handling)
+                skip_experiment = False
+                for key, allowed_values_untyped in filter_params.items():
                     if key not in param_map_for_filter:
-                        print(f"    Warning: Filter key '{key}' not recognized. Skipping filter.")
+                        print(f"    Warning: Filter key '{key}' not recognized. Skipping filter condition.")
                         continue
                     actual_value = param_map_for_filter[key]
-                    # Type handling for comparison
-                    if key in ['adv_rate', 'trigger_rate'] and not isinstance(actual_value, (int, float)):
+
+                    # Convert actual_value to string for consistent comparison if allowed_values are strings,
+                    # unless it's a known numeric key and allowed_values can also be numeric.
+                    allowed_values = []
+                    is_numeric_comparison = False
+                    if key in ['adv_rate', 'trigger_rate', 'poison_strength', 'local_epoch', 'n_sellers',
+                               'benign_rounds']:  # Known numeric params
                         try:
-                            actual_value = float(actual_value)
-                        except ValueError:
-                            pass
+                            actual_value_num = float(actual_value)
+                            allowed_values = [float(v) for v in allowed_values_untyped]
+                            is_numeric_comparison = True
+                        except (ValueError,
+                                TypeError):  # If actual_value or allowed_values not purely numeric, fall back to string
+                            is_numeric_comparison = False
+                            actual_value = str(actual_value)
+                            allowed_values = [str(v) for v in allowed_values_untyped]
+                    else:  # Default to string comparison for other params
+                        actual_value = str(actual_value)
+                        allowed_values = [str(v) for v in allowed_values_untyped]
 
-                    if isinstance(actual_value, (int, float)):
-                        typed_allowed_values = [
-                            float(v) if isinstance(v, (str, int, float)) and str(v).replace('.', '', 1).replace('-', '',
-                                                                                                                1).isdigit() else v
-                            for v in allowed_values]
-                    else:  # string comparison
-                        typed_allowed_values = [str(v) for v in allowed_values]
-
-                    if str(actual_value) not in [str(v) for v in
-                                                 typed_allowed_values]:  # Compare as strings if one is string
-                        if verbose: print(
-                            f"    Skipping experiment {root} due to filter: {key}='{actual_value}' (not in {typed_allowed_values})")
-                        skip_experiment = True
-                        break
+                    if is_numeric_comparison:
+                        if actual_value_num not in allowed_values:  # Numeric comparison
+                            if verbose: print(
+                                f"    Skipping (filter): {key}={actual_value_num} (not in {allowed_values})")
+                            skip_experiment = True;
+                            break
+                    else:  # String comparison
+                        if actual_value not in allowed_values:
+                            if verbose: print(
+                                f"    Skipping (filter): {key}='{actual_value}' (not in {allowed_values})")
+                            skip_experiment = True;
+                            break
                 if skip_experiment: continue
 
-            if verbose:
-                print(f"  Processing experiment: {root}")
-
-            adv_rate_for_internal_use = adv_rate_fc_datasplit  # This is 'ADV_RATE' that goes into attack_params
-
-            # --- Determine final ATTACK_METHOD, TRIGGER_RATE, and effective ADV_RATE for processing ---
-            attack_enabled_fc = get_param(full_config, 'attack.enabled', False)
-            gradient_manipulation_mode_fc = get_param(full_config, 'attack.gradient_manipulation_mode', 'None')
-            trigger_rate_from_attack_config_fc = get_param(full_config, 'attack.poison_rate', 0.0)
-
-            if not attack_enabled_fc or gradient_manipulation_mode_fc.lower() in ['none', '']:
-                final_attack_method_for_dict = 'NoAttack'  # Standardized
-                final_trigger_rate_for_dict = 0.0
-                # Effective adv_rate for 'NoAttack' scenario when passing to process_single_experiment
-                effective_adv_rate_for_processing = 0.0
-            else:
-                # Your old code used params["local_attack_params"]["gradient_manipulation_mode"]
-                # In new JSON, this is full_config.attack.gradient_manipulation_mode
-                final_attack_method_for_dict = gradient_manipulation_mode_fc
-                final_trigger_rate_for_dict = trigger_rate_from_attack_config_fc
-                effective_adv_rate_for_processing = adv_rate_for_internal_use
+            if verbose: print(f"  Processing experiment: {root}")
 
             # --- Construct parameter dicts for process_single_experiment ---
             attack_params_dict = {
-                'ATTACK_METHOD': final_attack_method_for_dict,
-                'TRIGGER_RATE': final_trigger_rate_for_dict,
-                # Corresponds to old params["local_attack_params"]["trigger_rate"]
-                'IS_SYBIL': get_param(full_config, 'sybil.sybil_mode', 'default') if get_param(full_config,
-                                                                                               'sybil.is_sybil',
-                                                                                               False) else "False",
-                # Matches old logic
-                'ADV_RATE': adv_rate_for_internal_use,
-                # This is the adv_rate reflecting the population, possibly overridden by sybil if you add that logic
-                'CHANGE_BASE': str(get_param(full_config, 'federated_learning.change_base', False)),
-                # From federated_learning config
-                'TRIGGER_MODE': get_param(full_config, 'sybil.trigger_mode', 'always_on'),  # From sybil config
-                "benign_rounds": get_param(full_config, 'sybil.benign_rounds', 0),  # From sybil config
-                "poison_strength": get_param(full_config, 'attack.poison_strength', 0.0)  # From attack config
-                # Note: Old code had "trigger_mode" twice, assuming one was sufficient.
+                'ATTACK_METHOD': eff_attack_method,
+                'TRIGGER_RATE': eff_trigger_rate,
+                'IS_SYBIL': is_sybil_fc_str,
+                'ADV_RATE': adv_rate_for_attack_construction,  # The ADV_RATE reflecting population for attack logic
+                'CHANGE_BASE': change_base_fc_str,
+                'TRIGGER_MODE': trigger_mode_from_sybil_fc,
+                "benign_rounds": benign_rounds_from_sybil_fc,
+                "poison_strength": poison_strength_fc,
+                # If 'ATTACK_OBJECTIVE' is needed by process_single_experiment:
+                # 'ATTACK_OBJECTIVE': eff_attack_objective,
             }
-
             market_params_dict = {
-                'AGGREGATION_METHOD': get_param(full_config, 'aggregation_method', 'N/A'),
-                'DATA_SPLIT_MODE': get_param(full_config, 'data_split.data_split_mode', 'N/A'),
-                'N_CLIENTS': get_param(full_config, 'data_split.num_sellers', 100),
-                'LOCAL_EPOCH': get_param(full_config, 'training.local_training_params.local_epochs', 1),
-                'DATASET': get_param(full_config, 'dataset_name', 'UnknownDataset'),
+                'AGGREGATION_METHOD': aggregation_method_fc,
+                'DATA_SPLIT_MODE': data_split_mode_fc,
+                'N_CLIENTS': n_sellers_fc,
+                'LOCAL_EPOCH': local_epoch_fc,
+                'DATASET': dataset_name_fc,
             }
-            if market_params_dict['DATA_SPLIT_MODE'] == "discovery":
-                market_params_dict["discovery_quality"] = str(
-                    get_param(full_config, 'data_split.dm_params.discovery_quality', 'N/A'))
-                market_params_dict["buyer_data_mode"] = get_param(full_config, 'data_split.dm_params.buyer_data_mode',
-                                                                  'N/A')
+            if data_split_mode_fc == "discovery":
+                market_params_dict["discovery_quality"] = discovery_quality_fc
+                market_params_dict["buyer_data_mode"] = buyer_data_mode_fc
 
-            # # --- Construct parameter dicts (matching your "old" structure's expectations) ---
-            # attack_params_dict = {
-            #     'ATTACK_METHOD': final_attack_method,  # This comes from gradient_manipulation_mode_fc
-            #     'LOCAL_POISON_RATE': local_poison_rate,  # This comes from trigger_rate_fc
-            #     'IS_SYBIL': is_sybil_fc_str,
-            #     'ADV_RATE': adv_rate_for_attack_params,  # Reflects sybil override if applicable
-            #     'TRIGGER_MODE': "fixed",
-            #     'ATTACK_OBJECTIVE': attack_objective
-            # }
-            #
-            # market_params_dict = {
-            #     'AGGREGATION_METHOD': aggregation_method_fc,
-            #     'DATA_SPLIT_MODE': data_split_mode_fc,
-            #     'N_CLIENTS': n_sellers_fc,
-            #     'LOCAL_EPOCH': local_epoch_fc,  # Added from your new config
-            #     'DATASET': dataset_name_fc,  # Added from your new config
-            # }
-            # if data_split_mode_fc == "discovery":
-            #     market_params_dict["discovery_quality"] = discovery_quality_fc
-            #     market_params_dict["buyer_data_mode"] = buyer_data_mode_fc
-
-            # --- Find and Process Runs ---
+            # (Run processing loop as before)
             run_paths = sorted(glob.glob(os.path.join(root, "run_*")))
-            if not run_paths:  # (Same as before)
-                if verbose:
-                    print(f"    No 'run_*' subdirectories found in: {root}")
-                    continue
-            if verbose:
-                print(f"    Found {len(run_paths)} potential run directories.")
 
             current_exp_processed_data, current_exp_summaries = [], []
             for run_idx, run_dir_path in enumerate(run_paths):
-                if not os.path.isdir(run_dir_path):
-                    continue
-                market_log_file = os.path.join(run_dir_path, "market_log_final.ckpt")  # Or "market_log_final.ckpt"
+                if not os.path.isdir(run_dir_path): continue
+                market_log_file = os.path.join(run_dir_path, "market_log.ckpt")  # OR "market_log_final.ckpt"
                 data_stats_file = os.path.join(run_dir_path, "data_statistics.json")
                 if not os.path.exists(market_log_file):
-                    if verbose:
-                        print(
-                            f"      Log file not found in: {run_dir_path} (expected {os.path.basename(market_log_file)})")
+                    if verbose: print(f"      Log file missing: {market_log_file}")
                     continue
                 data_stats_path_to_pass = data_stats_file if os.path.exists(data_stats_file) else None
                 try:
                     processed_run_data, summary_run = process_single_experiment(
-                        file_path=market_log_file,
-                        attack_params=attack_params_dict,  # Pass the newly constructed dict
-                        market_params=market_params_dict,  # Pass the newly constructed dict
-                        data_statistics_path=data_stats_path_to_pass,
-                        # Pass the adv_rate that reflects the active attack scenario for processing within single_experiment
-                        adv_rate=final_adv_rate_for_processing,
+                        file_path=market_log_file, attack_params=attack_params_dict,
+                        market_params=market_params_dict, data_statistics_path=data_stats_path_to_pass,
+                        adv_rate=eff_adv_rate_processing,  # Pass the effective adv_rate for the scenario
                         cur_run=run_idx
                     )
-                    if processed_run_data:
-                        current_exp_processed_data.extend(processed_run_data)
-                    if summary_run:
-                        summary_run['exp_path'] = root
-                        current_exp_summaries.append(summary_run)
+                    if processed_run_data: current_exp_processed_data.extend(processed_run_data)
+                    if summary_run: summary_run['exp_path'] = root; current_exp_summaries.append(summary_run)
                 except Exception as e:
-                    print(f"    ERROR processing run {run_dir_path}: {e}")
+                    print(f"    ERROR processing run {run_dir_path}: {e}");
                     traceback.print_exc()
 
-            # --- Aggregate results (ensure all key identifying params are in avg_summary) ---
             if current_exp_summaries:
                 processed_experiment_count += 1
-                all_summary_data.extend(current_exp_summaries)  # Store individual run summaries
+                all_summary_data.extend(current_exp_summaries)
                 try:
                     avg_summary_for_exp = average_dicts(current_exp_summaries)
-                    # Explicitly set/override key identifiers from the experiment-level derived values
-                    # These are the primary keys for grouping and identifying experiments in summary_avg.csv
+                    # Ensure all identifying parameters are present and correct in the averaged summary
+                    # These come from the experiment-level configuration, not from averaging metrics
                     avg_summary_for_exp.update({
-                        'AGGREGATION_METHOD': aggregation_method_fc,
-                        'DATASET': dataset_name_fc,
-                        'ATTACK_METHOD': final_attack_method,
-                        'ADV_RATE': final_adv_rate_for_processing,  # Use the one reflecting the scenario
-                        'LOCAL_POISON_RATE': local_poison_rate,
-                        'IS_SYBIL': is_sybil_fc_str,
-                        'DATA_SPLIT_MODE': data_split_mode_fc,
-                        'discovery_quality': discovery_quality_fc,  # Will be 'N/A' if not discovery mode
-                        'buyer_data_mode': buyer_data_mode_fc,  # Will be 'N/A' if not discovery mode
-                        'N_CLIENTS': n_sellers_fc,
-                        'LOCAL_EPOCH': local_epoch_fc,
-                        'ATTACK_OBJECTIVE': attack_objective,
+                        'AGGREGATION_METHOD': aggregation_method_fc, 'DATASET': dataset_name_fc,
+                        'ATTACK_METHOD': eff_attack_method, 'ADV_RATE': eff_adv_rate_processing,
+                        'TRIGGER_RATE': eff_trigger_rate, 'IS_SYBIL': is_sybil_fc_str,
+                        'CHANGE_BASE': change_base_fc_str, 'DATA_SPLIT_MODE': data_split_mode_fc,
+                        'discovery_quality': discovery_quality_fc, 'buyer_data_mode': buyer_data_mode_fc,
+                        'N_CLIENTS': n_sellers_fc, 'LOCAL_EPOCH': local_epoch_fc,
+                        'poison_strength': poison_strength_fc,
+                        'CONFIG_ADV_RATE': adv_rate_for_attack_construction,
+                        # Store the originally configured adv_rate for clarity
+                        # 'ATTACK_OBJECTIVE': eff_attack_objective, # Add if it's a key identifier
                         'exp_path': root
                     })
-                    avg_summary_for_exp.pop('run', None)  # Remove run-specific cur_run from averaged summary
+                    avg_summary_for_exp.pop('run', None)  # Remove run-specific 'run' key
 
                     all_summary_data_avg.append(avg_summary_for_exp)
                     if verbose: print(f"    Aggregated {len(current_exp_summaries)} runs for experiment {root}.")
                 except Exception as e:
-                    print(f"    ERROR averaging summaries for {root}: {e}")
+                    print(f"    ERROR averaging summaries for {root}: {e}");
                     traceback.print_exc()
-            if current_exp_processed_data:
-                all_processed_data.extend(current_exp_processed_data)
+            if current_exp_processed_data: all_processed_data.extend(current_exp_processed_data)
 
-    if not experiment_found_flag:
-        print("No 'experiment_params.json' files found.")
-    if processed_experiment_count == 0:
-        print("Found experiment params, but no runs yielded summaries.")
+    # (Saving logic - same as before)
+    if not experiment_found_flag: print("No 'experiment_params.json' files found.")
+    if processed_experiment_count == 0: print(
+        "Found experiment params, but no runs yielded summaries (or all filtered out).")
     if not all_processed_data and not all_summary_data_avg and not all_summary_data:
-        print("No data processed. Output files will be empty.")
+        print("No data processed. Output files will be empty.");
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     df_all_rounds = pd.DataFrame(all_processed_data) if all_processed_data else pd.DataFrame()
     df_summary_avg = pd.DataFrame(all_summary_data_avg) if all_summary_data_avg else pd.DataFrame()
@@ -1035,12 +890,12 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                                                                ["all_rounds.csv", "summary_avg.csv",
                                                                 "summary_individual_runs.csv"])
     if not df_all_rounds.empty:
-        df_all_rounds.to_csv(all_rounds_csv, index=False)
+        df_all_rounds.to_csv(all_rounds_csv, index=False);
         print(f"Saved {len(df_all_rounds)} rows to {all_rounds_csv}")
     else:
         print("No all_rounds data.")
     if not df_summary_avg.empty:
-        df_summary_avg.to_csv(summary_csv_avg, index=False)
+        df_summary_avg.to_csv(summary_csv_avg, index=False);
         print(
             f"Saved {len(df_summary_avg)} rows to {summary_csv_avg}")
     else:
