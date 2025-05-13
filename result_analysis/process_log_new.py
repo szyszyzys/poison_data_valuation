@@ -2,6 +2,7 @@ import glob
 import json
 import os
 import traceback
+from collections import defaultdict
 
 import numpy as np
 import pandas as pd
@@ -183,7 +184,7 @@ def process_single_experiment(
             )
 
             all_seller_ids = list(seller_distributions.keys())  # new
-            total_payments_per_seller = {sid: 0 for sid in all_seller_ids}
+            total_payments_per_seller = defaultdict(int)
             num_total_sellers = len(all_seller_ids)
 
             # ---------------------------------------------------- #
