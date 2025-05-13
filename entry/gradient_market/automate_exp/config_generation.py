@@ -106,7 +106,7 @@ BASE_CONFIG_TEMPLATE = {
     # --- Sybil Params ---
     'sybil': {
         'is_sybil': False,  # Default: Not a sybil attack (from args.is_sybil)
-        'benign_rounds': 5,
+        'benign_rounds': 0,
         'sybil_mode': 'default',
         'alpha': 1.0,
         'amplify_factor': 1.0,
