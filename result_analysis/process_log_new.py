@@ -521,9 +521,8 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                 trigger_rate_fc = get_param(full_config, 'attack.poison_rate', 0.0)
 
                 is_sybil_fc_bool = get_param(full_config, 'sybil.is_sybil', False)
-                sybil_mode_fc = get_param(full_config, 'sybil.sybil_mode', 'default')
                 # Replicate your old logic for IS_SYBIL string:
-                is_sybil_fc_str = sybil_mode_fc if is_sybil_fc_bool else "False"
+                is_sybil_fc_str = "True" if is_sybil_fc_bool else "False"
 
                 # Determine final adv_rate for attack_params
                 adv_rate_for_attack_params = get_param(full_config, 'data_split.adv_rate', 0.3)
@@ -552,7 +551,7 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
 
             except Exception as e:
                 print(f"  ERROR: Extracting parameters via get_param from {exp_params_path}: {e}. Skipping.")
-                traceback.print_exc();
+                traceback.print_exc()
                 continue
 
             # --- Apply Filters (using extracted _fc values) ---
@@ -610,7 +609,6 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                 'LOCAL_POISON_RATE': local_poison_rate,  # This comes from trigger_rate_fc
                 'IS_SYBIL': is_sybil_fc_str,
                 'ADV_RATE': adv_rate_for_attack_params,  # Reflects sybil override if applicable
-                'CHANGE_BASE': change_base_fc_str,
                 'TRIGGER_MODE': "fixed",
                 'ATTACK_OBJECTIVE': attack_objective
             }
@@ -629,17 +627,22 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
             # --- Find and Process Runs ---
             run_paths = sorted(glob.glob(os.path.join(root, "run_*")))
             if not run_paths:  # (Same as before)
-                if verbose: print(f"    No 'run_*' subdirectories found in: {root}"); continue
-            if verbose: print(f"    Found {len(run_paths)} potential run directories.")
+                if verbose:
+                    print(f"    No 'run_*' subdirectories found in: {root}")
+                    continue
+            if verbose:
+                print(f"    Found {len(run_paths)} potential run directories.")
 
             current_exp_processed_data, current_exp_summaries = [], []
             for run_idx, run_dir_path in enumerate(run_paths):
-                if not os.path.isdir(run_dir_path): continue
+                if not os.path.isdir(run_dir_path):
+                    continue
                 market_log_file = os.path.join(run_dir_path, "market_log_final.ckpt")  # Or "market_log_final.ckpt"
                 data_stats_file = os.path.join(run_dir_path, "data_statistics.json")
                 if not os.path.exists(market_log_file):
-                    if verbose: print(
-                        f"      Log file not found in: {run_dir_path} (expected {os.path.basename(market_log_file)})")
+                    if verbose:
+                        print(
+                            f"      Log file not found in: {run_dir_path} (expected {os.path.basename(market_log_file)})")
                     continue
                 data_stats_path_to_pass = data_stats_file if os.path.exists(data_stats_file) else None
                 try:
@@ -652,10 +655,13 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                         adv_rate=final_adv_rate_for_processing,
                         cur_run=run_idx
                     )
-                    if processed_run_data: current_exp_processed_data.extend(processed_run_data)
-                    if summary_run: summary_run['exp_path'] = root; current_exp_summaries.append(summary_run)
+                    if processed_run_data:
+                        current_exp_processed_data.extend(processed_run_data)
+                    if summary_run:
+                        summary_run['exp_path'] = root
+                        current_exp_summaries.append(summary_run)
                 except Exception as e:
-                    print(f"    ERROR processing run {run_dir_path}: {e}");
+                    print(f"    ERROR processing run {run_dir_path}: {e}")
                     traceback.print_exc()
 
             # --- Aggregate results (ensure all key identifying params are in avg_summary) ---
@@ -671,7 +677,7 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                         'DATASET': dataset_name_fc,
                         'ATTACK_METHOD': final_attack_method,
                         'ADV_RATE': final_adv_rate_for_processing,  # Use the one reflecting the scenario
-                        'TRIGGER_RATE': local_poison_rate,
+                        'LOCAL_POISON_RATE': local_poison_rate,
                         'IS_SYBIL': is_sybil_fc_str,
                         'CHANGE_BASE': change_base_fc_str,
                         'DATA_SPLIT_MODE': data_split_mode_fc,
@@ -687,7 +693,7 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                     all_summary_data_avg.append(avg_summary_for_exp)
                     if verbose: print(f"    Aggregated {len(current_exp_summaries)} runs for experiment {root}.")
                 except Exception as e:
-                    print(f"    ERROR averaging summaries for {root}: {e}");
+                    print(f"    ERROR averaging summaries for {root}: {e}")
                     traceback.print_exc()
             if current_exp_processed_data: all_processed_data.extend(current_exp_processed_data)
 
@@ -695,7 +701,7 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
     if not experiment_found_flag: print("No 'experiment_params.json' files found.")
     if processed_experiment_count == 0: print("Found experiment params, but no runs yielded summaries.")
     if not all_processed_data and not all_summary_data_avg and not all_summary_data:
-        print("No data processed. Output files will be empty.");
+        print("No data processed. Output files will be empty.")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     df_all_rounds = pd.DataFrame(all_processed_data) if all_processed_data else pd.DataFrame()
     df_summary_avg = pd.DataFrame(all_summary_data_avg) if all_summary_data_avg else pd.DataFrame()
@@ -704,18 +710,18 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                                                                ["all_rounds.csv", "summary_avg.csv",
                                                                 "summary_individual_runs.csv"])
     if not df_all_rounds.empty:
-        df_all_rounds.to_csv(all_rounds_csv, index=False);
+        df_all_rounds.to_csv(all_rounds_csv, index=False)
         print(f"Saved {len(df_all_rounds)} rows to {all_rounds_csv}")
     else:
         print("No all_rounds data.")
     if not df_summary_avg.empty:
-        df_summary_avg.to_csv(summary_csv_avg, index=False);
+        df_summary_avg.to_csv(summary_csv_avg, index=False)
         print(
             f"Saved {len(df_summary_avg)} rows to {summary_csv_avg}")
     else:
         print("No avg summary data.")
     if not df_summary_individual_runs.empty:
-        df_summary_individual_runs.to_csv(summary_csv_individual, index=False);
+        df_summary_individual_runs.to_csv(summary_csv_individual, index=False)
         print(
             f"Saved {len(df_summary_individual_runs)} rows to {summary_csv_individual}")
     else:

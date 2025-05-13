@@ -226,7 +226,7 @@ def poisoning_attack_text(
                     is_sybil=args.is_sybil,
                     sybil_coordinator=sybil_coordinator,
                     benign_rounds=sybil_params['benign_rounds'],
-                    vocab=vocab, model_init_config=text_seller_model_config,model_type=model_type,
+                    vocab=vocab, model_init_config=text_seller_model_config, model_type=model_type,
                     pad_idx=padding_idx, initial_model=model_structure_instance
                 )
                 sybil_coordinator.register_seller(current_seller)
@@ -254,7 +254,8 @@ def poisoning_attack_text(
                 current_seller = GradientSeller(seller_id=cur_id, local_data=seller_dataset,
                                                 dataset_name=dataset_name, save_path=save_path, device=device,
                                                 local_training_params=local_training_params, vocab=vocab,
-                                                pad_idx=padding_idx, initial_model=model_structure_instance,model_type=model_type,
+                                                pad_idx=padding_idx, initial_model=model_structure_instance,
+                                                model_type=model_type,
                                                 model_init_config=text_seller_model_config
                                                 )
         else:  # Benign seller
@@ -262,7 +263,8 @@ def poisoning_attack_text(
             current_seller = GradientSeller(seller_id=cur_id, local_data=seller_dataset,
                                             dataset_name=dataset_name, save_path=save_path, device=device,
                                             local_training_params=local_training_params, vocab=vocab,
-                                            pad_idx=padding_idx, initial_model=model_structure_instance,model_type=model_type,
+                                            pad_idx=padding_idx, initial_model=model_structure_instance,
+                                            model_type=model_type,
                                             model_init_config=text_seller_model_config
                                             )
 
@@ -381,7 +383,7 @@ def poisoning_attack_image(
     dl_num_workers = local_training_params.get('num_workers', 4)
     dl_pin_memory = local_training_params.get('pin_memory', torch.cuda.is_available())
     sm_model_type = "None"
-    model_type='image'
+    model_type = 'image'
     if dataset_name == "FMNIST":
         sm_model_type = 'lenet'
     elif dataset_name == "CIFAR":
@@ -420,7 +422,6 @@ def poisoning_attack_image(
     image_seller_model_config = {
         "dataset_name": dataset_name,
     }
-
 
     # --- Initialize Attack Generator ---
     if attack_type == BACKDOOR:
@@ -488,7 +489,7 @@ def poisoning_attack_image(
     print("Setting up FL components...")
     # Buyer
     buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader.dataset, dataset_name=dataset_name,
-                           save_path=save_path, local_training_params=local_training_params,model_type=model_type,
+                           save_path=save_path, local_training_params=local_training_params, model_type=model_type,
                            initial_model=model_structure_instance, model_init_config=image_seller_model_config)
 
     # Aggregator
@@ -544,7 +545,7 @@ def poisoning_attack_image(
                     local_training_params=local_training_params,
                     gradient_manipulation_mode=gradient_manipulation_mode,
                     is_sybil=args.is_sybil,
-                    sybil_coordinator=sybil_coordinator,model_type=model_type,
+                    sybil_coordinator=sybil_coordinator, model_type=model_type,
                     benign_rounds=sybil_params['benign_rounds'], initial_model=model_structure_instance,
                     model_init_config=image_seller_model_config
                 )
@@ -563,7 +564,7 @@ def poisoning_attack_image(
                     local_training_params=local_training_params,
                     is_sybil=args.is_sybil,
                     sybil_coordinator=sybil_coordinator,
-                    benign_rounds=sybil_params['benign_rounds'],model_type=model_type,
+                    benign_rounds=sybil_params['benign_rounds'], model_type=model_type,
                     initial_model=model_structure_instance, model_init_config=image_seller_model_config
                 )
                 malicious_sellers_list.append(current_seller)
@@ -572,7 +573,7 @@ def poisoning_attack_image(
                 current_seller = GradientSeller(seller_id=cur_id, local_data=loader.dataset,
                                                 dataset_name=dataset_name, save_path=save_path, device=device,
                                                 local_training_params=local_training_params,
-                                                initial_model=model_structure_instance,model_type=model_type,
+                                                initial_model=model_structure_instance, model_type=model_type,
                                                 model_init_config=image_seller_model_config)
 
         else:  # Benign seller
@@ -580,7 +581,7 @@ def poisoning_attack_image(
             current_seller = GradientSeller(seller_id=cur_id, local_data=loader.dataset,
                                             dataset_name=dataset_name, save_path=save_path, device=device,
                                             local_training_params=local_training_params,
-                                            initial_model=model_structure_instance,model_type=model_type,
+                                            initial_model=model_structure_instance, model_type=model_type,
                                             model_init_config=image_seller_model_config)
 
         marketplace.register_seller(cur_id, current_seller)
