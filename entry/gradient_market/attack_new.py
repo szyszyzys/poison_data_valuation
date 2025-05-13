@@ -56,7 +56,6 @@ def poisoning_attack_text(
         sybil_params: Optional[Dict] = None,
         local_training_params: Optional[Dict] = None,
         change_base: bool = True,
-        num_workers=4,
         data_split_mode: str = "NonIID",
         dm_params: Optional[Dict] = None, local_attack_params=None, privacy_attack={}
 ):
@@ -147,7 +146,6 @@ def poisoning_attack_text(
     print(f"Adversary IDs (indices): {adversary_ids}")
 
     # Define the collate function needed for text DataLoaders
-    dynamic_collate_fn = lambda batch: collate_batch_new(batch, padding_value=padding_idx)
     print("Setting up FL components...")
     # Get model instance using parameters from data loading
     model_structure_instance = get_text_model(
@@ -287,7 +285,7 @@ def poisoning_attack_text(
             buyer=buyer,
             n_adv=n_adversaries,
             test_dataloader_buyer_local=buyer_loader,  # Use collated loader
-            test_dataloader_global=test_loader,  # Ensure test loader has collate_fn
+            test_dataloader_global=test_loader,
             loss_fn=loss_fn,
             # Pass info needed for text ASR eval inside the round function
             backdoor_generator=attack_generator if attack_type == 'backdoor' else None,
@@ -349,7 +347,6 @@ def poisoning_attack_image(
         local_training_params: Optional[Dict] = None,
         change_base: bool = True,
         data_split_mode: str = "NonIID",
-        num_workers=4,
         dm_params: Optional[Dict] = None, local_attack_params=None, privacy_attack={}
 ):
     """

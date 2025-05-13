@@ -759,8 +759,8 @@ class GradientSeller(BaseSeller):
         self.batch_size = self.local_training_params.get('batch_size', 64)
         self.learning_rate = self.local_training_params.get('lr',
                                                             self.local_training_params.get('learning_rate', 0.01))
-        self.num_workers = self.local_training_params.get('num_workers', 4)
-        self.pin_memory = self.local_training_params.get('pin_memory', False)
+        self.num_workers = 0
+        self.pin_memory = False
 
         self.recent_metrics: Optional[Dict] = None
         self.cur_upload_gradient_list_tensors: Optional[
@@ -777,72 +777,73 @@ class GradientSeller(BaseSeller):
                 self.pad_idx = self.vocab.stoi[pad_token]
 
     def _get_new_model_instance(self) -> nn.Module:
-            """
-            Creates a new, uninitialized model instance based on the seller's stored configuration.
-            The model is created on self.device.
-            Relies on self.model_type and self.model_init_config.
-            """
-            logging.debug(
-                f"[{self.seller_id}] Creating new model instance of type '{self.model_type}' "
-                f"using stored config."
+        """
+        Creates a new, uninitialized model instance based on the seller's stored configuration.
+        The model is created on self.device.
+        Relies on self.model_type and self.model_init_config.
+        """
+        logging.debug(
+            f"[{self.seller_id}] Creating new model instance of type '{self.model_type}' "
+            f"using stored config."
+        )
+
+        # Always add/override device from self.device to ensure consistency
+        current_model_config = {**self.model_init_config, "device": self.device}
+
+        # Optional: dataset_name can also be part of model_init_config or passed if distinct
+        # If get_text_model/get_image_model always need dataset_name, ensure it's in current_model_config
+        if "dataset_name" not in current_model_config:
+            current_model_config["dataset_name"] = self.dataset_name
+
+        # Dispatch based on a more robust model_type or a prefix/suffix
+        # For example, if model_type is "text_cnn_agnews" or "text_transformer_trec"
+        if "text" in self.model_type.lower():
+            # get_text_model should be designed to take all its necessary args from a dict
+            # or specific named arguments present in current_model_config.
+            # Example: get_text_model(**current_model_config)
+            # Ensure all required keys (num_classes, vocab_size, padding_idx) are in current_model_config
+            required_text_keys = ["num_classes", "vocab_size", "padding_idx"]
+            if not all(key in current_model_config for key in required_text_keys):
+                missing_keys = [key for key in required_text_keys if key not in current_model_config]
+                raise ValueError(
+                    f"[{self.seller_id}] Missing required keys in model_init_config for text model: {missing_keys}. "
+                    f"Config provided: {current_model_config}"
+                )
+
+            # If get_text_model takes specific args and then **kwargs for others:
+            return get_text_model(
+                dataset_name=current_model_config.get("dataset_name", self.dataset_name),  # Prioritize config
+                num_classes=current_model_config["num_classes"],
+                vocab_size=current_model_config["vocab_size"],
+                padding_idx=current_model_config["padding_idx"],
+                device=current_model_config["device"],  # Explicitly from seller's device
+                # Pass any other params from model_init_config as kwargs if get_text_model supports it
+                # This requires get_text_model to be structured to accept **kwargs
+                # and internally pick out what it needs (e.g., embed_dim, num_filters)
+                **current_model_config.get("model_kwargs", {})  # If you have a nested 'model_kwargs'
+                # OR pass current_model_config directly if flat
             )
 
-            # Always add/override device from self.device to ensure consistency
-            current_model_config = {**self.model_init_config, "device": self.device}
+        elif "image" in self.model_type.lower() or \
+                self.model_type.lower() in ["resnet18", "simple_cnn_cifar", "simple_cnn_mnist"]:  # More specific types
+            # Ensure all required keys for get_image_model are present
+            # (e.g., num_classes might be needed, others might have defaults)
+            if "num_classes" not in current_model_config:
+                # Try to infer from dataset_name or raise error if necessary for get_image_model
+                if self.dataset_name.lower() == "cifar10":
+                    current_model_config["num_classes"] = 10
+                elif self.dataset_name.lower() == "mnist":
+                    current_model_config["num_classes"] = 10
+                # else: pass None and let get_image_model handle it or raise error
 
-            # Optional: dataset_name can also be part of model_init_config or passed if distinct
-            # If get_text_model/get_image_model always need dataset_name, ensure it's in current_model_config
-            if "dataset_name" not in current_model_config:
-                current_model_config["dataset_name"] = self.dataset_name
-
-
-            # Dispatch based on a more robust model_type or a prefix/suffix
-            # For example, if model_type is "text_cnn_agnews" or "text_transformer_trec"
-            if "text" in self.model_type.lower():
-                # get_text_model should be designed to take all its necessary args from a dict
-                # or specific named arguments present in current_model_config.
-                # Example: get_text_model(**current_model_config)
-                # Ensure all required keys (num_classes, vocab_size, padding_idx) are in current_model_config
-                required_text_keys = ["num_classes", "vocab_size", "padding_idx"]
-                if not all(key in current_model_config for key in required_text_keys):
-                    missing_keys = [key for key in required_text_keys if key not in current_model_config]
-                    raise ValueError(
-                        f"[{self.seller_id}] Missing required keys in model_init_config for text model: {missing_keys}. "
-                        f"Config provided: {current_model_config}"
-                    )
-
-                # If get_text_model takes specific args and then **kwargs for others:
-                return get_text_model(
-                    dataset_name=current_model_config.get("dataset_name", self.dataset_name), # Prioritize config
-                    num_classes=current_model_config["num_classes"],
-                    vocab_size=current_model_config["vocab_size"],
-                    padding_idx=current_model_config["padding_idx"],
-                    device=current_model_config["device"], # Explicitly from seller's device
-                    # Pass any other params from model_init_config as kwargs if get_text_model supports it
-                    # This requires get_text_model to be structured to accept **kwargs
-                    # and internally pick out what it needs (e.g., embed_dim, num_filters)
-                    **current_model_config.get("model_kwargs", {}) # If you have a nested 'model_kwargs'
-                                                                   # OR pass current_model_config directly if flat
-                )
-
-            elif "image" in self.model_type.lower() or \
-                 self.model_type.lower() in ["resnet18", "simple_cnn_cifar", "simple_cnn_mnist"]: # More specific types
-                # Ensure all required keys for get_image_model are present
-                # (e.g., num_classes might be needed, others might have defaults)
-                if "num_classes" not in current_model_config:
-                     # Try to infer from dataset_name or raise error if necessary for get_image_model
-                    if self.dataset_name.lower() == "cifar10": current_model_config["num_classes"] = 10
-                    elif self.dataset_name.lower() == "mnist": current_model_config["num_classes"] = 10
-                    # else: pass None and let get_image_model handle it or raise error
-
-                # If get_image_model takes specific args and then **kwargs:
-                return get_image_model(
-                    dataset_name=current_model_config.get("dataset_name", self.dataset_name), # Prioritize config
-                    device=current_model_config["device"],
-                )
-            else:
-                raise ValueError(f"[{self.seller_id}] Unsupported model_type: '{self.model_type}' for creating new instance.")
-
+            # If get_image_model takes specific args and then **kwargs:
+            return get_image_model(
+                dataset_name=current_model_config.get("dataset_name", self.dataset_name),  # Prioritize config
+                device=current_model_config["device"],
+            )
+        else:
+            raise ValueError(
+                f"[{self.seller_id}] Unsupported model_type: '{self.model_type}' for creating new instance.")
 
     def _get_init_args_for_base_model(self) -> Dict[str, Any]:
         # This is a placeholder and THE MOST DIFFICULT PART of this approach.
