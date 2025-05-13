@@ -463,16 +463,16 @@ if __name__ == "__main__":
         # Manually set device in template if torch is unavailable
         BASE_CONFIG_TEMPLATE['device'] = 'cpu'
 
-    CONFIG_OUTPUT_DIRECTORY = "./configs_generated_text"  # Directory to save generated configs
+    CONFIG_OUTPUT_DIRECTORY = "./configs_generated_img"  # Directory to save generated configs
 
     print(f"Generating configuration files in: {CONFIG_OUTPUT_DIRECTORY}")
 
     # Generate specific experiment groups citation of similar attacks, section 2 threat model. explain martfl... weak assumption show good attack results
-    generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
     generate_privacy_attack(CONFIG_OUTPUT_DIRECTORY)
     # Add calls to generate other experiment groups as needed
 
