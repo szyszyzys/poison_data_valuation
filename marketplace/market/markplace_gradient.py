@@ -285,7 +285,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
                     # Define the learning rates to try for this specific gradient
                     # NOTE: Get this list from config or define it here
-                    lrs_to_try = self.attack_config.get('gradient_inversion_lrs_to_try', [0.05, 0.01, 0.005])
+                    lrs_to_try = self.attack_config.get('gradient_inversion_lrs_to_try', [0.05, 0.01, 0.005, 0.1])
                     if not lrs_to_try:  # Ensure list is not empty
                         lrs_to_try = [gia_params.get('lr', 0.01)]  # Fallback to original lr
 
