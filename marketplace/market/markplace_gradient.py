@@ -237,7 +237,13 @@ class DataMarketplaceFederated(DataMarketplace):
 
                 # For GIA, we need ground truth images and labels.
                 # The attack typically reconstructs `num_images`. We need a GT batch of this size.
-                gia_params = self.attack_config.get('params', {})
+                gia_params = self.attack_config.get('params', {
+                    'num_images': self.attack_config.get("batch_size", 64),
+                    'iterations': 1000,
+                    'lr': 0.05,
+                    'loss_type': 'cosine',
+                    'regularization_weight': 0.0001
+                })
                 num_images_for_attack = gia_params.get('num_images', 1)
 
                 gt_images, gt_labels = None, None
