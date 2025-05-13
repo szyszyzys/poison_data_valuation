@@ -446,7 +446,7 @@ def perform_and_evaluate_inversion_attack(
         reconstructed_images, reconstructed_labels = gradient_inversion_attack(
             target_gradient=[g.clone().to(device) for g in target_gradient], model=attack_model,
             input_shape=input_shape, num_classes=num_classes, device=device, num_images=num_images,
-            iterations=iterations, lr=lr, label_type=label_type, ground_truth_labels=current_gt_labels_for_attack, dataset_mean = ds_mean, dataset_std = ds_std
+            iterations=iterations, lr=lr, label_type=label_type, ground_truth_labels=current_gt_labels_for_attack, dataset_mean = ds_mean, dataset_std = ds_std,
             **atk_kwargs)
 
         attack_duration_sec = time.time() - attack_start_time
