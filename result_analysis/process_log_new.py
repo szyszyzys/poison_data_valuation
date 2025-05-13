@@ -345,6 +345,7 @@ def process_single_experiment(file_path, attack_params, market_params, data_stat
                     summary_key = f'NO_ATTACK_DESIG_MAL_SEL_RATE_{hypo_adv_rate:.1f}'
                     if summary_key not in summary:  # If not added because it was an attack run
                         summary[summary_key] = np.nan
+            print(summary)
             return processed_data, summary
         return [], {}
 
@@ -802,8 +803,6 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                 # Determine final adv_rate for attack_params
                 adv_rate_for_attack_params = get_param(full_config, 'data_split.adv_rate', 0.3)
 
-                change_base_fc_bool = get_param(full_config, 'federated_learning.change_base', False)
-                change_base_fc_str = str(change_base_fc_bool)
 
                 # Determine final ATTACK_METHOD and related params
                 if not attack_enabled_fc or gradient_manipulation_mode_fc.lower() in ['none', '']:
@@ -840,7 +839,6 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                     'local_poison_rate': local_poison_rate,  # Filter based on effective trigger rate
                     'is_sybil': is_sybil_fc_str,
                     'attack_objective': attack_objective,
-                    'change_base': change_base_fc_str,
                     'dataset_name': dataset_name_fc,
                     'discovery_quality': discovery_quality_fc,
                     'buyer_data_mode': buyer_data_mode_fc,
@@ -954,7 +952,6 @@ def process_all_experiments_revised(base_results_dir='./experiment_results_revis
                         'ADV_RATE': final_adv_rate_for_processing,  # Use the one reflecting the scenario
                         'LOCAL_POISON_RATE': local_poison_rate,
                         'IS_SYBIL': is_sybil_fc_str,
-                        'CHANGE_BASE': change_base_fc_str,
                         'DATA_SPLIT_MODE': data_split_mode_fc,
                         'discovery_quality': discovery_quality_fc,  # Will be 'N/A' if not discovery mode
                         'buyer_data_mode': buyer_data_mode_fc,  # Will be 'N/A' if not discovery mode
