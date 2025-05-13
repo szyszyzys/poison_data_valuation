@@ -56,27 +56,27 @@ def calculate_gini(payments):
 
 # Assume average_dicts and process_single_experiment are defined elsewhere
 # Example placeholder for average_dicts
-def average_dicts(dict_list):
-    if not dict_list:
+def average_dicts(dicts):
+    """
+    Return the entry‑wise average of a list of dicts.
+    • Works for numbers; non‑numeric values are ignored when averaging.
+    • If a key is missing in some dicts, np.nan is used for those rows.
+    """
+    if not dicts:
         return {}
-    # Simple averaging for numeric values, assumes all dicts have same keys
-    # More robust implementation might be needed depending on dict contents
-    avg_dict = {}
-    keys = dict_list[0].keys()
-    for key in keys:
-        values = [d.get(key) for d in dict_list if isinstance(d.get(key), (int, float))]
-        if values:
-            avg_dict[key] = np.mean(values)
-        else:
-            # Keep non-numeric or missing values from the first dict (or handle differently)
-            avg_dict[key] = dict_list[0].get(key)
-    # Copy over the non-numeric identifying keys from the first dict
-    for key in keys:
-        if key not in avg_dict:  # If it wasn't numeric and averaged
-            avg_dict[key] = dict_list[0].get(key)
 
-    return avg_dict
+    import numpy as np
+    import pandas as pd
 
+    # union of keys across all run‑summaries
+    all_keys = set().union(*dicts)
+    out = {}
+
+    for k in all_keys:
+        vals = [d[k] for d in dicts if k in d and pd.notna(d[k])]
+        out[k] = np.mean(vals) if vals else np.nan
+
+    return out
 
 def process_single_experiment(
     file_path, attack_params, market_params, data_statistics_path,
@@ -779,7 +779,6 @@ def process_all_experiments_revised(
         poison_rate = _get(full_cfg, "attack.poison_rate", 0.0)
         attack_objective = _get(full_cfg, "attack.attack_type", "backdoor")
         benign_rounds = _get(full_cfg, "sybil.benign_rounds", 0)
-        trigger_mode = _get(full_cfg, "sybil.trigger_mode", "fixed")
 
         is_sybil_bool = _get(full_cfg, "sybil.is_sybil", False)
         sybil_mode = _get(full_cfg, "sybil.sybil_mode", "False")
@@ -824,26 +823,14 @@ def process_all_experiments_revised(
         if verbose:
             print(f"  Processing experiment: {root}")
 
-        # -------------------- 1️⃣  attack_params ----------------------- #
-        # attack_params_dict = {
-        #     "ATTACK_METHOD": attack_method,
-        #     "TRIGGER_RATE": trigger_rate,
-        #     "IS_SYBIL": sybil_mode if is_sybil_bool else "False",
-        #     "ADV_RATE": effective_adv_rate,
-        #     "CHANGE_BASE": _get(full_cfg, "data_split.change_base", "False"),
-        #     "TRIGGER_MODE": trigger_mode,
-        #     "benign_rounds": benign_rounds,
-        #     "trigger_mode": trigger_mode,  # (exact duplicate key kept for B/C)
-        # }
+
         attack_params_dict = {
             "ATTACK_METHOD": attack_method,  # now "None" for baselines
             "TRIGGER_RATE": trigger_rate,
             "IS_SYBIL": sybil_mode if is_sybil_bool else "False",
             "ADV_RATE": effective_adv_rate,
             "CHANGE_BASE": _get(full_cfg, "data_split.change_base", "False"),
-            "TRIGGER_MODE": trigger_mode,
             "benign_rounds": benign_rounds,
-            "trigger_mode": trigger_mode,
             "attack_objective": attack_objective  # kept for backward compatibility
         }
 
