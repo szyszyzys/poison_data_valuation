@@ -947,17 +947,8 @@ class GradientSeller(BaseSeller):
             training_stats['compute_time_ms'] = (time.time() - start_time) * 1000
             return zero_grad_tensors, None, base_model, {}, training_stats
 
-        # --- Data Type Detection (Simplified if dataset is always a PyTorch Dataset) ---
-        # We primarily rely on the structure of data items if we need to differentiate
-        # between image and text for collate_fn, but DataLoader creation is now more direct.
         data_loader: DataLoader
         try:
-            # Attempt to get the first item to infer structure for collate_fn if needed
-            # This assumes dataset[0] is representative.
-            first_item_sample = dataset[0]
-            # Example: Check if it's text data needing custom collation
-            # This check needs to be robust based on your actual data structure for text.
-            # For this example, let's assume if self.vocab or self.pad_idx is set, it's text.
             is_text_data = self.vocab is not None or self.pad_idx is not None
 
             if is_text_data:

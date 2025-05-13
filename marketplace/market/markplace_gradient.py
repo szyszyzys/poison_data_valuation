@@ -62,6 +62,10 @@ class DataMarketplaceFederated(DataMarketplace):
         """
         print(f"seller {seller_id}, registered {seller}")
         self.sellers[seller_id] = seller
+        if seller_id.startswith('adv_'):
+            self._adv_ids_set.add(seller_id)
+        else:
+            self._benign_ids_set.add(seller_id)
 
     def update_selection(self, new_method: str):
         """
@@ -91,9 +95,6 @@ class DataMarketplaceFederated(DataMarketplace):
         logging.info(f"Collecting gradients and stats from sellers: {list(self.sellers.keys())}")
         for seller_id, seller in self.sellers.items():
             try:
-                # --- Call the MODIFIED seller method ---
-                # It now returns two values: gradient and stats dict
-                # This assumes ALL seller types implement this modified return signature
                 grad_data, stats = seller.get_gradient_for_upload(base_model)
                 # -----------------------------------------
 
@@ -129,8 +130,6 @@ class DataMarketplaceFederated(DataMarketplace):
 
             except Exception as e:
                 logging.error(f"Error getting gradient/stats from seller {seller_id}: {e}", exc_info=True)
-                # Decide how to handle errors: skip seller, append Nones, raise?
-                # Skipping seller for robustness:
                 continue
 
         logging.info(f"Collected gradients and stats from {len(gradients_list)} out of {len(self.sellers)} sellers.")
@@ -312,7 +311,7 @@ class DataMarketplaceFederated(DataMarketplace):
                         # Perform the attack with the current LR
                         try:
                             gradient_inversion_log = perform_and_evaluate_inversion_attack(
-                                dataset_name= self.dataset_name,
+                                dataset_name=self.dataset_name,
                                 target_gradient=target_gradient,  # Pass original gradient each time
                                 model_template=self.aggregator.global_model,
                                 input_shape=input_shape_gia,
@@ -386,7 +385,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
         logging.info(f"Selected Sellers ({len(selected_ids)}): {selected_ids}")
         logging.info(f"Outlier Sellers ({len(outlier_ids)}): {outlier_ids}")
-        if aggregated_gradient and aggregated_gradient[0] is not None:
+        if aggregated_gradient is not None:
             # Use the pre-defined flatten_grads method
             logging.info(f"Aggregated gradient norm: {np.linalg.norm(flatten(aggregated_gradient))}")
 
