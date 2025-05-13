@@ -514,6 +514,7 @@ def poisoning_attack_image(
                                          trigger_mode=sybil_params["trigger_mode"])
 
     # Marketplace
+    privacy_attack["privacy_attack_path"] = save_path
     marketplace = DataMarketplaceFederated(aggregator,
                                            selection_method=aggregation_method, save_path=save_path,
                                            privacy_attack=privacy_attack)
