@@ -57,7 +57,7 @@ def poisoning_attack_text(
         local_training_params: Optional[Dict] = None,
         change_base: bool = True,
         data_split_mode: str = "NonIID",
-        dm_params: Optional[Dict] = None, local_attack_params=None, privacy_attack={}
+        dm_params: Optional[Dict] = None, local_attack_params=None, privacy_attack={}, **kwargs
 ):
     """
     Runs a federated learning experiment with either Backdoor or Label Flipping TEXT poisoning.
