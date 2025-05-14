@@ -1299,57 +1299,139 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
         self.record_federated_round(round_number, is_selected, final_model_params)
 
 
+# class TriggeredSubsetDataset(Dataset):
+#     def __init__(self, original_dataset: Dataset, trigger_indices: np.ndarray,
+#                  target_label: int, backdoor_generator, device: str):
+#         self.original_dataset = original_dataset
+#         self.trigger_indices_set = set(trigger_indices)  # Use a set for O(1) average time complexity lookups
+#         self.target_label = target_label
+#         self.backdoor_generator = backdoor_generator
+#         self.device = device
+#
+#         # Pre-fetch all items if original_dataset is slow or not easily indexable in a loop
+#         # For torchvision datasets, direct indexing is usually fine.
+#         # If original_dataset is very large and __getitem__ is slow, this might be a trade-off.
+#         # For now, we assume direct indexing is efficient.
+#
+#     def __len__(self):
+#         return len(self.original_dataset)
+#
+#     def __getitem__(self, idx: int):
+#         # Fetch original image and label
+#         img, label = self.original_dataset[idx]
+#
+#         # Ensure image is a tensor and on the correct device
+#         # Transformations (like ToTensor) should have been applied when original_dataset was created
+#         if not isinstance(img, torch.Tensor):
+#             # This case should ideally not happen if original_dataset is properly set up
+#             # For robustness, one might add a ToTensor transform here, but it's better upstream.
+#             raise TypeError(f"Image at index {idx} is not a Tensor. Found type: {type(img)}")
+#
+#         img = img.to(self.device)
+#
+#         if idx in self.trigger_indices_set:
+#             # Apply trigger and change label
+#             # The backdoor_generator's apply_trigger_tensor should handle the trigger application
+#             # and expect an image tensor.
+#             img = self.backdoor_generator.apply_trigger_tensor(img)
+#             # label = self.target_label # Label is an int
+#             # Convert label to tensor for consistency if your model/loss expects it
+#             final_label = torch.tensor(self.target_label, dtype=torch.long).to(self.device)
+#         else:
+#             # Convert original label to tensor if it's not already
+#             if isinstance(label, int):
+#                 final_label = torch.tensor(label, dtype=torch.long).to(self.device)
+#             elif isinstance(label, torch.Tensor):
+#                 final_label = label.to(torch.long).to(self.device)
+#             else:
+#                 raise TypeError(f"Unsupported label type: {type(label)}")
+#
+#         return img, final_label
+
 class TriggeredSubsetDataset(Dataset):
-    def __init__(self, original_dataset: Dataset, trigger_indices: np.ndarray,
-                 target_label: int, backdoor_generator, device: str):
+    """
+    Wraps an existing dataset so that a chosen subset of examples are
+    *dynamically* back‑doored at retrieval time.
+
+    Works for:
+        • Vision datasets       → each item = (Tensor[C,H,W], int)
+        • Text  datasets        → each item = (Tensor[L] | list[int] | Dict[str,Tensor], int)
+
+    Params
+    ------
+    original_dataset : torch.utils.data.Dataset
+    trigger_indices  : 1‑D array‑like of indices to poison
+    target_label     : int  – label to assign to poisoned samples
+    backdoor_generator : object
+        Must expose:
+            - apply_trigger_tensor(img_tensor)         # for images
+            - apply_trigger_text(token_ids | dict)     # for text
+    device : str  – 'cuda' or 'cpu'
+    """
+
+    def __init__(
+            self,
+            original_dataset: Dataset,
+            trigger_indices: np.ndarray,
+            target_label: int,
+            backdoor_generator,
+            device: str,
+    ):
         self.original_dataset = original_dataset
-        self.trigger_indices_set = set(trigger_indices)  # Use a set for O(1) average time complexity lookups
-        self.target_label = target_label
+        self.trigger_indices_set = set(map(int, trigger_indices))
+        self.target_label = int(target_label)
         self.backdoor_generator = backdoor_generator
         self.device = device
 
-        # Pre-fetch all items if original_dataset is slow or not easily indexable in a loop
-        # For torchvision datasets, direct indexing is usually fine.
-        # If original_dataset is very large and __getitem__ is slow, this might be a trade-off.
-        # For now, we assume direct indexing is efficient.
-
-    def __len__(self):
+    # ------------------------------------------------------------------ #
+    # Required Dataset interface
+    # ------------------------------------------------------------------ #
+    def __len__(self) -> int:
         return len(self.original_dataset)
 
-    def __getitem__(self, idx: int):
-        # Fetch original image and label
-        img, label = self.original_dataset[idx]
+    def __getitem__(self, idx: int) -> tuple:
+        data, label = self.original_dataset[idx]
 
-        # Ensure image is a tensor and on the correct device
-        # Transformations (like ToTensor) should have been applied when original_dataset was created
-        if not isinstance(img, torch.Tensor):
-            # This case should ideally not happen if original_dataset is properly set up
-            # For robustness, one might add a ToTensor transform here, but it's better upstream.
-            raise TypeError(f"Image at index {idx} is not a Tensor. Found type: {type(img)}")
+        is_poisoned = idx in self.trigger_indices_set
+        # -------------------------------------------------------------- #
+        # :: IMAGE BRANCH ::
+        # -------------------------------------------------------------- #
+        if isinstance(data, torch.Tensor) and data.dim() >= 3:
+            # Expect shape (C,H,W) or (H,W)
+            data = data.to(self.device)
 
-        img = img.to(self.device)
+            if is_poisoned:
+                # Rename to match your generator │▼
+                data = self.backdoor_generator.apply_trigger_tensor(data)
+                label = self.target_label
+        # -------------------------------------------------------------- #
+        # :: TEXT BRANCH ::
+        # -------------------------------------------------------------- #
+        elif isinstance(data, (list, tuple, torch.Tensor, dict)):
+            if is_poisoned:
+                data = self.backdoor_generator.apply_trigger_text(data, device=self.device)
 
-        if idx in self.trigger_indices_set:
-            # Apply trigger and change label
-            # The backdoor_generator's apply_trigger_tensor should handle the trigger application
-            # and expect an image tensor.
-            img = self.backdoor_generator.apply_trigger_tensor(img)
-            # label = self.target_label # Label is an int
-            # Convert label to tensor for consistency if your model/loss expects it
-            final_label = torch.tensor(self.target_label, dtype=torch.long).to(self.device)
+            # move to device if not already (for list/tuple case apply_trigger_text already did)
+            if isinstance(data, dict):
+                data = {k: v.to(self.device) if torch.is_tensor(v) else v
+                        for k, v in data.items()}
+            elif torch.is_tensor(data):
+                data = data.to(self.device)
+
         else:
-            # Convert original label to tensor if it's not already
-            if isinstance(label, int):
-                final_label = torch.tensor(label, dtype=torch.long).to(self.device)
-            elif isinstance(label, torch.Tensor):
-                final_label = label.to(torch.long).to(self.device)
-            else:
-                raise TypeError(f"Unsupported label type: {type(label)}")
+            raise TypeError(
+                f"Unsupported data type from wrapped dataset: {type(data)}"
+            )
 
-        return img, final_label
+        # ---------------------------------------------------------------- #
+        # Standardise label to Tensor[int] – many losses expect this
+        # ---------------------------------------------------------------- #
+        if not torch.is_tensor(label):
+            label = torch.tensor(label, dtype=torch.long)
+        label = label.to(self.device)
 
+        return data, label
 
-# --- End of New Dataset Wrapper ---
 
 class AdvancedBackdoorAdversarySeller(GradientSeller):
     """

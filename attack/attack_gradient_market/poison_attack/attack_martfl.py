@@ -31,8 +31,7 @@ stealth_grad = stealth_backdoor_attack(honest_grad, pattern_vector,
 """
 
 import logging
-import random
-from typing import List, Tuple, Optional, Any
+from typing import List, Tuple, Any, Union, Dict
 
 import numpy as np
 import torch
@@ -476,11 +475,11 @@ class LabelFlipAttackGenerator:
             return random.choice(possible_targets)
 
     def generate_poisoned_dataset(
-        self,
-        original_dataset: List[Tuple[Any, int]], # Feature first (Any), then label (int)
-        poison_rate: float = 0.1,
-        seed: int = 42
-        ) -> Tuple[List[Tuple[Any, int]], List[int]]:
+            self,
+            original_dataset: List[Tuple[Any, int]],  # Feature first (Any), then label (int)
+            poison_rate: float = 0.1,
+            seed: int = 42
+    ) -> Tuple[List[Tuple[Any, int]], List[int]]:
         """
         Creates a dataset with flipped labels for a fraction of samples.
         Keeps the features unchanged.
@@ -505,13 +504,15 @@ class LabelFlipAttackGenerator:
         num_samples = len(original_dataset)
         num_poison = int(poison_rate * num_samples)
         if num_poison == 0 and poison_rate > 0:
-             logging.warning(f"Poison rate {poison_rate} resulted in 0 samples to poison for dataset size {num_samples}.")
+            logging.warning(
+                f"Poison rate {poison_rate} resulted in 0 samples to poison for dataset size {num_samples}.")
         elif num_poison > 0:
-             logging.info(f"Applying label flipping to {num_poison}/{num_samples} samples ({poison_rate*100:.2f}%). Mode: {self.attack_mode}")
+            logging.info(
+                f"Applying label flipping to {num_poison}/{num_samples} samples ({poison_rate * 100:.2f}%). Mode: {self.attack_mode}")
 
         # Get indices to poison
         all_indices = list(range(num_samples))
-        random.shuffle(all_indices) # Shuffle to pick random indices
+        random.shuffle(all_indices)  # Shuffle to pick random indices
         indices_to_poison = set(all_indices[:num_poison])
 
         poisoned_dataset_list = []
@@ -523,7 +524,7 @@ class LabelFlipAttackGenerator:
             original_data_features, original_label = original_dataset[idx]
             # ------------------------------------------
 
-            current_label = original_label # Start with the original label
+            current_label = original_label  # Start with the original label
             is_poisoned = False
 
             if idx in indices_to_poison:
@@ -532,7 +533,7 @@ class LabelFlipAttackGenerator:
                 if flipped_label != original_label:
                     current_label = flipped_label
                     num_actually_flipped += 1
-                is_poisoned = True # Mark as processed for poisoning even if label didn't change
+                is_poisoned = True  # Mark as processed for poisoning even if label didn't change
 
             # Add the sample with original features and potentially modified label
             poisoned_dataset_list.append((original_data_features, current_label))
@@ -540,15 +541,19 @@ class LabelFlipAttackGenerator:
             # Store the original label
             original_labels_list.append(original_label)
 
-        if num_poison > 0: # Only log flipping stats if poisoning was attempted
-            logging.info(f"Label flipping complete. {num_actually_flipped} labels were actually changed out of {num_poison} selected samples.")
+        if num_poison > 0:  # Only log flipping stats if poisoning was attempted
+            logging.info(
+                f"Label flipping complete. {num_actually_flipped} labels were actually changed out of {num_poison} selected samples.")
         return poisoned_dataset_list, original_labels_list
+
 
 import logging
 import random
-from typing import List, Optional, Tuple, Any # Ensure Any for vocab type hint
+from typing import List, Optional, Tuple, Any  # Ensure Any for vocab type hint
 
-import numpy as np # For random.seed
+import numpy as np  # For random.seed
+
+
 # import torch # Not directly used in this class for now
 
 # Assume torchtext.vocab.Vocab from 0.6.0 is the type of 'vocab'
@@ -562,13 +567,13 @@ class BackdoorTextGenerator:
     """
 
     def __init__(self,
-                 vocab: Any, # Use Any or torchtext.vocab.Vocab if imported
+                 vocab: Any,  # Use Any or torchtext.vocab.Vocab if imported
                  target_label: int,
                  trigger_type: str = "word_insert",
-                 trigger_content: str = "cf", # The actual word(s) to insert
-                 location: str = "end", # "start", "end", "middle", "random_word"
+                 trigger_content: str = "cf",  # The actual word(s) to insert
+                 location: str = "end",  # "start", "end", "middle", "random_word"
                  max_seq_len: Optional[int] = None,
-                 unk_token_string: str = "<unk>" # Explicitly pass the UNK token string used during vocab creation
+                 unk_token_string: str = "<unk>"  # Explicitly pass the UNK token string used during vocab creation
                  ):
         if not hasattr(vocab, 'stoi') or not hasattr(vocab, 'itos'):
             raise TypeError(
@@ -589,7 +594,7 @@ class BackdoorTextGenerator:
         self.trigger_content = trigger_content
         self.location = location
         self.max_seq_len = max_seq_len
-        self.unk_token_string = unk_token_string # Store the UNK token string
+        self.unk_token_string = unk_token_string  # Store the UNK token string
 
         # --- Get the UNK index ---
         if self.unk_token_string not in self.vocab.stoi:
@@ -606,11 +611,11 @@ class BackdoorTextGenerator:
                 logging.warning(f"Using fallback UNK token '<unk>' at index {self.unk_idx_val}.")
             else:
                 # No usable UNK token found. This will cause problems for OOV trigger words.
-                logging.error("Neither specified UNK token nor default '<unk>' found in vocab. OOV trigger words cannot be handled.")
-                self.unk_idx_val = -1 # Indicates UNK handling is broken
+                logging.error(
+                    "Neither specified UNK token nor default '<unk>' found in vocab. OOV trigger words cannot be handled.")
+                self.unk_idx_val = -1  # Indicates UNK handling is broken
         else:
             self.unk_idx_val = self.vocab.stoi[self.unk_token_string]
-
 
         # --- Convert trigger string to token IDs using the vocab (0.6.0 style) ---
         trigger_words = self.trigger_content.split()
@@ -619,14 +624,16 @@ class BackdoorTextGenerator:
         for word in trigger_words:
             if word in self.vocab.stoi:
                 self.trigger_token_ids.append(self.vocab.stoi[word])
-            else: # Word is OOV
+            else:  # Word is OOV
                 if self.unk_idx_val != -1:
                     self.trigger_token_ids.append(self.unk_idx_val)
-                    logging.warning(f"Trigger word '{word}' not in vocabulary, mapped to UNK index {self.unk_idx_val} ('{self.unk_token_string}' or fallback).")
+                    logging.warning(
+                        f"Trigger word '{word}' not in vocabulary, mapped to UNK index {self.unk_idx_val} ('{self.unk_token_string}' or fallback).")
                 else:
                     # If unk_idx_val is -1, we cannot map OOV words.
                     # This could lead to an empty trigger if all words are OOV.
-                    logging.error(f"Trigger word '{word}' not in vocabulary, AND no valid UNK index available. This word will be omitted from trigger.")
+                    logging.error(
+                        f"Trigger word '{word}' not in vocabulary, AND no valid UNK index available. This word will be omitted from trigger.")
 
         # Check if any trigger words actually mapped to the UNK index (if unk_idx_val is valid)
         if self.unk_idx_val != -1 and any(token_id == self.unk_idx_val for token_id in self.trigger_token_ids):
@@ -647,7 +654,8 @@ class BackdoorTextGenerator:
         logging.info(f"  Target Label: {self.target_label}")
         logging.info(f"  Trigger Content: '{self.trigger_content}' (words: {trigger_words})")
         logging.info(f"  Trigger Token IDs: {self.trigger_token_ids}")
-        logging.info(f"  Actual UNK token string used for OOV: '{self.unk_token_string if self.unk_token_string in self.vocab.stoi else ('<unk>' if '<unk>' in self.vocab.stoi else 'N/A')}' at index {self.unk_idx_val}")
+        logging.info(
+            f"  Actual UNK token string used for OOV: '{self.unk_token_string if self.unk_token_string in self.vocab.stoi else ('<unk>' if '<unk>' in self.vocab.stoi else 'N/A')}' at index {self.unk_idx_val}")
         logging.info(f"  Location: {self.location}")
         logging.info(f"  Max Seq Len: {self.max_seq_len}")
 
@@ -664,16 +672,21 @@ class BackdoorTextGenerator:
         """
         poisoned_ids = list(token_ids)
 
-        if not self.trigger_token_ids: # If trigger is empty (e.g. all OOV and no unk mapping)
+        if not self.trigger_token_ids:  # If trigger is empty (e.g. all OOV and no unk mapping)
             return poisoned_ids
 
         insert_pos = -1
-        if self.location == "start": insert_pos = 0
-        elif self.location == "end": insert_pos = len(poisoned_ids)
-        elif self.location == "middle": insert_pos = len(poisoned_ids) // 2
+        if self.location == "start":
+            insert_pos = 0
+        elif self.location == "end":
+            insert_pos = len(poisoned_ids)
+        elif self.location == "middle":
+            insert_pos = len(poisoned_ids) // 2
         elif self.location == "random_word":
-            if len(poisoned_ids) == 0: insert_pos = 0
-            else: insert_pos = random.randint(0, len(poisoned_ids))
+            if len(poisoned_ids) == 0:
+                insert_pos = 0
+            else:
+                insert_pos = random.randint(0, len(poisoned_ids))
         else:
             logging.warning(f"Unknown location '{self.location}', defaulting to 'end'.")
             insert_pos = len(poisoned_ids)
@@ -687,12 +700,13 @@ class BackdoorTextGenerator:
                 len_trigger = len(self.trigger_token_ids)
                 if self.max_seq_len < len_trigger:
                     poisoned_ids = self.trigger_token_ids[:self.max_seq_len]
-                    logging.warning(f"Trigger ({len_trigger} tokens) longer than max_seq_len ({self.max_seq_len}). Truncating trigger itself.")
+                    logging.warning(
+                        f"Trigger ({len_trigger} tokens) longer than max_seq_len ({self.max_seq_len}). Truncating trigger itself.")
                 else:
                     len_original_content_allowed = self.max_seq_len - len_trigger
                     original_part_truncated = token_ids[:len_original_content_allowed]
                     poisoned_ids = original_part_truncated + self.trigger_token_ids
-            else: # Middle or random
+            else:  # Middle or random
                 poisoned_ids = poisoned_ids[:self.max_seq_len]
         return poisoned_ids
 
@@ -709,9 +723,11 @@ class BackdoorTextGenerator:
         num_poison = int(poison_rate * num_samples)
 
         if num_poison == 0 and poison_rate > 0 and num_samples > 0:
-            logging.warning(f"Poison rate {poison_rate} resulted in 0 samples to poison for dataset size {num_samples}.")
-        elif num_poison > 0 :
-             logging.info(f"Poisoning {num_poison}/{num_samples} samples ({poison_rate * 100:.2f}%). Target label: {self.target_label}")
+            logging.warning(
+                f"Poison rate {poison_rate} resulted in 0 samples to poison for dataset size {num_samples}.")
+        elif num_poison > 0:
+            logging.info(
+                f"Poisoning {num_poison}/{num_samples} samples ({poison_rate * 100:.2f}%). Target label: {self.target_label}")
 
         all_indices = list(range(num_samples))
         random.shuffle(all_indices)
@@ -722,7 +738,8 @@ class BackdoorTextGenerator:
 
         for idx in range(num_samples):
             if not (isinstance(original_dataset[idx], (list, tuple)) and len(original_dataset[idx]) == 2):
-                logging.error(f"Item at index {idx} in original_dataset is malformed: {original_dataset[idx]}. Skipping.")
+                logging.error(
+                    f"Item at index {idx} in original_dataset is malformed: {original_dataset[idx]}. Skipping.")
                 original_labels_list.append(None)
                 continue
             original_label, original_token_ids = original_dataset[idx]
@@ -749,3 +766,41 @@ class BackdoorTextGenerator:
                 continue
             poisoned_sequences.append(self.apply_trigger_sequence(seq))
         return poisoned_sequences
+
+        # --- New: unified wrapper for Dataset ---
+
+    def apply_trigger_text(
+            self,
+            tokens: Union[List[int], torch.Tensor, Dict[str, torch.Tensor]],
+            device: Optional[str] = None
+    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+        """
+        Insert the trigger into a token sequence or a HuggingFace‑style
+        dict {'input_ids': Tensor, ...}.  Always returns tensors.
+        """
+        device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+        # 1) Plain list / 1‑D tensor
+        if isinstance(tokens, (list, tuple, torch.Tensor)):
+            if torch.is_tensor(tokens):
+                tokens_list = tokens.tolist()
+            else:
+                tokens_list = list(tokens)
+            poisoned_ids = self.apply_trigger_sequence(tokens_list)
+            return torch.tensor(poisoned_ids, dtype=torch.long, device=device)
+
+        # 2) Dict with 'input_ids'
+        elif isinstance(tokens, dict):
+            input_ids = tokens["input_ids"]
+            if torch.is_tensor(input_ids):
+                ids_list = input_ids.tolist()
+            else:
+                ids_list = list(input_ids)
+            poisoned_ids = self.apply_trigger_sequence(ids_list)
+            tokens["input_ids"] = torch.tensor(poisoned_ids,
+                                               dtype=torch.long,
+                                               device=device)
+            return tokens
+
+        else:
+            raise TypeError(f"Unsupported token container: {type(tokens)}")
