@@ -637,9 +637,9 @@ def poisoning_attack_image(
     marketplace.save_results(save_path)
 
     print("\nSimulation finished.")
-    print(f"Main results saved to: {save_path / 'round_results.csv'}")
+    print(f"Main results saved to: {f'{save_path}/round_results.csv'}")
     if marketplace.attack_results_list:
-        print(f"Attack results saved to: {save_path / 'attack_results.csv'}")
+        print(f"Attack results saved to: '{save_path}attack_results.csv'")
         print(f"Attack visualizations saved in: {marketplace.attack_save_dir}")
 
 
