@@ -1,12 +1,17 @@
-from typing import Dict, Any
+import copy
+import numpy as np
+import torch
+from collections.abc import Sequence
+from typing import Dict, Any, Tuple
 
 import matplotlib.pyplot as plt
-import numpy as np
 import seaborn as sns
-import torch
 from sklearn.metrics import confusion_matrix
 
 
+# ------------------------------------------------------------------ #
+# utilities defined earlier
+# ------------------------------------------------------------------ #
 def _forward(model, batch):
     """
     Run the model on a single input that can be
@@ -14,7 +19,6 @@ def _forward(model, batch):
       • dict   (HF style)                 → model(**batch)
     """
     return model(**batch) if isinstance(batch, dict) else model(batch)
-
 
 def _move_to_device(x, device):
     """Recursively move tensors inside lists / dicts to device."""
@@ -26,7 +30,31 @@ def _move_to_device(x, device):
         return type(x)(_move_to_device(v, device) for v in x)
     return x
 
+# ------------------------------------------------------------------ #
 
+def _split_batch(batch: Sequence) -> Tuple[Any, torch.Tensor]:
+    """
+    Auto‑detect whether batch comes as
+        • (inputs, labels)
+        • (labels, inputs)                        (torchtext default)
+        • (labels, inputs, lengths)
+    Returns (inputs, labels).  lengths (if present) are ignored.
+    """
+    if len(batch) == 3:  # (labels, inputs, lengths)
+        labels, inputs, _ = batch
+    else:  # len == 2
+        a, b = batch
+        # If a is a vector of ints and b is not, assume (labels, inputs)
+        if torch.is_tensor(a) and a.dtype in (torch.int32, torch.int64) and a.dim() <= 1:
+            labels, inputs = a, b
+        else:  # otherwise assume (inputs, labels)
+            inputs, labels = a, b
+    return inputs, labels
+
+
+# ------------------------------------------------------------------ #
+#            UPDATED  evaluate_attack_performance_backdoor_poison
+# ------------------------------------------------------------------ #
 def evaluate_attack_performance_backdoor_poison(
         model,
         test_loader,
@@ -37,48 +65,45 @@ def evaluate_attack_performance_backdoor_poison(
         save_path: str = "attack_performance.png",
 ) -> Dict[str, Any]:
     """
-    Evaluate a model's robustness against a back‑door attack on *image or text*
-    datasets.  For each batch it:
-       1. computes metrics on the clean inputs,
-       2. inserts the trigger, runs the model again, and collects back‑door metrics.
+    Evaluate robustness against a back‑door attack for both vision and text
+    datasets, independent of the batch tuple order returned by the loader.
     """
 
     model.eval()
-
     clean_preds, clean_labels = [], []
     trig_preds, trig_labels = [], []
 
     with torch.no_grad():
-        for batch_data, batch_labels in test_loader:
-            # ------------- CLEAN PATH -----------------
-            batch_data = _move_to_device(batch_data, device)
-            batch_labels = batch_labels.to(device)
+        for batch in test_loader:
+            inputs, labels = _split_batch(batch)
+            inputs = _move_to_device(inputs, device)
+            labels = labels.to(device)
 
-            outputs = _forward(model, batch_data)
+            # ---------------- CLEAN -----------------
+            outputs = _forward(model, inputs)
             preds = outputs.argmax(dim=1)
 
             clean_preds.append(preds.cpu().numpy())
-            clean_labels.append(batch_labels.cpu().numpy())
+            clean_labels.append(labels.cpu().numpy())
 
-            # ------------- TRIGGERED PATH -------------
-            # Produce a *deep* copy of the batch on CPU so we don't overwrite the
-            # clean tensor used above.
-            if torch.is_tensor(batch_data):
-                triggered = batch_data.clone().cpu()
-                triggered = backdoor_generator.apply_trigger_tensor(triggered)
-            else:  # dict or list/tuple token IDs
-                import copy
-                triggered = copy.deepcopy(batch_data)
-                triggered = backdoor_generator.apply_trigger_text(triggered)
+            # ---------------- TRIGGERED -------------
+            if torch.is_tensor(inputs):  # image or padded token tensor
+                trig_inp = inputs.clone().cpu()
+                trig_inp = backdoor_generator.apply_trigger_tensor(trig_inp) \
+                    if inputs.dim() >= 3 else \
+                    backdoor_generator.apply_trigger_text(trig_inp)
+            else:  # dict or list/tuple tokens
+                trig_inp = copy.deepcopy(inputs)
+                trig_inp = backdoor_generator.apply_trigger_text(trig_inp)
 
-            triggered = _move_to_device(triggered, device)
-            outputs_t = _forward(model, triggered)
+            trig_inp = _move_to_device(trig_inp, device)
+            outputs_t = _forward(model, trig_inp)
             preds_t = outputs_t.argmax(dim=1)
 
             trig_preds.append(preds_t.cpu().numpy())
-            trig_labels.append(batch_labels.cpu().numpy())
+            trig_labels.append(labels.cpu().numpy())
 
-    # -------------------- METRICS -----------------------
+    # -------------------- METRICS --------------------
     clean_preds = np.concatenate(clean_preds)
     clean_labels = np.concatenate(clean_labels)
     trig_preds = np.concatenate(trig_preds)
@@ -87,41 +112,35 @@ def evaluate_attack_performance_backdoor_poison(
     clean_acc = float(np.mean(clean_preds == clean_labels))
     trig_acc = float(np.mean(trig_preds == trig_labels))
     attack_sr = None if target_label is None else float(np.mean(trig_preds == target_label))
-    conf_matrix = confusion_matrix(trig_labels, trig_preds)
+    conf_mat = confusion_matrix(trig_labels, trig_preds)
 
-    metrics: Dict[str, Any] = {
-        "clean_accuracy": clean_acc,
-        "triggered_accuracy": trig_acc,
-        "attack_success_rate": attack_sr,
-        "confusion_matrix_triggered": conf_matrix,
-    }
+    metrics: Dict[str, Any] = dict(
+        clean_accuracy=clean_acc,
+        triggered_accuracy=trig_acc,
+        attack_success_rate=attack_sr,
+        confusion_matrix_triggered=conf_mat,
+    )
 
-    # ---------------- OPTIONAL VISUALISATION ----------------
+    # ---------------- VISUALISATION -----------------
     if plot:
         fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+        labels_bar = ["Clean", "Triggered"] + (["Attack SR"] if attack_sr is not None else [])
+        values_bar = [clean_acc * 100, trig_acc * 100] + ([attack_sr * 100] if attack_sr is not None else [])
 
-        # Bar chart
-        labels = ["Clean Accuracy", "Triggered Accuracy"]
-        values = [clean_acc * 100, trig_acc * 100]
-        if attack_sr is not None:
-            labels.append("Attack Success Rate")
-            values.append(attack_sr * 100)
-
-        ax[0].bar(labels, values, color=["steelblue", "darkorange", "crimson"][: len(labels)])
-        ax[0].set_ylabel("Percentage (%)")
+        ax[0].bar(labels_bar, values_bar, color=["steelblue", "darkorange", "crimson"][: len(labels_bar)])
+        ax[0].set_ylabel("Percentage (%)");
         ax[0].set_ylim(0, 100)
         ax[0].set_title("Model Performance")
-        for i, v in enumerate(values):
+        for i, v in enumerate(values_bar):
             ax[0].text(i, v + 1, f"{v:.1f}%", ha="center")
 
-        # Confusion‑matrix heat‑map
-        sns.heatmap(conf_matrix, annot=True, fmt="d", cmap="Blues", ax=ax[1])
-        ax[1].set_xlabel("Predicted")
+        sns.heatmap(conf_mat, annot=True, fmt="d", cmap="Blues", ax=ax[1])
+        ax[1].set_xlabel("Predicted");
         ax[1].set_ylabel("True")
         ax[1].set_title("Triggered Confusion Matrix")
 
-        plt.tight_layout()
-        plt.savefig(save_path)
+        plt.tight_layout();
+        plt.savefig(save_path);
         plt.close(fig)
 
     return metrics
