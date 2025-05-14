@@ -779,7 +779,21 @@ class BackdoorTextGenerator:
         dict {'input_ids': Tensor, ...}.  Always returns tensors.
         """
         device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.is_tensor(tokens):
+            # ------------------ NEW: batched tensor ------------------
+            if tokens.dim() == 2:  # shape [B, L]
+                seqs = [self.apply_trigger_sequence(row.tolist())
+                        for row in tokens]  # List[List[int]]
+                max_len = max(len(s) for s in seqs)
+                pad_id = self.pad_idx if hasattr(self, "pad_idx") else 0
+                padded = [s + [pad_id] * (max_len - len(s)) for s in seqs]
+                return torch.tensor(padded, dtype=torch.long, device=device)
+            # --------------------------------------------------------
 
+            if tokens.dim() == 0:  # scalar -> len==1
+                tokens = tokens.unsqueeze(0)
+            poisoned_ids = self.apply_trigger_sequence(tokens.tolist())
+            return torch.tensor(poisoned_ids, dtype=torch.long, device=device)
         # 1) Plain list / 1‑D tensor
         if isinstance(tokens, (list, tuple, torch.Tensor)):
             if torch.is_tensor(tokens):
