@@ -100,7 +100,7 @@ class SybilCoordinator:
     def __init__(self,
                  backdoor_generator,
                  detection_threshold: float = 0.8,
-                 benign_rounds: int = 3,
+                 benign_rounds: int = 0,
                  gradient_default_mode: str = "mimic",
                  trigger_mode: str = "static",
                  alpha: float = 0.5,
