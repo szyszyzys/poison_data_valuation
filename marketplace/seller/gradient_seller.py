@@ -1558,7 +1558,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         if self.sybil_coordinator and self.sybil_coordinator.start_atk:  # Check if coordinator exists
             behavior_func = self.adversary_behaviors.get(self.gradient_manipulation_mode, self.get_clean_gradient)
         else:
-            behavior_func = self.gradient_manipulation_mode
+            behavior_func = self.get_clean_gradient
 
         logging.info(f"[{self.seller_id}] Using behavior: {behavior_func.__name__}")
         local_gradient_list_np_or_tensor = behavior_func(base_model)  # Can be list of Tensors or np arrays
