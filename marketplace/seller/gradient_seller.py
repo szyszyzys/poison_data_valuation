@@ -1390,13 +1390,9 @@ class TriggeredSubsetDataset(Dataset):
         return len(self.original_dataset)
 
     def __getitem__(self, idx: int):
-        first, second = self.original_dataset[idx]
+        # NO auto‑swap here — keep whatever order original_dataset uses
+        data, label = self.original_dataset[idx]
 
-        # 🔑  detect torchtext order (label first) and swap
-        if isinstance(first, int) and not isinstance(second, int):
-            label, data = first, second
-        else:
-            data, label = first, second
 
         is_poisoned = idx in self.trigger_indices_set
         # -------------------------------------------------------------- #

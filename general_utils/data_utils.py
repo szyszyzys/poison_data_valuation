@@ -21,42 +21,48 @@ class TextDataset(Dataset):
 # vocab = loaded_data['vocabulary']
 # pad_idx = loaded_data['padding_idx']
 
+from typing import List, Tuple, Any
+import torch
+from torch.nn.utils.rnn import pad_sequence
+
 def collate_batch(
-        batch: List[Tuple[int, List[int]]],  # Batch is a list of (label, token_ids)
-        padding_value: int  # Pass the padding index from your vocab
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:  # Returns labels, padded_sequences, lengths
+    batch: List[Tuple[Any, Any]],   # accept any order / type
+    padding_value: int,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Collates a batch of text data, padding sequences.
+    Collate a batch of text samples, padding sequences to the same length.
 
-    Args:
-        batch: A list of tuples, where each tuple is (label, list_of_token_ids).
-        padding_value: The integer index used for padding.
-
-    Returns:
-        A tuple containing:
-            - labels_tensor (Tensor): Tensor of labels for the batch.
-            - padded_sequences (Tensor): Tensor of token ID sequences, padded to
-                                        the length of the longest sequence in the batch.
-                                        Shape: (batch_size, max_seq_length)
-            - lengths_tensor (Tensor): Tensor of original sequence lengths for each item.
-                                        Shape: (batch_size,) Useful for PackedSequence.
+    Supports the two common orders:
+        • (label, token_ids)  – torchtext datasets
+        • (token_ids, label)  – custom wrappers / HF style
+    and token_ids as list[int], 1‑D Tensor, or 0‑D Tensor.
     """
-    labels_list, sequences_list, lengths_list = [], [], []
-    for (label, token_ids) in batch:
-        labels_list.append(label)
-        # Convert list of token IDs to a Tensor for this sequence
-        seq_tensor = torch.tensor(token_ids, dtype=torch.int64)
-        sequences_list.append(seq_tensor)
-        lengths_list.append(len(token_ids))  # Store original length
+    labels, seqs, lengths = [], [], []
 
-    labels_tensor = torch.tensor(labels_list, dtype=torch.int64)
-    lengths_tensor = torch.tensor(lengths_list, dtype=torch.int64)
+    for a, b in batch:
+        # --------‑ auto‑detect ordering --------
+        if isinstance(a, int) and not isinstance(b, int):
+            label, token_ids = a, b      # torchtext order
+        else:
+            token_ids, label = a, b      # swapped order
 
-    # Pad sequences
-    # pad_sequence expects a list of Tensors and pads them
-    # batch_first=True makes the output shape (batch_size, max_seq_length)
+        # --------‑ normalise token_ids --------
+        if torch.is_tensor(token_ids):
+            # Make sure it's at least 1‑D
+            if token_ids.dim() == 0:
+                token_ids = token_ids.unsqueeze(0)
+            token_tensor = token_ids.to(dtype=torch.long)
+        else:                              # list / tuple
+            token_tensor = torch.tensor(token_ids, dtype=torch.long)
+
+        seqs.append(token_tensor)
+        lengths.append(token_tensor.size(0))
+        labels.append(int(label) if torch.is_tensor(label) else label)
+
+    labels_tensor   = torch.tensor(labels,  dtype=torch.long)
+    lengths_tensor  = torch.tensor(lengths, dtype=torch.long)
     padded_sequences = pad_sequence(
-        sequences_list, batch_first=True, padding_value=padding_value
+        seqs, batch_first=True, padding_value=padding_value
     )
 
     return labels_tensor, padded_sequences, lengths_tensor
