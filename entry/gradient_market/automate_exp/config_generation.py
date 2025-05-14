@@ -264,7 +264,7 @@ def generate_label_flipping_attack_configs(output_dir):
     adv_rates = [0.3]
     aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
     target_labels = [0]  # Could vary this too
-    flip_modes = ['blended_patch']  # Could vary
+    flip_modes = ['target']  # Could vary
     poison_rates = [0.2, 0.3, 0.5]
     for ds, rate, agg, target, flip_mode, poison_rate in itertools.product(datasets, adv_rates, aggregations,
                                                                            target_labels,
