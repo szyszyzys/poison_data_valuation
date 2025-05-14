@@ -1,11 +1,12 @@
 # generate_configs.py
 import copy
 import itertools
-import numpy as np  # Make sure numpy is imported
 import os
+from types import NoneType  # Import NoneType for the representer
+
+import numpy as np  # Make sure numpy is imported
 import torch
 import yaml
-from types import NoneType  # Import NoneType for the representer
 
 from entry.constant.constant import BACKDOOR, LABEL_FLIP
 
@@ -131,7 +132,7 @@ BASE_CONFIG_TEMPLATE = {
 }
 
 # DATASETS = ['AG_NEWS']
-DATASETS = [ 'FMNIST']
+DATASETS = ['FMNIST']
 AGGREGATIONS = ['martfl', "fltrust", "skymask"]
 # --- Model Configs per Dataset (Simplified) ---
 # You might need more details (layers, etc.) depending on model structure definition
@@ -225,7 +226,8 @@ def generate_backdoor_attack_configs(output_dir):
                                                                          trigger_types, poison_rates):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
         rate_pct = int(rate * 100)
-        exp_id = f"{BACKDOOR}_{ds.lower()}_{agg.lower()}_adv{rate_pct}pct_t{target}_{trigger}"
+        poison_rates_pct = int(poison_rates * 100)
+        exp_id = f"{BACKDOOR}_{ds.lower()}_{agg.lower()}_adv{rate_pct}pct_t{target}_prate{poison_rates_pct}pct_{trigger}"
 
         config['experiment_id'] = exp_id
         config['dataset_name'] = ds
@@ -402,7 +404,7 @@ def generate_privacy_attack(output_dir):
 
     for ds, agg in itertools.product(datasets, aggregations):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
-        exp_id = f"gradient_inversion_{ds.lower()}_{agg}" # Simplified ID
+        exp_id = f"gradient_inversion_{ds.lower()}_{agg}"  # Simplified ID
 
         config['experiment_id'] = exp_id
         config['dataset_name'] = ds
@@ -421,24 +423,24 @@ def generate_privacy_attack(output_dir):
         # **NOTE:** These are STARTING POINTS and likely require tuning per dataset/model!
         gia_default_params = {
             # --- Core Attack Params ---
-            'num_images': client_training_batch_size, # Crucial: Match client batch size
-            'iterations': 2000 if ds == 'CIFAR' else 1000, # More complex datasets might need more iterations initially
+            'num_images': client_training_batch_size,  # Crucial: Match client batch size
+            'iterations': 2000 if ds == 'CIFAR' else 1000,  # More complex datasets might need more iterations initially
             'lr': 0.01,  # Starting low, common for Adam with Cosine Loss in GIA. **Tune this!**
-            'loss_type': 'cosine', # Generally preferred for gradient matching
-            'label_type': 'ground_truth', # Assume labels are unknown unless debugging
+            'loss_type': 'cosine',  # Generally preferred for gradient matching
+            'label_type': 'ground_truth',  # Assume labels are unknown unless debugging
 
             # --- Regularization ---
-            'regularization_weight': 1e-4, # TV Loss weight. **Tune this carefully!** (e.g., 1e-3, 1e-5, 0.0)
+            'regularization_weight': 1e-4,  # TV Loss weight. **Tune this carefully!** (e.g., 1e-3, 1e-5, 0.0)
 
             # --- Initialization & Optimization ---
             # Defaults below might already be handled by your gradient_inversion_attack function,
             # but explicitly setting them here makes the config complete.
-            'optimizer_class': 'Adam', # Or 'SGD', 'LBFGS'. Adam is a common default.
-            'init_type': 'gaussian', # 'gaussian' (randn) or 'random' (rand)
+            'optimizer_class': 'Adam',  # Or 'SGD', 'LBFGS'. Adam is a common default.
+            'init_type': 'gaussian',  # 'gaussian' (randn) or 'random' (rand)
 
             # --- Logging & Output ---
-            'log_interval': 200, # How often to log progress during attack
-            'return_best': True, # Almost always want the best reconstruction found
+            'log_interval': 200,  # How often to log progress during attack
+            'return_best': True,  # Almost always want the best reconstruction found
         }
 
         # Assign the generated params
@@ -447,11 +449,12 @@ def generate_privacy_attack(output_dir):
         # Configure paths
         results_path = os.path.join(config['output']['save_path_base'], "privacy", exp_id)
         config['output']['final_save_path'] = results_path
-        config['privacy_attack']['privacy_attack_path'] = results_path # Use same path for attack artifacts
+        config['privacy_attack']['privacy_attack_path'] = results_path  # Use same path for attack artifacts
 
         # Save the configuration file
         file_path = os.path.join(output_dir, "privacy", f"{exp_id}.yaml")
         save_config(config, file_path)
+
 
 # --- Main Execution ---
 if __name__ == "__main__":
@@ -469,8 +472,8 @@ if __name__ == "__main__":
 
     # Generate specific experiment groups citation of similar attacks, section 2 threat model. explain martfl... weak assumption show good attack results
     # generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
-    # generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
+    generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_privacy_attack(CONFIG_OUTPUT_DIRECTORY)
