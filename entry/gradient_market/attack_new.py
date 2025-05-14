@@ -346,6 +346,7 @@ def poisoning_attack_image(
         sybil_params: Optional[Dict] = None,
         local_training_params: Optional[Dict] = None,
         change_base: bool = True,
+        num_workers = 0,
         data_split_mode: str = "NonIID",
         dm_params: Optional[Dict] = None, local_attack_params=None, privacy_attack={}
 ):
