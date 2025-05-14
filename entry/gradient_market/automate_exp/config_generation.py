@@ -271,7 +271,7 @@ def generate_label_flipping_attack_configs(output_dir):
                                                                            flip_modes, poison_rates):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
         rate_pct = int(rate * 100)
-        exp_id = f"{LABEL_FLIP}_{ds.lower()}_{agg.lower()}_adv{rate_pct}pct_t{target}_{flip_mode}"
+        exp_id = f"{LABEL_FLIP}_{ds.lower()}_{agg.lower()}_adv{rate_pct}pct_prate{poison_rates}_t{target}_{flip_mode}}"
 
         config['experiment_id'] = exp_id
         config['dataset_name'] = ds
