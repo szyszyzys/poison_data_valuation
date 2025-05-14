@@ -265,7 +265,7 @@ def generate_label_flipping_attack_configs(output_dir):
     aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
     target_labels = [0]  # Could vary this too
     flip_modes = ['blended_patch']  # Could vary
-    poison_rates = [0.2]
+    poison_rates = [0.2, 0.3, 0.5]
     for ds, rate, agg, target, flip_mode, poison_rate in itertools.product(datasets, adv_rates, aggregations,
                                                                            target_labels,
                                                                            flip_modes, poison_rates):
@@ -468,12 +468,12 @@ if __name__ == "__main__":
     print(f"Generating configuration files in: {CONFIG_OUTPUT_DIRECTORY}")
 
     # Generate specific experiment groups citation of similar attacks, section 2 threat model. explain martfl... weak assumption show good attack results
-    generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
     generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_privacy_attack(CONFIG_OUTPUT_DIRECTORY)
+    # generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_privacy_attack(CONFIG_OUTPUT_DIRECTORY)
     # Add calls to generate other experiment groups as needed
 
     print("\nConfiguration generation finished.")
