@@ -171,10 +171,8 @@ def poisoning_attack_text(
     # Ensure buyer loader also uses the correct collate function if not already done
     buyer_dataset_list = buyer_loader.dataset
 
-    buyer_loader_collated = DataLoader(buyer_dataset_list, batch_size=local_training_params.get('batch_size', 64),
-                                       shuffle=True)
 
-    buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader_collated.dataset,  # Pass underlying dataset list
+    buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader.dataset,  # Pass underlying dataset list
                            dataset_name=dataset_name, save_path=save_path, initial_model=model_structure_instance,
                            local_training_params=local_training_params, pad_idx=padding_idx, model_type=model_type,
                            model_init_config=text_seller_model_config)
@@ -184,7 +182,7 @@ def poisoning_attack_text(
                             # Pass the instantiated model
                             model_structure=model_structure_instance,
                             dataset_name=dataset_name, aggregation_method=aggregation_method,
-                            change_base=change_base, buyer_data_loader=buyer_loader_collated,
+                            change_base=change_base, buyer_data_loader=buyer_loader,
                             loss_fn=loss_fn, device=device)
 
     # Sybil Coordinator
