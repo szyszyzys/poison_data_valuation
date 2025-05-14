@@ -132,7 +132,7 @@ BASE_CONFIG_TEMPLATE = {
 }
 
 # DATASETS = ['AG_NEWS']
-DATASETS = ['FMNIST']
+DATASETS = ['FMNIST', 'CIFAR']
 AGGREGATIONS = ["fltrust", "skymask"]
 # --- Model Configs per Dataset (Simplified) ---
 # You might need more details (layers, etc.) depending on model structure definition
