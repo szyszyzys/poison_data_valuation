@@ -5,6 +5,6 @@ conda env export --from-history | grep -v prefix: > environment.yml
 pip list --format=json \
   | python -c "import sys, json; pkgs=json.load(sys.stdin); \
                print('- pip'); print('  - pip:'); \
-               [print(f'      - {p['name']}=={p['version']}') \
+               [print(f'      - {p[\"name\"]}=={p[\"version\"]}') \
                 for p in pkgs if p.get('installer')=='pip']" \
   >> environment.yml
