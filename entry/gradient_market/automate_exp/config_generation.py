@@ -472,7 +472,7 @@ if __name__ == "__main__":
 
     # Generate specific experiment groups citation of similar attacks, section 2 threat model. explain martfl... weak assumption show good attack results
     generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
-    # generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
+    generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
