@@ -1404,7 +1404,6 @@ class TriggeredSubsetDataset(Dataset):
 
 
         is_poisoned = idx in self.trigger_indices_set
-        print(is_poisoned)
         # -------------------------------------------------------------- #
         # :: IMAGE BRANCH ::
         # -------------------------------------------------------------- #
