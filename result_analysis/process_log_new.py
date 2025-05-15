@@ -577,28 +577,25 @@ def process_all_experiments_revised(
             processed_experiment_count += 1
             all_summary_data.extend(cur_exp_summaries)
 
-            avg_summary = average_dicts(cur_exp_summaries)
-            # inject identifying keys (same keys as old code produced)
-            avg_summary.update({
-                "AGGREGATION_METHOD": agg_method,
-                "DATASET": dataset_name,
-                "ATTACK_METHOD": attack_method,
-                "ADV_RATE": effective_adv_rate,
-                "TRIGGER_RATE": trigger_rate,
-                "IS_SYBIL": attack_params_dict["IS_SYBIL"],
-                "DATA_SPLIT_MODE": data_split_mode,
-                "discovery_quality": discovery_quality,
-                "buyer_data_mode": buyer_data_mode,
-                "N_CLIENTS": n_clients,
-                "LOCAL_EPOCH": local_epoch,
-                "exp_path": root,
-                "attack_objective": attack_objective,
-            })
-            avg_summary.pop("run", None)  # per‑run field not relevant here
-            all_summary_data_avg.append(avg_summary)
-
-        if cur_exp_processed:
-            all_processed_data.extend(cur_exp_processed)
+        avg_summary = average_dicts(cur_exp_summaries)
+        # inject identifying keys (same keys as old code produced)
+        avg_summary.update({
+            "AGGREGATION_METHOD": agg_method,
+            "DATASET": dataset_name,
+            "ATTACK_METHOD": attack_method,
+            "ADV_RATE": effective_adv_rate,
+            "TRIGGER_RATE": trigger_rate,
+            "IS_SYBIL": attack_params_dict["IS_SYBIL"],
+            "DATA_SPLIT_MODE": data_split_mode,
+            "discovery_quality": discovery_quality,
+            "buyer_data_mode": buyer_data_mode,
+            "N_CLIENTS": n_clients,
+            "LOCAL_EPOCH": local_epoch,
+            "exp_path": root,
+            "attack_objective": attack_objective,
+        })
+        avg_summary.pop("run", None)  # per‑run field not relevant here
+        all_summary_data_avg.append(avg_summary)
 
     # ------------------------------------------------------------------ #
     #                          write CSV outputs                         #
