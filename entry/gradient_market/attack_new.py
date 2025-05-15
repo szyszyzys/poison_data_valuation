@@ -111,10 +111,10 @@ def poisoning_attack_text(
             "discovery_quality"],
         buyer_data_mode=dm_params[
             "buyer_data_mode"],
-        backdoor_pattern = backdoor_trigger_content
+        backdoor_pattern=backdoor_trigger_content
     )
     assert backdoor_trigger_content in vocab.stoi, "trigger token not in vocab!"
-    print("TRG idx:", vocab.stoi[backdoor_trigger_content])   # should be different from UNK & PAD
+    print("TRG idx:", vocab.stoi[backdoor_trigger_content])  # should be different from UNK & PAD
 
     num_classes = len(class_names)
     vocab_size = len(vocab)
@@ -703,11 +703,8 @@ def main():
 
     # 7. Loop for multiple runs (if n_samples > 1)
     print(f"Starting, dataset type: {dataset_domain}, {n_samples} run(s) for experiment: {experiment_id}")
-    if config.get("exp_name", "None") != "None":
-        lower = 0
-    else:
-        lower = 0
-    n_samples = 3
+    lower = 0
+
     for i in range(lower, n_samples):
         current_seed = initial_seed + i
         set_seed(current_seed)  # Set seed for this specific run

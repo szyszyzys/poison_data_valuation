@@ -57,7 +57,7 @@ BASE_CONFIG_TEMPLATE = {
     'n_samples': 10,
     # --- Data Split Info (Passed to get_data_set) ---
     'data_split': {
-        'num_sellers': 10,
+        'num_sellers': 30,
         'adv_rate': 0.0,  # Default: no adversaries
         'buyer_percentage': 0.02,
         'data_split_mode': 'discovery',
@@ -131,9 +131,12 @@ BASE_CONFIG_TEMPLATE = {
     }
 }
 NONE = "None"
-DATASETS = ['TREC']
-# DATASETS = ['FMNIST', 'CIFAR', 'AG_NEWS', 'TREC']
-AGGREGATIONS = ["fltrust"]
+# DATASETS = ['TREC']
+DATASETS = ['FMNIST', 'CIFAR', 'AG_NEWS', 'TREC']
+AGGREGATIONS = ["fltrust", 'fedavg', 'martfl', 'skymask']
+ADV_RATES = [0.1, 0.2, 0.3, 0.4]
+POISON_RATES = [0.1, 0.2, 0.3, 0.4]
+
 # --- Model Configs per Dataset (Simplified) ---
 # You might need more details (layers, etc.) depending on model structure definition
 MODEL_CONFIGS = {
@@ -215,12 +218,12 @@ def generate_backdoor_attack_configs(output_dir):
     """Vary attack params: adv_rate, aggregation, maybe trigger/target."""
     print("\n--- Generating Attack Configs ---")
     datasets = DATASETS
-    adv_rates = [0.3]
 
     aggregations = AGGREGATIONS
     target_labels = [0]
     trigger_types = ['blended_patch']  # Could vary
-    poison_rates = [0.2, 0.3, 0.4]
+    adv_rates = ADV_RATES
+    poison_rates = POISON_RATES
     for ds, rate, agg, target, trigger, poison_rate in itertools.product(datasets, adv_rates, aggregations,
                                                                          target_labels,
                                                                          trigger_types, poison_rates):
@@ -263,11 +266,11 @@ def generate_label_flipping_attack_configs(output_dir):
     """Vary attack params: adv_rate, aggregation, maybe trigger/target."""
     print("\n--- Generating Attack Configs ---")
     datasets = DATASETS  # Focus on one dataset for this example
-    adv_rates = [0.3]
     aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
     target_labels = [0]  # Could vary this too
     flip_modes = ['target']  # Could vary
-    poison_rates = [0.2, 0.3, 0.5]
+    adv_rates = ADV_RATES
+    poison_rates = POISON_RATES
     for ds, rate, agg, target, flip_mode, poison_rate in itertools.product(datasets, adv_rates, aggregations,
                                                                            target_labels,
                                                                            flip_modes, poison_rates):
@@ -305,7 +308,9 @@ def generate_sybil_configs(output_dir):
     """Focus on varying Sybil parameters."""
     print("\n--- Generating Sybil Attack Configs ---")
     datasets = DATASETS
-    adv_rates = [0.3]  # Fix adversary rate
+
+    adv_rates = ADV_RATES
+    poison_rates = POISON_RATES
     aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
     amplify_factors = [1.0]  # Vary amplification
     attack_modes = ["None", BACKDOOR]
@@ -362,6 +367,8 @@ def generate_discovery_configs(output_dir):
     qualities = [0.3, 0.7, 0.95]  # Low, Medium, High quality simulation
     buyer_modes = ['biased', 'unbiased']  # Add 'biased' if construct_buyer_set supports it well
     aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
+    adv_rates = ADV_RATES
+    poison_rates = POISON_RATES
 
     for ds, quality, buyer_mode, agg in itertools.product(datasets, qualities, buyer_modes, aggregations):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
@@ -402,6 +409,8 @@ def generate_privacy_attack(output_dir):
     # Add any other parameters you want to vary for GIA here
     # For now, keeping other settings fixed from BASE_CONFIG_TEMPLATE
     aggregations = ['fedavg']
+    adv_rates = ADV_RATES
+    poison_rates = POISON_RATES
 
     for ds, agg in itertools.product(datasets, aggregations):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
@@ -467,7 +476,7 @@ if __name__ == "__main__":
         # Manually set device in template if torch is unavailable
         BASE_CONFIG_TEMPLATE['device'] = 'cpu'
 
-    CONFIG_OUTPUT_DIRECTORY = "./configs_generated_fltrust_trec"  # Directory to save generated configs
+    CONFIG_OUTPUT_DIRECTORY = "./configs_generated"  # Directory to save generated configs
 
     print(f"Generating configuration files in: {CONFIG_OUTPUT_DIRECTORY}")
 
@@ -475,9 +484,9 @@ if __name__ == "__main__":
     generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
     generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
     generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
-    # generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
-    # generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
-    # generate_privacy_attack(CONFIG_OUTPUT_DIRECTORY)
+    generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
+    generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
+    generate_privacy_attack(CONFIG_OUTPUT_DIRECTORY)
 
     print("\nConfiguration generation finished.")
     print(f"Check the '{CONFIG_OUTPUT_DIRECTORY}' directory.")
