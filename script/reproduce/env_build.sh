@@ -1,100 +1,84 @@
-#!/usr/bin/env bash
-###############################################################################
-# install_env.sh  —  Robust one‑liner to recreate the DGM‑Benchmark environment
-#
-#  • Prefers micromamba (fast, minimal), falls back to conda automatically
-#  • Uses environment.lock.yml if present for bit‑for‑bit reproducibility;
-#    otherwise falls back to environment.yml
-#  • Activates the env, installs the project in‑place (`pip install -e .`)
-#  • Runs `pip check` and an optional smoke test to make sure deps resolve
-#
-# Usage: ./install_env.sh          # installs into dgm-benchmark env
-#        ./install_env.sh gpu      # forces CUDA build variants if present
-###############################################################################
-set -euo pipefail
-ENV_NAME="dgm-benchmark"
-LOCK_FILE="environment.lock.yml"
-YAML_FILE="environment.yml"
-EXTRA_ARG="${1:-}"
+#!/bin/bash
+set -euo pipefail  # Exit on error, unset variables are errors, and propagate pipe errors
 
-# -----------------------------------------------------------------------------
-# Helper: download micromamba to a local cache if conda isn't installed
-# -----------------------------------------------------------------------------
-install_micromamba() {
-  local MAMBADIR="$HOME/.local/micromamba"
-  if [[ ! -x "$MAMBADIR/bin/micromamba" ]]; then
-    echo "[*] Micromamba not found → downloading…"
-    curl -sSLo micromamba.tar.bz2 \
-      https://micro.mamba.pm/api/micromamba/linux-64/latest         # change for macOS if needed
-    mkdir -p "$MAMBADIR"
-    tar -xjf micromamba.tar.bz2 -C "$MAMBADIR" --strip-components=1
-    rm micromamba.tar.bz2
-  fi
-  export PATH="$MAMBADIR/bin:$PATH"
+# ================================
+# Full Script to Install Conda (if needed) & Rebuild Environment
+# ================================
+
+ENV_NAME="DMBENCH"
+ENV_FILE="environment.yml"
+
+# Function to print an error message and exit
+function error_exit {
+    echo "$1" >&2
+    exit 1
 }
 
-# -----------------------------------------------------------------------------
-# 1. Choose installer ---------------------------------------------------------
-# -----------------------------------------------------------------------------
-if command -v micromamba &>/dev/null; then
-  MAMBA_CMD="micromamba"
-elif command -v conda &>/dev/null; then
-  MAMBA_CMD="conda"
+# 1️⃣ Check if Conda is installed or if Miniconda exists in $HOME/miniconda
+if ! command -v conda &> /dev/null; then
+    if [ -d "$HOME/miniconda" ]; then
+        echo "🔹 Miniconda directory found. Adding it to PATH..."
+        export PATH="$HOME/miniconda/bin:$PATH"
+    else
+        echo "🔹 Conda not found. Installing Miniconda..."
+
+        # Detect system architecture and set the installer name
+        if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+            INSTALLER="Miniconda3-latest-Linux-x86_64.sh"
+        elif [[ "$OSTYPE" == "darwin"* ]]; then
+            INSTALLER="Miniconda3-latest-MacOSX-x86_64.sh"
+        else
+            error_exit "❌ Unsupported OS: $OSTYPE"
+        fi
+
+        # Download the Miniconda installer using wget or curl
+        if command -v wget &> /dev/null; then
+            wget "https://repo.anaconda.com/miniconda/$INSTALLER" -O miniconda.sh || error_exit "❌ Failed to download Miniconda installer using wget."
+        elif command -v curl &> /dev/null; then
+            curl -L "https://repo.anaconda.com/miniconda/$INSTALLER" -o miniconda.sh || error_exit "❌ Failed to download Miniconda installer using curl."
+        else
+            error_exit "❌ Neither wget nor curl is available. Please install one."
+        fi
+
+        # Install Miniconda silently (-b) into $HOME/miniconda
+        bash miniconda.sh -b -p "$HOME/miniconda" || error_exit "❌ Miniconda installation failed."
+
+        # Add Miniconda to the PATH for the current session
+        export PATH="$HOME/miniconda/bin:$PATH"
+
+        # Initialize Conda for the bash shell
+        conda init bash || error_exit "❌ Conda initialization failed."
+
+        echo "✅ Miniconda installed successfully!"
+    fi
 else
-  install_micromamba
-  MAMBA_CMD="micromamba"
-fi
-echo "[*] Using $MAMBA_CMD for environment creation"
-
-# -----------------------------------------------------------------------------
-# 2. Determine which spec file to use -----------------------------------------
-# -----------------------------------------------------------------------------
-if [[ -f $LOCK_FILE ]]; then
-  SPEC_FILE=$LOCK_FILE
-  echo "[*] Found lockfile → strict reproducibility enabled"
-else
-  SPEC_FILE=$YAML_FILE
+    echo "🔹 Conda is already installed; using the existing installation."
 fi
 
-# -----------------------------------------------------------------------------
-# 3. Create (or update) the environment --------------------------------------
-# -----------------------------------------------------------------------------
-echo "[*] Creating env '$ENV_NAME' from $SPEC_FILE"
-if [[ "$MAMBA_CMD" == "micromamba" ]]; then
-  micromamba create -y -n "$ENV_NAME" -f "$SPEC_FILE"
-  # shellcheck source=/dev/null
-  eval "$(micromamba shell hook -s bash)"
-  micromamba activate "$ENV_NAME"
-else
-  conda env create -y -n "$ENV_NAME" -f "$SPEC_FILE" || \
-  conda env update  -y -n "$ENV_NAME" -f "$SPEC_FILE"
-  # shellcheck source=/dev/null
-  source "$(conda info --base)/etc/profile.d/conda.sh"
-  conda activate "$ENV_NAME"
-  conda config --env --set channel_priority strict
+# 2️⃣ Ensure Conda is active using the recommended shell hook.
+export PATH="$HOME/miniconda/bin:$PATH"
+eval "$(conda shell.bash hook)" || error_exit "❌ Failed to initialize Conda shell hook."
+
+# 3️⃣ Check if the environment file exists.
+if [ ! -f "$ENV_FILE" ]; then
+    error_exit "❌ Environment file '$ENV_FILE' not found!"
 fi
 
-# -----------------------------------------------------------------------------
-# 4. Install project in editable mode (if setup.cfg/pyproject.toml exists) ----
-# -----------------------------------------------------------------------------
-if [[ -f setup.cfg || -f pyproject.toml ]]; then
-  echo "[*] Installing project in editable mode"
-  python -m pip install -e .
+# 4️⃣ Remove the existing environment if it exists.
+if conda env list | grep -q "$ENV_NAME"; then
+    echo "🔹 Removing existing Conda environment: $ENV_NAME"
+    conda env remove -n "$ENV_NAME" || error_exit "❌ Failed to remove existing environment."
 fi
 
-# -----------------------------------------------------------------------------
-# 5. Optional GPU extras (override via ./install_env.sh gpu) ------------------
-# -----------------------------------------------------------------------------
-if [[ "$EXTRA_ARG" == "gpu" && -f requirements_gpu.txt ]]; then
-  echo "[*] Installing GPU‑specific extras"
-  python -m pip install -r requirements_gpu.txt
-fi
+# 5️⃣ Create a new environment from the YAML file.
+echo "🔹 Creating Conda environment: $ENV_NAME"
+conda env create -f "$ENV_FILE" || error_exit "❌ Failed to create environment from $ENV_FILE."
 
-# -----------------------------------------------------------------------------
-# 6. Sanity checks ------------------------------------------------------------
-# -----------------------------------------------------------------------------
-echo "[*] Verifying package consistency"
-python -m pip check        # dependency conflicts → non‑zero exit
+# 6️⃣ Activate the newly created environment.
+echo "🔹 Activating environment: $ENV_NAME"
+conda activate "$ENV_NAME" || error_exit "❌ Failed to activate environment: $ENV_NAME."
 
-echo "[✓] Environment '$ENV_NAME' is ready."
-echo "    To activate later:  $MAMBA_CMD activate $ENV_NAME"
+# 7️⃣ Verify Python installation in the activated environment.
+python --version || error_exit "❌ Python not found in the activated environment."
+
+echo "✅ Environment setup complete!"

@@ -571,7 +571,7 @@ def process_all_experiments_revised(
             except Exception as e:
                 print(f"    ERROR processing {run_dir}: {e}")
                 traceback.print_exc()
-
+        all_processed_data.extend(cur_exp_processed)
         # ------------- aggregate summaries (per experiment) ----------- #
         if cur_exp_summaries:
             processed_experiment_count += 1
