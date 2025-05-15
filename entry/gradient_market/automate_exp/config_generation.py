@@ -220,7 +220,7 @@ def generate_backdoor_attack_configs(output_dir):
     aggregations = AGGREGATIONS
     target_labels = [0]
     trigger_types = ['blended_patch']  # Could vary
-    poison_rates = [0.3, 0.4]
+    poison_rates = [0.3, 0.4, 1.0]
     for ds, rate, agg, target, trigger, poison_rate in itertools.product(datasets, adv_rates, aggregations,
                                                                          target_labels,
                                                                          trigger_types, poison_rates):
