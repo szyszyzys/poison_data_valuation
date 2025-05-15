@@ -595,7 +595,6 @@ class BackdoorTextGenerator:
         self.location = location
         self.max_seq_len = max_seq_len
         self.unk_token_string = unk_token_string  # Store the UNK token string
-
         # --- Get the UNK index ---
         if self.unk_token_string not in self.vocab.stoi:
             # This is a critical issue if the specified UNK token isn't in the vocab.
