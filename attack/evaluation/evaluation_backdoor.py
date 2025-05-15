@@ -70,7 +70,7 @@ def evaluate_attack_performance_backdoor_poison(
     """
     print("________________________")
     print("start evaluation backdoor attack")
-
+    print(f"target label {target_label}")
     model.eval()
     clean_preds, clean_labels = [], []
     trig_preds, trig_labels = [], []
@@ -97,6 +97,9 @@ def evaluate_attack_performance_backdoor_poison(
             else:  # dict or list/tuple tokens
                 trig_inp = copy.deepcopy(inputs)
                 trig_inp = backdoor_generator.apply_trigger_text(trig_inp)
+                print("do test backdoor")
+                print(inputs)
+                print(trig_inp)
 
             trig_inp = _move_to_device(trig_inp, device)
             outputs_t = _forward(model, trig_inp)
