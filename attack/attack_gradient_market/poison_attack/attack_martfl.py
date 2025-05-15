@@ -634,7 +634,7 @@ class BackdoorTextGenerator:
                     # This could lead to an empty trigger if all words are OOV.
                     logging.error(
                         f"Trigger word '{word}' not in vocabulary, AND no valid UNK index available. This word will be omitted from trigger.")
-
+        print(f"current trigger: {self.trigger_token_ids}")
         # Check if any trigger words actually mapped to the UNK index (if unk_idx_val is valid)
         if self.unk_idx_val != -1 and any(token_id == self.unk_idx_val for token_id in self.trigger_token_ids):
             # This log is now more accurate as it refers to the UNK index we determined.

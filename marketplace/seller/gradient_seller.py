@@ -1420,10 +1420,8 @@ class TriggeredSubsetDataset(Dataset):
         # :: TEXT BRANCH ::
         # -------------------------------------------------------------- #
         elif isinstance(data, (list, tuple, torch.Tensor, dict)):
-            print(data)
             if is_poisoned:
                 data = self.backdoor_generator.apply_trigger_text(data, device=self.device)
-            print(data)
             # move to device if not already (for list/tuple case apply_trigger_text already did)
             if isinstance(data, dict):
                 data = {k: v.to(self.device) if torch.is_tensor(v) else v

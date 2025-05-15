@@ -110,8 +110,12 @@ def poisoning_attack_text(
         discovery_quality=dm_params[
             "discovery_quality"],
         buyer_data_mode=dm_params[
-            "buyer_data_mode"]
+            "buyer_data_mode"],
+        backdoor_pattern = backdoor_trigger_content
     )
+    assert backdoor_trigger_content in vocab.stoi, "trigger token not in vocab!"
+    print("TRG idx:", vocab.stoi[backdoor_trigger_content])   # should be different from UNK & PAD
+
     num_classes = len(class_names)
     vocab_size = len(vocab)
     print(f"Data loaded. Num classes: {num_classes}, Vocab size: {vocab_size}, Padding Idx: {padding_idx}")

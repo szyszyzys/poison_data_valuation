@@ -175,6 +175,7 @@ def get_text_data_set(
         min_freq: int = 1,
         unk_token: str = "<unk>",
         pad_token: str = "<pad>",
+        backdoor_pattern = "",
 ) -> Tuple[Optional[DataLoader], Dict[int, Optional[DataLoader]], Optional[DataLoader], List[str], Vocab, int]:
     if not (0.0 <= buyer_percentage <= 1.0):
         raise ValueError("buyer_percentage must be between 0 and 1.")
@@ -241,7 +242,7 @@ def get_text_data_set(
                     yield text_content
 
     # ─── 2. Build or Load Vocabulary from Cache (MODIFIED FOR TORCHTEXT 0.6.0) ───
-    vocab_cache_params = (dataset_name, min_freq, unk_token, pad_token, "torchtext_0.6.0")
+    vocab_cache_params = (dataset_name, min_freq, unk_token, pad_token, backdoor_pattern, "torchtext_0.6.0")
     vocab_cache_file = get_cache_path(app_cache_dir, "vocab", vocab_cache_params)
     vocab: Optional[Vocab] = None
     pad_idx = -1
@@ -316,7 +317,7 @@ def get_text_data_set(
         vocab = Vocab(
             counter=token_counter,
             min_freq=min_freq,
-            specials=[unk_token, pad_token]
+            specials=[unk_token, pad_token, backdoor_pattern]
         )
 
         if unk_token in vocab.stoi:
