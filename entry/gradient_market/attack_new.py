@@ -648,7 +648,7 @@ def main():
     # 1. Set up argparse to accept only the config file path
     parser = argparse.ArgumentParser(description="Run Federated Learning Experiment from Config File")
     parser.add_argument("config", help="Path to the YAML configuration file")
-    parser.add_argument("--rerun", type=str, default="true", help="Path to the YAML configuration file")
+    parser.add_argument("--rerun", type=str, default="false", help="Path to the YAML configuration file")
 
     cli_args = parser.parse_args()
     print(f"start run with config: {cli_args.config}")
