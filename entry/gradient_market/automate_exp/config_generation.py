@@ -131,8 +131,8 @@ BASE_CONFIG_TEMPLATE = {
     }
 }
 
-# DATASETS = ['AG_NEWS']
-DATASETS = ['FMNIST', 'CIFAR', 'AG_NEWS', 'TREC']
+DATASETS = ['TREC']
+# DATASETS = ['FMNIST', 'CIFAR', 'AG_NEWS', 'TREC']
 AGGREGATIONS = ["martfl"]
 # --- Model Configs per Dataset (Simplified) ---
 # You might need more details (layers, etc.) depending on model structure definition
@@ -220,7 +220,7 @@ def generate_backdoor_attack_configs(output_dir):
     aggregations = AGGREGATIONS
     target_labels = [0]
     trigger_types = ['blended_patch']  # Could vary
-    poison_rates = [0.2]
+    poison_rates = [0.2, 0.3, 0.4]
     for ds, rate, agg, target, trigger, poison_rate in itertools.product(datasets, adv_rates, aggregations,
                                                                          target_labels,
                                                                          trigger_types, poison_rates):
@@ -466,12 +466,12 @@ if __name__ == "__main__":
         # Manually set device in template if torch is unavailable
         BASE_CONFIG_TEMPLATE['device'] = 'cpu'
 
-    CONFIG_OUTPUT_DIRECTORY = "./configs_generated_martfl"  # Directory to save generated configs
+    CONFIG_OUTPUT_DIRECTORY = "./configs_generated_martfl_trec"  # Directory to save generated configs
 
     print(f"Generating configuration files in: {CONFIG_OUTPUT_DIRECTORY}")
 
     # Generate specific experiment groups citation of similar attacks, section 2 threat model. explain martfl... weak assumption show good attack results
-    generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
     generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
