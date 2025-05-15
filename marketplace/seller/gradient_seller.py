@@ -1427,7 +1427,7 @@ class TriggeredSubsetDataset(Dataset):
                         for k, v in data.items()}
             elif torch.is_tensor(data):
                 data = data.to(self.device)
-
+            label = self.target_label
         else:
             raise TypeError(
                 f"Unsupported data type from wrapped dataset: {type(data)}"
