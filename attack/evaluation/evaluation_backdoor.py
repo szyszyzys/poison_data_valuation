@@ -86,7 +86,6 @@ def evaluate_attack_performance_backdoor_poison(
 
             clean_preds.append(preds.cpu().numpy())
             clean_labels.append(labels.cpu().numpy())
-            print(inputs)
 
             # ---------------- TRIGGERED -------------
             if torch.is_tensor(inputs):  # image or padded token tensor
@@ -98,10 +97,10 @@ def evaluate_attack_performance_backdoor_poison(
             else:  # dict or list/tuple tokens
                 trig_inp = copy.deepcopy(inputs)
                 trig_inp = backdoor_generator.apply_trigger_text(trig_inp)
-            print(trig_inp)
             trig_inp = _move_to_device(trig_inp, device)
             outputs_t = _forward(model, trig_inp)
             preds_t = outputs_t.argmax(dim=1)
+            print(preds_t)
 
             trig_preds.append(preds_t.cpu().numpy())
             trig_labels.append(labels.cpu().numpy())
