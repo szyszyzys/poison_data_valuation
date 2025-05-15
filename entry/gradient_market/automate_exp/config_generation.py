@@ -57,7 +57,7 @@ BASE_CONFIG_TEMPLATE = {
     'n_samples': 10,
     # --- Data Split Info (Passed to get_data_set) ---
     'data_split': {
-        'num_sellers': 10,
+        'num_sellers': 1,
         'adv_rate': 0.0,  # Default: no adversaries
         'buyer_percentage': 0.02,
         'data_split_mode': 'discovery',
