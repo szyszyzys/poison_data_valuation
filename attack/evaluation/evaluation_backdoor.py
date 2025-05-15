@@ -114,8 +114,6 @@ def evaluate_attack_performance_backdoor_poison(
     trig_acc = float(np.mean(trig_preds == trig_labels))
     attack_sr = None if target_label is None else float(np.mean(trig_preds == target_label))
     conf_mat = confusion_matrix(trig_labels, trig_preds)
-    print(trig_preds)
-    print(target_label)
     metrics: Dict[str, Any] = dict(
         clean_accuracy=clean_acc,
         triggered_accuracy=trig_acc,

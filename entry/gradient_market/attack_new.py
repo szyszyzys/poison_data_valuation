@@ -8,7 +8,6 @@ from typing import Dict, Optional, Any
 import torch
 import torch.backends.cudnn
 from torch import nn
-from torch.utils.data import DataLoader
 
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
 from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorTextGenerator, LabelFlipAttackGenerator
@@ -22,7 +21,7 @@ from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator, \
     AdvancedPoisoningAdversarySeller
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
-from marketplace.utils.gradient_market_utils.text_data_processor import get_text_data_set, collate_batch_new
+from marketplace.utils.gradient_market_utils.text_data_processor import get_text_data_set
 from model.utils import get_text_model, get_model_name, get_domain, get_image_model
 
 logger = logging.getLogger(__name__)
@@ -73,7 +72,8 @@ def poisoning_attack_text(
     print(f"--- Starting TEXT Poisoning Attack ---")
     print(f"Dataset: {dataset_name}, Attack Type: {attack_type}")
     print(f"Sellers: {n_sellers}, Adversary Rate: {adv_rate}")
-
+    if dataset_name == "TREC":
+        backdoor_target_label = 3
     # --- Basic Setup ---
     model_type = "text"
     if aggregation_method == "skymask":
@@ -170,7 +170,6 @@ def poisoning_attack_text(
     # Buyer (operates on its clean data loader)
     # Ensure buyer loader also uses the correct collate function if not already done
     buyer_dataset_list = buyer_loader.dataset
-
 
     buyer = GradientSeller(seller_id="buyer", local_data=buyer_loader.dataset,  # Pass underlying dataset list
                            dataset_name=dataset_name, save_path=save_path, initial_model=model_structure_instance,
@@ -344,7 +343,7 @@ def poisoning_attack_image(
         sybil_params: Optional[Dict] = None,
         local_training_params: Optional[Dict] = None,
         change_base: bool = True,
-        num_workers = 0,
+        num_workers=0,
         data_split_mode: str = "NonIID",
         dm_params: Optional[Dict] = None, local_attack_params=None, privacy_attack={}
 ):
