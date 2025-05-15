@@ -466,7 +466,7 @@ if __name__ == "__main__":
         # Manually set device in template if torch is unavailable
         BASE_CONFIG_TEMPLATE['device'] = 'cpu'
 
-    CONFIG_OUTPUT_DIRECTORY = "./configs_generated_martfl_trec"  # Directory to save generated configs
+    CONFIG_OUTPUT_DIRECTORY = "./configs_generated_martfl_ag"  # Directory to save generated configs
 
     print(f"Generating configuration files in: {CONFIG_OUTPUT_DIRECTORY}")
 
