@@ -227,7 +227,7 @@ def generate_backdoor_attack_configs(output_dir):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
         rate_pct = int(rate * 100)
         poison_rates_pct = int(poison_rate * 100)
-        exp_id = f"{BACKDOOR}_{ds.lower()}_{agg.lower()}_adv{rate_pct}pct_t{target}_prate{poison_rates_pct}pct_{trigger}"
+        exp_id = f"{BACKDOOR}_{ds.lower()}_{agg.lower()}_adv{rate_pct}pct_t{target}_prate{poison_rates_pct}pct"
 
         config['experiment_id'] = exp_id
         config['dataset_name'] = ds
