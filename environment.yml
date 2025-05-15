@@ -1,0 +1,5 @@
+name: dmnew
+channels:
+  - defaults
+- pip
+  - pip:
