@@ -68,6 +68,8 @@ def evaluate_attack_performance_backdoor_poison(
     Evaluate robustness against a back‑door attack for both vision and text
     datasets, independent of the batch tuple order returned by the loader.
     """
+    print("________________________")
+    print("start evaluation backdoor attack")
 
     model.eval()
     clean_preds, clean_labels = [], []
@@ -124,23 +126,23 @@ def evaluate_attack_performance_backdoor_poison(
     # ---------------- VISUALISATION -----------------
     if plot:
         fig, ax = plt.subplots(1, 2, figsize=(12, 5))
-        labels_bar = ["Clean", "Triggered"] + (["Attack SR"] if attack_sr is not None else [])
+        labels_bar = ["Clean", "Triggered"] + (["AttackASR"] if attack_sr is not None else [])
         values_bar = [clean_acc * 100, trig_acc * 100] + ([attack_sr * 100] if attack_sr is not None else [])
 
         ax[0].bar(labels_bar, values_bar, color=["steelblue", "darkorange", "crimson"][: len(labels_bar)])
-        ax[0].set_ylabel("Percentage (%)");
+        ax[0].set_ylabel("Percentage (%)")
         ax[0].set_ylim(0, 100)
         ax[0].set_title("Model Performance")
         for i, v in enumerate(values_bar):
             ax[0].text(i, v + 1, f"{v:.1f}%", ha="center")
 
         sns.heatmap(conf_mat, annot=True, fmt="d", cmap="Blues", ax=ax[1])
-        ax[1].set_xlabel("Predicted");
+        ax[1].set_xlabel("Predicted")
         ax[1].set_ylabel("True")
         ax[1].set_title("Triggered Confusion Matrix")
 
-        plt.tight_layout();
-        plt.savefig(save_path);
+        plt.tight_layout()
+        plt.savefig(save_path)
         plt.close(fig)
 
     return metrics
