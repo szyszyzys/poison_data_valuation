@@ -467,7 +467,7 @@ class DataMarketplaceFederated(DataMarketplace):
         pg_asr = perf_global.get('attack_success_rate', 'N/A')
         pl_acc = perf_local.get('accuracy', 'N/A')
         logging.info(
-            f"  Global Acc: {pg_acc} if isinstance(pg_acc, float) else {pg_acc}, Global ASR: {pg_asr} if isinstance(pg_asr, float) else {pg_asr}")
+            f"  Global Acc: {pg_acc} if isinstance(pg_acc, float) else {pg_acc}, Global ASR: {pg_asr}")
         logging.info(f"  Local Acc: {pl_acc} if isinstance(pl_acc, float) else {pl_acc}")
         logging.info(f"  Server Time: {server_total_time_ms:.2f}ms")
 
