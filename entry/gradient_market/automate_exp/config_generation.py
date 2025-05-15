@@ -131,7 +131,7 @@ BASE_CONFIG_TEMPLATE = {
     }
 }
 
-DATASETS = ['TREC']
+DATASETS = ['TREC', "AG_NEWS"]
 # DATASETS = ['FMNIST', 'CIFAR', 'AG_NEWS', 'TREC']
 AGGREGATIONS = ["martfl"]
 # --- Model Configs per Dataset (Simplified) ---
