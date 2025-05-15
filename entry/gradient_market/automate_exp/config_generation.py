@@ -131,9 +131,9 @@ BASE_CONFIG_TEMPLATE = {
     }
 }
 
-DATASETS = ['TREC', "AG_NEWS"]
+DATASETS = ['TREC']
 # DATASETS = ['FMNIST', 'CIFAR', 'AG_NEWS', 'TREC']
-AGGREGATIONS = ["fedavg"]
+AGGREGATIONS = ["martfl"]
 # --- Model Configs per Dataset (Simplified) ---
 # You might need more details (layers, etc.) depending on model structure definition
 MODEL_CONFIGS = {
@@ -215,12 +215,12 @@ def generate_backdoor_attack_configs(output_dir):
     """Vary attack params: adv_rate, aggregation, maybe trigger/target."""
     print("\n--- Generating Attack Configs ---")
     datasets = DATASETS
-    adv_rates = [1]
+    adv_rates = [0.3]
 
     aggregations = AGGREGATIONS
     target_labels = [0]
     trigger_types = ['blended_patch']  # Could vary
-    poison_rates = [0.3, 0.4, 1.0]
+    poison_rates = [0.2, 0.3, 0.4]
     for ds, rate, agg, target, trigger, poison_rate in itertools.product(datasets, adv_rates, aggregations,
                                                                          target_labels,
                                                                          trigger_types, poison_rates):
@@ -466,7 +466,7 @@ if __name__ == "__main__":
         # Manually set device in template if torch is unavailable
         BASE_CONFIG_TEMPLATE['device'] = 'cpu'
 
-    CONFIG_OUTPUT_DIRECTORY = "./configs_generated_fedavg"  # Directory to save generated configs
+    CONFIG_OUTPUT_DIRECTORY = "./configs_generated_martfl_trec"  # Directory to save generated configs
 
     print(f"Generating configuration files in: {CONFIG_OUTPUT_DIRECTORY}")
 
