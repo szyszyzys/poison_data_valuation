@@ -215,7 +215,7 @@ def generate_backdoor_attack_configs(output_dir):
     """Vary attack params: adv_rate, aggregation, maybe trigger/target."""
     print("\n--- Generating Attack Configs ---")
     datasets = DATASETS
-    adv_rates = [0.3, 0.4]
+    adv_rates = [1]
 
     aggregations = AGGREGATIONS
     target_labels = [0]
