@@ -217,8 +217,8 @@ def generate_backdoor_attack_configs(output_dir):
     datasets = DATASETS
     adv_rates = [0.3]
 
-    aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
-    target_labels = [0]  # Could vary this too
+    aggregations = AGGREGATIONS
+    target_labels = [0]
     trigger_types = ['blended_patch']  # Could vary
     poison_rates = [0.2]
     for ds, rate, agg, target, trigger, poison_rate in itertools.product(datasets, adv_rates, aggregations,
