@@ -130,7 +130,7 @@ BASE_CONFIG_TEMPLATE = {
         # Specific save path will be constructed using experiment_id
     }
 }
-
+NONE = "None"
 DATASETS = ['TREC']
 # DATASETS = ['FMNIST', 'CIFAR', 'AG_NEWS', 'TREC']
 AGGREGATIONS = ["martfl"]
@@ -220,7 +220,7 @@ def generate_backdoor_attack_configs(output_dir):
     aggregations = AGGREGATIONS
     target_labels = [0]
     trigger_types = ['blended_patch']  # Could vary
-    poison_rates = [0.2]
+    poison_rates = [0.2, 0.3]
     for ds, rate, agg, target, trigger, poison_rate in itertools.product(datasets, adv_rates, aggregations,
                                                                          target_labels,
                                                                          trigger_types, poison_rates):
@@ -339,6 +339,7 @@ def generate_sybil_configs(output_dir):
             config['attack']['poison_rate'] = 0.2
         else:
             config['attack']['enabled'] = False
+            config['attack']['attack_type'] = NONE
 
         # Enable and configure Sybil
         config['sybil']['is_sybil'] = True
@@ -472,12 +473,11 @@ if __name__ == "__main__":
 
     # Generate specific experiment groups citation of similar attacks, section 2 threat model. explain martfl... weak assumption show good attack results
     generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
-    # generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
-    # generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
+    generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
+    generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_privacy_attack(CONFIG_OUTPUT_DIRECTORY)
-    # Add calls to generate other experiment groups as needed
 
     print("\nConfiguration generation finished.")
     print(f"Check the '{CONFIG_OUTPUT_DIRECTORY}' directory.")

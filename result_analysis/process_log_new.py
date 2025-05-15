@@ -98,14 +98,15 @@ def average_dicts(dicts):
                 if first_non_null is None:
                     first_non_null = v
 
-        if numeric_vals:                     # there is something to average
+        if numeric_vals:  # there is something to average
             out[k] = float(np.mean(numeric_vals))
-        elif first_non_null is not None:     # only categorical/constant values
+        elif first_non_null is not None:  # only categorical/constant values
             out[k] = first_non_null
-        else:                                # nothing recorded for this key
+        else:  # nothing recorded for this key
             out[k] = np.nan
 
     return out
+
 
 # ----------------------------------------------------------------------
 # Helper utils   (drop these near the top of the module, or inside the
@@ -337,7 +338,7 @@ def process_single_experiment(
             "FINAL_MAIN_ACC": final_record["main_acc"],
             "FINAL_CLEAN_ACC": final_record["clean_acc"],
             "FINAL_TRIGGERED_ACC": final_record["triggered_acc"],
-            "FINAL_ASR": final_record["asr"],
+            "FINAL_ASR": final_record.get("asr", 0),
             "MAX_ASR": max(asr_values),
             # averages
             "AVG_SELECTED_DISTRIBUTION_SIMILARITY": np.mean(
@@ -468,7 +469,7 @@ def process_all_experiments_revised(
         attack_enabled = _get(full_cfg, "attack.enabled", False)
         gradient_manip_mode = _get(full_cfg, "attack.gradient_manipulation_mode", "None")
         poison_rate = _get(full_cfg, "attack.poison_rate", 0.0)
-        attack_objective = _get(full_cfg, "attack.attack_type", "backdoor")
+        attack_objective = _get(full_cfg, "attack.attack_type", "None")
         benign_rounds = _get(full_cfg, "sybil.benign_rounds", 0)
 
         is_sybil_bool = _get(full_cfg, "sybil.is_sybil", False)
