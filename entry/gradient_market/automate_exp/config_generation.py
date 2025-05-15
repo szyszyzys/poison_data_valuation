@@ -52,7 +52,7 @@ BASE_CONFIG_TEMPLATE = {
     'dataset_name': 'CIFAR',  # Default, override per experiment
     'model_structure': 'SimpleCNN',  # Default, override per experiment
     'aggregation_method': 'fedavg',  # Default, override per experiment
-    'global_rounds': 200,
+    'global_rounds': 100,
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',  # Detect device
     'n_samples': 10,
     # --- Data Split Info (Passed to get_data_set) ---
