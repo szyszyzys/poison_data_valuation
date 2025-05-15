@@ -220,7 +220,7 @@ def generate_backdoor_attack_configs(output_dir):
     aggregations = AGGREGATIONS
     target_labels = [0]
     trigger_types = ['blended_patch']  # Could vary
-    poison_rates = [0.2, 0.3, 0.4]
+    poison_rates = [0.2]
     for ds, rate, agg, target, trigger, poison_rate in itertools.product(datasets, adv_rates, aggregations,
                                                                          target_labels,
                                                                          trigger_types, poison_rates):
@@ -471,8 +471,8 @@ if __name__ == "__main__":
     print(f"Generating configuration files in: {CONFIG_OUTPUT_DIRECTORY}")
 
     # Generate specific experiment groups citation of similar attacks, section 2 threat model. explain martfl... weak assumption show good attack results
-    # generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
+    generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
     # generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
