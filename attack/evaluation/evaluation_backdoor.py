@@ -100,7 +100,6 @@ def evaluate_attack_performance_backdoor_poison(
             trig_inp = _move_to_device(trig_inp, device)
             outputs_t = _forward(model, trig_inp)
             preds_t = outputs_t.argmax(dim=1)
-            print(preds_t)
 
             trig_preds.append(preds_t.cpu().numpy())
             trig_labels.append(labels.cpu().numpy())
@@ -115,13 +114,14 @@ def evaluate_attack_performance_backdoor_poison(
     trig_acc = float(np.mean(trig_preds == trig_labels))
     attack_sr = None if target_label is None else float(np.mean(trig_preds == target_label))
     conf_mat = confusion_matrix(trig_labels, trig_preds)
-
+    print(trig_preds == target_label)
     metrics: Dict[str, Any] = dict(
         clean_accuracy=clean_acc,
         triggered_accuracy=trig_acc,
         attack_success_rate=attack_sr,
         confusion_matrix_triggered=conf_mat,
     )
+    print(attack_sr)
 
     # ---------------- VISUALISATION -----------------
     if plot:
