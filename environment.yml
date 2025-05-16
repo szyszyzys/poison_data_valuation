@@ -128,7 +128,6 @@ dependencies:
     - pyarrow==20.0.0
     - pybind11==2.13.6
     - pyDeprecate==0.3.2
-    - pyg-lib==0.4.0+pt22cu121
     - pyparsing==3.1.2
     - pyre-extensions==0.0.32
     - pytest==7.4.2
