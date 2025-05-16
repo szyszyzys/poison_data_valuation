@@ -172,13 +172,13 @@ dependencies:
     - tinycss2==1.3.0
     - tokenizers==0.21.1
     - tomli==2.0.1
-    - torch==2.7.0+cu118
-    - torchaudio==2.7.0+cu118
+    - torch==2.7.0
+    - torchaudio==2.7.0
     - torcheval==0.0.6
     - torchmetrics==0.9.3
     - torchtext==0.6.0
     - torchtnt==0.2.4
-    - torchvision==0.22.0+cu118
+    - torchvision==0.22.0
     - tqdm==4.67.1
     - transformers==4.51.3
     - triton==3.3.0
