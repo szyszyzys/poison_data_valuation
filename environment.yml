@@ -1,4 +1,4 @@
-name: dmnew
+name: DGMBENCH
 channels:
   - pyg
   - pytorch
