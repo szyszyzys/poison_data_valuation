@@ -389,7 +389,7 @@ def poisoning_attack_image(
     if dataset_name == "FMNIST":
         sm_model_type = 'lenet'
     elif dataset_name == "CIFAR":
-        sm_model_type = 'cifarcnn'
+        sm_model_type = 'lenet'
     # --- Basic Setup ---
     n_adversaries = int(n_sellers * adv_rate)
     if args is None:  # Use default args if none provided
@@ -689,7 +689,6 @@ def main():
     # 5. Get Model structure (do this once outside the loop)
     # Pass model structure name or definition from config
     dataset_domain = get_domain(dataset_name)
-    attack_func_args['model_structure'] = get_model_name(dataset_name)  # Pass the actual model object/class
 
     # 6. Save parameters used for this experiment group (optional)
     all_params_to_save = {

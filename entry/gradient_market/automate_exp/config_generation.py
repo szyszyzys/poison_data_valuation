@@ -134,13 +134,13 @@ NONE = "None"
 # DATASETS = ['TREC']
 DATASETS = ['CIFAR']
 AGGREGATIONS = ['martfl']
-ADV_RATES = [0.1, 0.2, 0.3, 0.4]
+ADV_RATES = [0.2]
 POISON_RATES = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4]
 
 # --- Model Configs per Dataset (Simplified) ---
 # You might need more details (layers, etc.) depending on model structure definition
 MODEL_CONFIGS = {
-    'CIFAR': 'CNN', 'CIFAR10': 'CNN',
+    'CIFAR': 'LENET', 'CIFAR10': 'LENET',
     'FMNIST': 'LENET',  # Or SimpleMLP
     'AG_NEWS': 'TextCNN',
     'TREC': 'TextCNN',
@@ -313,7 +313,7 @@ def generate_sybil_configs(output_dir):
     poison_rates = POISON_RATES
     aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
     amplify_factors = [1.0]  # Vary amplification
-    attack_modes = ["None", BACKDOOR]
+    attack_modes = [BACKDOOR]
     for ds, rate, agg, amplify, attack_mode in itertools.product(datasets, adv_rates, aggregations, amplify_factors,
                                                                  attack_modes):
         config = copy.deepcopy(BASE_CONFIG_TEMPLATE)
@@ -364,8 +364,8 @@ def generate_discovery_configs(output_dir):
     """Compare discovery split method."""
     print("\n--- Generating Discovery Split Configs ---")
     datasets = DATASETS  # Discovery might be more interesting with complex data
-    qualities = [0.3, 0.7, 0.95]  # Low, Medium, High quality simulation
-    buyer_modes = ['biased', 'unbiased']  # Add 'biased' if construct_buyer_set supports it well
+    qualities = [1]  # Low, Medium, High quality simulation
+    buyer_modes = ['unbiased']  # Add 'biased' if construct_buyer_set supports it well
     aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
     adv_rates = ADV_RATES
     poison_rates = POISON_RATES
@@ -405,7 +405,7 @@ def generate_privacy_attack(output_dir):
     """Generate configs for Gradient Inversion experiments."""
     print("\n--- Generating Gradient Inversion Attack Configs ---")
     # Use datasets relevant to GIA (often image datasets)
-    datasets = ['FMNIST', 'CIFAR']
+    datasets = []
     # Add any other parameters you want to vary for GIA here
     # For now, keeping other settings fixed from BASE_CONFIG_TEMPLATE
     aggregations = ['fedavg']

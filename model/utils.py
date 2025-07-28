@@ -440,16 +440,29 @@ def load_param(path: str, device: torch.device):
 def get_image_model(dataset_name: str,
                     model_structure_name: str = "",
                     device: Optional[Union[str, torch.device]] = None) -> nn.Module:
+    """
+    Dispatcher function to get a model based on dataset and model structure name.
+    """
     match dataset_name.lower():
         case "cifar":
-            model = CNN_CIFAR()
+            match model_structure_name.lower():
+                case "lenet":
+                    model = LeNetForCIFAR10()
+                case "cnn" | "":  # Default to CNN_CIFAR if name is "cnn" or empty
+                    model = CNN_CIFAR()
+                case _:
+                    raise NotImplementedError(
+                        f"Model '{model_structure_name}' not implemented for dataset '{dataset_name}'"
+                    )
         case "fmnist":
+            # Assuming LeNet is the only model for fmnist for now
             model = LeNet()
         case _:
-            raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
+            raise NotImplementedError(f"Cannot find models for dataset '{dataset_name}'")
 
     if device:
         model.to(torch.device(device) if isinstance(device, str) else device)
+
     return model
 
 
@@ -491,7 +504,7 @@ def get_text_model(
 def get_model_name(dataset_name):
     match dataset_name.lower():
         case "cifar":
-            model = 'CNN'
+            model = 'LeNet'
         case "fmnist":
             model = 'LeNet'
         case "trec" | "ag_news":

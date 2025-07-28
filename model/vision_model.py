@@ -306,6 +306,41 @@ def local_training_and_get_gradient(model: nn.Module,
     return flat_update, data_size
 
 
+class LeNetForCIFAR10(nn.Module):
+    """A version of the LeNet-5 architecture adapted for CIFAR-10."""
+    def __init__(self):
+        super(LeNetForCIFAR10, self).__init__()
+        # First convolutional block
+        # Input: 3x32x32 -> Output: 6x28x28
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=6, kernel_size=5)
+        # Max pooling
+        # Input: 6x28x28 -> Output: 6x14x14
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        # Second convolutional block
+        # Input: 6x14x14 -> Output: 16x10x10
+        self.conv2 = nn.Conv2d(in_channels=6, out_channels=16, kernel_size=5)
+        # Fully connected layers
+        # Flattened Input: 16 * 5 * 5 = 400
+        self.fc1 = nn.Linear(in_features=16 * 5 * 5, out_features=120)
+        self.fc2 = nn.Linear(in_features=120, out_features=84)
+        self.fc3 = nn.Linear(in_features=84, out_features=10)  # 10 classes for CIFAR-10
+
+    def forward(self, x):
+        # Convolutional blocks with ReLU activation and pooling
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+
+        # Flatten the feature maps for the fully connected layers
+        x = torch.flatten(x, 1)  # flatten all dimensions except batch
+
+        # Fully connected layers with ReLU activation
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+
+        # Output layer (no activation, as nn.CrossEntropyLoss applies softmax)
+        x = self.fc3(x)
+        return x
+
 class LeNet(nn.Module):
 
     def __init__(self):
