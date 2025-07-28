@@ -126,7 +126,7 @@ BASE_CONFIG_TEMPLATE = {
 
     # --- Output ---
     'output': {
-        'save_path_base': './experiment_results_revised',  # Base directory for saving results
+        'save_path_base': './experiment_results_rebuttal',  # Base directory for saving results
         # Specific save path will be constructed using experiment_id
     }
 }
