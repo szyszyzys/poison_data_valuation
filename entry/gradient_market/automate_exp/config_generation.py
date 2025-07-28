@@ -132,10 +132,10 @@ BASE_CONFIG_TEMPLATE = {
 }
 NONE = "None"
 # DATASETS = ['TREC']
-DATASETS = ['FMNIST', 'CIFAR', 'AG_NEWS', 'TREC']
-AGGREGATIONS = ["fltrust", 'fedavg', 'martfl', 'skymask']
+DATASETS = ['CIFAR']
+AGGREGATIONS = ['martfl']
 ADV_RATES = [0.1, 0.2, 0.3, 0.4]
-POISON_RATES = [0.1, 0.2, 0.3, 0.4]
+POISON_RATES = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4]
 
 # --- Model Configs per Dataset (Simplified) ---
 # You might need more details (layers, etc.) depending on model structure definition
