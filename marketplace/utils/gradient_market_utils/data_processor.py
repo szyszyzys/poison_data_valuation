@@ -31,7 +31,7 @@ import logging
 import random
 # Assuming vision datasets, add text imports if needed later
 from collections import defaultdict
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional, Callable
 
 import numpy as np
 # PyTorch and Torchvision imports
