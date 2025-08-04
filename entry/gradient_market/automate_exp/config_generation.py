@@ -50,7 +50,7 @@ BASE_CONFIG_TEMPLATE = {
     # --- Top Level Params for backdoor_attack ---
     'exp_name': 'new',  # Default, override per experiment
     'dataset_name': 'CIFAR',  # Default, override per experiment
-    'model_structure': 'SimpleCNN',  # Default, override per experiment
+    'model_structure': 'Simple_CNN',  # Default, override per experiment
     'aggregation_method': 'fedavg',  # Default, override per experiment
     'global_rounds': 100,
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',  # Detect device
@@ -132,32 +132,34 @@ BASE_CONFIG_TEMPLATE = {
 }
 NONE = "None"
 # DATASETS = ['TREC']
-DATASETS = ['CIFAR']
+DATASETS = ['CelebA', 'Camelyon16']
 AGGREGATIONS = ['martfl']
-ADV_RATES = [0.2]
+MODEL_NAME = "simple_cnn"
+
+SPLIT_METHOD = "metadata"
+
+ADV_RATES = [0.1, 0.2, 0.3, 0.4]
 POISON_RATES = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4]
 
-# --- Model Configs per Dataset (Simplified) ---
-# You might need more details (layers, etc.) depending on model structure definition
-MODEL_CONFIGS = {
-    'CIFAR': 'LENET', 'CIFAR10': 'LENET',
-    'FMNIST': 'LENET',  # Or SimpleMLP
-    'AG_NEWS': 'TextCNN',
-    'TREC': 'TextCNN',
-}
 DATASET_CHANNELS = {
     'CIFAR': 3, 'CIFAR10': 3,
     'FMNIST': 1,
     'MNIST': 1,
     'AG_NEWS': None,  # Not applicable
     'TREC': None,  # Not applicable
+    'CelebA': 3,
+    'Camelyon16': 3,
+
 }
+
 DEFAULT_LRS = {  # Example: Adjust learning rates per dataset
     'CIFAR': 0.001, 'CIFAR10': 0.001,
     'FMNIST': 0.001,
     'MNIST': 0.001,
     'AG_NEWS': 0.0005,
     'TREC': 0.0005,
+    'CelebA': 0.001,
+    'Camelyon16': 0.001,
 }
 
 
@@ -185,7 +187,7 @@ def generate_baseline_configs(output_dir):
     """Baselines: No attack, vary dataset and split method."""
     print("\n--- Generating Baseline Configs ---")
     datasets = DATASETS
-    split_methods = ['discovery']  # Add 'discovery' if desired
+    split_methods = ['metadata']  # Add 'discovery' if desired
     aggregations = AGGREGATIONS  # Compare how Sybil affects different aggregators
 
     for (ds, agg) in itertools.product(datasets, aggregations):
@@ -196,7 +198,7 @@ def generate_baseline_configs(output_dir):
 
             config['experiment_id'] = exp_id
             config['dataset_name'] = ds
-            config['model_structure'] = MODEL_CONFIGS.get(ds, 'DefaultModel')
+            config['model_structure'] = MODEL_NAME
             config['training']['local_training_params']['learning_rate'] = DEFAULT_LRS.get(ds, 0.001)
             config['data_split']['data_split_mode'] = split
             config['data_split']['normalize_data'] = (DATASET_CHANNELS[ds] is not None)  # Normalize vision only
@@ -234,9 +236,10 @@ def generate_backdoor_attack_configs(output_dir):
 
         config['experiment_id'] = exp_id
         config['dataset_name'] = ds
-        config['model_structure'] = MODEL_CONFIGS.get(ds, 'DefaultModel')
+        config['model_structure'] = MODEL_NAME
         config['training']['local_training_params']['learning_rate'] = DEFAULT_LRS.get(ds, 0.001)
         config['data_split']['normalize_data'] = (DATASET_CHANNELS[ds] is not None)
+        config['data_split']['data_split_mode'] = SPLIT_METHOD
 
         config['aggregation_method'] = agg
         config['data_split']['adv_rate'] = rate
@@ -280,7 +283,7 @@ def generate_label_flipping_attack_configs(output_dir):
 
         config['experiment_id'] = exp_id
         config['dataset_name'] = ds
-        config['model_structure'] = MODEL_CONFIGS.get(ds, 'DefaultModel')
+        config['model_structure'] = MODEL_NAME
         config['training']['local_training_params']['learning_rate'] = DEFAULT_LRS.get(ds, 0.001)
         config['data_split']['normalize_data'] = (DATASET_CHANNELS[ds] is not None)
 
@@ -322,7 +325,7 @@ def generate_sybil_configs(output_dir):
 
         config['experiment_id'] = exp_id
         config['dataset_name'] = ds
-        config['model_structure'] = MODEL_CONFIGS.get(ds, 'DefaultModel')
+        config['model_structure'] = MODEL_NAME
         config['training']['local_training_params']['learning_rate'] = DEFAULT_LRS.get(ds, 0.001)
         config['data_split']['normalize_data'] = (DATASET_CHANNELS[ds] is not None)
 
@@ -376,7 +379,7 @@ def generate_discovery_configs(output_dir):
 
         config['experiment_id'] = exp_id
         config['dataset_name'] = ds
-        config['model_structure'] = MODEL_CONFIGS.get(ds, 'DefaultModel')
+        config['model_structure'] = MODEL_NAME
         config['training']['local_training_params']['learning_rate'] = DEFAULT_LRS.get(ds, 0.001)
         config['data_split']['normalize_data'] = (DATASET_CHANNELS[ds] is not None)
         config['aggregation_method'] = agg
@@ -418,7 +421,7 @@ def generate_privacy_attack(output_dir):
 
         config['experiment_id'] = exp_id
         config['dataset_name'] = ds
-        config['model_structure'] = MODEL_CONFIGS.get(ds, 'DefaultModel')
+        config['model_structure'] = MODEL_NAME
         config['training']['local_training_params']['learning_rate'] = DEFAULT_LRS.get(ds, 0.001)
         config['data_split']['normalize_data'] = (DATASET_CHANNELS[ds] is not None)
         config['aggregation_method'] = agg
@@ -483,10 +486,10 @@ if __name__ == "__main__":
     # Generate specific experiment groups citation of similar attacks, section 2 threat model. explain martfl... weak assumption show good attack results
     generate_baseline_configs(CONFIG_OUTPUT_DIRECTORY)
     generate_backdoor_attack_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
-    generate_privacy_attack(CONFIG_OUTPUT_DIRECTORY)
+    # generate_label_flipping_attack_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_sybil_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_discovery_configs(CONFIG_OUTPUT_DIRECTORY)
+    # generate_privacy_attack(CONFIG_OUTPUT_DIRECTORY)
 
     print("\nConfiguration generation finished.")
     print(f"Check the '{CONFIG_OUTPUT_DIRECTORY}' directory.")

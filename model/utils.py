@@ -25,10 +25,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision.utils as vutils
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset, Dataset
 
 # from model.text_model import TEXTCNN
-from model.vision_model import CNN_CIFAR, LeNet, TextCNN
+from model.vision_model import LeNet, TextCNN, SimpleCNN
 
 
 def train_local_model(model: nn.Module,
@@ -225,7 +225,7 @@ def local_training_and_get_gradient(  # Actually returns weight deltas, not grad
         opt_str: str = "SGD",
         momentum: float = 0.9,
         weight_decay: float = 0.0005,
-        batch_size = 64,
+        batch_size=64,
         # batch_size is part of train_loader, not needed as separate arg here
         evaluate_on_full_train_set: bool = False
 ) -> Tuple[Optional[List[torch.Tensor]], Optional[np.ndarray], Optional[nn.Module], Dict, Optional[float]]:
@@ -437,31 +437,67 @@ def load_param(path: str, device: torch.device):
     return state_dict
 
 
-def get_image_model(dataset_name: str,
-                    model_structure_name: str = "",
-                    device: Optional[Union[str, torch.device]] = None) -> nn.Module:
+MODEL_REGISTRY = {
+    "simple_cnn": {
+        "class": SimpleCNN,
+        "supported_datasets": ["cifar", "celeba", "camelyon16"],
+    },
+    "lenet": {
+        "class": LeNet,
+        "supported_datasets": ["mnist", "fmnist", "cifar"],  # LeNet can now support CIFAR
+    },
+}
+
+
+# --- 0c. Flexible Model Dispatcher Function ---
+
+def get_image_model(
+        model_name: str,
+        dataset: Dataset,
+        device: Optional[Union[str, torch.device]] = None
+) -> nn.Module:
     """
-    Dispatcher function to get a model based on dataset and model structure name.
+    Gets an initialized model instance based on its name and the dataset.
     """
-    match dataset_name.lower():
-        case "cifar":
-            match model_structure_name.lower():
-                case "lenet":
-                    model = LeNetForCIFAR10()
-                case "cnn" | "":  # Default to CNN_CIFAR if name is "cnn" or empty
-                    model = CNN_CIFAR()
-                case _:
-                    raise NotImplementedError(
-                        f"Model '{model_structure_name}' not implemented for dataset '{dataset_name}'"
-                    )
-        case "fmnist":
-            # Assuming LeNet is the only model for fmnist for now
-            model = LeNet()
-        case _:
-            raise NotImplementedError(f"Cannot find models for dataset '{dataset_name}'")
+    model_name = model_name.lower()
+    if model_name not in MODEL_REGISTRY:
+        raise NotImplementedError(
+            f"Model '{model_name}' is not in the registry. Available models: {list(MODEL_REGISTRY.keys())}")
+
+    model_info = MODEL_REGISTRY[model_name]
+    model_class = model_info["class"]
+
+    dataset_name = dataset.__class__.__name__.lower().replace('custom', '').replace('fashion', '')
+    if isinstance(dataset, Subset):
+        dataset_name = dataset.dataset.__class__.__name__.lower().replace('custom', '').replace('fashion', '')
+
+    if dataset_name not in model_info["supported_datasets"]:
+        raise ValueError(
+            f"Model '{model_name}' does not support dataset '{dataset_name}'. Supported: {model_info['supported_datasets']}")
+
+    try:
+        num_classes = len(dataset.classes)
+    except AttributeError:
+        # Handle Subset case
+        if isinstance(dataset, Subset):
+            num_classes = len(dataset.dataset.classes)
+        else:
+            raise AttributeError(f"Dataset '{dataset_name}' must have a '.classes' attribute.")
+
+    try:
+        sample_image, _ = dataset[0]
+        in_channels = sample_image.shape[0]
+    except (IndexError, TypeError):
+        in_channels = 3 if dataset_name in ["cifar", "celeba", "camelyon16"] else 1
+        print(f"Warning: Could not determine input channels from dataset sample. Defaulting to {in_channels}.")
+
+    print(
+        f"Instantiating model '{model_name}' for '{dataset_name}' with {in_channels} channels and {num_classes} classes.")
+    model = model_class(in_channels=in_channels, num_classes=num_classes)
 
     if device:
         model.to(torch.device(device) if isinstance(device, str) else device)
+        print(f"Model moved to device: {device}")
 
     return model
 

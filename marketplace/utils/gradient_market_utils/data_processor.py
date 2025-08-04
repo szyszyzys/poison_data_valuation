@@ -27,20 +27,17 @@ Usage Example:
     for cid, loader in client_loaders.items():
         print(f"Client {cid} has {len(loader.dataset)} samples.")
 """
-# Assuming vision datasets, add text imports if needed later
-import logging
-from collections import defaultdict
-from typing import Tuple, Dict, List, Optional, Any  # Ensure Any is imported for Dataset type hint
-
-import numpy as np
-from torch.utils.data import Subset, DataLoader
-from torchvision import datasets, transforms
 import logging
 import random
-from typing import Dict, List, Optional, Tuple
+# Assuming vision datasets, add text imports if needed later
+from collections import defaultdict
+from typing import Dict, List, Tuple, Any, Optional
 
 import numpy as np
+# PyTorch and Torchvision imports
+from torch.utils.data import DataLoader, Subset
 from torch.utils.data import Dataset  # Or whichever base class you use
+from torchvision import datasets, transforms
 
 # refined_data_split.py
 
@@ -74,57 +71,157 @@ def load_cifar10_dataset(train=True, download=True):
     return dataset
 
 
-# def create_client_dataloaders(dataset, splits, batch_size=32, shuffle=True):
-#     """
-#     Given a dataset and a dictionary of splits (client_id: indices),
-#     return a dictionary mapping client_id to a DataLoader for that client's data.
-#     """
-#     client_loaders = {}
-#     for client_id, indices in splits.items():
-#         subset = Subset(dataset, indices)
-#         loader = DataLoader(subset, batch_size=batch_size, shuffle=shuffle)
-#         client_loaders[client_id] = loader
-#     return client_loaders
+class CelebACustom(datasets.CelebA):
+    """
+    Wrapper for the CelebA dataset that correctly loads and provides access to
+    the celebrity identity for each image.
+    """
+
+    def __init__(self, root: str, split: str, transform: Optional[Callable] = None, download: bool = True):
+        super().__init__(root=root, split=split, target_type="identity", transform=transform, download=download)
+        self.identity = np.array(self.identity)
+        self.classes = [str(i) for i in range(1, 10001)]
+        print(
+            f"CelebA dataset initialized. Found {len(self.filename)} images and {len(np.unique(self.identity))} unique identities.")
 
 
-# Example get_data_set function that uses the buyer-seller split.
-# def get_data_set(dataset_name, buyer_count, num_sellers, iid=True):
-#     """
-#     Load the dataset and split it between a buyer and several sellers.
-#
-#     Parameters:
-#       dataset_name (str): Name of the dataset ("FMNIST", "CIFAR", etc.)
-#       buyer_count (int): Number of samples to allocate to the buyer.
-#       num_sellers (int): Number of seller clients.
-#       iid (bool): If True, assume IID distribution (affects how splitting might be done).
-#
-#     Returns:
-#       tuple: (client_loaders, full_dataset, test_set_loader)
-#     """
-#     # Load dataset (for example purposes, we'll assume these functions exist)
-#     if dataset_name == "FMNIST":
-#         from torchvision import datasets, transforms
-#         transform = transforms.ToTensor()  # FMNIST images will be [0, 1] and shape (1, H, W)
-#         dataset = datasets.FashionMNIST(root='./data', train=True, download=True, transform=transform)
-#         test_set = datasets.FashionMNIST(root='./data', train=False, download=True, transform=transform)
-#     elif dataset_name == "CIFAR":
-#         from torchvision import datasets, transforms
-#         transform = transforms.ToTensor()
-#         dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
-#         test_set = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
-#     else:
-#         raise NotImplementedError(f"No current dataset {dataset_name}")
-#
-#     # Create splits: assign buyer_count samples to buyer, rest to sellers.
-#     splits = split_dataset_buyer_seller(dataset, buyer_count, num_sellers)
-#     client_loaders = create_client_dataloaders(dataset, splits, batch_size=64, shuffle=True)
-#
-#     print("Client splits:")
-#     for cid, loader in client_loaders.items():
-#         print(f"  Client {cid}: {len(loader.dataset)} samples")
-#
-#     test_set_loader = DataLoader(test_set, batch_size=64, shuffle=False)
-#     return client_loaders, dataset, test_set_loader
+# --- 1b. Camelyon16 Custom Class ---
+class Camelyon16Custom(Dataset):
+    """
+    Custom Dataset for a pre-processed version of the Camelyon16 challenge dataset.
+    """
+
+    def __init__(self, root: str, transform: Optional[Callable] = None, download: bool = True):
+        self.root = root
+        self.transform = transform
+        self.data_dir = os.path.join(self.root, 'camelyon16_patches')
+        self.metadata_path = os.path.join(self.data_dir, 'patch_meta.csv')
+        self.patches_dir = os.path.join(self.data_dir, 'patches')
+        self.classes = ['Normal', 'Tumor']
+        if download:
+            self._download_and_extract()
+        if not self._check_integrity():
+            raise RuntimeError('Dataset not found or corrupted. You can try passing download=True to re-download it.')
+        self.metadata = pd.read_csv(self.metadata_path)
+        self.metadata.reset_index(inplace=True)
+        self.image_paths = [os.path.join(self.patches_dir, f) for f in self.metadata['filename']]
+        self.labels = self.metadata['label'].values
+        print(f"Camelyon16 dataset initialized. Found {len(self.image_paths)} patches.")
+        print(f"Metadata columns available: {self.metadata.columns.tolist()}")
+
+    def __len__(self) -> int:
+        return len(self.image_paths)
+
+    def __getitem__(self, idx: int) -> Tuple[Any, int]:
+        image_path = self.image_paths[idx]
+        image = Image.open(image_path).convert("RGB")
+        label = int(self.labels[idx])
+        if self.transform:
+            image = self.transform(image)
+        return image, label
+
+    def _check_integrity(self) -> bool:
+        return os.path.exists(self.data_dir) and os.path.exists(self.metadata_path) and os.path.exists(self.patches_dir)
+
+    def _download_and_extract(self):
+        if self._check_integrity():
+            print('Files already downloaded and verified.')
+            return
+        os.makedirs(self.data_dir, exist_ok=True)
+        print("=" * 80)
+        print("ATTENTION: Creating a DUMMY Camelyon16 dataset for demonstration purposes.")
+        print("This avoids a multi-gigabyte download. The logic and metadata structure are preserved.")
+        print("=" * 80)
+        os.makedirs(self.patches_dir, exist_ok=True)
+        num_dummy_samples = 2000
+        metadata_list = []
+        utrecht_patients = [f'patient_U_{i:02d}' for i in range(20)]
+        for i in range(500):
+            patient = np.random.choice(utrecht_patients)
+            label = np.random.choice([0, 1])
+            fname = f'dummy_utrecht_{i}.png'
+            Image.new('RGB', (96, 96), color='blue').save(os.path.join(self.patches_dir, fname))
+            metadata_list.append({'filename': fname, 'label': label, 'center': 'Utrecht', 'patient': patient})
+        radboud_patients = [f'patient_R_{i:02d}' for i in range(50)]
+        for i in range(1500):
+            patient = np.random.choice(radboud_patients)
+            label = np.random.choice([0, 1])
+            fname = f'dummy_radboud_{i}.png'
+            Image.new('RGB', (96, 96), color='red').save(os.path.join(self.patches_dir, fname))
+            metadata_list.append({'filename': fname, 'label': label, 'center': 'Radboud', 'patient': patient})
+        dummy_metadata_df = pd.DataFrame(metadata_list)
+        dummy_metadata_df.to_csv(self.metadata_path, index=False)
+
+
+def split_celeba_by_identity(
+        dataset: CelebACustom, num_benign_sellers: int, num_malicious_sellers: int, buyer_val_ids_fraction: float
+) -> Tuple[np.ndarray, np.ndarray, Dict[int, List[int]], List[int]]:
+    """Partitions the CelebA dataset based on 1-based celebrity ID."""
+    print("Partitioning CelebA by celebrity identity...")
+    identities = dataset.identity.squeeze()
+    all_indices = np.arange(len(dataset))
+    total_celebs_for_benign = 100 * num_benign_sellers
+    total_celebs_for_malicious = 100 * num_malicious_sellers
+    buyer_id_range = np.arange(1, 101)
+    benign_seller_id_range = np.arange(101, 101 + total_celebs_for_benign)
+    malicious_seller_id_range = np.arange(
+        benign_seller_id_range[-1] + 1,
+        benign_seller_id_range[-1] + 1 + total_celebs_for_malicious
+    )
+    np.random.shuffle(buyer_id_range)
+    val_split_idx = int(len(buyer_id_range) * buyer_val_ids_fraction)
+    buyer_val_ids, buyer_test_ids = buyer_id_range[:val_split_idx], buyer_id_range[val_split_idx:]
+    buyer_val_indices = all_indices[np.isin(identities, buyer_val_ids)]
+    buyer_test_indices = all_indices[np.isin(identities, buyer_test_ids)]
+    seller_splits: Dict[int, List[int]] = {}
+    malicious_seller_ids: List[int] = []
+    if num_benign_sellers > 0:
+        benign_id_chunks = np.array_split(benign_seller_id_range, num_benign_sellers)
+        for i, chunk in enumerate(benign_id_chunks):
+            seller_splits[i] = all_indices[np.isin(identities, chunk)].tolist()
+    if num_malicious_sellers > 0:
+        malicious_id_chunks = np.array_split(malicious_seller_id_range, num_malicious_sellers)
+        for i, chunk in enumerate(malicious_id_chunks):
+            seller_idx = num_benign_sellers + i
+            seller_splits[seller_idx] = all_indices[np.isin(identities, chunk)].tolist()
+            malicious_seller_ids.append(seller_idx)
+    return buyer_val_indices, buyer_test_indices, seller_splits, malicious_seller_ids
+
+
+def split_camelyon16_by_hospital(
+        dataset: Camelyon16Custom, num_benign_sellers: int, num_malicious_sellers: int,
+        buyer_val_patient_fraction: float
+) -> Tuple[np.ndarray, np.ndarray, Dict[int, List[int]], List[int]]:
+    """Partitions the Camelyon16 dataset based on hospital and patient ID."""
+    print("Partitioning Camelyon16 by hospital and patient ID...")
+    metadata = dataset.metadata
+    utrecht_indices = metadata[metadata['center'] == 'Utrecht'].index.to_numpy()
+    radboud_indices = metadata[metadata['center'] == 'Radboud'].index.to_numpy()
+    utrecht_patients = metadata.loc[utrecht_indices, 'patient'].unique()
+    np.random.shuffle(utrecht_patients)
+    val_split_idx = int(len(utrecht_patients) * buyer_val_patient_fraction)
+    buyer_val_patients, buyer_test_patients = utrecht_patients[:val_split_idx], utrecht_patients[val_split_idx:]
+    buyer_val_indices = metadata[metadata['patient'].isin(buyer_val_patients)].index.to_numpy()
+    buyer_test_indices = metadata[metadata['patient'].isin(buyer_test_patients)].index.to_numpy()
+    radboud_patients = metadata.loc[radboud_indices, 'patient'].unique()
+    np.random.shuffle(radboud_patients)
+    seller_splits: Dict[int, List[int]] = {}
+    malicious_seller_ids: List[int] = []
+    num_malicious_patients = int(len(radboud_patients) * 0.2) * num_malicious_sellers
+    malicious_patients, benign_patients = radboud_patients[:num_malicious_patients], radboud_patients[
+                                                                                     num_malicious_patients:]
+    if num_benign_sellers > 0:
+        benign_patient_chunks = np.array_split(benign_patients, num_benign_sellers)
+        for i, chunk in enumerate(benign_patient_chunks):
+            seller_splits[i] = metadata[metadata['patient'].isin(chunk)].index.to_numpy().tolist()
+    if num_malicious_sellers > 0:
+        malicious_patient_chunks = np.array_split(malicious_patients, num_malicious_sellers)
+        for i, chunk in enumerate(malicious_patient_chunks):
+            malicious_idx = num_benign_sellers + i
+            seller_splits[malicious_idx] = metadata[metadata['patient'].isin(chunk)].index.to_numpy().tolist()
+            malicious_seller_ids.append(malicious_idx)
+    return buyer_val_indices, buyer_test_indices, seller_splits, malicious_seller_ids
+
 
 def split_dataset_by_label(
         dataset: Any,
@@ -550,111 +647,6 @@ def get_transforms(dataset_name: str, normalize_data: bool = True) -> transforms
     return data_transforms
 
 
-def get_data_set(
-        dataset_name,
-        buyer_percentage=0.01,
-        num_sellers=10,
-        batch_size=64,
-        normalize_data=True,
-        split_method="discovery",  # Changed default to make the relevant part active
-        n_adversaries=0,
-        save_path='./result',
-        # --- Discovery Split Specific Params ---
-        discovery_quality=0.3,
-        buyer_data_mode="random",
-        buyer_bias_type="dirichlet",  # Added: Specify how buyer bias is generated
-        buyer_dirichlet_alpha=0.3,  # Added: Alpha specifically for buyer bias
-        # --- Other Split Method Params ---
-        seller_dirichlet_alpha=0.7,  # Alpha used in the default/other split method,
-        num_workers=0,
-        pin_memory=False
-):
-    pin_memory = False
-    # Define transforms based on the dataset.
-    # (Keep your transform definitions here)
-    transform = get_transforms(dataset_name, normalize_data=normalize_data)
-    print(f"Using transforms for {dataset_name}: {transform}")
-    # Load training and test datasets.
-    if dataset_name == "FMNIST":
-        dataset = datasets.FashionMNIST(root='./data', train=True, download=True, transform=transform)
-        test_set = datasets.FashionMNIST(root='./data', train=False, download=True, transform=transform)
-        class_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
-                       'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
-    elif dataset_name == "CIFAR":
-        dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
-        test_set = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
-        class_names = ['airplane', 'automobile', 'bird', 'cat', 'deer',
-                       'dog', 'frog', 'horse', 'ship', 'truck']
-    elif dataset_name == "MNIST":
-        dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-        test_set = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
-        class_names = [str(i) for i in range(10)]
-    else:
-        raise NotImplementedError(f"Dataset {dataset_name} is not implemented.")
-
-    # --- Derive NUM_CLASSES dynamically ---
-    num_classes = len(dataset.classes)
-    print(f"Dataset: {dataset_name}, Number of classes: {num_classes}")
-
-    # Determine the number of buyer samples.
-    total_samples = len(dataset)
-    buyer_count = int(total_samples * buyer_percentage)
-    print(f"Allocating {buyer_count} samples ({buyer_percentage * 100:.2f}%) for the buyer.")
-
-    # --- Conditional Data Splitting ---
-    if split_method == "discovery":
-        print(f"Using 'discovery' split method with buyer bias type: '{buyer_bias_type}'")
-        # Generate buyer distribution ONLY when needed
-        buyer_biased_distribution = generate_buyer_bias_distribution(
-            num_classes=num_classes,  # Use derived num_classes
-            bias_type=buyer_bias_type,
-            alpha=buyer_dirichlet_alpha  # Use argument for alpha
-        )
-        print(f"Generated buyer bias distribution: {buyer_biased_distribution}")
-
-        buyer_indices, seller_splits = split_dataset_discovery(
-            dataset=dataset,
-            buyer_count=buyer_count,
-            num_clients=num_sellers,
-            noise_factor=discovery_quality,
-            buyer_data_mode=buyer_data_mode,
-            buyer_bias_distribution=buyer_biased_distribution  # Pass generated dist
-        )
-    elif split_method == "label":
-        print("Using 'label' split method (likely non-iid based on labels)")
-        buyer_indices, seller_splits = split_dataset_by_label(
-            dataset=dataset,
-            buyer_count=buyer_count,
-            num_sellers=num_sellers,
-            # Add any other specific args for this function
-        )
-    else:  # Default or other specified methods (e.g., Dirichlet split for sellers)
-        print(f"Using '{split_method}' split method (likely Dirichlet for sellers with alpha={seller_dirichlet_alpha})")
-        buyer_indices, seller_splits = split_dataset_buyer_seller_improved(
-            dataset=dataset,
-            buyer_count=buyer_count,
-            num_sellers=num_sellers,
-            split_method=split_method,  # Pass original method name if needed internally
-            dirichlet_alpha=seller_dirichlet_alpha,  # Use alpha for seller split
-            n_adversaries=n_adversaries
-        )
-
-    # --- Post-splitting steps ---
-    data_distribution_info = print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_results=True,
-                                                            output_dir=save_path)
-
-    # Create DataLoaders.
-    buyer_loader = DataLoader(Subset(dataset, buyer_indices), batch_size=batch_size, shuffle=True,
-                              num_workers=num_workers, pin_memory=pin_memory)
-    seller_loaders = {i: DataLoader(Subset(dataset, indices), batch_size=batch_size, shuffle=True,
-                                    num_workers=num_workers, pin_memory=pin_memory)
-                      for i, indices in seller_splits.items()}
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False,
-                             num_workers=num_workers, pin_memory=pin_memory)
-    print("DataLoaders created successfully.")
-    return buyer_loader, seller_loaders, dataset, test_loader, class_names
-
-
 def dirichlet_partition(indices_by_class: dict, n_clients: int, alpha: float) -> dict:
     """
     Partition indices among n_clients using a Dirichlet distribution.
@@ -889,7 +881,7 @@ def print_and_save_data_statistics(
 
 
 def print_and_save_data_statistics_text(
-        dataset: Any, # Original dataset (e.g., processed_train_data which might be ListDatasetWithTargets or raw list)
+        dataset: Any,  # Original dataset (e.g., processed_train_data which might be ListDatasetWithTargets or raw list)
         buyer_indices: np.ndarray,
         seller_splits: Dict[int, List[int]],
         save_results: bool = True,
@@ -900,10 +892,10 @@ def print_and_save_data_statistics_text(
     Also compute and print the distribution alignment metrics and save to JSON.
     Adapts for text data format before calling _extract_targets.
     """
-    logger = logging.getLogger(__name__) # Use standard logging
+    logger = logging.getLogger(__name__)  # Use standard logging
 
     # --- MODIFICATION FOR TEXT DATA ---
-    dataset_for_targets = dataset # Default to original
+    dataset_for_targets = dataset  # Default to original
     is_likely_text_data_format = False
 
     # Heuristic: If the 'dataset' object itself is NOT ListDatasetWithTargets,
@@ -916,23 +908,25 @@ def print_and_save_data_statistics_text(
         if isinstance(first_item, (list, tuple)) and len(first_item) == 2:
             if isinstance(first_item[0], int) and isinstance(first_item[1], list):
                 is_likely_text_data_format = True
-                logger.debug("print_and_save_data_statistics: Detected raw text data format. Will use temporary wrapper for _extract_targets.")
+                logger.debug(
+                    "print_and_save_data_statistics: Detected raw text data format. Will use temporary wrapper for _extract_targets.")
 
     if is_likely_text_data_format:
         # Ensure 'dataset' is a list before passing to ListDatasetWithTargets constructor
         if isinstance(dataset, list):
             try:
                 # This dataset should be List[Tuple[int, List[int]]]
-                dataset_for_targets = ListDatasetWithTargets(dataset) # type: ignore
+                dataset_for_targets = ListDatasetWithTargets(dataset)  # type: ignore
             except ValueError as e:
-                logger.error(f"Error creating ListDatasetWithTargets wrapper in print_and_save_data_statistics: {e}. Proceeding with original dataset for target extraction, which might fail.")
+                logger.error(
+                    f"Error creating ListDatasetWithTargets wrapper in print_and_save_data_statistics: {e}. Proceeding with original dataset for target extraction, which might fail.")
                 # dataset_for_targets remains 'dataset'
         else:
-            logger.warning("print_and_save_data_statistics: Detected text format, but 'dataset' is not a list. Cannot safely wrap for _extract_targets. Proceeding with original, which might fail.")
+            logger.warning(
+                "print_and_save_data_statistics: Detected text format, but 'dataset' is not a list. Cannot safely wrap for _extract_targets. Proceeding with original, which might fail.")
             # dataset_for_targets remains 'dataset'
 
     # --- END MODIFICATION ---
-
 
     # 1) Extract all labels robustly using the (potentially wrapped) dataset
     try:
@@ -947,28 +941,26 @@ def print_and_save_data_statistics_text(
             "seller_stats": {}
         }
 
-
     if len(targets) == 0:
         logger.warning("No targets extracted or dataset was effectively empty for statistics.")
         unique_classes = np.array([])
     else:
         unique_classes = np.unique(targets)
-        if len(unique_classes) == 0 and len(targets) > 0: # All targets are the same or an issue
+        if len(unique_classes) == 0 and len(targets) > 0:  # All targets are the same or an issue
             logger.warning(f"Targets extracted but np.unique(targets) is empty. Targets sample: {targets[:5]}")
-
 
     # 2) Buyer stats
     # Ensure buyer_indices are valid for the extracted targets array
     valid_buyer_indices = buyer_indices
     if buyer_indices is not None and len(buyer_indices) > 0 and len(targets) > 0:
         if buyer_indices.max() >= len(targets):
-            logger.error(f"Max buyer index ({buyer_indices.max()}) exceeds target array length ({len(targets)}). Clamping or erroring.")
+            logger.error(
+                f"Max buyer index ({buyer_indices.max()}) exceeds target array length ({len(targets)}). Clamping or erroring.")
             # Option: Filter out invalid indices or raise error. For now, log and proceed, might crash.
             # valid_buyer_indices = buyer_indices[buyer_indices < len(targets)]
             # If valid_buyer_indices becomes empty, handle downstream.
     elif buyer_indices is None or len(buyer_indices) == 0:
-        valid_buyer_indices = np.array([], dtype=int) # Ensure it's an array for indexing
-
+        valid_buyer_indices = np.array([], dtype=int)  # Ensure it's an array for indexing
 
     if len(valid_buyer_indices) > 0 and len(targets) > 0:
         buyer_targets = targets[valid_buyer_indices]
@@ -982,23 +974,23 @@ def print_and_save_data_statistics_text(
         "class_distribution": buyer_counts
     }
 
-    logger.info("Buyer Data Statistics:") # Changed print to logger.info
+    logger.info("Buyer Data Statistics:")  # Changed print to logger.info
     logger.info(f"  Total Samples: {buyer_stats['total_samples']}")
     if unique_classes.size > 0:
         for c_val in unique_classes:
             logger.info(f"  Class {int(c_val)}: {buyer_counts.get(str(int(c_val)), 0)}")
     logger.info("\n" + "=" * 40 + "\n")
 
-
     # 3) Seller stats
-    seller_stats_dict: Dict[str, Dict[str, Any]] = {} # Changed key to str for JSON serializability
+    seller_stats_dict: Dict[str, Dict[str, Any]] = {}  # Changed key to str for JSON serializability
     for seller_id_int, indices in seller_splits.items():
-        seller_id_str = str(seller_id_int) # Use string key for seller_id in results
-        valid_seller_indices = np.array(indices, dtype=int) # Ensure it's an array
+        seller_id_str = str(seller_id_int)  # Use string key for seller_id in results
+        valid_seller_indices = np.array(indices, dtype=int)  # Ensure it's an array
 
         if len(valid_seller_indices) > 0 and len(targets) > 0:
             if valid_seller_indices.max() >= len(targets):
-                logger.error(f"Max seller {seller_id_str} index ({valid_seller_indices.max()}) exceeds target array length ({len(targets)}).")
+                logger.error(
+                    f"Max seller {seller_id_str} index ({valid_seller_indices.max()}) exceeds target array length ({len(targets)}).")
                 # valid_seller_indices = valid_seller_indices[valid_seller_indices < len(targets)]
                 # If this results in empty, counts will be zero.
 
@@ -1019,11 +1011,10 @@ def print_and_save_data_statistics_text(
                 logger.info(f"  Class {int(c_val)}: {current_seller_counts.get(str(int(c_val)), 0)}")
         logger.info("-" * 30)
 
-
     # 4) Package results
     results = {
         "buyer_stats": buyer_stats,
-        "seller_stats": seller_stats_dict # Use dict with string keys
+        "seller_stats": seller_stats_dict  # Use dict with string keys
     }
 
     # 5) Save JSON if desired
@@ -1038,233 +1029,7 @@ def print_and_save_data_statistics_text(
             logger.error(f"Failed to save statistics JSON to {output_dir}: {e}")
 
     return results
-    # # Visualize Buyer Distribution.
-    # plt.figure(figsize=(8, 4))
-    # plt.bar([str(c) for c in unique_classes], [buyer_counts[str(c)] for c in unique_classes])
-    # plt.title("Buyer Class Distribution")
-    # plt.xlabel("Class")
-    # plt.ylabel("Count")
-    # if save_results:
-    #     buyer_fig_file = os.path.join(output_dir, 'buyer_distribution.png')
-    #     plt.savefig(buyer_fig_file)
-    #     print(f"Buyer distribution figure saved to {buyer_fig_file}")
-    # plt.close()
-    #
-    # # Visualize Seller Distributions.
-    # num_sellers = len(seller_splits)
-    # n_cols = 3
-    # n_rows = int(np.ceil(num_sellers / n_cols))
-    # fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
-    # if num_sellers == 1:
-    #     axes = [axes]  # make it iterable
-    # else:
-    #     axes = axes.flatten()
-    #
-    # for i, (seller_id, indices) in enumerate(seller_splits.items()):
-    #     seller_targets = targets[indices]
-    #     counts = {str(c): int(np.sum(seller_targets == c)) for c in unique_classes}
-    #     axes[i].bar([str(c) for c in unique_classes], [counts[str(c)] for c in unique_classes])
-    #     axes[i].set_title(f"Seller {seller_id}")
-    #     axes[i].set_xlabel("Class")
-    #     axes[i].set_ylabel("Count")
-    #
-    # # Hide any unused subplots.
-    # for j in range(i + 1, len(axes)):
-    #     axes[j].axis("off")
-    #
-    # plt.tight_layout()
-    # if save_results:
-    #     sellers_fig_file = os.path.join(output_dir, 'seller_distribution.png')
-    #     plt.savefig(sellers_fig_file)
-    #     print(f"Seller distribution figure saved to {sellers_fig_file}")
-    # plt.close()
-    #
-    # # ----- Compute and print distribution alignment metrics -----
-    # # Using cosine similarity between the buyer's and each seller's class count vectors.
-    # alignment_metrics = {}
-    # buyer_vector = np.array([buyer_counts[str(c)] for c in unique_classes])
-    # for seller_id, stats in seller_stats.items():
-    #     seller_counts = stats["class_distribution"]
-    #     seller_vector = np.array([seller_counts[str(c)] for c in unique_classes])
-    #     similarity = np.dot(buyer_vector, seller_vector) / (
-    #             np.linalg.norm(buyer_vector) * np.linalg.norm(seller_vector))
-    #     alignment_metrics[seller_id] = similarity
-    #     print(f"Alignment metric for Seller {seller_id}: {similarity:.4f}")
-    #
-    # print("\n" + "=" * 40 + "\n")
-    # print("Sellers ranked by alignment (high to low):")
-    # sorted_sellers = sorted(alignment_metrics.items(), key=lambda x: x[1], reverse=True)
-    # for rank, (seller_id, metric) in enumerate(sorted_sellers, start=1):
-    #     print(f"{rank}. Seller {seller_id} with metric {metric:.4f}")
 
-    return results
-
-
-# def construct_buyer_set(dataset, buyer_count, mode="random", bias_distribution=None):
-#     """
-#     Construct buyer set indices from a global dataset in two modes:
-#       - "random": Uniformly sample buyer_count indices from the global dataset.
-#       - "biased": Sample buyer_count indices according to a specified bias_distribution.
-#
-#     Parameters:
-#       dataset: A dataset object that either has a 'targets' attribute or returns (data, label) pairs.
-#       buyer_count (int): The number of samples for the buyer set.
-#       mode (str): "random" or "biased". Determines the sampling mode.
-#       bias_distribution (dict or None): If mode is "biased", this dictionary maps class labels (as keys)
-#           to desired relative proportions. For example: {0: 0.1, 1: 0.2, 2: 0.7}. The values need not sum to 1;
-#           they will be normalized. If None in biased mode, a default bias is used.
-#
-#     Returns:
-#       buyer_indices (np.ndarray): An array of indices for the buyer set.
-#     """
-#     total_samples = len(dataset)
-#
-#     # Extract targets from dataset.
-#     if hasattr(dataset, 'targets'):
-#         targets = np.array(dataset.targets)
-#     else:
-#         targets = np.array([dataset[i][1] for i in range(total_samples)])
-#
-#     if mode == "random":
-#         # Unbiased random sampling.
-#         buyer_indices = np.random.choice(np.arange(total_samples), size=buyer_count, replace=False)
-#         return buyer_indices
-#
-#     elif mode == "biased":
-#         # If no bias_distribution is provided, use a default that overrepresents one class.
-#         if bias_distribution is None:
-#             unique_classes = np.unique(targets)
-#             # Example default: favor the highest class while assigning a small proportion to others.
-#             bias_distribution = {int(c): 0.1 for c in unique_classes}
-#             # Overrepresent the last (or any chosen) class.
-#             bias_distribution[int(unique_classes[-1])] = 0.7
-#
-#         # Normalize bias_distribution so proportions sum to 1.
-#         total_prop = sum(bias_distribution.values())
-#         normalized_bias = {int(k): v / total_prop for k, v in bias_distribution.items()}
-#
-#         # Build a mapping: class -> list of indices in the global dataset.
-#         indices_by_class = {}
-#         for c in np.unique(targets):
-#             indices_by_class[int(c)] = np.where(targets == c)[0].tolist()
-#
-#         buyer_indices = []
-#         # For each class, compute the number of samples and sample accordingly.
-#         for cls, proportion in normalized_bias.items():
-#             n_samples = int(round(buyer_count * proportion))
-#             available = indices_by_class.get(cls, [])
-#             if len(available) == 0:
-#                 continue
-#             if len(available) < n_samples:
-#                 # If not enough samples available, sample with replacement.
-#                 sampled = list(np.random.choice(available, size=n_samples, replace=True))
-#             else:
-#                 sampled = random.sample(available, n_samples)
-#             buyer_indices.extend(sampled)
-#
-#         # Adjust for rounding: if we have too many or too few indices, fix that.
-#         buyer_indices = np.array(buyer_indices)
-#         if len(buyer_indices) > buyer_count:
-#             buyer_indices = np.random.choice(buyer_indices, size=buyer_count, replace=False)
-#         elif len(buyer_indices) < buyer_count:
-#             gap = buyer_count - len(buyer_indices)
-#             extra = np.random.choice(np.arange(total_samples), size=gap, replace=False)
-#             buyer_indices = np.concatenate([buyer_indices, extra])
-#         return buyer_indices
-#
-#     else:
-#         raise ValueError("Unknown mode. Please use 'random' or 'biased'.")
-#
-#
-# def split_dataset_martfl_discovery(dataset,
-#                                    buyer_count: int,
-#                                    num_clients: int,
-#                                    client_data_count: int = 0,
-#                                    noise_factor: float = 0.3, buyer_data_mode="random") -> (np.ndarray, dict):
-#     """
-#     Simulate a MartFL scenario where:
-#       1. A buyer dataset is first sampled from the global dataset.
-#       2. The buyer's label distribution is computed.
-#       3. Client (seller) datasets are generated from the remaining data so that
-#          each client’s distribution is similar to the buyer’s (with a bit of noise).
-#
-#     Parameters:
-#       dataset: A dataset object (expects a 'targets' attribute or __getitem__ returns (data, label)).
-#       buyer_count (int): Number of samples reserved for the buyer.
-#       num_clients (int): Number of simulated client datasets.
-#       client_data_count (int): Number of samples for each client dataset.
-#       noise_factor (float): A multiplicative noise factor applied to the expected counts per class.
-#                             For each class, the actual number of samples is sampled from a uniform
-#                             factor in [1-noise_factor, 1+noise_factor] times the buyer proportion.
-#
-#     Returns:
-#       buyer_indices (np.ndarray): Array of indices for the buyer dataset.
-#       seller_splits (dict): Mapping from client id (0 to num_clients-1) to list of indices.
-#     """
-#     total_samples = len(dataset)
-#     all_indices = np.arange(total_samples)
-#     np.random.shuffle(all_indices)
-#
-#     # Buyer: use first buyer_count indices.
-#     buyer_indices = construct_buyer_set(dataset, buyer_count, mode=buyer_data_mode)
-#
-#     # Get targets from the dataset.
-#     if hasattr(dataset, 'targets'):
-#         targets = np.array(dataset.targets)
-#     else:
-#         targets = np.array([dataset[i][1] for i in range(total_samples)])
-#
-#     # Compute buyer distribution.
-#     buyer_targets = targets[buyer_indices]
-#     unique_classes = np.unique(buyer_targets)
-#     buyer_counts = {c: np.sum(buyer_targets == c) for c in unique_classes}
-#     buyer_proportions = {c: buyer_counts[c] / buyer_count for c in unique_classes}
-#
-#     # Seller pool: remaining indices.
-#     seller_pool = np.setdiff1d(all_indices, buyer_indices)
-#     if client_data_count == 0:
-#         client_data_count = len(seller_pool) // num_clients
-#
-#     # Build a dictionary mapping each class to the seller pool indices of that class.
-#     pool_by_class = {}
-#     for c in unique_classes:
-#         cls_indices = seller_pool[targets[seller_pool] == c]
-#         np.random.shuffle(cls_indices)
-#         pool_by_class[c] = list(cls_indices)
-#
-#     # For each client, sample indices from each class based on the buyer's proportions.
-#     seller_splits = {}
-#     for client_id in range(num_clients):
-#         client_indices = []
-#         for c in unique_classes:
-#             # Expected number of samples for this class for a client.
-#             expected = buyer_proportions[c] * client_data_count
-#             # Apply a multiplicative noise factor.
-#             factor = np.random.uniform(1 - noise_factor, 1 + noise_factor)
-#             n_samples = int(round(expected * factor))
-#             # Ensure we do not request more samples than available; if not enough, sample with replacement.
-#             available = pool_by_class[c]
-#             if len(available) >= n_samples:
-#                 sampled = available[:n_samples]
-#                 # Remove these indices from the pool so that they are not reused.
-#                 pool_by_class[c] = available[n_samples:]
-#             else:
-#                 # Not enough available; sample with replacement.
-#                 sampled = list(np.random.choice(available, size=n_samples, replace=True))
-#             client_indices.extend(sampled)
-#         # If the total number of indices is less than client_data_count, fill the gap randomly from seller_pool.
-#         if len(client_indices) < client_data_count:
-#             gap = client_data_count - len(client_indices)
-#             extra = list(np.random.choice(seller_pool, size=gap, replace=False))
-#             client_indices.extend(extra)
-#         # Optionally, shuffle client indices.
-#         np.random.shuffle(client_indices)
-#         seller_splits[client_id] = client_indices
-#
-#     return buyer_indices, seller_splits
-
-
-# --- Helper Function for Precise Count Calculation ---
 
 def _calculate_target_counts(
         target_total: int,
@@ -1330,339 +1095,6 @@ def _calculate_target_counts(
         int_counts[first_class] = max(0, int_counts[first_class])  # Ensure non-negative
 
     return int_counts
-
-
-# --- Refined construct_buyer_set Function ---
-
-# def construct_buyer_set(
-#         dataset: Dataset,
-#         buyer_count: int,
-#         mode: str = "unbiased",
-#         bias_distribution: Optional[Dict] = None,
-#         seed: int = 42
-# ) -> np.ndarray:
-#     """
-#     Refined: Constructs buyer set indices from a global dataset.
-#
-#     Args:
-#         dataset: Dataset object with .targets or indexable as (data, label).
-#         buyer_count: The target number of samples for the buyer set.
-#         mode: "random" (uniform sampling) or "biased".
-#         bias_distribution: Required if mode="biased". Dict {class: proportion}.
-#         seed: Random seed.
-#
-#     Returns:
-#         Numpy array of buyer indices.
-#     """
-#     random.seed(seed)
-#     np.random.seed(seed)
-#     total_samples = len(dataset)
-#
-#     if buyer_count > total_samples:
-#         logging.warning(f"Buyer count {buyer_count} > total samples {total_samples}. Capping.")
-#         buyer_count = total_samples
-#     if buyer_count <= 0:
-#         return np.array([], dtype=int)
-#
-#     # Extract targets robustly
-#     targets = None
-#     if hasattr(dataset, 'targets'):
-#         targets = np.array(dataset.targets)
-#     else:
-#         try:
-#             # targets = np.array([dataset[i][1] for i in range(total_samples)])
-#             targets = np.array([dataset[i][0] for i in range(total_samples)])
-#             logging.info("Extracted targets by iterating dataset.")
-#         except Exception as e:
-#             logging.error(f"Could not get targets from dataset: {e}")
-#             raise ValueError("Dataset must have .targets or be indexable as (data, label).")
-#
-#     all_indices = np.arange(total_samples)
-#
-#     if mode == "unbiased":
-#         buyer_indices = np.random.choice(all_indices, size=buyer_count, replace=False)
-#         logging.info(f"Constructed random buyer set with {len(buyer_indices)} samples.")
-#         return buyer_indices
-#
-#     elif mode == "biased":
-#         if bias_distribution is None:
-#             # Default bias is removed - require explicit distribution for clarity
-#             raise ValueError("bias_distribution must be provided for 'biased' mode.")
-#
-#         # Ensure keys are integers if possible
-#         try:
-#             bias_distribution = {int(k): v for k, v in bias_distribution.items()}
-#         except ValueError:
-#             logging.warning("Could not convert bias_distribution keys to int, proceeding.")
-#
-#         unique_classes_in_dataset = np.unique(targets)
-#
-#         # Build mapping: class -> list of available indices
-#         indices_by_class = {int(c): all_indices[targets == c].tolist() for c in unique_classes_in_dataset}
-#         for c in indices_by_class: random.shuffle(indices_by_class[c])  # Shuffle available indices
-#
-#         # Calculate precise target counts per class
-#         target_counts = _calculate_target_counts(buyer_count, bias_distribution)
-#
-#         buyer_indices_list = []
-#         # Sample according to target counts, without replacement from available pool
-#         for cls, needed_count in target_counts.items():
-#             if needed_count <= 0: continue
-#
-#             available = indices_by_class.get(cls, [])
-#             num_available = len(available)
-#
-#             num_to_sample = min(needed_count, num_available)  # Take only what's available
-#
-#             if num_to_sample > 0:
-#                 sampled = random.sample(available, num_to_sample)  # No replacement
-#                 buyer_indices_list.extend(sampled)
-#             # Log if scarcity occurred
-#             if needed_count > num_available:
-#                 logging.warning(
-#                     f"Buyer set (biased): Class {cls} needed {needed_count}, only {num_available} available.")
-#
-#         final_buyer_indices = np.array(buyer_indices_list)
-#         np.random.shuffle(final_buyer_indices)  # Shuffle the final list
-#
-#         # Log final count - might be slightly less than buyer_count due to scarcity
-#         if len(final_buyer_indices) != buyer_count:
-#             logging.warning(
-#                 f"Final buyer set size {len(final_buyer_indices)} differs from target {buyer_count} due to data scarcity per class.")
-#
-#         logging.info(f"Constructed biased buyer set with {len(final_buyer_indices)} samples.")
-#         return final_buyer_indices
-#
-#     else:
-#         raise ValueError("Unknown mode. Please use 'unbiased' or 'biased'.")
-#
-
-# --- Refined split_dataset_martfl_discovery Function ---
-
-# def split_dataset_discovery(
-#         dataset: Dataset,
-#         buyer_count: int,
-#         num_clients: int,
-#         client_data_count: int = 0,  # If 0, distribute remaining seller pool evenly
-#         noise_factor: float = 0.3,
-#         buyer_data_mode: str = "unbiased",
-#         buyer_bias_distribution: Optional[Dict] = None,  # Pass through to construct_buyer_set
-#         seed: int = 42
-# ) -> Tuple[np.ndarray, Dict[int, List[int]]]:
-#     """
-#     Refined: Simulates MartFL scenario. Seller distributions noisy mimics of buyer.
-#
-#     Args:
-#         dataset: Dataset object.
-#         buyer_count: Number of samples for buyer.
-#         num_clients: Number of seller clients.
-#         client_data_count: Target samples per client. If 0, split seller pool evenly.
-#         noise_factor: Multiplicative uniform noise [1-f, 1+f] on buyer proportions.
-#         buyer_data_mode: Passed to construct_buyer_set ('random' or 'biased').
-#         buyer_bias_distribution: Passed if buyer_data_mode is 'biased'.
-#         seed: Random seed.
-#
-#     Returns:
-#         Tuple: (buyer_indices, seller_splits {client_id: indices_list}).
-#     """
-#     random.seed(seed)
-#     np.random.seed(seed)
-#     total_samples = len(dataset)
-#     all_indices = np.arange(total_samples)
-#
-#     # 1. Construct Buyer Set
-#     buyer_indices = construct_buyer_set(
-#         dataset, buyer_count, buyer_data_mode, buyer_bias_distribution, seed
-#     )
-#
-#     # 2. Get Targets & Determine Seller Pool
-#     targets = None
-#     if hasattr(dataset, 'targets'):
-#         targets = np.array(dataset.targets)
-#     else:
-#         try:
-#             # --- >>> MODIFY THIS LINE <<< ---
-#             # Original might be: targets = np.array([dataset[i][1] for i in range(total_samples)])
-#             # Change to access the FIRST element (index 0) for processed data:
-#             targets = np.array([dataset[i][0] for i in range(total_samples)])
-#             # --- >>> END MODIFICATION <<< ---
-#         except Exception as e:
-#             # Add more specific error info
-#             raise ValueError(
-#                 f"Could not get targets via indexing dataset[i][0]. Ensure dataset is indexable and items have label at index 0. Original error: {e}") from e
-#     unique_classes_in_dataset = np.unique(targets)
-#     num_classes = len(unique_classes_in_dataset)
-#
-#     seller_pool_indices = np.setdiff1d(all_indices, buyer_indices, assume_unique=True)
-#     num_seller_pool = len(seller_pool_indices)
-#     logging.info(f"Seller pool size: {num_seller_pool}")
-#
-#     if num_seller_pool == 0:
-#         logging.warning("Seller pool is empty after buyer set construction.")
-#         return buyer_indices, {i: [] for i in range(num_clients)}
-#     if num_clients <= 0:
-#         logging.warning("num_clients is zero or negative, returning empty seller splits.")
-#         return buyer_indices, {}
-#
-#     # 3. Calculate Actual Buyer Distribution
-#     buyer_proportions = {}
-#     if len(buyer_indices) > 0:
-#         buyer_targets = targets[buyer_indices]
-#         unique_buyer_classes, buyer_cls_counts = np.unique(buyer_targets, return_counts=True)
-#         buyer_proportions = {int(c): count / len(buyer_indices) for c, count in
-#                              zip(unique_buyer_classes, buyer_cls_counts)}
-#     else:  # Handle empty buyer set
-#         logging.warning("Buyer set is empty, cannot calculate buyer proportions. Sellers might get random data.")
-#         # Fallback: use uniform proportions over classes found in seller pool? Or error?
-#         # For now, let proportions be empty, leading to uniform sampling later if needed.
-#
-#     # 4. Determine Samples Per Client
-#     target_samples_per_client = client_data_count
-#     if target_samples_per_client <= 0:
-#         if num_clients > num_seller_pool:
-#             logging.warning(
-#                 f"More clients ({num_clients}) than available seller samples ({num_seller_pool}). Some clients will get 0 samples.")
-#         # Distribute seller pool samples as evenly as possible
-#         base_samples = num_seller_pool // num_clients
-#         extra_samples = num_seller_pool % num_clients
-#         client_sample_counts = [base_samples + 1 if i < extra_samples else base_samples for i in range(num_clients)]
-#         # We will assign based on counts rather than fix target_samples_per_client
-#         distribute_evenly = True
-#         logging.info(f"Distributing {num_seller_pool} seller samples evenly across {num_clients} clients.")
-#     else:
-#         # Check if total requested exceeds pool size
-#         if target_samples_per_client * num_clients > num_seller_pool:
-#             logging.warning(
-#                 f"Requested total client samples ({target_samples_per_client * num_clients}) > available seller pool ({num_seller_pool}). Clients might get fewer samples.")
-#         # All clients target the same count
-#         client_sample_counts = [target_samples_per_client] * num_clients
-#         distribute_evenly = False
-#         logging.info(f"Targeting {target_samples_per_client} samples per client.")
-#
-#     # 5. Index Seller Pool by Class & Prepare Pointers
-#     pool_by_class = {int(c): [] for c in unique_classes_in_dataset}
-#     seller_pool_targets = targets[seller_pool_indices]
-#     for i, original_idx in enumerate(seller_pool_indices):
-#         label = int(seller_pool_targets[i])
-#         pool_by_class[label].append(original_idx)
-#
-#     for c in pool_by_class:  # Shuffle available indices for each class
-#         random.shuffle(pool_by_class[c])
-#     class_pointers = {c: 0 for c in pool_by_class}  # Track next available index
-#
-#     # 6. Assign Data to Sellers
-#     seller_splits = {}
-#     assigned_count_total = 0
-#     indices_assigned_this_round = set()  # Track assigned indices *within* this function call
-#
-#     for client_id in range(num_clients):
-#         client_indices = []
-#         num_samples_for_this_client = client_sample_counts[client_id]
-#
-#         if num_samples_for_this_client == 0:
-#             seller_splits[client_id] = []
-#             continue
-#
-#         # Calculate noisy target proportions for this client
-#         noisy_proportions = {}
-#         if buyer_proportions:  # If buyer proportions could be calculated
-#             total_noisy_prop = 0
-#             for c in unique_classes_in_dataset:  # Iterate over all classes
-#                 expected_prop = buyer_proportions.get(c, 0)  # Default to 0 if buyer lacked class
-#                 factor = np.random.uniform(1 - noise_factor, 1 + noise_factor)
-#                 noisy_prop = expected_prop * factor
-#                 noisy_proportions[c] = max(0, noisy_prop)  # Ensure non-negative
-#                 total_noisy_prop += noisy_proportions[c]
-#             # Normalize noisy proportions
-#             if total_noisy_prop > 0:
-#                 noisy_proportions = {c: p / total_noisy_prop for c, p in noisy_proportions.items()}
-#             else:  # Fallback if all noisy props became 0 (unlikely)
-#                 noisy_proportions = {c: 1.0 / num_classes for c in unique_classes_in_dataset}
-#         else:  # Fallback if buyer was empty: use uniform distribution
-#             noisy_proportions = {c: 1.0 / num_classes for c in unique_classes_in_dataset}
-#
-#         # Calculate precise target counts for this client
-#         target_counts = _calculate_target_counts(num_samples_for_this_client, noisy_proportions)
-#
-#         # Sample data based on target counts
-#         current_client_samples = 0
-#         for cls, needed_count in target_counts.items():
-#             if needed_count <= 0: continue
-#
-#             start_ptr = class_pointers.get(cls, 0)
-#             available_list = pool_by_class.get(cls, [])
-#             num_available = len(available_list) - start_ptr
-#
-#             num_to_sample = min(needed_count, num_available)
-#
-#             if num_to_sample > 0:
-#                 end_ptr = start_ptr + num_to_sample
-#                 sampled_indices = available_list[start_ptr:end_ptr]
-#                 client_indices.extend(sampled_indices)
-#                 indices_assigned_this_round.update(sampled_indices)  # Track assignment
-#                 class_pointers[cls] = end_ptr  # Move pointer
-#                 current_client_samples += num_to_sample
-#
-#         # Log if client got fewer samples than targeted due to overall class scarcity
-#         if current_client_samples < num_samples_for_this_client:
-#             logging.warning(
-#                 f"Client {client_id} assigned {current_client_samples} samples (targeted {num_samples_for_this_client}) due to class data scarcity in pool.")
-#
-#         np.random.shuffle(client_indices)  # Shuffle samples for the client
-#         seller_splits[client_id] = client_indices
-#         assigned_count_total += len(client_indices)
-#
-#     # Final check on assigned samples
-#     unassigned_in_pool = num_seller_pool - len(indices_assigned_this_round)
-#     if unassigned_in_pool > 0:
-#         # This can happen if client_data_count was specified and != 0,
-#         # or if integer division left remainders when distributing evenly.
-#         logging.info(f"{unassigned_in_pool} samples remain unassigned in the seller pool.")
-#     elif unassigned_in_pool < 0:
-#         logging.error("More samples assigned than available in seller pool! Check logic.")  # Should not happen
-#
-#     return buyer_indices, seller_splits
-
-
-
-
-def _extract_targets(dataset: Dataset) -> np.ndarray:
-    """
-    Return a 1D numpy array of labels for every item in `dataset`, handling:
-      1) .targets attribute (e.g. torchvision)
-      2) HuggingFace-style dicts with 'label' or 'labels'
-      3) tuple/list (x, y) -> use y
-      4) scalar labels (dataset[i] itself is label)
-    """
-    n = len(dataset)
-
-    # 1) PyTorch-style .targets
-    if hasattr(dataset, "targets"):
-        return np.array(dataset.targets)
-
-    # 2) Inspect one sample
-    sample = dataset[0]
-    # 2a) HuggingFace dict
-    if isinstance(sample, dict):
-        if "label" in sample:
-            return np.array([dataset[i]["label"] for i in range(n)])
-        if "labels" in sample:
-            return np.array([dataset[i]["labels"] for i in range(n)])
-        raise ValueError("Dict dataset has no 'label' or 'labels' key.")
-
-    # 2b) Tuple/list
-    if isinstance(sample, (list, tuple)) and len(sample) >= 2:
-        # assume (x, y, ...)
-        return np.array([dataset[i][1] for i in range(n)])
-
-    # 2c) Scalar label
-    if isinstance(sample, (int, float, np.integer, np.floating)):
-        return np.array([dataset[i] for i in range(n)])
-
-    # Otherwise fail
-    raise ValueError(
-        "Cannot extract labels: expected .targets, dict with 'label(s)', tuple (x,y), or scalar label."
-    )
 
 
 def construct_buyer_set(
@@ -2107,3 +1539,121 @@ def split_dataset_discovery_text(
         seller_splits[cid] = chosen
 
     return buyer_indices, seller_splits
+
+
+def get_data_set(
+        dataset_name: str,
+        split_method: str,
+        root_dir: str = './data',
+        batch_size: int = 64,
+        num_sellers: int = 10,
+        n_adversaries: int = 1,
+        normalize_data: bool = True,
+        save_path: str = './result',
+        # --- Params for "Discovery" or "Dirichlet" splits ---
+        buyer_percentage: float = 0.01,
+        seller_dirichlet_alpha: float = 0.7,
+        discovery_quality: float = 0.3,
+        buyer_data_mode: str = "random",
+        buyer_bias_type: str = "dirichlet",
+        buyer_dirichlet_alpha: float = 0.3,
+        # --- Params for "Metadata" split ---
+        buyer_val_holdout_fraction: float = 0.2,
+        # --- Dataloader params ---
+        num_workers: int = 0,
+        pin_memory: bool = False,
+):
+    """
+    Loads, partitions, and prepares DataLoaders for various marketplace scenarios,
+    maintaining a consistent signature and return value with the original function.
+    """
+    # --- 1. Setup and Load Dataset ---
+    transform = transforms.Compose([
+        transforms.Resize((96, 96)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]) if normalize_data else transforms.Lambda(
+            lambda x: x)
+    ])
+
+    dataset, test_set = None, None
+    if dataset_name == "CelebA":
+        dataset = CelebACustom(root=root_dir, split='all', transform=transform, download=True)
+    elif dataset_name == "Camelyon16":
+        dataset = Camelyon16Custom(root=root_dir, transform=transform, download=True)
+    else:
+        try:
+            DatasetClass = {'FMNIST': datasets.FashionMNIST, 'CIFAR': datasets.CIFAR10, 'MNIST': datasets.MNIST}[
+                dataset_name]
+            dataset = DatasetClass(root=root_dir, train=True, download=True, transform=transform)
+            test_set = DatasetClass(root=root_dir, train=False, download=True, transform=transform)
+        except KeyError:
+            raise NotImplementedError(f"Dataset {dataset_name} is not implemented.")
+
+    class_names = dataset.classes
+    print(f"Loaded {dataset_name}. Classes: {class_names}")
+
+    # --- 2. Partition Dataset based on split_method ---
+    buyer_indices, seller_splits = None, None
+    num_malicious_sellers = n_adversaries
+    num_benign_sellers = num_sellers - num_malicious_sellers
+    dataset.info = {}  # Attach info dict to dataset object
+
+    if split_method == "metadata":
+        if dataset_name == "CelebA":
+            buyer_indices, test_indices, seller_splits, malicious_ids = split_celeba_by_identity(
+                dataset, num_benign_sellers, num_malicious_sellers, buyer_val_holdout_fraction
+            )
+            dataset.info['malicious_ids'] = malicious_ids
+            test_set = Subset(dataset, test_indices)  # Create test set from partition
+        elif dataset_name == "Camelyon16":
+            buyer_indices, test_indices, seller_splits, malicious_ids = split_camelyon16_by_hospital(
+                dataset, num_benign_sellers, num_malicious_sellers, buyer_val_holdout_fraction
+            )
+            dataset.info['malicious_ids'] = malicious_ids
+            test_set = Subset(dataset, test_indices)
+        else:
+            raise ValueError(f"Metadata split is not defined for dataset '{dataset_name}'")
+    else:
+        # Logic for original, non-metadata splits
+        buyer_count = int(len(dataset) * buyer_percentage)
+        print(f"Allocating {buyer_count} samples ({buyer_percentage * 100:.2f}%) for the buyer.")
+
+        if split_method == "discovery":
+            print(f"Using 'discovery' split method with buyer bias type: '{buyer_bias_type}'")
+            buyer_biased_distribution = generate_buyer_bias_distribution(
+                num_classes=len(class_names),
+                bias_type=buyer_bias_type,
+                alpha=buyer_dirichlet_alpha
+            )
+            buyer_indices, seller_splits = split_dataset_discovery(
+                dataset=dataset, buyer_count=buyer_count, num_clients=num_sellers,
+                noise_factor=discovery_quality, buyer_data_mode=buyer_data_mode,
+                buyer_bias_distribution=buyer_biased_distribution
+            )
+        elif split_method == "label":
+            print("Using 'label' split method (placeholder implementation).")
+            buyer_indices, seller_splits = split_dataset_by_label(
+                dataset=dataset, buyer_count=buyer_count, num_sellers=num_sellers
+            )
+        else:  # Default or other specified methods (e.g., Dirichlet)
+            print(f"Using '{split_method}' split method with alpha={seller_dirichlet_alpha}")
+            buyer_indices, seller_splits = split_dataset_buyer_seller_improved(
+                dataset=dataset, buyer_count=buyer_count, num_sellers=num_sellers,
+                split_method=split_method, dirichlet_alpha=seller_dirichlet_alpha,
+                n_adversaries=n_adversaries
+            )
+
+    # --- 3. Final Steps and DataLoader Creation ---
+    print_and_save_data_statistics(dataset, buyer_indices, seller_splits, save_results=True, output_dir=save_path)
+
+    buyer_loader = DataLoader(Subset(dataset, buyer_indices), batch_size=batch_size, shuffle=True,
+                              num_workers=num_workers, pin_memory=pin_memory)
+    seller_loaders = {
+        i: DataLoader(Subset(dataset, indices), batch_size=batch_size, shuffle=True, num_workers=num_workers,
+                      pin_memory=pin_memory)
+        for i, indices in seller_splits.items() if len(indices) > 0}
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=num_workers,
+                             pin_memory=pin_memory)
+
+    print(f"\nDataLoaders created successfully. Returning in original format.")
+    return buyer_loader, seller_loaders, dataset, test_loader, class_names

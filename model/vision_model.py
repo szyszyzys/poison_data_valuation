@@ -72,8 +72,8 @@ class TextCNN(nn.Module):
                  filter_sizes: List[int],
                  num_class: int,
                  dropout: float = 0.5,
-                 padding_idx: int = 1, # Default assumes <pad> is often index 1, but should be passed correctly
-                 concise = True,
+                 padding_idx: int = 1,  # Default assumes <pad> is often index 1, but should be passed correctly
+                 concise=True,
                  ):
         super(TextCNN, self).__init__()
 
@@ -165,72 +165,6 @@ class TextCNN(nn.Module):
         return logits
 
 
-# ---------------------------
-# Model Definitions
-# ---------------------------
-
-class CNN_FMNIST(nn.Module):
-    """
-    A simple CNN for Fashion MNIST.
-    Input: 1 x 28 x 28, Output: 10 classes.
-    Architecture: [Conv -> ReLU -> MaxPool] x 2, then FC layers.
-    """
-
-    def __init__(self, num_classes=10):
-        super(CNN_FMNIST, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=5, padding=2)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=5, padding=2)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.fc1 = nn.Linear(64 * 7 * 7, 1024)
-        self.fc2 = nn.Linear(1024, num_classes)
-
-    def forward(self, x):
-        # x: (batch, 1, 28, 28)
-        x = self.pool(F.relu(self.conv1(x)))  # (batch, 32, 14, 14)
-        x = self.pool(F.relu(self.conv2(x)))  # (batch, 64, 7, 7)
-        x = x.view(x.size(0), -1)  # (batch, 64*7*7)
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
-
-
-class CNN_CIFAR(nn.Module):
-    """
-    A CNN for CIFAR-10.
-    Input: 3 x 32 x 32, Output: 10 classes.
-    Architecture: 3 Conv layers (with BatchNorm and ReLU) and 2 FC layers.
-    """
-
-    def __init__(self, num_classes=10):
-        super(CNN_CIFAR, self).__init__()
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(128)
-        self.conv3 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm2d(256)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.fc1 = nn.Linear(256 * 4 * 4, 512)
-        self.fc2 = nn.Linear(512, num_classes)
-
-    def forward(self, x):
-        # x: (batch, 3, 32, 32)
-        x = F.relu(self.bn1(self.conv1(x)))  # (batch, 64, 32, 32)
-        x = self.pool(x)  # (batch, 64, 16, 16)
-        x = F.relu(self.bn2(self.conv2(x)))  # (batch, 128, 16, 16)
-        x = self.pool(x)  # (batch, 128, 8, 8)
-        x = F.relu(self.bn3(self.conv3(x)))  # (batch, 256, 8, 8)
-        x = self.pool(x)  # (batch, 256, 4, 4)
-        x = x.view(x.size(0), -1)  # (batch, 256*4*4)
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
-
-
-# ---------------------------
-# Federated Training Functions
-# ---------------------------
-
 def train_local_model(model: nn.Module,
                       train_loader: DataLoader,
                       criterion: nn.Module,
@@ -306,95 +240,48 @@ def local_training_and_get_gradient(model: nn.Module,
     return flat_update, data_size
 
 
-class LeNetForCIFAR10(nn.Module):
-    """A version of the LeNet-5 architecture adapted for CIFAR-10."""
-    def __init__(self):
-        super(LeNetForCIFAR10, self).__init__()
-        # First convolutional block
-        # Input: 3x32x32 -> Output: 6x28x28
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=6, kernel_size=5)
-        # Max pooling
-        # Input: 6x28x28 -> Output: 6x14x14
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        # Second convolutional block
-        # Input: 6x14x14 -> Output: 16x10x10
-        self.conv2 = nn.Conv2d(in_channels=6, out_channels=16, kernel_size=5)
-        # Fully connected layers
-        # Flattened Input: 16 * 5 * 5 = 400
-        self.fc1 = nn.Linear(in_features=16 * 5 * 5, out_features=120)
-        self.fc2 = nn.Linear(in_features=120, out_features=84)
-        self.fc3 = nn.Linear(in_features=84, out_features=10)  # 10 classes for CIFAR-10
+class SimpleCNN(nn.Module):
+    """A generic CNN that can be adapted for various image datasets."""
+
+    def __init__(self, in_channels: int = 3, num_classes: int = 10):
+        super(SimpleCNN, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, padding=1)
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        # To make this adaptable, we use an AdaptiveAvgPool2d layer
+        self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
+        self.fc1 = nn.Linear(64 * 7 * 7, 512)
+        self.fc2 = nn.Linear(512, num_classes)
 
     def forward(self, x):
-        # Convolutional blocks with ReLU activation and pooling
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
-
-        # Flatten the feature maps for the fully connected layers
-        x = torch.flatten(x, 1)  # flatten all dimensions except batch
-
-        # Fully connected layers with ReLU activation
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-
-        # Output layer (no activation, as nn.CrossEntropyLoss applies softmax)
-        x = self.fc3(x)
+        x = self.fc2(x)
         return x
+
 
 class LeNet(nn.Module):
+    """A classic LeNet architecture, adapted for different input sizes and channels."""
 
-    def __init__(self):
+    def __init__(self, in_channels: int = 1, num_classes: int = 10):
         super(LeNet, self).__init__()
-        self.conv1 = nn.Conv2d(1, 6, 5)
+        self.conv1 = nn.Conv2d(in_channels, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
         self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 4 * 4, 120)
+        self.avgpool = nn.AdaptiveAvgPool2d((5, 5))
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
         self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
+        self.fc3 = nn.Linear(84, num_classes)
 
     def forward(self, x):
-        x = F.max_pool2d(F.relu(self.conv1(x)), (2, 2))
-        x = F.max_pool2d(F.relu(self.conv2(x)), 2)
-        x = x.view(x.size()[0], -1)
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
-        # x = self.fc(x)
         return x
-
-# ---------------------------
-# Example Main (for testing)
-# ---------------------------
-
-# if __name__ == "__main__":
-#     # For testing, you can switch between FMNIST and CIFAR.
-#     import argparse
-#
-#     parser = argparse.ArgumentParser(description="Train CNN on FMNIST or CIFAR for FL simulation")
-#     parser.add_argument("--dataset", type=str, default="FMNIST", choices=["FMNIST", "CIFAR"])
-#     parser.add_argument("--batch_size", type=int, default=64)
-#     parser.add_argument("--epochs", type=int, default=1)
-#     parser.add_argument("--lr", type=float, default=0.01)
-#     args = parser.parse_args()
-#
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#
-#     if args.dataset.upper() == "FMNIST":
-#         train_loader, test_loader = get_fmnist_dataloaders(batch_size=args.batch_size)
-#         model = CNN_FMNIST(num_classes=10)
-#     else:
-#         train_loader, test_loader = get_cifar_dataloaders(batch_size=args.batch_size)
-#         model = CNN_CIFAR(num_classes=10)
-#
-#     model.to(device)
-#     print(f"Training {args.dataset} model on {device}...")
-#
-#     # Train locally and get gradient update
-#     flat_update, data_size = local_training_and_get_gradient(model, train_loader,
-#                                                              device=device,
-#                                                              local_epochs=args.epochs,
-#                                                              lr=args.lr)
-#     print("Gradient update shape:", flat_update.shape)
-#     print("Local dataset size:", data_size)
-#
-#     # Save the model for this round (e.g., round1)
-#     save_model(model, f"saved_models/{args.dataset.lower()}_model_round1.pt")

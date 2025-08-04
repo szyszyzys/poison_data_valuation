@@ -416,11 +416,6 @@ def poisoning_attack_image(
     else:
         raise ValueError(f"Unsupported image dataset: {dataset_name}")
 
-    model_structure_instance = get_image_model(
-        dataset_name=dataset_name,
-    )
-    for i, p in enumerate(model_structure_instance.parameters()):
-        logger.debug(f"  Aggregator structure - Param {i}: shape {p.shape}")
     image_seller_model_config = {
         "dataset_name": dataset_name,
     }
@@ -452,7 +447,7 @@ def poisoning_attack_image(
     # --- Load Data ---
     # We load the *original* clean splits first. Poisoning happens later if needed.
     print("Loading clean image data splits...")
-    buyer_loader, client_loaders_clean_data, _, test_loader, class_names = get_data_set(
+    buyer_loader, client_loaders_clean_data, dataset, test_loader, class_names = get_data_set(
         dataset_name,
         buyer_percentage=buyer_percentage,
         num_sellers=n_sellers,
@@ -465,6 +460,8 @@ def poisoning_attack_image(
         num_workers=dl_num_workers,
         pin_memory=dl_pin_memory
     )
+    model = get_image_model(model_name=model_structure, dataset=dataset, device=device)
+
     num_classes = len(class_names)
     print(f"Data loaded. Num classes: {num_classes}")
 
