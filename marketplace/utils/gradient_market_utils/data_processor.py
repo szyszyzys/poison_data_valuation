@@ -38,6 +38,7 @@ import numpy as np
 from torch.utils.data import DataLoader, Subset
 from torch.utils.data import Dataset  # Or whichever base class you use
 from torchvision import datasets, transforms
+from PIL import Image
 
 # refined_data_split.py
 
