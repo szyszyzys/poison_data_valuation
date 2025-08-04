@@ -413,6 +413,10 @@ def poisoning_attack_image(
         channels = 1
     elif dataset_name == "CIFAR":
         channels = 3
+    elif dataset_name == "CelebA":
+        channels = 3
+    elif dataset_name == "Camelyon16":
+        channels = 3
     else:
         raise ValueError(f"Unsupported image dataset: {dataset_name}")
 
