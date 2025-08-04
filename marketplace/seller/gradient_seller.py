@@ -741,9 +741,11 @@ class GradientSeller(BaseSeller):
             base_price=base_price,
             price_variation=price_variation,
             save_path=save_path,
-            device=device
+            device=device,
+            model_name = "simple_cnn"
         )
         self.model_type = model_type
+        self.model_name = model_name
         self._base_model_structure = initial_model  # This is just the architecture
         self._base_model_structure.to(device)  # Ensure the structure is on device
         self.model_init_config = model_init_config
@@ -838,7 +840,8 @@ class GradientSeller(BaseSeller):
 
             # If get_image_model takes specific args and then **kwargs:
             return get_image_model(
-                dataset_name=current_model_config.get("dataset_name", self.dataset_name),  # Prioritize config
+                model_name=self.model_type,
+                dataset=self.dataset,
                 device=current_model_config["device"],
             )
         else:
