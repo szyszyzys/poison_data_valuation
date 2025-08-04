@@ -146,6 +146,8 @@ def get_num_classes(dataset_name: str) -> int:
         'CIFAR': 10,
         'AG_NEWS': 4,
         'TREC': 6,
+        'CAMELYON16': 2,
+        "CELEBA": 2
     }
 
     if dataset_name not in dataset_classes:
