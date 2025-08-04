@@ -839,7 +839,7 @@ class GradientSeller(BaseSeller):
 
             # If get_image_model takes specific args and then **kwargs:
             return get_image_model(
-                model_name=self.model_type,
+                model_name=self.model_name,
                 dataset=self.dataset,
                 device=current_model_config["device"],
             )
