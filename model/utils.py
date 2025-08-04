@@ -573,6 +573,10 @@ def get_domain(dataset_name: str) -> str:
             domain = 'image'
         case "fmnist":
             domain = 'image'
+        case "celeba":
+            domain = 'image'
+        case "camelyon16":
+            domain = 'image'
         # Use | (OR pattern) to match multiple string literals
         case "trec" | "ag_news":
             domain = 'text'

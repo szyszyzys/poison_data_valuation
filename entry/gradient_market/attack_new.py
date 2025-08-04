@@ -22,7 +22,7 @@ from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorA
     AdvancedPoisoningAdversarySeller
 from marketplace.utils.gradient_market_utils.data_processor import get_data_set
 from marketplace.utils.gradient_market_utils.text_data_processor import get_text_data_set
-from model.utils import get_text_model, get_model_name, get_domain, get_image_model
+from model.utils import get_text_model, get_domain, get_image_model
 
 logger = logging.getLogger(__name__)
 
