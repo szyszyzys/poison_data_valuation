@@ -1,6 +1,6 @@
+# log_utils.py (or results_logger.py)
 import argparse
 import logging
-# log_utils.py (or results_logger.py)
 import os
 from pathlib import Path
 from typing import Dict, Optional, Any
@@ -460,7 +460,7 @@ def poisoning_attack_image(
         num_workers=dl_num_workers,
         pin_memory=dl_pin_memory
     )
-    model = get_image_model(model_name=model_structure, dataset=dataset, device=device)
+    model_structure_instance = get_image_model(model_name=model_structure, dataset=dataset, device=device)
 
     num_classes = len(class_names)
     print(f"Data loaded. Num classes: {num_classes}")
@@ -641,6 +641,29 @@ def poisoning_attack_image(
         print(f"Attack visualizations saved in: {marketplace.attack_save_dir}")
 
 
+run_file_handler = None
+
+
+def setup_logging(log_path=None):
+    """
+    Sets up logging to the console and optionally to a file for each run.
+    """
+    global run_file_handler
+    log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    # Remove the old file handler if it exists
+    if run_file_handler:
+        root_logger.removeHandler(run_file_handler)
+
+    # Add a new file handler for the current run
+    if log_path:
+        run_file_handler = logging.FileHandler(log_path, mode='w')
+        run_file_handler.setFormatter(log_formatter)
+        root_logger.addHandler(run_file_handler)
+
+
 def main():
     # 1. Set up argparse to accept only the config file path
     parser = argparse.ArgumentParser(description="Run Federated Learning Experiment from Config File")
@@ -649,7 +672,7 @@ def main():
 
     cli_args = parser.parse_args()
     print(f"start run with config: {cli_args.config}")
-
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     # 2. Load the configuration file
     config = load_config(cli_args.config)
     if config is None:
@@ -698,9 +721,8 @@ def main():
     save_to_json(all_params_to_save, f"{experiment_base_path}/experiment_params.json")
 
     # 7. Loop for multiple runs (if n_samples > 1)
-    print(f"Starting, dataset type: {dataset_domain}, {n_samples} run(s) for experiment: {experiment_id}")
     lower = 0
-
+    logging.info(f"Starting, dataset type: {dataset_domain}, {n_samples} run(s) for experiment: {experiment_id}")
     for i in range(lower, n_samples):
         current_seed = initial_seed + i
         set_seed(current_seed)  # Set seed for this specific run
@@ -708,6 +730,8 @@ def main():
         # Define save path for this specific run
         current_run_save_path = os.path.join(experiment_base_path, f"run_{i}")
         Path(current_run_save_path).mkdir(parents=True, exist_ok=True)
+        log_file_path_run = os.path.join(current_run_save_path, 'run.log')
+        setup_logging(log_file_path_run)
         logging.info(f"\n--- Starting Run {i} (Seed: {current_seed}) ---")
         logging.info(f"Saving results to: {current_run_save_path}")
 
@@ -779,6 +803,8 @@ def main():
             logging.error(f"Exception: {e}", exc_info=True)  # Log traceback
             # Decide if you want to continue to the next run or stop
             # continue
+    setup_logging(None)
+    logging.info(f"\nFinished all {n_samples} run(s) for experiment: {experiment_id}")
 
     print(f"\nFinished all {n_samples} run(s) for experiment: {experiment_id}")
 
