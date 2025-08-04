@@ -732,7 +732,7 @@ class GradientSeller(BaseSeller):
                  local_training_params: Optional[Dict[str, Any]] = None,
                  model_type="image",
                  model_init_config=None,
-                 initial_model=None):
+                 initial_model=None,             model_name = "simple_cnn"):
 
         super().__init__(
             seller_id=seller_id,
@@ -742,7 +742,6 @@ class GradientSeller(BaseSeller):
             price_variation=price_variation,
             save_path=save_path,
             device=device,
-            model_name = "simple_cnn"
         )
         self.model_type = model_type
         self.model_name = model_name
