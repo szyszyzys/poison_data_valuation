@@ -2,25 +2,21 @@
 
 import torch
 
-# Make sure all your dataclasses are importable from a single file
 from common.gradient_market_configs import (
     AppConfig, ExperimentConfig, TrainingConfig, ServerPrivacyConfig,
-    AdversarySellerConfig, DataConfig, ImageDataConfig, PropertySkewParams
+    AdversarySellerConfig, DataConfig, ImageDataConfig, PropertySkewParams, DiscoverySplitParams, VocabConfig,
+    TextDataConfig
 )
 from config_generator import ExperimentGenerator
 from scenarios import ALL_SCENARIOS
 
 
-def get_base_config() -> AppConfig:
-    """Creates the default, base AppConfig object for all experiments."""
+def get_base_image_config() -> AppConfig:
+    """Creates the default, base AppConfig for IMAGE-based experiments."""
     return AppConfig(
         experiment=ExperimentConfig(
-            dataset_name="CelebA",
-            model_structure="SimpleCNN",
-            aggregation_method="fedavg",
-            global_rounds=100,
-            n_sellers=30,
-            adv_rate=0.0,
+            dataset_name="CelebA", model_structure="SimpleCNN", aggregation_method="fedavg",
+            global_rounds=100, n_sellers=30, adv_rate=0.0,
             device="cuda" if torch.cuda.is_available() else "cpu"
         ),
         training=TrainingConfig(local_epochs=2, batch_size=64, learning_rate=0.001),
@@ -31,18 +27,41 @@ def get_base_config() -> AppConfig:
                 property_skew=PropertySkewParams()
             )
         ),
-        seed=42,
-        n_samples=10,
+        seed=42, n_samples=10,
+    )
+
+
+def get_base_text_config() -> AppConfig:
+    """Creates the default, base AppConfig for TEXT-based experiments."""
+    return AppConfig(
+        experiment=ExperimentConfig(
+            dataset_name="AG_NEWS", model_structure="BiLSTM", aggregation_method="fedavg",
+            global_rounds=50, n_sellers=20, adv_rate=0.0,
+            device="cuda" if torch.cuda.is_available() else "cpu"
+        ),
+        training=TrainingConfig(local_epochs=3, batch_size=32, learning_rate=0.001),
+        server_privacy=ServerPrivacyConfig(),
+        adversary_seller_config=AdversarySellerConfig(),
+        data=DataConfig(
+            text=TextDataConfig(
+                vocab=VocabConfig(),
+                discovery=DiscoverySplitParams()
+            )
+        ),
+        seed=42, n_samples=10,
     )
 
 
 def main():
     """Generates all configurations defined in scenarios.py."""
     output_dir = "./configs_generated"
-    base_config = get_base_config()
     generator = ExperimentGenerator(output_dir)
 
+    # The loop is now simpler and more powerful
     for scenario in ALL_SCENARIOS:
+        # Get the correct base config for THIS specific scenario
+        base_config = scenario.base_config_factory()
+        # Generate all variations
         generator.generate(base_config, scenario)
 
     print(f"\n✅ All configurations have been generated in '{output_dir}'")

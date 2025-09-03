@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
+from torch.utils.data import Dataset
+
 from common.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation, PoisonType, LabelFlipMode
 
 
@@ -140,6 +142,11 @@ class DataConfig:
     text: Optional[TextDataConfig] = None
     image: Optional[ImageDataConfig] = None
 
+@dataclass
+class RuntimeDataConfig:
+    """Holds runtime data objects passed to sellers."""
+    dataset: Dataset
+    num_classes: int
 
 # --- These are RUNTIME configs, not loaded from YAML. Keeping them is correct. ---
 @dataclass
@@ -187,3 +194,25 @@ class AppConfig:
     n_samples: int = 1
     data_root: str = "./data"
     use_cache: bool = True
+
+    def __post_init__(self):
+        """
+        Performs validation and adjustments after the config object is created.
+        """
+        logger.info("Performing post-initialization validation on AppConfig...")
+
+        poison_cfg = self.adversary_seller_config.poisoning
+        sybil_cfg = self.adversary_seller_config.sybil
+
+        # If attacks are off, ensure adv_rate is zero.
+        if poison_cfg.type.value == 'none' and self.experiment.adv_rate > 0:
+            logger.warning(
+                f"Poisoning type is 'none', but adv_rate is {self.experiment.adv_rate}. Forcing adv_rate to 0."
+            )
+            self.experiment.adv_rate = 0.0
+
+        # If sybil is on but poisoning is off, issue a warning.
+        if sybil_cfg.is_sybil and poison_cfg.type.value == 'none':
+            logger.warning(
+                "Sybil attack is enabled, but poisoning type is 'none'. Ensure this is intended."
+            )

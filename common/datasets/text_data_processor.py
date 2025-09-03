@@ -19,6 +19,7 @@ from common.gradient_market_configs import AppConfig
 # --- HuggingFace datasets dynamic import ---
 try:
     from datasets import load_dataset as hf_load
+
     hf_datasets_available = True
 except ImportError:
     hf_datasets_available = False
@@ -26,6 +27,7 @@ except ImportError:
 
 # --- Configure logging once ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 def collate_batch(batch: List[Tuple[int, List[int]]], padding_value: int) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -81,18 +83,24 @@ class ProcessedTextData:
     pad_idx: int
     num_classes: int
 
+
 def get_text_data_set(cfg: AppConfig) -> ProcessedTextData:
     """
     Loads, processes, caches, and splits a text dataset according to the provided AppConfig.
     """
     # 1. --- Input Validation and Setup ---
-    # Parameters are now sourced from the main cfg object
+    ### UPDATED: Access the dedicated text and experiment configs ###
     exp_cfg = cfg.experiment
     train_cfg = cfg.training
-    partition_cfg = cfg.data_partition
+    text_cfg = cfg.data.text
 
-    # It's good practice to get partition-specific params with a default
-    buyer_percentage = partition_cfg.partition_params.get('buyer_percentage', 0.01)
+    if not text_cfg:
+        raise ValueError("Text data configuration ('data.text') is missing from the AppConfig.")
+
+    # Get parameters from their new, correct locations
+    discovery_params = text_cfg.discovery
+    vocab_cfg = text_cfg.vocab
+    buyer_percentage = discovery_params.buyer_percentage
 
     if not (0.0 <= buyer_percentage <= 1.0):
         raise ValueError("buyer_percentage must be between 0 and 1.")
@@ -101,9 +109,7 @@ def get_text_data_set(cfg: AppConfig) -> ProcessedTextData:
     np.random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)
 
-    # Assume data_root is a parameter you might add to AppConfig, or use a default
-    data_root = getattr(cfg, 'data_root', './data')
-    app_cache_dir = os.path.join(data_root, ".cache", "get_text_data_set_cache")
+    app_cache_dir = os.path.join(cfg.data_root, ".cache", "get_text_data_set_cache")
     os.makedirs(app_cache_dir, exist_ok=True)
     logging.info(f"Using cache directory: {app_cache_dir}")
 
@@ -134,14 +140,9 @@ def get_text_data_set(cfg: AppConfig) -> ProcessedTextData:
                 yield (label_content, text_content) if label_fld else text_content
 
     # 3. --- Build or Load Vocabulary ---
-    # Vocab params can be nested in the partition config for clarity
-    vocab_params = partition_cfg.partition_params.get('vocab_params', {})
-    min_freq = vocab_params.get('min_freq', 1)
-    unk_token = vocab_params.get('unk_token', '<unk>')
-    pad_token = vocab_params.get('pad_token', '<pad>')
-    backdoor_pattern = vocab_params.get('backdoor_pattern', '')
-
-    vocab_cache_params = (exp_cfg.dataset_name, min_freq, unk_token, pad_token, backdoor_pattern)
+    vocab_cache_params = (
+        exp_cfg.dataset_name, vocab_cfg.min_freq, vocab_cfg.unk_token, vocab_cfg.pad_token
+    )
     vocab_cache_file = get_cache_path(app_cache_dir, "vocab", vocab_cache_params)
     vocab: Optional[Vocab] = None
 
@@ -162,17 +163,18 @@ def get_text_data_set(cfg: AppConfig) -> ProcessedTextData:
         )
         vocab = Vocab(
             counter=token_counter,
-            min_freq=min_freq,
-            specials=[unk_token, pad_token, backdoor_pattern]
+            min_freq=vocab_cfg.min_freq,
+            # The backdoor pattern is an attack detail, not part of the base vocab
+            specials=[vocab_cfg.unk_token, vocab_cfg.pad_token]
         )
-        unk_idx = vocab[unk_token]
-        pad_idx = vocab[pad_token]
+        unk_idx = vocab[vocab_cfg.unk_token]
+        pad_idx = vocab[vocab_cfg.pad_token]
         logging.info(f"Vocabulary built. Size: {len(vocab.itos)}. UNK index: {unk_idx}, PAD index: {pad_idx}.")
         if cfg.use_cache:
             torch.save((vocab, pad_idx, unk_idx), vocab_cache_file)
             logging.info(f"Vocabulary saved to cache: {vocab_cache_file}")
 
-    unk_idx, pad_idx = vocab[unk_token], vocab[pad_token]
+    unk_idx, pad_idx = vocab[vocab_cfg.unk_token], vocab[vocab_cfg.pad_token]
 
     # 4. --- Numericalize Data ---
     def numericalize_dataset(data_iterator_func: Callable, split_name: str) -> List[Tuple[int, List[int]]]:
@@ -202,9 +204,9 @@ def get_text_data_set(cfg: AppConfig) -> ProcessedTextData:
     # 5. --- Split Data ---
     split_params = (
         exp_cfg.dataset_name, vocab_cache_file, cfg.seed, buyer_percentage, exp_cfg.n_sellers,
-        cfg.data_partition.strategy, config.discovery_quality, config.buyer_data_mode, config.buyer_bias_type, config.buyer_dirichlet_alpha
+        text_cfg.strategy, discovery_params.discovery_quality, discovery_params.buyer_data_mode,
+        discovery_params.buyer_bias_type, discovery_params.buyer_dirichlet_alpha
     )
-
     split_cache_file = get_cache_path(app_cache_dir, "split_indices", split_params)
 
     if cfg.use_cache and os.path.exists(split_cache_file):
@@ -212,32 +214,32 @@ def get_text_data_set(cfg: AppConfig) -> ProcessedTextData:
         with open(split_cache_file, "rb") as f:
             buyer_indices, seller_splits = pickle.load(f)
     else:
-        logging.info(f"Splitting data using method: '{config.split_method}'")
+        logging.info(f"Splitting data using method: '{text_cfg.strategy}'")
         total_samples = len(processed_train_data)
         buyer_count = int(total_samples * buyer_percentage)
 
-        if cfg.data_partition.strategy == "discovery":
+        if text_cfg.strategy == "discovery":
             buyer_bias_dist = None
-            if cfg.data_partition.buyer_data_mode == "biased":
-                 buyer_bias_dist = generate_buyer_bias_distribution(
+            if discovery_params.buyer_data_mode == "biased":
+                buyer_bias_dist = generate_buyer_bias_distribution(
                     num_classes=num_classes,
-                    bias_type=config.buyer_bias_type,
-                    alpha=config.buyer_dirichlet_alpha
+                    bias_type=discovery_params.buyer_bias_type,
+                    alpha=discovery_params.buyer_dirichlet_alpha
                 )
-            # *** KEY FIX: Calling the actual implemented function ***
+
             buyer_indices, seller_splits = split_text_dataset_martfl_discovery(
                 dataset=processed_train_data,
                 buyer_count=buyer_count,
-                num_clients=config.num_sellers,
-                noise_factor=config.discovery_quality,
-                buyer_data_mode=config.buyer_data_mode,
+                num_clients=exp_cfg.n_sellers,  # Use correct config path
+                noise_factor=discovery_params.discovery_quality,
+                buyer_data_mode=discovery_params.buyer_data_mode,
                 buyer_bias_distribution=buyer_bias_dist,
-                seed=config.seed
+                seed=cfg.seed
             )
         else:
-            raise ValueError(f"Unsupported split_method: '{config.split_method}'")
+            raise ValueError(f"Unsupported split_method: '{text_cfg.strategy}'")
 
-        if config.use_cache:
+        if cfg.use_cache:
             with open(split_cache_file, "wb") as f:
                 pickle.dump((buyer_indices, seller_splits), f)
             logging.info(f"Split indices saved to cache: {split_cache_file}")
@@ -257,17 +259,26 @@ def get_text_data_set(cfg: AppConfig) -> ProcessedTextData:
 
     buyer_loader = None
     if buyer_indices is not None and len(buyer_indices) > 0:
-        buyer_loader = DataLoader(Subset(processed_train_data, buyer_indices.tolist()), batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+        buyer_loader = DataLoader(Subset(processed_train_data, buyer_indices.tolist()), batch_size=batch_size,
+                                  shuffle=True, collate_fn=collate_fn)
+
+    collate_fn = lambda batch: collate_batch(batch, padding_value=pad_idx)
+    batch_size = train_cfg.batch_size
+    buyer_loader = DataLoader(Subset(processed_train_data, buyer_indices.tolist()), batch_size=batch_size, shuffle=True,
+                              collate_fn=collate_fn)
 
     seller_loaders = {}
-    for i in range(config.num_sellers):
+    ### UPDATED: Use the correct config path for number of sellers ###
+    for i in range(exp_cfg.n_sellers):
         indices = seller_splits.get(i)
-        if indices and len(indices) > 0:
-            seller_loaders[i] = DataLoader(Subset(processed_train_data, indices), batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+        if indices:
+            seller_loaders[i] = DataLoader(Subset(processed_train_data, indices), batch_size=batch_size, shuffle=True,
+                                           collate_fn=collate_fn)
         else:
             seller_loaders[i] = None
 
-    test_loader = DataLoader(processed_test_data, batch_size=batch_size, shuffle=False, collate_fn=collate_fn) if processed_test_data else None
+    test_loader = DataLoader(processed_test_data, batch_size=batch_size, shuffle=False,
+                             collate_fn=collate_fn) if processed_test_data else None
 
     logging.info("DataLoader creation complete.")
 
@@ -295,9 +306,11 @@ def _calculate_target_counts(total_samples: int, proportions: Dict[int, float]) 
     return counts
 
 
-def construct_text_buyer_set(dataset: List[Tuple[int, Any]], buyer_count: int, buyer_data_mode: str, buyer_bias_distribution: Optional[Dict], seed: int) -> np.ndarray:
+def construct_text_buyer_set(dataset: List[Tuple[int, Any]], buyer_count: int, buyer_data_mode: str,
+                             buyer_bias_distribution: Optional[Dict], seed: int) -> np.ndarray:
     """Constructs the buyer index set based on the specified mode."""
-    random.seed(seed); np.random.seed(seed)
+    random.seed(seed);
+    np.random.seed(seed)
     total_samples = len(dataset)
     all_indices = np.arange(total_samples)
 
@@ -335,9 +348,13 @@ def construct_text_buyer_set(dataset: List[Tuple[int, Any]], buyer_count: int, b
         raise ValueError(f"Unknown buyer_data_mode: {buyer_data_mode}")
 
 
-def split_text_dataset_martfl_discovery(dataset: List[Tuple[int, Any]], buyer_count: int, num_clients: int, noise_factor: float, buyer_data_mode: str, buyer_bias_distribution: Optional[Dict], seed: int) -> Tuple[np.ndarray, Dict[int, List[int]]]:
+def split_text_dataset_martfl_discovery(dataset: List[Tuple[int, Any]], buyer_count: int, num_clients: int,
+                                        noise_factor: float, buyer_data_mode: str,
+                                        buyer_bias_distribution: Optional[Dict], seed: int) -> Tuple[
+    np.ndarray, Dict[int, List[int]]]:
     """Simulates MartFL data split where seller distributions are noisy mimics of the buyer's."""
-    random.seed(seed); np.random.seed(seed)
+    random.seed(seed);
+    np.random.seed(seed)
     total_samples = len(dataset)
     all_indices = np.arange(total_samples)
     targets = np.array([item[0] for item in dataset])
@@ -356,12 +373,12 @@ def split_text_dataset_martfl_discovery(dataset: List[Tuple[int, Any]], buyer_co
     if len(buyer_indices) > 0:
         _, buyer_cls_counts = np.unique(targets[buyer_indices], return_counts=True)
         buyer_proportions = {c: count / len(buyer_indices) for c, count in zip(unique_classes, buyer_cls_counts)}
-    else: # Fallback to uniform if buyer is empty
+    else:  # Fallback to uniform if buyer is empty
         buyer_proportions = {c: 1.0 / num_classes for c in unique_classes}
 
     # 4. Assign Data to Sellers
     seller_splits = {}
-    seller_pool_splits = np.array_split(seller_pool_indices, num_clients) # Simple even split for this example
+    seller_pool_splits = np.array_split(seller_pool_indices, num_clients)  # Simple even split for this example
 
     for client_id in range(num_clients):
         # A more sophisticated implementation would sample from the pool based on noisy proportions.

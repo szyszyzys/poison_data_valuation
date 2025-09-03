@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -322,34 +322,20 @@ def setup_federated_marketplace(cfg: AppConfig, save_dir: str, seed: int = 42):
 def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader], DataLoader, Dict]:
     """
     A unified function to load, partition, and prepare federated image datasets.
-
-    This function orchestrates the entire data setup process based on the provided
-    application configuration. It handles dataset loading, complex partitioning
-    strategies (like property skew), and the creation of PyTorch DataLoaders.
-
-    Args:
-        cfg (AppConfig): The main application configuration object containing all
-                         parameters for the experiment, data, and partitioning.
-
-    Returns:
-        A tuple containing:
-        - buyer_loader (DataLoader): DataLoader for the buyer's root dataset.
-        - seller_loaders (Dict[int, DataLoader]): A dictionary mapping client IDs
-          to their respective DataLoaders.
-        - test_loader (DataLoader): DataLoader for the global test set.
-        - stats (Dict): A dictionary with detailed statistics about the data distribution.
     """
     logger.info(f"--- Starting Federated Dataset Setup for '{cfg.experiment.dataset_name}' ---")
 
-    # 1. Load the base dataset using the helper function
-    # The property_key for CelebA is now passed dynamically from the config
-    property_key = cfg.data_partition.partition_params.get('property_key', 'Blond_Hair')
+    # This is the new, correct way to get data-related settings.
+    image_cfg = cfg.data.image
+    if not image_cfg:
+        raise ValueError("Image data configuration ('data.image') is missing from the AppConfig.")
 
-    if cfg.experiment.dataset_name.lower() == 'celeba':
-        # Pass the property key at initialization
-        train_set, _ = load_dataset_with_property(cfg.experiment.dataset_name, property_key=property_key)
-    else:
-        train_set, _ = load_dataset(cfg.experiment.dataset_name)
+    # 1. Load the base dataset using the helper function
+    # The property_key is now accessed from its new location.
+    property_key = image_cfg.property_skew.property_key
+
+    # This logic is now simpler, as the key is always present in the config
+    train_set, _ = load_dataset_with_property(cfg.experiment.dataset_name, property_key=property_key)
 
     # 2. Initialize the partitioner
     partitioner = FederatedDataPartitioner(
@@ -359,15 +345,18 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     )
 
     # 3. Execute the partitioning strategy defined in the config
-    logger.info(f"Applying '{cfg.data_partition.strategy}' partitioning strategy...")
+    logger.info(f"Applying '{image_cfg.strategy}' partitioning strategy...")
+
+    partition_params_dict = asdict(image_cfg.property_skew)
+
     partitioner.partition(
-        strategy=cfg.data_partition.strategy,
-        buyer_config=cfg.data_partition.buyer_config,
-        partition_params=cfg.data_partition.partition_params
+        strategy=image_cfg.strategy,
+        buyer_config=image_cfg.buyer_config,
+        partition_params=partition_params_dict  # Pass the dictionary here
     )
     buyer_indices, seller_splits, test_indices = partitioner.get_splits()
 
-    # 4. Generate and save statistics about the data distribution
+    # 4. Generate and save statistics (no changes needed here)
     stats = save_data_statistics(
         buyer_indices=buyer_indices,
         seller_splits=seller_splits,
@@ -376,7 +365,7 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         output_dir=cfg.experiment.save_path
     )
 
-    # 5. Create the final DataLoader objects
+    # 5. Create the final DataLoader objects (no changes needed here)
     batch_size = cfg.training.batch_size
     buyer_loader = DataLoader(Subset(train_set, buyer_indices), batch_size=batch_size, shuffle=True)
 
@@ -385,7 +374,6 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         for cid, indices in seller_splits.items() if indices
     }
 
-    # Ensure test_loader is not empty before creating
     test_loader = None
     if len(test_indices) > 0:
         test_loader = DataLoader(Subset(train_set, test_indices), batch_size=batch_size, shuffle=False)

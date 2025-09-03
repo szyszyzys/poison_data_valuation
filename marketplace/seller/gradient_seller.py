@@ -22,7 +22,7 @@ from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGener
     LabelFlipGenerator, BackdoorTextGenerator
 from common.enums import TriggerType, TriggerLocation
 from common.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, LabelFlipConfig, \
-    BackdoorTextConfig, SybilConfig
+    BackdoorTextConfig, SybilConfig, RuntimeDataConfig
 from common.status_save import ClientState
 from marketplace.seller.adversary_gradient_seller import DataConfig, TrainingConfig, GradientSeller
 from marketplace.seller.seller import BaseSeller
@@ -378,7 +378,7 @@ class GradientSeller(BaseSeller):
 
     def __init__(self,
                  seller_id: str,
-                 data_config: DataConfig,
+                 data_config: RuntimeDataConfig,
                  training_config: TrainingConfig,
                  model_factory: Callable[[], nn.Module],
                  save_path: str = "",
@@ -519,7 +519,7 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
 
     def __init__(self,
                  seller_id: str,
-                 data_config: DataConfig,
+                 data_config: RuntimeDataConfig,
                  training_config: TrainingConfig,
                  model_factory: Callable[[], nn.Module],
                  adversary_config: AdversarySellerConfig,  # Use the unified config
@@ -701,7 +701,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
     def __init__(self,
                  seller_id: str,
-                 data_config: DataConfig,
+                 data_config: RuntimeDataConfig,
                  training_config: TrainingConfig,
                  model_factory: Callable[[], nn.Module],
                  adversary_config: AdversarySellerConfig,  # Use the unified config

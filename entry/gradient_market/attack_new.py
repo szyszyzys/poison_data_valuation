@@ -15,7 +15,9 @@ from attack.attack_gradient_market.poison_attack.attack_utils import BackdoorIma
 from attack.attack_gradient_market.poison_attack.attack_utils import BackdoorTextGenerator
 from common.datasets.image_data_processor import get_image_dataset
 from common.datasets.text_data_processor import get_text_data_set
-from common.gradient_market_configs import DataConfig, AppConfig, BackdoorTextConfig, BackdoorImageConfig
+from common.enums import PoisonType
+from common.gradient_market_configs import AppConfig, BackdoorTextConfig, BackdoorImageConfig, \
+    LabelFlipConfig, RuntimeDataConfig
 from entry.gradient_market.backdoor_attack import FederatedEarlyStopper, load_config
 from marketplace.market.markplace_gradient import DataMarketplaceFederated, MarketplaceConfig
 from marketplace.market_mechanism.martfl import Aggregator
@@ -26,9 +28,6 @@ from model.utils import get_text_model, get_image_model
 
 class SellerFactory:
     """Handles creating and configuring different seller types from a unified AppConfig."""
-
-    ### UPDATED ###
-    # This class is now more powerful and handles generator creation internally.
 
     ADVERSARY_CLASS_MAP = {
         "backdoor": AdvancedBackdoorAdversarySeller,
@@ -42,17 +41,14 @@ class SellerFactory:
         self.runtime_kwargs = kwargs  # For passing runtime objects like vocab
 
     def _create_poison_generator(self) -> Optional[PoisonGenerator]:
-        """
-        Internal factory method to create the correct poison generator based on the AppConfig.
-        This replaces the old standalone 'create_attack_generator' function.
-        """
+        """Internal factory method to create the correct poison generator based on the AppConfig."""
         poison_cfg = self.cfg.adversary_seller_config.poisoning
-        is_text = 'text' in self.cfg.experiment.dataset_name.lower()  # Simple domain check
 
-        if poison_cfg.type == 'backdoor':
+        is_text = self.cfg.data.text is not None
+
+        if poison_cfg.type == PoisonType.BACKDOOR:
             if is_text:
                 params = poison_cfg.text_backdoor_params
-                # Create the specific config for the generator
                 generator_cfg = BackdoorTextConfig(
                     vocab=self.runtime_kwargs.get("vocab"),
                     target_label=params.target_label,
@@ -62,37 +58,33 @@ class SellerFactory:
                 return BackdoorTextGenerator(generator_cfg)
             else:  # Image
                 params = poison_cfg.image_backdoor_params
-                # You may need to pass image channels dynamically if they vary
                 generator_cfg = BackdoorImageConfig(
                     target_label=params.target_label,
                     trigger_type=params.trigger_type,
                     blend_alpha=params.strength,
                     location=params.location
-                # channels and trigger_size can be added here if needed
-                channel
+                    # channels and trigger_size are assumed to have defaults in BackdoorImageConfig
                 )
                 return BackdoorImageGenerator(generator_cfg)
 
-        elif poison_cfg.type == 'label_flip':
+        elif poison_cfg.type == PoisonType.LABEL_FLIP:
             params = poison_cfg.label_flip_params
             generator_cfg = LabelFlipConfig(
                 num_classes=self.cfg.experiment.num_classes,
-                attack_mode=params.mode,
+                attack_mode=params.mode.value,  # Use .value to get the string for the generator
                 target_label=params.target_label
             )
             return LabelFlipGenerator(generator_cfg)
 
-        return None  # Return None if poison type is 'none' or unknown
+        return None  # Return None if poison type is 'none'
 
     def create_seller(self,
                       seller_id: str,
                       dataset: Dataset,
                       is_adversary: bool,
                       sybil_coordinator: SybilCoordinator):
-        """
-        Creates a seller instance, assembling configs and dependencies on the fly.
-        """
-        data_cfg = DataConfig(
+        """Creates a seller instance, assembling configs and dependencies on the fly."""
+        data_cfg = RuntimeDataConfig(
             dataset=dataset,
             num_classes=self.cfg.experiment.num_classes
         )
@@ -110,17 +102,22 @@ class SellerFactory:
 
         # --- Adversary Creation Logic ---
         attack_type = self.cfg.adversary_seller_config.poisoning.type
-        AdversaryClass = self.ADVERSARY_CLASS_MAP.get(attack_type)
 
-        ### UPDATED ###
-        # Create the poison generator specifically for this adversary
+        AdversaryClass = self.ADVERSARY_CLASS_MAP.get(attack_type.value)
         poison_generator = self._create_poison_generator()
 
         if not AdversaryClass or not poison_generator:
-            logging.warning(f"Attack type '{attack_type}' invalid or 'none'. Creating a benign seller for {seller_id}.")
-            return GradientSeller(...)  # Fallback to benign
+            logging.warning(
+                f"Attack type '{attack_type.value}' is invalid or 'none'. Creating a benign seller for {seller_id}.")
+            return GradientSeller(
+                seller_id=seller_id,
+                data_config=data_cfg,
+                training_config=training_cfg,
+                model_factory=self.model_factory,
+                device=self.cfg.experiment.device,
+                **self.runtime_kwargs
+            )
 
-        # The adversary class gets the poison generator it needs to function
         return AdversaryClass(
             seller_id=seller_id,
             data_config=data_cfg,
@@ -128,7 +125,7 @@ class SellerFactory:
             model_factory=self.model_factory,
             adversary_config=self.cfg.adversary_seller_config,
             sybil_coordinator=sybil_coordinator,
-            poison_generator=poison_generator,  # Pass the generator here
+            poison_generator=poison_generator,
             device=self.cfg.experiment.device,
             **self.runtime_kwargs
         )
@@ -149,7 +146,17 @@ def setup_data_and_model(cfg: AppConfig):
         seller_extra_args = {"vocab": vocab, "pad_idx": pad_idx, "model_type": "text"}
     else:  # Image
         buyer_loader, seller_loaders, test_loader, stats = get_image_dataset(cfg)
-        full_dataset = test_loader.dataset.dataset
+        if test_loader:
+            full_dataset = test_loader.dataset.dataset
+        elif buyer_loader:
+            full_dataset = buyer_loader.dataset.dataset
+        else:
+            # Fallback to the first available seller if others don't exist
+            first_seller_loader = next(iter(seller_loaders.values()), None)
+            if not first_seller_loader:
+                raise ValueError("No data loaders available to determine dataset properties.")
+            full_dataset = first_seller_loader.dataset.dataset
+
         num_classes = len(np.unique(full_dataset.targets))
         model_init_cfg = {"num_classes": num_classes}
         model_factory = lambda: get_image_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
@@ -226,7 +233,6 @@ def run_attack(cfg: AppConfig):
     sybil_coordinator = SybilCoordinator(cfg.adversary_seller_config.sybil, aggregator)
     loss_fn = nn.CrossEntropyLoss()
 
-    ### FIXED ###
     # Get a sample batch from the test_loader to determine the input shape.
     sample_data, _ = next(iter(test_loader))
 
