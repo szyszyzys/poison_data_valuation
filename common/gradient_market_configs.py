@@ -1,9 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
-from torch.utils.data import Dataset
-
-from common.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation
+from common.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation, PoisonType, LabelFlipMode
 
 
 @dataclass
@@ -50,25 +48,21 @@ class TextBackdoorParams:
 class LabelFlipParams:
     """Parameters specific to the label-flipping poisoning attack."""
     target_label: int = 0
-    mode: str = "fixed_target"
+    mode: LabelFlipMode = LabelFlipMode.FIXED_TARGET
 
 
 @dataclass
 class PoisoningConfig:
-    """
-    Configuration for client-side data poisoning attacks.
-    Specifies the type and parameters for the attack.
-    """
-    type: str = "none"  # 'none', 'backdoor', or 'label_flip'
+    """Configuration for client-side data poisoning attacks."""
+    type: PoisonType = PoisonType.NONE
     poison_rate: float = 0.1
-    # Nested parameters for each attack type
     image_backdoor_params: ImageBackdoorParams = field(default_factory=ImageBackdoorParams)
     text_backdoor_params: TextBackdoorParams = field(default_factory=TextBackdoorParams)
     label_flip_params: LabelFlipParams = field(default_factory=LabelFlipParams)
 
 
 @dataclass
-class PrivacyConfig:
+class ServerPrivacyConfig:
     """Configuration for server-side privacy attacks (e.g., GIA)."""
     perform_gia: bool = False
     gia_frequency: int = 10
@@ -88,25 +82,66 @@ class SybilConfig:
 
 
 @dataclass
-class AdversarySellerConfig:
-    """
-    A unified profile for an adversarial seller.
-    This composes all configs related to adversarial behavior.
-    """
-    # Contains settings like type ('backdoor', 'label_flip') and poison_rate
-    poisoning: PoisoningConfig = field(default_factory=PoisoningConfig)
+class DiscoverySplitParams:
+    """Parameters for the 'discovery' text data splitting strategy."""
+    buyer_percentage: float = 0.05
+    discovery_quality: float = 0.3
+    buyer_data_mode: str = "biased"
+    buyer_bias_type: str = "dirichlet"
+    buyer_dirichlet_alpha: float = 0.2
 
-    # Contains settings like is_sybil, roles, and strategies
+
+@dataclass  # --- FIXED: Added the @dataclass decorator ---
+class VocabConfig:
+    """Configuration for building the torchtext vocabulary."""
+    min_freq: int = 1
+    unk_token: str = "<unk>"
+    pad_token: str = "<pad>"
+
+
+@dataclass
+class PropertySkewParams:
+    """Parameters for the 'property-skew' image data splitting strategy."""
+    property_key: str = "Blond_Hair"
+    num_high_prevalence_clients: int = 2
+    num_security_attackers: int = 2
+    high_prevalence_ratio: float = 0.8
+    low_prevalence_ratio: float = 0.1
+    standard_prevalence_ratio: float = 0.4
+
+
+@dataclass
+class TextDataConfig:
+    """All settings related to a text dataset source."""
+    vocab: VocabConfig
+    strategy: str = "discovery"
+    discovery: Optional[DiscoverySplitParams] = None
+    buyer_config: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ImageDataConfig:
+    """All settings related to an image dataset source."""
+    strategy: str = "property-skew"
+    property_skew: Optional[PropertySkewParams] = None
+    buyer_config: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AdversarySellerConfig:
+    """A unified profile for an adversarial seller."""
+    poisoning: PoisoningConfig = field(default_factory=PoisoningConfig)
     sybil: SybilConfig = field(default_factory=SybilConfig)
 
 
 @dataclass
 class DataConfig:
-    """Configuration for a seller's local data."""
-    dataset: Dataset
-    num_classes: int
+    """Holds configuration for one type of data source."""
+    text: Optional[TextDataConfig] = None
+    image: Optional[ImageDataConfig] = None
 
 
+# --- These are RUNTIME configs, not loaded from YAML. Keeping them is correct. ---
 @dataclass
 class LabelFlipConfig:
     """Configuration for the LabelFlipGenerator."""
@@ -137,35 +172,18 @@ class BackdoorTextConfig:
     max_seq_len: Optional[int] = None
 
 
-@dataclass
-class PropertySkewConfig:
-    """Configuration for the property-skew partitioning strategy."""
-    property_key: str
-    num_high_prevalence_clients: int
-    num_security_attackers: int
-    high_prevalence_ratio: float
-    low_prevalence_ratio: float
-    standard_prevalence_ratio: float
-
-
-@dataclass
-class DataPartitionConfig:
-    """Configuration for data partitioning and splitting."""
-    strategy: str = "property-skew"
-    buyer_config: Dict[str, Any] = field(default_factory=dict)
-    partition_params: Dict[str, Any] = field(default_factory=dict)
+# --- REMOVED: Deleted the duplicate and redundant class definitions ---
 
 
 @dataclass
 class AppConfig:
-    """
-    A single, top-level dataclass that composes all other configurations.
-    This object directly maps to the structure of your YAML file.
-    """
+    """Top-level configuration for the entire experiment run."""
     experiment: ExperimentConfig
     training: TrainingConfig
-    privacy: PrivacyConfig
+    server_privacy: ServerPrivacyConfig
     adversary_seller_config: AdversarySellerConfig
-    data_partition: DataPartitionConfig
+    data: DataConfig
     seed: int = 42
     n_samples: int = 1
+    data_root: str = "./data"
+    use_cache: bool = True

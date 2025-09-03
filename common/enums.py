@@ -4,6 +4,7 @@ from enum import Enum
 class ImageTriggerType(Enum):
     BLENDED_PATCH = "blended_patch"
     CHECKERBOARD = "checkerboard"
+    NOISE = "noise"
 
 
 class ImageTriggerLocation(Enum):
@@ -17,3 +18,14 @@ class TextTriggerLocation(Enum):
     START = "start"
     END = "end"
     MIDDLE = "middle"
+
+
+class PoisonType(str, Enum):
+    NONE = "none"
+    BACKDOOR = "backdoor"
+    LABEL_FLIP = "label_flip"
+
+
+class LabelFlipMode(str, Enum):
+    FIXED_TARGET = "fixed_target"
+    RANDOM_DIFFERENT = "random_different"

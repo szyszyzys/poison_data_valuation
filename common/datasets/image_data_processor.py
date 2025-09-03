@@ -92,15 +92,19 @@ class Camelyon16Custom(Dataset):
         return image, label
 
     def has_property(self, item_idx: int, property_key: str) -> bool:
-        """
-        Checks if a sample has a given property based on metadata.
-        This is now flexible and not hardcoded.
-        """
+        """Checks if a sample has a given property based on metadata."""
         property_key = property_key.lower()
 
         if property_key == 'tumor':
             # 'label' column: 1 for tumor, 0 for normal
             return self.metadata.iloc[item_idx]['label'] == 1
+        elif property_key in self.metadata.columns:
+            # ### NEW ###
+            # This allows partitioning by any metadata column, e.g., 'center'.
+            # This is more flexible but assumes binary or specific value checks.
+            # You might need to adjust what value you're checking against.
+            # For simplicity, let's assume it checks for presence (not None/NaN).
+            return pd.notna(self.metadata.iloc[item_idx][property_key])
 
         return False
 
@@ -311,3 +315,96 @@ def setup_federated_marketplace(cfg: AppConfig, save_dir: str, seed: int = 42):
 
     logger.info("Federated marketplace setup complete. DataLoaders are ready. ✅")
     return buyer_loader, seller_loaders, test_loader, stats
+
+
+# Place this function within your federated_data_setup.py file
+
+def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader], DataLoader, Dict]:
+    """
+    A unified function to load, partition, and prepare federated image datasets.
+
+    This function orchestrates the entire data setup process based on the provided
+    application configuration. It handles dataset loading, complex partitioning
+    strategies (like property skew), and the creation of PyTorch DataLoaders.
+
+    Args:
+        cfg (AppConfig): The main application configuration object containing all
+                         parameters for the experiment, data, and partitioning.
+
+    Returns:
+        A tuple containing:
+        - buyer_loader (DataLoader): DataLoader for the buyer's root dataset.
+        - seller_loaders (Dict[int, DataLoader]): A dictionary mapping client IDs
+          to their respective DataLoaders.
+        - test_loader (DataLoader): DataLoader for the global test set.
+        - stats (Dict): A dictionary with detailed statistics about the data distribution.
+    """
+    logger.info(f"--- Starting Federated Dataset Setup for '{cfg.experiment.dataset_name}' ---")
+
+    # 1. Load the base dataset using the helper function
+    # The property_key for CelebA is now passed dynamically from the config
+    property_key = cfg.data_partition.partition_params.get('property_key', 'Blond_Hair')
+
+    if cfg.experiment.dataset_name.lower() == 'celeba':
+        # Pass the property key at initialization
+        train_set, _ = load_dataset_with_property(cfg.experiment.dataset_name, property_key=property_key)
+    else:
+        train_set, _ = load_dataset(cfg.experiment.dataset_name)
+
+    # 2. Initialize the partitioner
+    partitioner = FederatedDataPartitioner(
+        dataset=train_set,
+        num_clients=cfg.experiment.n_sellers,
+        seed=cfg.seed
+    )
+
+    # 3. Execute the partitioning strategy defined in the config
+    logger.info(f"Applying '{cfg.data_partition.strategy}' partitioning strategy...")
+    partitioner.partition(
+        strategy=cfg.data_partition.strategy,
+        buyer_config=cfg.data_partition.buyer_config,
+        partition_params=cfg.data_partition.partition_params
+    )
+    buyer_indices, seller_splits, test_indices = partitioner.get_splits()
+
+    # 4. Generate and save statistics about the data distribution
+    stats = save_data_statistics(
+        buyer_indices=buyer_indices,
+        seller_splits=seller_splits,
+        client_properties=partitioner.client_properties,
+        targets=_extract_targets(train_set),
+        output_dir=cfg.experiment.save_path
+    )
+
+    # 5. Create the final DataLoader objects
+    batch_size = cfg.training.batch_size
+    buyer_loader = DataLoader(Subset(train_set, buyer_indices), batch_size=batch_size, shuffle=True)
+
+    seller_loaders = {
+        cid: DataLoader(Subset(train_set, indices), batch_size=batch_size, shuffle=True)
+        for cid, indices in seller_splits.items() if indices
+    }
+
+    # Ensure test_loader is not empty before creating
+    test_loader = None
+    if len(test_indices) > 0:
+        test_loader = DataLoader(Subset(train_set, test_indices), batch_size=batch_size, shuffle=False)
+        logger.info(f"Created test loader with {len(test_indices)} samples.")
+    else:
+        logger.warning("No test indices found; test_loader will be None.")
+
+    logger.info("✅ Federated dataset setup complete. DataLoaders are ready.")
+    return buyer_loader, seller_loaders, test_loader, stats
+
+
+# You would also need a slight modification to load_dataset to handle the property_key for CelebA
+def load_dataset_with_property(name: str, root: str = "./data", download: bool = True,
+                               property_key: str = 'Blond_Hair') -> Tuple[Dataset, Optional[Dataset]]:
+    """Loads datasets, allowing dynamic property selection for CelebA."""
+    logger.info(f"Loading '{name}' dataset...")
+    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
+    if name.lower() == "camelyon16":
+        return Camelyon16Custom(root, transform=transform, download=download), None
+    elif name.lower() == "celeba":
+        return CelebACustom(root, split='all', transform=transform, download=download, property_key=property_key), None
+    raise NotImplementedError(f"Dataset '{name}' is not supported in this configuration.")

@@ -21,7 +21,7 @@ from general_utils.file_utils import save_to_json
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator
-from marketplace.utils.gradient_market_utils.data_processor import get_data_set
+from common.datasets.image_data_processor import get_data_set
 from model.utils import get_image_model, get_text_model
 
 logger = logging.getLogger(__name__)

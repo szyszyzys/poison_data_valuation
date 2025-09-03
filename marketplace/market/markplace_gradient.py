@@ -1,4 +1,3 @@
-import copy
 import logging
 import time
 from collections import OrderedDict
@@ -14,9 +13,10 @@ from torch.utils.data import DataLoader
 # --- Assumed Imports from Your Project ---
 # These are placeholders for your actual class implementations.
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance
+from common.gradient_market_configs import ServerPrivacyConfig
+from entry.gradient_market.privacy_attack import GradientInversionAttacker
 from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.seller import BaseSeller
-from entry.gradient_market.privacy_attack import GradientInversionAttacker, GradientInversionAttackerConfig
 
 
 # --- Placeholder Base Class ---
@@ -33,7 +33,7 @@ class MarketplaceConfig:
     dataset_name: str
     input_shape: Tuple[int, int, int]
     num_classes: int
-    privacy_attack_config: GradientInversionAttackerConfig = field(default_factory=GradientInversionAttackerConfig)
+    privacy_attack_config: ServerPrivacyConfig = field(default_factory=ServerPrivacyConfig)
 
 
 # --- Helper Class for Evaluation (Unchanged) ---

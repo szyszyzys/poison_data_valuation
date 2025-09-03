@@ -22,9 +22,9 @@ from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGener
     LabelFlipGenerator, BackdoorTextGenerator
 from common.enums import TriggerType, TriggerLocation
 from common.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, LabelFlipConfig, \
-    BackdoorTextConfig
+    BackdoorTextConfig, SybilConfig
 from common.status_save import ClientState
-from marketplace.seller.adversary_gradient_seller import DataConfig, TrainingConfig
+from marketplace.seller.adversary_gradient_seller import DataConfig, TrainingConfig, GradientSeller
 from marketplace.seller.seller import BaseSeller
 from model.utils import local_training_and_get_gradient
 
@@ -133,64 +133,34 @@ def estimate_byte_size(data: Any) -> int:
     return total_size
 
 
-# CombinedSybilCoordinator integrates functionalities from both PFedBA_SybilAttack and SybilCoordinator.
 class SybilCoordinator:
-    def __init__(self,
-                 backdoor_generator,
-                 detection_threshold: float = 0.8,
-                 benign_rounds: int = 0,
-                 gradient_default_mode: str = "mimic",
-                 trigger_mode: str = "static",
-                 role_config: Dict[str, float] = None,
-                 # Pass strategy configurations here
-                 strategy_configs: Dict[str, Dict] = None,
-                 history_window_size: int = 10,
-                 device: str = "cuda" if torch.cuda.is_available() else "cpu",
-                 aggregator=None):
-
-        self.backdoor_generator = backdoor_generator
+    def __init__(self, sybil_cfg: SybilConfig, aggregator):
+        self.sybil_cfg = sybil_cfg
         self.aggregator = aggregator
-        self.device = device
+        self.device = aggregator.device  # Get device from a reliable source
 
-        # Use the new ClientState class
         self.clients: Dict[str, ClientState] = collections.OrderedDict()
 
-        # Attack Configuration
-        self.benign_rounds = benign_rounds
-        self.detection_threshold = detection_threshold
-        self.trigger_mode = trigger_mode
-        self.gradient_default_mode = gradient_default_mode
-        self.role_config = role_config or {'attacker': 0.2, 'explorer': 0.4}
-
-        # --- NEW: Initialize strategy objects ---
-        default_strategy_configs = {
-            'mimic': {'alpha': 0.5},
-            'pivot': {},
-            'knock_out': {'alpha': 0.5}
-        }
-        # Merge user-provided configs with defaults
-        final_strategy_configs = {**default_strategy_configs, **(strategy_configs or {})}
-
+        # --- Initialize strategies from config ---
         self.strategies: Dict[str, BaseGradientStrategy] = {
-            'mimic': MimicStrategy(**final_strategy_configs['mimic']),
-            'pivot': PivotStrategy(**final_strategy_configs['pivot']),
-            'knock_out': KnockOutStrategy(**final_strategy_configs['knock_out']),
+            'mimic': MimicStrategy(**self.sybil_cfg.strategy_configs.get('mimic', {})),
+            'pivot': PivotStrategy(),
+            'knock_out': KnockOutStrategy(**self.sybil_cfg.strategy_configs.get('knock_out', {})),
         }
-        # --- END NEW ---
 
         # State Tracking
         self.cur_round = 0
         self.start_atk = False
         self.selected_gradients: Dict[str, torch.Tensor] = {}
-        self.selected_history: collections.deque = collections.deque(maxlen=history_window_size)
+        self.selected_history: collections.deque = collections.deque(
+            maxlen=self.sybil_cfg.history_window_size
+        )
         self.selection_patterns = {}
 
-    def register_seller(self, seller) -> None:
+    def register_seller(self, seller: GradientSeller) -> None:
         """Register a malicious seller with the coordinator."""
         if not hasattr(seller, 'seller_id'):
             raise AttributeError("Seller object must have a 'seller_id' attribute")
-
-        # Create a ClientState object to hold the seller and its metadata
         self.clients[seller.seller_id] = ClientState(seller_obj=seller)
 
     def get_client_with_highest_selection_rate(self) -> str:
@@ -201,8 +171,8 @@ class SybilCoordinator:
         best_client = None
         max_rate = -1.0  # start with a rate lower than any possible selection rate
         for cid, client_info in self.clients.items():
-            if client_info["selection_rate"] > max_rate:
-                max_rate = client_info["selection_rate"]
+            if client_info.selection_rate > max_rate:
+                max_rate = client_info.selection_rate
                 best_client = cid
         return best_client
 
@@ -215,9 +185,9 @@ class SybilCoordinator:
             client_state.selection_rate = sum(client_state.selection_history) / len(client_state.selection_history)
             client_state.rounds_participated += 1
 
-            # Switch phase based on rounds and selection rate using configured threshold
-            if (client_state.rounds_participated >= self.benign_rounds and
-                    client_state.selection_rate > self.detection_threshold):
+            # Use parameters from the config object
+            if (client_state.rounds_participated >= self.sybil_cfg.benign_rounds and
+                    client_state.selection_rate > self.sybil_cfg.detection_threshold):
                 client_state.phase = "attack"
             else:
                 client_state.phase = "benign"
@@ -255,19 +225,17 @@ class SybilCoordinator:
         self.selection_patterns = {"centroid": centroid, "avg_similarity": avg_sim}
 
     def adaptive_role_assignment(self) -> None:
-        """Dynamically reassign roles based on selection rates using configured percentages."""
+        """Dynamically reassign roles based on selection rates."""
         if not self.clients:
             return
 
-        sorted_clients = sorted(
-            self.clients.items(),
-            key=lambda item: item[1].selection_rate,
-            reverse=True
-        )
-
+        sorted_clients = sorted(self.clients.items(), key=lambda item: item[1].selection_rate, reverse=True)
         num_clients = len(sorted_clients)
-        attacker_cutoff = int(self.role_config['attacker'] * num_clients)
-        explorer_cutoff = int((1 - self.role_config['explorer']) * num_clients)
+
+        # Use role percentages from the config
+        role_config = self.sybil_cfg.role_config
+        attacker_cutoff = int(role_config.get('attacker', 0.2) * num_clients)
+        explorer_cutoff = int((1 - role_config.get('explorer', 0.4)) * num_clients)
 
         for i, (cid, client_state) in enumerate(sorted_clients):
             if i < attacker_cutoff:
@@ -276,28 +244,6 @@ class SybilCoordinator:
                 client_state.role = "explorer"
             else:
                 client_state.role = "hybrid"
-
-    # ----- Selected Gradients & Update Methods -----
-    def precompute_current_round_gradient(self, selected_info: Optional[dict] = None) -> None:
-        """
-        Update the internal storage of selected gradients.
-        If selected_info is provided, use it; otherwise, query registered sellers.
-        """
-        self.selected_gradients = {}
-        if selected_info:
-            for seller_id, gradient in selected_info.items():
-                if seller_id in self.registered_clients:
-                    self.selected_gradients[seller_id] = self._ensure_tensor(gradient)
-            return
-        selected_ids = []
-        for seller_id, seller in self.registered_clients.items():
-            if hasattr(seller, 'selected_last_round') and seller.selected_last_round:
-                base_model = copy.deepcopy(self.aggregator.global_model)
-                base_model = base_model.to(self.device)
-                gradient = seller.get_local_gradient(base_model)
-                selected_ids.append(seller_id)
-                self.selected_gradients[seller_id] = self._ensure_tensor(gradient)
-        print(f"Selected adv sellers in last round: {selected_ids}")
 
     def _ensure_tensor(self, gradient: Union[torch.Tensor, List, np.ndarray]) -> torch.Tensor:
         """
@@ -321,88 +267,43 @@ class SybilCoordinator:
             raise TypeError(f"Unsupported gradient type: {type(gradient)}")
 
     def collect_selected_gradients(self, selected_client_ids: List[str]) -> None:
-        """
-        Collects and stores the gradients from the sellers selected in the current round.
-        """
+        """Collects gradients from the sellers selected in the current round."""
         self.selected_gradients = {}
-        base_model = copy.deepcopy(self.aggregator.global_model).to(self.device)
+        base_model = self.aggregator.global_model.to(self.device)
 
         for cid in selected_client_ids:
             if cid in self.clients:
                 seller = self.clients[cid].seller_obj
                 gradient = seller.get_local_gradient(base_model)
-                # Ensure gradients are stored in a standard, flat format
                 self.selected_gradients[cid] = self._ensure_tensor(gradient)
 
     def get_selected_average(self) -> Optional[torch.Tensor]:
-        """
-        Compute and return the average gradient of all selected sellers.
-        """
+        """Compute the average gradient of all selected sellers."""
         if not self.selected_gradients:
             return None
         gradients = list(self.selected_gradients.values())
-        gradients = [g.to(self.device) for g in gradients]
-        avg_grad = torch.mean(torch.stack(gradients), dim=0)
-        return avg_grad
+        return torch.mean(torch.stack(gradients), dim=0)
 
-    def _get_gradient_strategy(self, name: str) -> callable:
-        """Returns the gradient manipulation function based on the strategy name."""
-        strategies = {
-            "mimic": self._strategy_mimic,
-            "pivot": self._strategy_pivot,
-            "knock_out": self._strategy_knock_out,
-        }
-        return strategies.get(name, self._strategy_mimic)  # Default to mimic
-
-    # --- Individual Strategy Implementations ---
-    def _strategy_mimic(self, current_grad, avg_grad):
-        alpha = self.strategy_configs['alpha']
-        return (1 - alpha) * current_grad + alpha * avg_grad
-
-    def _strategy_pivot(self, current_grad, avg_grad):
-        return avg_grad.clone()
-
-    def _strategy_knock_out(self, current_grad, avg_grad):
-        alpha_knock = min(self.strategy_configs['alpha'] * 2, 1.0)
-        return (1 - alpha_knock) * current_grad + alpha_knock * avg_grad
-
-    def update_nonselected_gradient(self,
-                                    current_gradient: Union[torch.Tensor, List],
-                                    strategy: Optional[str] = None) -> List[np.ndarray]:
-        """
-        Update a non-selected gradient using a specified strategy.
-        """
-        strat_name = strategy or self.gradient_default_mode
+    def update_nonselected_gradient(self, current_gradient, strategy: Optional[str] = None) -> List[np.ndarray]:
+        """Update a non-selected gradient using a specified strategy object."""
+        strat_name = strategy or self.sybil_cfg.gradient_default_mode
         avg_grad = self.get_selected_average()
-
-        def to_numpy(g: torch.Tensor) -> np.ndarray:
-            return g.cpu().numpy()
 
         # If no selected gradients exist, just return the original gradient
         if avg_grad is None:
+            # Logic to handle both list and single tensor inputs
             if isinstance(current_gradient, list):
-                return [to_numpy(self._ensure_tensor(g)) for g in current_gradient]
-            return [to_numpy(self._ensure_tensor(current_gradient))]
+                return [g.cpu().numpy() for g in current_gradient]
+            return [self._ensure_tensor(current_gradient).cpu().numpy()]
 
-        # Get the correct strategy object
-        strategy_fn = self.strategies.get(strat_name)
-        if not strategy_fn:
-            raise ValueError(f"Strategy '{strat_name}' not found.")
+        strategy_obj = self.strategies.get(strat_name)
+        if not strategy_obj:
+            raise ValueError(f"Strategy '{strat_name}' not found or configured.")
 
-        # Standardize the input gradient to a flat tensor
-        is_list = isinstance(current_gradient, list)
-        original_shapes = [g.shape for g in current_gradient] if is_list else None
         current_grad_tensor = self._ensure_tensor(current_gradient)
+        new_grad = strategy_obj.manipulate(current_grad_tensor, avg_grad)
 
-        # Use the strategy object to manipulate the gradient
-        new_grad = strategy_fn.manipulate(current_grad_tensor, avg_grad)
-
-        # Reconstruct the original shape if necessary
-        if is_list and original_shapes:
-            new_grad_list = self._unflatten_gradient(new_grad, original_shapes)
-            return [to_numpy(t) for t in new_grad_list]
-
-        return [to_numpy(new_grad)]
+        return [new_grad.cpu().numpy()]
 
     def _unflatten_gradient(self, flat_grad: torch.Tensor, original_shapes: List[torch.Size]) -> List[torch.Tensor]:
         """
@@ -419,33 +320,45 @@ class SybilCoordinator:
         return result
 
     def prepare_for_new_round(self) -> None:
-        """
-        Should be called at the end of a round to prepare for the next one.
-        Increments round counter and handles dynamic trigger updates.
-        """
+        """Prepares state for the next round and handles dynamic triggers."""
         self.cur_round += 1
-        if self.cur_round >= self.benign_rounds:
+        if self.cur_round >= self.sybil_cfg.benign_rounds:
             self.start_atk = True
 
-        # Dynamic trigger logic
-        if self.trigger_mode == "dynamic" and self.start_atk:
-            best_client_id = self.get_client_with_highest_selection_rate()
-            if best_client_id:
-                best_seller = self.clients[best_client_id].seller_obj
-                is_first_attack_round = self.cur_round == self.benign_rounds
-                # This part is still specific, but now the context is clearer
-                best_seller.upload_global_trigger(
-                    self.aggregator.global_model,
-                    first_attack=is_first_attack_round,
-                    lr=0.01,
-                    num_steps=50
-                )
+        # Dynamic trigger logic is now decoupled
+        if self.sybil_cfg.trigger_mode == "dynamic" and self.start_atk:
+            self._execute_dynamic_trigger_update()
+
+    def _execute_dynamic_trigger_update(self):
+        """Logic for generating and distributing a new trigger."""
+        best_client_id = self.get_client_with_highest_selection_rate()
+        if not best_client_id:
+            return
+
+        # 1. Have the "best" seller generate a new, optimized trigger
+        best_seller = self.clients[best_client_id].seller_obj
+        logging.info(f"Coordinator: Tasking seller {best_seller.seller_id} to generate a new trigger.")
+        # This method is assumed to exist on the adversary seller class
+        new_trigger = best_seller.generate_optimized_trigger(self.aggregator.global_model)
+
+        # 2. Distribute the new trigger to all other sybils
+        if new_trigger is not None:
+            self.distribute_global_trigger(new_trigger)
+
+    def distribute_global_trigger(self, new_trigger: torch.Tensor) -> None:
+        """Distribute a new trigger to all registered malicious sellers."""
+        logging.info("Coordinator: Distributing new global trigger to all Sybil sellers.")
+        for client_state in self.clients.values():
+            # This method is assumed to exist on the adversary seller class
+            client_state.seller_obj.update_poison_trigger(new_trigger)
 
     def on_round_end(self) -> None:
         """Clear round-specific state."""
+        self.update_historical_patterns(self.selected_gradients)
+        self.adaptive_role_assignment()
         self.selected_gradients = {}
 
-    def update_global_trigger(self, new_trigger: torch.Tensor) -> None:
+    def distribute_global_trigger(self, new_trigger: torch.Tensor) -> None:
         """
         Update the global trigger maintained by the coordinator.
         This new trigger will be used by all malicious sellers.
@@ -1051,52 +964,3 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                 f"Phase 2 - Step {step + 1}, GradDist: {gradient_distance.item():.4f}, BdoorLoss: {backdoor_loss_val.item():.4f}")
 
         return trigger.detach()
-
-
-def global_clip_np(arr, max_norm: float) -> np.ndarray:
-    current_norm = np.linalg.norm(arr)
-    if current_norm > max_norm:
-        scale = max_norm / (current_norm + 1e-8)
-        return arr * scale
-    return arr
-
-
-def flatten_state_dict(state_dict: dict) -> np.ndarray:
-    flat_params = []
-    for key, param in state_dict.items():
-        flat_params.append(param.detach().cpu().numpy().ravel())
-    return np.concatenate(flat_params)
-
-
-def unflatten_state_dict(model, flat_params: np.ndarray) -> dict:
-    new_state_dict = {}
-    pointer = 0
-    for key, param in model.state_dict().items():
-        numel = param.numel()
-        # Slice the flat_params to match this parameter's number of elements.
-        param_flat = flat_params[pointer:pointer + numel]
-        # Reshape to the original shape.
-        new_state_dict[key] = torch.tensor(param_flat.reshape(param.shape), dtype=param.dtype)
-        pointer += numel
-    return new_state_dict
-
-
-def unflatten_np(flat_array, shapes):
-    """
-    Unflatten a 1D NumPy array back into a list of arrays with the provided shapes.
-
-    Parameters:
-      flat_array (np.ndarray): The flattened array.
-      shapes (list of tuple): List of shapes corresponding to the original arrays.
-
-    Returns:
-      arrays (list of np.ndarray): The unflattened arrays.
-    """
-    arrays = []
-    start = 0
-    for shape in shapes:
-        num_elements = np.prod(shape)
-        segment = flat_array[start:start + num_elements]
-        arrays.append(segment.reshape(shape))
-        start += num_elements
-    return arrays

@@ -1,40 +1,88 @@
 # log_utils.py (or results_logger.py)
 
 import argparse
+import copy
 import logging
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
+import numpy as np
 import torch.nn as nn
 from torch.utils.data import Dataset
 
-from attack.attack_gradient_market.poison_attack.attack_utils import BackdoorImageGenerator, LabelFlipGenerator
+from attack.attack_gradient_market.poison_attack.attack_utils import BackdoorImageGenerator, LabelFlipGenerator, \
+    PoisonGenerator
 from attack.attack_gradient_market.poison_attack.attack_utils import BackdoorTextGenerator
-from common.gradient_market_configs import ExperimentConfig, TrainingConfig, DataConfig, AppConfig
+from common.datasets.image_data_processor import get_image_dataset
+from common.datasets.text_data_processor import get_text_data_set
+from common.gradient_market_configs import DataConfig, AppConfig, BackdoorTextConfig, BackdoorImageConfig
 from entry.gradient_market.backdoor_attack import FederatedEarlyStopper, load_config
 from marketplace.market.markplace_gradient import DataMarketplaceFederated, MarketplaceConfig
 from marketplace.market_mechanism.martfl import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator, \
     AdvancedPoisoningAdversarySeller
-from marketplace.utils.gradient_market_utils.data_processor import AttackConfig, setup_federated_marketplace
-from marketplace.utils.gradient_market_utils.text_data_processor import get_text_data_set
 from model.utils import get_text_model, get_image_model
 
 
 class SellerFactory:
     """Handles creating and configuring different seller types from a unified AppConfig."""
 
-    # A map to make adding new adversary types easy and clean
+    ### UPDATED ###
+    # This class is now more powerful and handles generator creation internally.
+
     ADVERSARY_CLASS_MAP = {
         "backdoor": AdvancedBackdoorAdversarySeller,
         "label_flip": AdvancedPoisoningAdversarySeller,
     }
 
     def __init__(self, cfg: AppConfig, model_factory: Callable[[], nn.Module], **kwargs):
-        """Initializes the factory with the main application config."""
+        """Initializes the factory with the main application config and runtime args."""
         self.cfg = cfg
         self.model_factory = model_factory
-        self.kwargs = kwargs  # For passing runtime objects like vocab and model_type
+        self.runtime_kwargs = kwargs  # For passing runtime objects like vocab
+
+    def _create_poison_generator(self) -> Optional[PoisonGenerator]:
+        """
+        Internal factory method to create the correct poison generator based on the AppConfig.
+        This replaces the old standalone 'create_attack_generator' function.
+        """
+        poison_cfg = self.cfg.adversary_seller_config.poisoning
+        is_text = 'text' in self.cfg.experiment.dataset_name.lower()  # Simple domain check
+
+        if poison_cfg.type == 'backdoor':
+            if is_text:
+                params = poison_cfg.text_backdoor_params
+                # Create the specific config for the generator
+                generator_cfg = BackdoorTextConfig(
+                    vocab=self.runtime_kwargs.get("vocab"),
+                    target_label=params.target_label,
+                    trigger_content=params.trigger_content,
+                    location=params.location
+                )
+                return BackdoorTextGenerator(generator_cfg)
+            else:  # Image
+                params = poison_cfg.image_backdoor_params
+                # You may need to pass image channels dynamically if they vary
+                generator_cfg = BackdoorImageConfig(
+                    target_label=params.target_label,
+                    trigger_type=params.trigger_type,
+                    blend_alpha=params.strength,
+                    location=params.location
+                # channels and trigger_size can be added here if needed
+                channel
+                )
+                return BackdoorImageGenerator(generator_cfg)
+
+        elif poison_cfg.type == 'label_flip':
+            params = poison_cfg.label_flip_params
+            generator_cfg = LabelFlipConfig(
+                num_classes=self.cfg.experiment.num_classes,
+                attack_mode=params.mode,
+                target_label=params.target_label
+            )
+            return LabelFlipGenerator(generator_cfg)
+
+        return None  # Return None if poison type is 'none' or unknown
 
     def create_seller(self,
                       seller_id: str,
@@ -42,18 +90,14 @@ class SellerFactory:
                       is_adversary: bool,
                       sybil_coordinator: SybilCoordinator):
         """
-        Creates a seller instance, assembling the necessary config objects on the fly.
+        Creates a seller instance, assembling configs and dependencies on the fly.
         """
-        # --- 1. Assemble the common config objects all sellers need ---
         data_cfg = DataConfig(
             dataset=dataset,
             num_classes=self.cfg.experiment.num_classes
         )
-
-        # The TrainingConfig is already perfectly structured in AppConfig
         training_cfg = self.cfg.training
 
-        # --- 2. Create a benign seller if not an adversary ---
         if not is_adversary:
             return GradientSeller(
                 seller_id=seller_id,
@@ -61,126 +105,93 @@ class SellerFactory:
                 training_config=training_cfg,
                 model_factory=self.model_factory,
                 device=self.cfg.experiment.device,
-                **self.kwargs
+                **self.runtime_kwargs
             )
 
-        # --- 3. Logic for creating an adversary ---
-
-        # Determine which adversary class to use from the config
+        # --- Adversary Creation Logic ---
         attack_type = self.cfg.adversary_seller_config.poisoning.type
         AdversaryClass = self.ADVERSARY_CLASS_MAP.get(attack_type)
 
-        if not AdversaryClass:
-            # Fallback to a benign seller if the attack type is unknown or 'none'
-            logging.warning(f"No adversary class found for attack type '{attack_type}'. Creating a benign seller.")
-            return GradientSeller(
-                seller_id=seller_id,
-                data_config=data_cfg,
-                training_config=training_cfg,
-                model_factory=self.model_factory,
-                device=self.cfg.experiment.device,
-                **self.kwargs
-            )
+        ### UPDATED ###
+        # Create the poison generator specifically for this adversary
+        poison_generator = self._create_poison_generator()
 
-        # The adversary class gets the same base configs plus the specific AdversarySellerConfig
+        if not AdversaryClass or not poison_generator:
+            logging.warning(f"Attack type '{attack_type}' invalid or 'none'. Creating a benign seller for {seller_id}.")
+            return GradientSeller(...)  # Fallback to benign
+
+        # The adversary class gets the poison generator it needs to function
         return AdversaryClass(
             seller_id=seller_id,
             data_config=data_cfg,
             training_config=training_cfg,
             model_factory=self.model_factory,
-            adversary_config=self.cfg.adversary_seller_config,  # Pass the whole object
+            adversary_config=self.cfg.adversary_seller_config,
             sybil_coordinator=sybil_coordinator,
+            poison_generator=poison_generator,  # Pass the generator here
             device=self.cfg.experiment.device,
-            **self.kwargs
+            **self.runtime_kwargs
         )
 
 
-# ==============================================================================
-# SECTION 3: UNIFIED EXPERIMENT FUNCTION
-# ==============================================================================
-
-def setup_data_and_model(exp_cfg: ExperimentConfig, train_cfg: TrainingConfig):
-    """
-    Loads the appropriate dataset and creates a model factory based on the experiment config.
-
-    Returns:
-        A tuple containing loaders, model factory, class information, and any extra arguments.
-    """
-    is_text = get_domain(exp_cfg.dataset_name) == 'text'  # Use a helper for robustness
+def setup_data_and_model(cfg: AppConfig):
+    """Loads dataset and creates a model factory from the AppConfig."""
+    dataset_name = cfg.experiment.dataset_name
+    is_text = 'text' in dataset_name.lower()
 
     if is_text:
-        loader_args = {"batch_size": train_cfg.batch_size, "num_sellers": exp_cfg.n_sellers}
-        _, client_loaders, test_loader, classes, vocab, pad_idx = get_text_data_set(**loader_args)
-        model_init_cfg = {"num_classes": len(classes), "vocab_size": len(vocab), "padding_idx": pad_idx}
-        model_factory = lambda: get_text_model(dataset_name=exp_cfg.dataset_name, **model_init_cfg)
+        ### FIXED ###
+        # Renamed 'client_loaders' to 'seller_loaders' for consistency.
+        _, seller_loaders, test_loader, classes, vocab, pad_idx = get_text_data_set(cfg)
+        num_classes = len(classes)
+        model_init_cfg = {"num_classes": num_classes, "vocab_size": len(vocab), "padding_idx": pad_idx}
+        model_factory = lambda: get_text_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
         seller_extra_args = {"vocab": vocab, "pad_idx": pad_idx, "model_type": "text"}
     else:  # Image
-        loader_args = {"batch_size": train_cfg.batch_size, "num_sellers": exp_cfg.n_sellers}
-        _, client_loaders, _, test_loader, classes = get_data_set(**loader_args)
-        model_init_cfg = {"num_classes": len(classes)}
-        model_factory = lambda: get_image_model(model_name=exp_cfg.model_name, **model_init_cfg)
+        buyer_loader, seller_loaders, test_loader, stats = get_image_dataset(cfg)
+        full_dataset = test_loader.dataset.dataset
+        num_classes = len(np.unique(full_dataset.targets))
+        model_init_cfg = {"num_classes": num_classes}
+        model_factory = lambda: get_image_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
         seller_extra_args = {"model_type": "image"}
 
-    logging.info(f"Data loaded for '{exp_cfg.dataset_name}'. Number of classes: {len(classes)}")
-    return client_loaders, test_loader, model_factory, model_init_cfg, seller_extra_args, len(classes)
+    # Dynamically update num_classes in the config object for runtime use
+    cfg.experiment.num_classes = num_classes
+    logging.info(f"Data loaded for '{dataset_name}'. Number of classes: {cfg.experiment.num_classes}")
+
+    # Now this return statement works for both text and image datasets
+    return seller_loaders, test_loader, model_factory, seller_extra_args
 
 
-def create_attack_generator(exp_cfg: ExperimentConfig, atk_cfg: AttackConfig, num_classes: int, **kwargs):
-    """
-    Initializes and returns the appropriate data poisoning attack generator.
-    """
-    if exp_cfg.attack_type == "backdoor":
-        if get_domain(exp_cfg.dataset_name) == 'text':
-            return BackdoorTextGenerator(
-                kwargs.get("vocab"),
-                atk_cfg.backdoor_target_label,
-                atk_cfg.backdoor_trigger_content
-            )
-        else:  # Image
-            return BackdoorImageGenerator(atk_cfg.backdoor_target_label)
-
-    elif exp_cfg.attack_type == "label_flip":
-        return LabelFlipGenerator(
-            num_classes,
-            atk_cfg.label_flip_mode,
-            atk_cfg.label_flip_target_label
-        )
-    return None  # For benign experiments
-
-
-def initialize_sellers(cfg: AppConfig, marketplace, client_loaders, model_factory, model_init_cfg, seller_extra_args,
-                       attack_generator, sybil_coordinator):
-    """Creates and registers all benign and adversarial sellers in the marketplace."""
+def initialize_sellers(cfg: AppConfig, marketplace, client_loaders, model_factory, seller_extra_args,
+                       sybil_coordinator):
+    """Creates and registers all sellers in the marketplace using the factory."""
+    ### UPDATED ###
+    # The 'attack_generator' argument is gone. The factory handles it all.
     logging.info("--- Initializing Sellers ---")
-
     n_adversaries = int(cfg.experiment.n_sellers * cfg.experiment.adv_rate)
     adversary_ids = list(client_loaders.keys())[:n_adversaries]
 
-    # The SellerFactory now takes the main config object
-    seller_factory = SellerFactory(cfg, model_factory, model_init_cfg, **seller_extra_args)
+    seller_factory = SellerFactory(cfg, model_factory, **seller_extra_args)
 
     for cid, loader in client_loaders.items():
         is_adv = cid in adversary_ids
-        seller_type = "Adversary" if is_adv else "Benign"
-
         seller = seller_factory.create_seller(
             seller_id=f"{'adv' if is_adv else 'bn'}_{cid}",
             dataset=loader.dataset,
             is_adversary=is_adv,
-            attack_generator=attack_generator,
             sybil_coordinator=sybil_coordinator
         )
         marketplace.register_seller(seller.seller_id, seller)
 
-        if is_adv and cfg.sybil.is_sybil:
+        if is_adv and cfg.adversary_seller_config.sybil.is_sybil:
             sybil_coordinator.register_seller(seller)
 
     logging.info(f"Initialized {cfg.experiment.n_sellers} sellers ({n_adversaries} adversaries).")
-    return marketplace, sybil_coordinator
 
 
-def run_training_loop(cfg: AppConfig, marketplace, test_loader, loss_fn, sybil_coordinator, attack_generator):
-    """Runs the main federated training rounds, handling early stopping."""
+def run_training_loop(cfg: AppConfig, marketplace, test_loader, loss_fn, sybil_coordinator):
+    """Runs the main federated training rounds."""
     logging.info("\n--- Starting Federated Training Rounds ---")
     early_stopper = FederatedEarlyStopper(patience=20, monitor='acc')
 
@@ -192,8 +203,7 @@ def run_training_loop(cfg: AppConfig, marketplace, test_loader, loss_fn, sybil_c
             round_number=gr,
             test_dataloader_global=test_loader,
             loss_fn=loss_fn,
-            sybil_coordinator=sybil_coordinator,
-            backdoor_generator=attack_generator if cfg.poisoning.type == 'backdoor' else None
+            sybil_coordinator=sybil_coordinator
         )
 
         if early_stopper.update(round_record.get("perf_global", {}).get('acc', 0)):
@@ -205,50 +215,39 @@ def run_training_loop(cfg: AppConfig, marketplace, test_loader, loss_fn, sybil_c
 
 
 def run_attack(cfg: AppConfig):
-    """
-    Orchestrates the poisoning attack experiment by calling modular helper functions.
-    """
-    logging.info(f"--- Starting Poisoning Attack ---")
-    logging.info(
-        f"Dataset: {cfg.experiment.dataset_name} | Attack: {cfg.poisoning.type} | Model: {cfg.experiment.model_structure}")
+    """Orchestrates the entire experiment from a single config object."""
+    logging.info(f"--- Starting Experiment: {cfg.experiment.dataset_name} | {cfg.experiment.model_structure} ---")
 
-    # --- 1. Data and Model Setup ---
-    # Note: These helpers would also be updated to accept 'cfg'
-    client_loaders, test_loader, model_factory, model_init_cfg, seller_extra_args, num_classes = setup_data_and_model(
-        cfg)
+    # 1. Data and Model Setup
+    client_loaders, test_loader, model_factory, seller_extra_args = setup_data_and_model(cfg)
 
-    # --- 2. Attack Generator Setup ---
-    attack_generator = create_attack_generator(cfg, num_classes, **seller_extra_args)
+    # 2. FL Component Initialization
+    aggregator = Aggregator(cfg.experiment.aggregation_method, model_factory())
+    sybil_coordinator = SybilCoordinator(cfg.adversary_seller_config.sybil, aggregator)
+    loss_fn = nn.CrossEntropyLoss()
 
-    # --- 3. FL Component Initialization ---
-    initial_model = model_factory()
-    aggregator = Aggregator(cfg, initial_model)  # Aggregator can also be simplified to take cfg
-
-    # Dynamically get input shape and create marketplace config
+    ### FIXED ###
+    # Get a sample batch from the test_loader to determine the input shape.
     sample_data, _ = next(iter(test_loader))
+
     marketplace_config = MarketplaceConfig(
         save_path=cfg.experiment.save_path,
         dataset_name=cfg.experiment.dataset_name,
+        # Use the sample_data we just created
         input_shape=tuple(sample_data.shape[1:]),
-        num_classes=num_classes,
-        privacy_attack_config=cfg.privacy
+        # Read num_classes from the config, which was updated in setup_data_and_model
+        num_classes=cfg.experiment.num_classes,
+        privacy_attack_config=cfg.server_privacy
     )
     marketplace = DataMarketplaceFederated(aggregator, marketplace_config)
 
-    sybil_coordinator = SybilCoordinator(cfg, aggregator, attack_generator)  # SybilCoordinator can also take cfg
-    loss_fn = nn.CrossEntropyLoss()
+    # 3. Seller Initialization
+    initialize_sellers(cfg, marketplace, client_loaders, model_factory, seller_extra_args, sybil_coordinator)
 
-    # --- 4. Seller Initialization (using the new helper) ---
-    marketplace, sybil_coordinator = initialize_sellers(
-        cfg, marketplace, client_loaders, model_factory,
-        model_init_cfg, seller_extra_args, attack_generator, sybil_coordinator
-    )
+    # 4. Federated Training Loop
+    run_training_loop(cfg, marketplace, test_loader, loss_fn, sybil_coordinator)
 
-    # --- 5. Federated Training Loop (using the new helper) ---
-    run_training_loop(cfg, marketplace, test_loader, loss_fn, sybil_coordinator, attack_generator)
-
-    # --- 6. Save Final Results ---
-    logging.info("Training finished. Saving final logs...")
+    logging.info("--- Experiment Finished ---")
 
 
 def main():
@@ -256,34 +255,19 @@ def main():
     parser.add_argument("config", help="Path to the YAML configuration file")
     cli_args = parser.parse_args()
 
-    config_dict = load_config(cli_args.config)
-    if not config_dict:
-        return  # Exit if config loading failed
+    app_config = load_config(cli_args.config)
 
-    # --- Automatically map the entire dictionary to your nested dataclasses ---
-    try:
-        # The main, unified config object
-        cfg = from_dict(data_class=AppConfig, data=config_dict)
-    except Exception as e:
-        logging.error(f"Error parsing config into dataclasses: {e}")
-        return
-
-    # Loop for multiple runs with different seeds
-    initial_seed = cfg.seed
-    for i in range(cfg.n_samples):
-        # Create a deep copy of the config for this specific run to avoid mutation issues
-        run_cfg = copy.deepcopy(cfg)
+    initial_seed = app_config.seed
+    for i in range(app_config.n_samples):
+        run_cfg = copy.deepcopy(app_config)
         current_seed = initial_seed + i
-        # set_seed(current_seed) # Assuming you have this function
+        # set_seed(current_seed)
 
-        # Dynamically set the save path for this specific run inside its own config copy
         run_save_path = Path(run_cfg.experiment.save_path) / f"run_{i}_seed_{current_seed}"
         run_save_path.mkdir(parents=True, exist_ok=True)
         run_cfg.experiment.save_path = str(run_save_path)
 
-        logging.info(f"\n--- Starting Run {i} (Seed: {current_seed}) ---")
-
-        # Pass the single, comprehensive config object for this run
+        logging.info(f"\n{'=' * 20} Starting Run {i + 1}/{app_config.n_samples} (Seed: {current_seed}) {'=' * 20}")
         run_attack(run_cfg)
 
 

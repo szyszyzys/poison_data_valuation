@@ -1,37 +1,9 @@
-import numpy as np
-import torch
-import copy
 from typing import Dict, List, Tuple, Optional
 
-# -------------------------------------------------------------------
-# Utility functions: flatten/unflatten parameters & gradient clipping
-# -------------------------------------------------------------------
-def flatten_np(param_tensors: List[torch.Tensor]) -> np.ndarray:
-    """Flatten a list of PyTorch tensors into a single 1D NumPy array."""
-    flat = []
-    for t in param_tensors:
-        flat.append(t.view(-1).detach().cpu().numpy())
-    return np.concatenate(flat, axis=0)
+import numpy as np
+import torch
 
-def unflatten_np(flat_params: np.ndarray, shapes: List[torch.Size]) -> List[np.ndarray]:
-    """Unflatten a 1D NumPy array into a list of arrays with specified shapes."""
-    idx = 0
-    result = []
-    for shape in shapes:
-        size = 1
-        for dim in shape:
-            size *= dim
-        segment = flat_params[idx:idx + size]
-        idx += size
-        result.append(segment.reshape(shape))
-    return result
-
-def global_clip_np(grad: np.ndarray, clip_norm: float) -> np.ndarray:
-    """Global L2 norm clipping for a flattened NumPy gradient."""
-    norm = np.linalg.norm(grad)
-    if norm > clip_norm:
-        grad = grad * (clip_norm / norm)
-    return grad
+from common.utils import global_clip_np, unflatten_np, flatten_np
 
 
 # -------------------------------------------------------------------
@@ -75,9 +47,9 @@ class LocalPoisoner:
         self.last_poisoned_grad = None
 
         # Typically, you'd load or define these externally
-        self.clean_data = None       # (X_clean, y_clean)
-        self.backdoor_data = None    # (X_back, y_back)
-        self.local_model = None      # user-defined: a PyTorch model or param dict
+        self.clean_data = None  # (X_clean, y_clean)
+        self.backdoor_data = None  # (X_back, y_back)
+        self.local_model = None  # user-defined: a PyTorch model or param dict
 
         print(f"[LocalPoisoner] Initialized for seller {seller_id}")
 
@@ -334,7 +306,7 @@ if __name__ == "__main__":
         initial_poison_strength=0.3,
         alpha_align=0.8,
         progressive_schedule=(2, 5),  # ramp poison_strength from round 2 to 5
-        layerwise_indices=None,       # or specify [0, 1, ...] for partial
+        layerwise_indices=None,  # or specify [0, 1, ...] for partial
         use_sybil=False
     )
 

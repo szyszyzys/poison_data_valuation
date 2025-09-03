@@ -5,10 +5,11 @@ from typing import List, Tuple, Any
 
 import torch
 
-from common.enums import TriggerLocation
+from common.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation
 from common.gradient_market_configs import LabelFlipConfig, BackdoorImageConfig, BackdoorTextConfig
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 class PoisonGenerator(ABC):
     """
@@ -66,12 +67,15 @@ class BackdoorImageGenerator(PoisonGenerator):
         if self.randomize_location:
             y = torch.randint(0, max(H - h, 1), (1,)).item()
             x = torch.randint(0, max(W - w, 1), (1,)).item()
-        elif self.location == TriggerLocation.BOTTOM_RIGHT:
-            y, x = H - h, W - w
-        elif self.location == TriggerLocation.TOP_LEFT:
-            y, x = 0, 0
-        else:  # "center"
-            y, x = (H - h) // 2, (W - w) // 2
+        else:
+            # Use a mapping for cleaner lookup
+            location_coords = {
+                ImageTriggerLocation.TOP_LEFT: (0, 0),
+                ImageTriggerLocation.CENTER: ((H - h) // 2, (W - w) // 2),
+                ImageTriggerLocation.BOTTOM_RIGHT: (H - h, W - w)
+            }
+            # Default to CENTER if location is not in the map, though enum ensures it will be
+            y, x = location_coords.get(self.location, location_coords[ImageTriggerLocation.CENTER])
 
         # Ensure the trigger is on the same device as the image
         trigger = trigger.to(image.device)
@@ -83,16 +87,16 @@ class BackdoorImageGenerator(PoisonGenerator):
         return image
 
     @staticmethod
-    def _generate_trigger_pattern(trigger_type: TriggerType, channels: int, size: Tuple[int, int]) -> torch.Tensor:
+    def _generate_trigger_pattern(trigger_type: ImageTriggerType, channels: int, size: Tuple[int, int]) -> torch.Tensor:
         """Generates a trigger pattern tensor on the CPU."""
         h, w = size
-        if trigger_type == TriggerType.BLENDED_PATCH:
+        if trigger_type == ImageTriggerType.BLENDED_PATCH:
             return torch.ones(channels, h, w)
-        elif trigger_type == TriggerType.CHECKERBOARD:
+        elif trigger_type == ImageTriggerType.CHECKERBOARD:
             coords = torch.arange(h).unsqueeze(1) + torch.arange(w).unsqueeze(0)
             checkerboard = (coords % 2 == 0).float()
             return checkerboard.unsqueeze(0).repeat(channels, 1, 1)
-        elif trigger_type == "noise":
+        elif trigger_type == ImageTriggerType.NOISE:
             return torch.rand(channels, h, w)
         else:
             raise ValueError(f"Unknown trigger_type: {trigger_type}")
@@ -139,6 +143,7 @@ class LabelFlipGenerator(PoisonGenerator):
             possible_targets.remove(label)
             return data, random.choice(possible_targets)
 
+
 class BackdoorTextGenerator(PoisonGenerator):
     """
     Generates backdoor attacks for text data by inserting trigger words/phrases.
@@ -160,7 +165,8 @@ class BackdoorTextGenerator(PoisonGenerator):
         if not self.trigger_token_ids:
             raise ValueError(f"Trigger content '{config.trigger_content}' could not be converted to token IDs.")
 
-        logging.info(f"Initialized BackdoorTextGenerator with trigger: '{config.trigger_content}' -> {self.trigger_token_ids}")
+        logging.info(
+            f"Initialized BackdoorTextGenerator with trigger: '{config.trigger_content}' -> {self.trigger_token_ids}")
 
     def _string_to_ids(self, text: str) -> List[int]:
         """Converts a string to a list of token IDs using the vocabulary."""
@@ -197,12 +203,11 @@ class BackdoorTextGenerator(PoisonGenerator):
         poisoned_ids = poisoned_ids[:insert_pos] + self.trigger_token_ids + poisoned_ids[insert_pos:]
 
         # Handle truncation if max_seq_len is set
-        if self.config.max_seq_len is not None and len(poisoned_ids) > self.config.max_seq_len:
-            if self.config.location == TextTriggerLocation.END:
-                len_trigger = len(self.trigger_token_ids)
-                start_pos = self.config.max_seq_len - len_trigger
-                poisoned_ids = poisoned_ids[start_pos : start_pos + self.config.max_seq_len]
-            else:
-                poisoned_ids = poisoned_ids[:self.config.max_seq_len]
+        if self.config.location == TextTriggerLocation.END:
+            # Keep the last max_seq_len tokens
+            poisoned_ids = poisoned_ids[-self.config.max_seq_len:]
+        else:
+            # For START, MIDDLE, or RANDOM, just truncate the end
+            poisoned_ids = poisoned_ids[:self.config.max_seq_len]
 
         return poisoned_ids, self.config.target_label

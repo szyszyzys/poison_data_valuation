@@ -11,7 +11,7 @@ from torch import nn
 from entry.gradient_market.automate_exp.config_parser import parse_config_for_attack_function
 from entry.gradient_market.backdoor_attack import FederatedEarlyStopper, load_config, set_seed
 from general_utils.file_utils import save_to_json
-from marketplace.utils.gradient_market_utils.data_processor import print_and_save_data_statistics, \
+from common.datasets.image_data_processor import print_and_save_data_statistics, \
     generate_buyer_bias_distribution, split_dataset_discovery, get_transforms
 from model.utils import get_model_name, get_domain
 

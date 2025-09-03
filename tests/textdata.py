@@ -1,6 +1,4 @@
-import torch
-
-from marketplace.utils.gradient_market_utils.text_data_processor import get_text_data_set
+from common.datasets.text_data_processor import get_text_data_set
 
 
 def test_get_text_data_set():
