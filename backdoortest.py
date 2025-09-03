@@ -6,7 +6,7 @@ import torch
 import torchvision
 import torchvision.transforms as transforms
 
-from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
+from attack.attack_gradient_market.poison_attack.attack_utils import BackdoorImageGenerator
 
 # --- Configuration ---
 NUM_SAMPLES_TO_SHOW = 5

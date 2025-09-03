@@ -1,30 +1,68 @@
-# You already have these classes in your project:
-# from your_seller_module import GradientSeller, SellerStats
-# from train import compute_loss, etc. (if needed)
-# from dataset import dataset_output_dim (if needed)
 import collections
 import copy
 import logging
 import sys
 import time
+# Add these class definitions as well
+from abc import ABC, abstractmethod
 from collections import abc  # abc.Mapping for general dicts
-from functools import partial
-from typing import Any
+from typing import Any, Callable, Set
 from typing import Dict
-from typing import List, Optional, Union
+from typing import List, Optional
 from typing import Tuple
+from typing import Union
 
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-from general_utils.data_utils import collate_batch
+from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
+    LabelFlipGenerator, BackdoorTextGenerator
+from common.enums import TriggerType, TriggerLocation
+from common.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, LabelFlipConfig, \
+    BackdoorTextConfig
+from common.status_save import ClientState
+from marketplace.seller.adversary_gradient_seller import DataConfig, TrainingConfig
 from marketplace.seller.seller import BaseSeller
-from model.utils import get_image_model, local_training_and_get_gradient, get_text_model
-from model.vision_model import TextCNN
+from model.utils import local_training_and_get_gradient
+
+
+class BaseGradientStrategy(ABC):
+    """Abstract base class for all gradient manipulation strategies."""
+
+    @abstractmethod
+    def manipulate(self, current_grad: torch.Tensor, avg_grad: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
+
+
+class MimicStrategy(BaseGradientStrategy):
+    """Mimics the average gradient by blending it with the current one."""
+
+    def __init__(self, alpha: float = 0.5):
+        self.alpha = alpha
+
+    def manipulate(self, current_grad: torch.Tensor, avg_grad: torch.Tensor) -> torch.Tensor:
+        return (1 - self.alpha) * current_grad + self.alpha * avg_grad
+
+
+class PivotStrategy(BaseGradientStrategy):
+    """Completely replaces the current gradient with the average one."""
+
+    def manipulate(self, current_grad: torch.Tensor, avg_grad: torch.Tensor) -> torch.Tensor:
+        return avg_grad.clone()
+
+
+class KnockOutStrategy(BaseGradientStrategy):
+    """A more aggressive version of the Mimic strategy."""
+
+    def __init__(self, alpha: float = 0.5):
+        # Uses a higher amplification factor for the blend
+        self.alpha_knock = min(alpha * 2, 1.0)
+
+    def manipulate(self, current_grad: torch.Tensor, avg_grad: torch.Tensor) -> torch.Tensor:
+        return (1 - self.alpha_knock) * current_grad + self.alpha_knock * avg_grad
 
 
 def estimate_byte_size(data: Any) -> int:
@@ -103,49 +141,57 @@ class SybilCoordinator:
                  benign_rounds: int = 0,
                  gradient_default_mode: str = "mimic",
                  trigger_mode: str = "static",
-                 alpha: float = 0.5,
-                 amplify_factor: float = 2.0,
-                 cost_scale: float = 1.5,
+                 role_config: Dict[str, float] = None,
+                 # Pass strategy configurations here
+                 strategy_configs: Dict[str, Dict] = None,
+                 history_window_size: int = 10,
                  device: str = "cuda" if torch.cuda.is_available() else "cpu",
                  aggregator=None):
-        # PFedBA-related attributes
-        self.detection_threshold = detection_threshold
-        self.benign_rounds = benign_rounds  # rounds to act benign before switching to attack
-        self.selected_history = []  # history of gradients (dicts: seller_id -> gradient)
-        self.selection_patterns = {}  # stores computed centroid and average similarity
-        self.clients = {}  # maps seller_id to info: role, selection_history, phase, rounds_participated
-        self.trigger_mode = trigger_mode
-        # SybilCoordinator-related attributes
-        self.gradient_default_mode = gradient_default_mode
-        self.alpha = alpha
-        self.amplify_factor = amplify_factor
-        self.cost_scale = cost_scale
-        self.device = device
-        self.aggregator = aggregator
-        self.registered_clients = collections.OrderedDict()  # seller_id -> seller object
-        self.selected_gradients = {}  # stores gradients from sellers selected in the last round
-        self.cur_round = 0
-        self.start_atk = False
 
         self.backdoor_generator = backdoor_generator
+        self.aggregator = aggregator
+        self.device = device
 
-    # ----- Registration Methods -----
+        # Use the new ClientState class
+        self.clients: Dict[str, ClientState] = collections.OrderedDict()
+
+        # Attack Configuration
+        self.benign_rounds = benign_rounds
+        self.detection_threshold = detection_threshold
+        self.trigger_mode = trigger_mode
+        self.gradient_default_mode = gradient_default_mode
+        self.role_config = role_config or {'attacker': 0.2, 'explorer': 0.4}
+
+        # --- NEW: Initialize strategy objects ---
+        default_strategy_configs = {
+            'mimic': {'alpha': 0.5},
+            'pivot': {},
+            'knock_out': {'alpha': 0.5}
+        }
+        # Merge user-provided configs with defaults
+        final_strategy_configs = {**default_strategy_configs, **(strategy_configs or {})}
+
+        self.strategies: Dict[str, BaseGradientStrategy] = {
+            'mimic': MimicStrategy(**final_strategy_configs['mimic']),
+            'pivot': PivotStrategy(**final_strategy_configs['pivot']),
+            'knock_out': KnockOutStrategy(**final_strategy_configs['knock_out']),
+        }
+        # --- END NEW ---
+
+        # State Tracking
+        self.cur_round = 0
+        self.start_atk = False
+        self.selected_gradients: Dict[str, torch.Tensor] = {}
+        self.selected_history: collections.deque = collections.deque(maxlen=history_window_size)
+        self.selection_patterns = {}
+
     def register_seller(self, seller) -> None:
-        """
-        Register a malicious seller with the coordinator.
-        The seller object must have a unique attribute 'seller_id'.
-        Also, add an entry to the local clients dictionary.
-        """
+        """Register a malicious seller with the coordinator."""
         if not hasattr(seller, 'seller_id'):
             raise AttributeError("Seller object must have a 'seller_id' attribute")
-        self.registered_clients[seller.seller_id] = seller
-        self.clients[seller.seller_id] = {
-            "role": "hybrid",  # initial role can be "hybrid"
-            "selection_history": [],
-            "selection_rate": 0.0,
-            "phase": "benign",  # initial phase: benign
-            "rounds_participated": 0
-        }
+
+        # Create a ClientState object to hold the seller and its metadata
+        self.clients[seller.seller_id] = ClientState(seller_obj=seller)
 
     def get_client_with_highest_selection_rate(self) -> str:
         """
@@ -161,72 +207,75 @@ class SybilCoordinator:
         return best_client
 
     # ----- Update & Analysis Methods -----
-    def update_selection_information(self, selected_client_ids: List[str],
-                                     client_gradients: dict) -> None:
-        """
-        Update each registered seller's selection history based on whether
-        its update was selected by the server. Also update global selection patterns.
-        """
-        for cid in self.clients:
+    def update_client_states(self, selected_client_ids: List[str]) -> None:
+        """Update the state of each client based on the latest selection results."""
+        for cid, client_state in self.clients.items():
             was_selected = cid in selected_client_ids
-            self.clients[cid]["selection_history"].append(was_selected)
-            history = self.clients[cid]["selection_history"]
-            self.clients[cid]["selection_rate"] = sum(history) / len(history)
-            self.clients[cid]["rounds_participated"] += 1
-            # Switch phase to "attack" if enough rounds have passed and selection rate is high.
-            if (self.clients[cid]["rounds_participated"] >= self.benign_rounds and
-                    self.clients[cid]["selection_rate"] > 0.8):
-                self.clients[cid]["phase"] = "attack"
+            client_state.selection_history.append(was_selected)
+            client_state.selection_rate = sum(client_state.selection_history) / len(client_state.selection_history)
+            client_state.rounds_participated += 1
+
+            # Switch phase based on rounds and selection rate using configured threshold
+            if (client_state.rounds_participated >= self.benign_rounds and
+                    client_state.selection_rate > self.detection_threshold):
+                client_state.phase = "attack"
             else:
-                self.clients[cid]["phase"] = "benign"
-        # Collect gradients from selected sellers.
-        selected_grads = {cid: grad for cid, grad in client_gradients.items() if cid in selected_client_ids}
-        self.selected_history.append(selected_grads)
-        if len(self.selected_history) > 10:
-            self.selected_history.pop(0)
+                client_state.phase = "benign"
+
+    def update_historical_patterns(self, selected_gradients: Dict[str, torch.Tensor]) -> None:
+        """Update the global history of selected gradients and re-analyze patterns."""
+        if not selected_gradients:
+            return
+
+        self.selected_history.append(selected_gradients)
         self._analyze_selection_patterns()
 
     def _analyze_selection_patterns(self) -> None:
-        """
-        Analyze stored selected gradients to compute a centroid and average cosine similarity.
-        This pattern information is used to adjust non-selected gradients.
-        """
-        all_selected = []
-        for round_dict in self.selected_history:
-            for grad in round_dict.values():
-                all_selected.append(grad.flatten())
-        if not all_selected:
+        """Analyze stored selected gradients to compute a centroid and average cosine similarity."""
+        # This function's internal logic is mostly fine, so it's kept as is.
+        # It benefits from self.selected_history being a deque.
+        all_selected_flat = [
+            grad.flatten() for round_dict in self.selected_history for grad in round_dict.values()
+        ]
+
+        if not all_selected_flat:
+            self.selection_patterns = {}
             return
-        all_tensor = torch.stack(all_selected)
+
+        all_tensor = torch.stack(all_selected_flat)
         centroid = torch.mean(all_tensor, dim=0)
-        total_sim = 0.0
-        count = 0
-        for i in range(len(all_selected)):
-            for j in range(i + 1, len(all_selected)):
-                sim = F.cosine_similarity(all_selected[i].unsqueeze(0),
-                                          all_selected[j].unsqueeze(0))[0]
-                total_sim += sim.item()
-                count += 1
-        avg_sim = total_sim / count if count > 0 else 0.0
+
+        # Simplified similarity calculation
+        avg_sim = 0.0
+        if len(all_tensor) > 1:
+            # Calculate similarity of each gradient to the centroid
+            sims = F.cosine_similarity(all_tensor, centroid.unsqueeze(0))
+            avg_sim = torch.mean(sims).item()
+
         self.selection_patterns = {"centroid": centroid, "avg_similarity": avg_sim}
 
     def adaptive_role_assignment(self) -> None:
-        """
-        Dynamically reassign roles to sellers based on their selection rates.
-        For example, the top 20% become "attacker", the bottom 40% "explorer", and the remainder "hybrid."
-        """
-        selection_rates = {cid: self.clients[cid]["selection_rate"] for cid in self.clients}
-        sorted_clients = sorted(selection_rates.items(), key=lambda x: x[1], reverse=True)
+        """Dynamically reassign roles based on selection rates using configured percentages."""
+        if not self.clients:
+            return
+
+        sorted_clients = sorted(
+            self.clients.items(),
+            key=lambda item: item[1].selection_rate,
+            reverse=True
+        )
+
         num_clients = len(sorted_clients)
-        top_cutoff = int(0.2 * num_clients)
-        bottom_cutoff = int(0.6 * num_clients)
-        for i, (cid, _) in enumerate(sorted_clients):
-            if i < top_cutoff:
-                self.clients[cid]["role"] = "attacker"
-            elif i >= bottom_cutoff:
-                self.clients[cid]["role"] = "explorer"
+        attacker_cutoff = int(self.role_config['attacker'] * num_clients)
+        explorer_cutoff = int((1 - self.role_config['explorer']) * num_clients)
+
+        for i, (cid, client_state) in enumerate(sorted_clients):
+            if i < attacker_cutoff:
+                client_state.role = "attacker"
+            elif i >= explorer_cutoff:
+                client_state.role = "explorer"
             else:
-                self.clients[cid]["role"] = "hybrid"
+                client_state.role = "hybrid"
 
     # ----- Selected Gradients & Update Methods -----
     def precompute_current_round_gradient(self, selected_info: Optional[dict] = None) -> None:
@@ -271,6 +320,20 @@ class SybilCoordinator:
         else:
             raise TypeError(f"Unsupported gradient type: {type(gradient)}")
 
+    def collect_selected_gradients(self, selected_client_ids: List[str]) -> None:
+        """
+        Collects and stores the gradients from the sellers selected in the current round.
+        """
+        self.selected_gradients = {}
+        base_model = copy.deepcopy(self.aggregator.global_model).to(self.device)
+
+        for cid in selected_client_ids:
+            if cid in self.clients:
+                seller = self.clients[cid].seller_obj
+                gradient = seller.get_local_gradient(base_model)
+                # Ensure gradients are stored in a standard, flat format
+                self.selected_gradients[cid] = self._ensure_tensor(gradient)
+
     def get_selected_average(self) -> Optional[torch.Tensor]:
         """
         Compute and return the average gradient of all selected sellers.
@@ -282,67 +345,64 @@ class SybilCoordinator:
         avg_grad = torch.mean(torch.stack(gradients), dim=0)
         return avg_grad
 
+    def _get_gradient_strategy(self, name: str) -> callable:
+        """Returns the gradient manipulation function based on the strategy name."""
+        strategies = {
+            "mimic": self._strategy_mimic,
+            "pivot": self._strategy_pivot,
+            "knock_out": self._strategy_knock_out,
+        }
+        return strategies.get(name, self._strategy_mimic)  # Default to mimic
+
+    # --- Individual Strategy Implementations ---
+    def _strategy_mimic(self, current_grad, avg_grad):
+        alpha = self.strategy_configs['alpha']
+        return (1 - alpha) * current_grad + alpha * avg_grad
+
+    def _strategy_pivot(self, current_grad, avg_grad):
+        return avg_grad.clone()
+
+    def _strategy_knock_out(self, current_grad, avg_grad):
+        alpha_knock = min(self.strategy_configs['alpha'] * 2, 1.0)
+        return (1 - alpha_knock) * current_grad + alpha_knock * avg_grad
+
     def update_nonselected_gradient(self,
                                     current_gradient: Union[torch.Tensor, List],
                                     strategy: Optional[str] = None) -> List[np.ndarray]:
         """
-        Update the gradient for a non-selected seller based on the average gradient of selected sellers.
-        Strategies include "mimic", "pivot", "knock_out", "slowdown", "cost_inflation", "camouflage", etc.
+        Update a non-selected gradient using a specified strategy.
         """
-        strat = strategy if strategy is not None else self.gradient_default_mode
+        strat_name = strategy or self.gradient_default_mode
         avg_grad = self.get_selected_average()
 
-        # Helper function to safely convert to numpy
-        def to_numpy(g):
-            if isinstance(g, torch.Tensor):
-                return g.cpu().numpy()
-            elif isinstance(g, np.ndarray):
-                return g
-            else:
-                raise TypeError(f"Expected torch.Tensor or numpy.ndarray but got {type(g)}.")
+        def to_numpy(g: torch.Tensor) -> np.ndarray:
+            return g.cpu().numpy()
 
-        # If no average gradient, just return current_gradient as numpy arrays.
+        # If no selected gradients exist, just return the original gradient
         if avg_grad is None:
             if isinstance(current_gradient, list):
-                return [to_numpy(g) for g in current_gradient]
-            else:
-                return [to_numpy(current_gradient)]
+                return [to_numpy(self._ensure_tensor(g)) for g in current_gradient]
+            return [to_numpy(self._ensure_tensor(current_gradient))]
 
+        # Get the correct strategy object
+        strategy_fn = self.strategies.get(strat_name)
+        if not strategy_fn:
+            raise ValueError(f"Strategy '{strat_name}' not found.")
+
+        # Standardize the input gradient to a flat tensor
         is_list = isinstance(current_gradient, list)
-        original_shapes = None
-        if is_list:
-            original_shapes = [g.shape for g in current_gradient]
-            current_grad_tensor = self._ensure_tensor(current_gradient)
-        else:
-            current_grad_tensor = current_gradient.to(self.device)
+        original_shapes = [g.shape for g in current_gradient] if is_list else None
+        current_grad_tensor = self._ensure_tensor(current_gradient)
 
-        if strat == "mimic":
-            new_grad = (1 - self.alpha) * current_grad_tensor + self.alpha * avg_grad
-        elif strat == "pivot":
-            new_grad = avg_grad.clone()
-        elif strat == "knock_out":
-            alpha_knock = min(self.alpha * 2, 1.0)
-            new_grad = (1 - alpha_knock) * current_grad_tensor + alpha_knock * avg_grad
-        elif strat == "slowdown":
-            new_grad = 0.1 * current_grad_tensor
-        elif strat == "cost_inflation":
-            new_grad = self.cost_scale * avg_grad
-        elif strat == "camouflage":
-            aligned_grad = (1 - self.alpha) * current_grad_tensor + self.alpha * avg_grad
-            new_grad = self.amplify_factor * aligned_grad
-        else:
-            new_grad = (1 - self.alpha) * current_grad_tensor + self.alpha * avg_grad
+        # Use the strategy object to manipulate the gradient
+        new_grad = strategy_fn.manipulate(current_grad_tensor, avg_grad)
 
-        # If the original gradient was a list, unflatten it to match the original shapes.
+        # Reconstruct the original shape if necessary
         if is_list and original_shapes:
-            new_grad = self._unflatten_gradient(new_grad, original_shapes)
+            new_grad_list = self._unflatten_gradient(new_grad, original_shapes)
+            return [to_numpy(t) for t in new_grad_list]
 
-        # Ensure new_grad is a list (if it's a single tensor or array, wrap it in a list)
-        if isinstance(new_grad, (torch.Tensor, np.ndarray)):
-            new_grad = [new_grad]
-
-        # Convert each element in the list to a NumPy array.
-        return [to_numpy(t) for t in new_grad]
+        return [to_numpy(new_grad)]
 
     def _unflatten_gradient(self, flat_grad: torch.Tensor, original_shapes: List[torch.Size]) -> List[torch.Tensor]:
         """
@@ -358,25 +418,31 @@ class SybilCoordinator:
             offset += num_elements
         return result
 
-    def on_round_start(self) -> None:
-        """Operations to be performed at the end of a round."""
+    def prepare_for_new_round(self) -> None:
+        """
+        Should be called at the end of a round to prepare for the next one.
+        Increments round counter and handles dynamic trigger updates.
+        """
         self.cur_round += 1
-        if self.trigger_mode == "dynamic" and self.cur_round >= self.benign_rounds:
-            # find the seller with the most selection rate
-            is_first = self.cur_round == self.benign_rounds
-            best_client_id = self.get_client_with_highest_selection_rate()
-            best_client = self.registered_clients[best_client_id]
-            # use the best seller's local to update the pattern
-            best_client.upload_global_trigger(self.aggregator.global_model, first_attack=is_first, lr=0.01,
-                                              num_steps=50)
-        # save the result after tigger updates
         if self.cur_round >= self.benign_rounds:
             self.start_atk = True
-        self.precompute_current_round_gradient()
 
-    # ----- Reset and End-of-Round Handling -----
+        # Dynamic trigger logic
+        if self.trigger_mode == "dynamic" and self.start_atk:
+            best_client_id = self.get_client_with_highest_selection_rate()
+            if best_client_id:
+                best_seller = self.clients[best_client_id].seller_obj
+                is_first_attack_round = self.cur_round == self.benign_rounds
+                # This part is still specific, but now the context is clearer
+                best_seller.upload_global_trigger(
+                    self.aggregator.global_model,
+                    first_attack=is_first_attack_round,
+                    lr=0.01,
+                    num_steps=50
+                )
+
     def on_round_end(self) -> None:
-        """Operations to be performed at the end of a round."""
+        """Clear round-specific state."""
         self.selected_gradients = {}
 
     def update_global_trigger(self, new_trigger: torch.Tensor) -> None:
@@ -389,986 +455,270 @@ class SybilCoordinator:
         print("Coordinator: Global trigger updated.")
 
 
-# class GradientSeller(BaseSeller):
-#     """
-#     Seller that participates in federated learning by providing gradient updates
-#     instead of selling raw data.
-#     """
-#
-#     def __init__(self,
-#                  seller_id: str,
-#                  local_data: Dataset,
-#                  price_strategy: str = 'uniform',
-#                  dataset_name: str = 'dataset',
-#                  base_price: float = 1.0,
-#                  pad_idx=None,
-#                  price_variation: float = 0.2,
-#                  save_path="",
-#                  device="cpu",
-#                  vocab=None,
-#                  local_epochs=2, local_training_params=None):
-#         """.
-#         :param seller_id: Unique ID for the seller.
-#         :param local_data: The local dataset this seller holds for gradient computation.
-#         :param price_strategy: If needed, you can still keep a pricing concept or set to 'none'.
-#         :param base_price:  For some FL-based cost logic, or ignore if not used.
-#         :param price_variation: Variation factor for generating costs, if relevant.
-#         """
-#         super().__init__(
-#             seller_id=seller_id,
-#             dataset=local_data,  # We store the local dataset internally.
-#             price_strategy=price_strategy,
-#             base_price=base_price,
-#             price_variation=price_variation, save_path=save_path
-#             , device=device
-#         )
-#
-#         # Possibly store local model parameters or placeholders.
-#         # E.g., we might keep them in this field after each training round:
-#         self.dataset_name = dataset_name
-#         self.local_model_params: Optional[np.ndarray] = None
-#         self.current_round = 0
-#         self.selected_last_round = False
-#         self.local_epochs = local_epochs
-#         self.local_training_params = local_training_params
-#         self.recent_metrics = None
-#         self.cur_upload_gradient_flt = None
-#         self.cur_local_gradient = None
-#         self.vocab = vocab
-#         self.pad_idx = pad_idx
-#
-#     def set_local_model_params(self, params: np.ndarray):
-#         """Set (or update) local model parameters before computing gradient."""
-#         self.local_model_params = params
-#
-#     def get_gradient_for_upload(self, global_model=None) -> (torch.Tensor, int):
-#         """
-#         Compute the gradient that will be sent to the central server
-#
-#         :param global_model: Optional global model (will be deep copied)
-#         :return: Tuple (gradient, flattened_gradient, local_model, eval_results)
-#         """
-#         # 1. Determine the base model for local training
-#         if global_model is not None:
-#             # Deep copy the provided global model
-#             base_model = copy.deepcopy(global_model)
-#             print(f"[{self.seller_id}] Using provided global model.")
-#         else:
-#             try:
-#                 # Load previous local model if no global model provided
-#                 base_model = self.load_local_model()
-#                 print(f"[{self.seller_id}] Loaded previous local model.")
-#             except Exception as e:
-#                 print(f"[{self.seller_id}] No saved model found; using default initialization.")
-#                 base_model = get_image_model(self.dataset_name)  # Create a new model with default initialization
-#
-#         # Move the model to the correct device
-#         base_model = base_model.to(self.device)
-#
-#         # 2. Train locally and obtain the gradient update
-#         try:
-#             # Call the MODIFIED local training method
-#             gradient, gradient_flt, updated_model, local_eval_res, training_stats = self._compute_local_grad(
-#                 base_model, self.dataset  # Pass the actual dataset attribute
-#             )
-#
-#             # Ensure training_stats is a dict, even if _compute_local_grad fails partially
-#             if not isinstance(training_stats, dict):
-#                 logging.warning(f"Seller {self.seller_id}: _compute_local_grad did not return a valid stats dict.")
-#                 training_stats = {'train_loss': None, 'compute_time_ms': None}
-#
-#
-#         except Exception as e:
-#             logging.error(f"Seller {self.seller_id}: Error during _compute_local_grad: {e}", exc_info=True)
-#             # Return None gradient and empty stats on error? Or raise?
-#             # Returning None gradient signals failure to the marketplace loop
-#             return None, {'train_loss': None, 'compute_time_ms': None, 'upload_bytes': None}
-#
-#         # Update internal counter
-#         self.cur_upload_gradient_flt = gradient_flt
-#
-#         try:
-#             upload_bytes = estimate_byte_size(gradient)  # Use a helper to estimate size
-#         except Exception as e:
-#             logging.warning(f"Seller {self.seller_id}: Could not estimate gradient size: {e}")
-#             upload_bytes = None  # Indicate failure to estimate
-#
-#         # 4. Add upload_bytes to the stats dictionary
-#         training_stats['upload_bytes'] = upload_bytes
-#
-#         # 5. Return the gradient data and the completed stats dictionary
-#         #    Make sure the 'gradient' variable holds the data structure you intend to send
-#         #    (e.g., the dict of weight differences, NOT necessarily gradient_flt)
-#         return gradient, training_stats
-#
-#     def _create_zero_gradient(self):
-#         """Helper to create a zero gradient structure matching the model."""
-#         # Ensure model is initialized
-#         if not hasattr(self, 'global_model') or self.global_model is None:
-#             raise RuntimeError("Seller's global_model is not initialized.")
-#         zero_grad = {name: torch.zeros_like(param) for name, param in self.global_model.named_parameters() if
-#                      param.requires_grad}
-#         return zero_grad
-#
-#     def _compute_local_grad(self, base_model, dataset, batch_size=64) -> Tuple[Any, Any, Any, Dict, Dict]:
-#         """
-#         MODIFIED: Train local model, compute gradient, AND gather training stats.
-#
-#         Args:
-#             base_model: Initial model for local training (on correct device).
-#             dataset: Local data (expects structure usable by list_to_tensor_dataset).
-#
-#         Returns:
-#             Tuple (gradient, gradient_flt, updated_model, local_eval_res, training_stats):
-#                 gradient: Calculated gradient (e.g., weight diff).
-#                 gradient_flt: Flattened gradient.
-#                 updated_model: Model after local training.
-#                 local_eval_res: Evaluation results (potentially basic).
-#                 training_stats: {'train_loss': float|None, 'compute_time_ms': float|None}.
-#         """
-#         start_time = time.time()  # Start timing
-#
-#         if not dataset:
-#             logging.warning(f"Seller {self.seller_id}: Dataset is empty. Skipping gradient computation.")
-#             return self._create_zero_gradient()  # Need a way to return zero grad
-#
-#         # --- >> 1. Data Type Detection << ---
-#         try:
-#             first_item_data = dataset[0][0]
-#             first_item_label = dataset[0][1]  # Get label/second element too for better check
-#             # Image data: Expect (Tensor, int)
-#             is_image_data = isinstance(first_item_data, torch.Tensor) and isinstance(first_item_label, int)
-#             # Text data: Expect (int, list) - label first for our processed text
-#             is_text_data = isinstance(first_item_data, int) and isinstance(first_item_label, list)
-#
-#             if not is_image_data and not is_text_data:
-#                 # Handle ambiguous/unexpected format
-#                 raise TypeError(
-#                     f"Unrecognized data format in dataset item 0: type(item[0])={type(first_item_data)}, type(item[1])={type(first_item_label)}")
-#
-#         except Exception as e:
-#             logging.error(
-#                 f"Seller {self.seller_id}: Could not determine dataset type from first item: {dataset[0]}. Error: {e}")
-#             raise ValueError("Failed to determine dataset type.") from e
-#
-#         # --- >> 2. Create Appropriate DataLoader << ---
-#         data_loader = None
-#         try:
-#             if is_image_data:
-#                 logging.debug(f"Seller {self.seller_id}: Detected image data. Using TensorDataset.")
-#                 # Use the original function, assuming it works for images
-#                 tensor_dataset = list_to_tensor_dataset(dataset)
-#                 data_loader = DataLoader(tensor_dataset, batch_size=batch_size, shuffle=True)
-#
-#             elif is_text_data:
-#                 logging.debug(f"Seller {self.seller_id}: Detected text data. Using custom collate function.")
-#                 # Ensure pad_idx is available
-#                 pad_idx = getattr(self, 'pad_idx', None)  # Assumes pad_idx is stored in seller
-#                 if pad_idx is None:
-#                     # Try getting from vocab if available
-#                     vocab = getattr(self, 'vocab', None)
-#                     pad_token = getattr(self, 'pad_token', '<pad>')  # Assume pad token name
-#                     if vocab and pad_token in vocab.get_stoi():
-#                         pad_idx = vocab.get_stoi()[pad_token]
-#                     else:
-#                         raise ValueError(f"Seller {self.seller_id}: pad_idx not found, required for text data.")
-#                 logging.debug(f"Seller {self.seller_id}: Using pad_idx: {pad_idx}")
-#
-#                 pytorch_dataset = TextDataset(dataset)  # Wrap list in Dataset
-#                 custom_collate = partial(collate_batch, padding_value=pad_idx)
-#                 data_loader = DataLoader(
-#                     pytorch_dataset,
-#                     batch_size=batch_size,
-#                     shuffle=True,  # Shuffle for gradient computation epochs
-#                     collate_fn=custom_collate
-#                 )
-#             # No else needed due to check above
-#
-#         except Exception as e:
-#             data_type = "image" if is_image_data else "text"
-#             logging.error(f"Seller {self.seller_id}: Failed to create {data_type} DataLoader: {e}",
-#                           exc_info=True)  # Log traceback
-#             raise  # Re-raise the exception
-#
-#         if data_loader is None:
-#             # This case should ideally be prevented by the exceptions above
-#             logging.error(f"Seller {self.seller_id}: DataLoader is None after setup. Cannot compute gradient.")
-#             return self._create_zero_gradient()  # Or raise error
-#
-#         # Call the MODIFIED external training function which now returns avg_loss
-#         try:
-#             # Check if local_training_params are available
-#             if not hasattr(self, 'local_training_params') or not self.local_training_params:
-#                 raise ValueError("Missing 'local_training_params' attribute on seller.")
-#
-#             # Call the function - IT MUST NOW RETURN 5 VALUES
-#             grad_update, grad_update_flt, local_model, local_eval_res, avg_train_loss = local_training_and_get_gradient(
-#                 model=base_model,
-#                 train_loader=data_loader,  # Pass the converted dataset
-#                 batch_size=self.local_training_params.get('batch_size', 64),  # Use batch size from params
-#                 device=self.device,
-#                 # Ensure key names match your actual params dict
-#                 local_epochs=self.local_training_params.get("epochs",
-#                                                             self.local_training_params.get("local_epochs", 1)),
-#                 lr=self.local_training_params.get("learning_rate", self.local_training_params.get("lr", 0.01)),
-#                 # Pass other necessary params if local_training_and_get_gradient needs them
-#             )
-#
-#         except Exception as e:
-#             logging.error(f"Seller {self.seller_id}: Error during call to local_training_and_get_gradient: {e}",
-#                           exc_info=True)
-#             end_time_error = time.time()
-#             stats_error = {'train_loss': None, 'compute_time_ms': (end_time_error - start_time) * 1000}
-#             # Return None for gradient components, keep original model, empty eval, computed stats
-#             return None, None, base_model, {}, stats_error
-#
-#         # Calculate compute time
-#         end_time = time.time()
-#         compute_time_ms = (end_time - start_time) * 1000
-#
-#         # Package the stats
-#         training_stats = {
-#             'train_loss': avg_train_loss,  # Use the value returned by the training function
-#             'compute_time_ms': compute_time_ms
-#         }
-#
-#         # Clean up GPU memory (keep this if useful)
-#         torch.cuda.empty_cache()
-#
-#         # Return all original values PLUS the new stats dict
-#         return grad_update, grad_update_flt, local_model, local_eval_res, training_stats
-#
-#     def save_local_model(self, model: torch.nn.Module):
-#         """
-#         Save the local model parameters to disk for future rounds.
-#         """
-#         # Build the save path based on client_path and seller_id.
-#         save_path = f"{self.save_path}/local_model_{self.seller_id}.pt"
-#         torch.save(model.state_dict(), save_path)
-#         print(f"[{self.seller_id}] Saved local model to {save_path}.")
-#
-#     def load_local_model(self) -> Dict[str, torch.Tensor]:
-#         """
-#         Load the local model parameters from disk.
-#         """
-#         load_path = f"{self.save_path}/local_model_{self.seller_id}.pt"
-#         state_dict = torch.load(load_path, map_location=self.device)
-#         return state_dict
-#
-#     def record_federated_round(self,
-#                                round_number: int,
-#                                is_selected: bool,
-#                                final_model_params: Optional[Dict[str, torch.Tensor]] = None):
-#         """
-#         Record this seller's participation in a federated round.
-#         This may include whether it was selected, and (optionally) its final local model parameters.
-#
-#         :param round_number: The current round index.
-#         :param is_selected:  Whether this seller's update was selected.
-#         :param final_model_params: Optionally, the final local model parameters.
-#         """
-#         record = {
-#             'round_number': round_number,
-#             'timestamp': pd.Timestamp.now().isoformat(),
-#             'selected': is_selected,
-#             'gradient': self.cur_upload_gradient_flt,
-#         }
-#         self.selected_last_round = is_selected
-#         # if final_model_params is not None:
-#         #     # Convert state_dict tensors to lists (or use another serialization as needed).
-#         #     record['final_model_params'] = {k: v.cpu().numpy().tolist() for k, v in final_model_params.items()}
-#
-#     def round_end_process(self, round_number,
-#                           is_selected,
-#                           final_model_params=None):
-#         self.reset_current_local_gradient()
-#         self.record_federated_round(
-#             round_number,
-#             is_selected,
-#             final_model_params)
-#
-#     def reset_current_local_gradient(self):
-#         self.cur_local_gradient = None
-#
-#     # If you don't need the .get_data() returning "X" and "cost", you can override it:
-#     @property
-#     def get_data(self):
-#         """
-#         Overridden: Typically in FL, we might not 'sell' raw data.
-#         Return something if your code expects this method, or return empty.
-#         """
-#         return {
-#             "X": None,
-#             "cost": None,
-#         }
-#
-#     @property
-#     def get_federated_history(self):
-#         return self.federated_round_history
-#
-#     @property
-#     def local_model_path(self):
-#         return {self.exp_save_path}
-
-
 class GradientSeller(BaseSeller):
     """
-    Seller that participates in federated learning by providing gradient updates.
-    Revised for efficiency, assuming local_data in __init__ is a torch.utils.data.Dataset.
+    A seller that participates in federated learning by providing gradient updates.
+
+    This version is decoupled from model creation via a factory pattern and uses
+    configuration objects for clarity, making it a robust base class.
     """
 
     def __init__(self,
                  seller_id: str,
-                 local_data: Dataset,  # CRITICAL: Assume this is already a torch.utils.data.Dataset
-                 price_strategy: str = 'uniform',
-                 dataset_name: str = 'dataset',  # Used for get_image_model fallback
-                 base_price: float = 1.0,
-                 pad_idx: Optional[int] = None,  # For text data
-                 price_variation: float = 0.2,
+                 data_config: DataConfig,
+                 training_config: TrainingConfig,
+                 model_factory: Callable[[], nn.Module],
                  save_path: str = "",
                  device: str = "cpu",
-                 vocab: Optional[Any] = None,  # For text data, e.g., torchtext.vocab.Vocab
-                 local_epochs: int = 2,  # Default local epochs
-                 local_training_params: Optional[Dict[str, Any]] = None,
-                 model_type="image",
-                 model_init_config=None,
-                 initial_model=None,             model_name = "simple_cnn"):
+                 **kwargs: Any):
 
         super().__init__(
             seller_id=seller_id,
-            dataset=local_data,  # BaseSeller stores this as self.dataset
-            price_strategy=price_strategy,
-            base_price=base_price,
-            price_variation=price_variation,
+            dataset=data_config.dataset,
             save_path=save_path,
             device=device,
+            **kwargs  # Pass any remaining BaseSeller args like pricing
         )
-        self.model_type = model_type
-        self.model_name = model_name
-        self._base_model_structure = initial_model  # This is just the architecture
-        self._base_model_structure.to(device)  # Ensure the structure is on device
-        self.model_init_config = model_init_config
-        self.dataset_name = dataset_name  # Used by get_image_model if loading fails
-        self.local_model_params: Optional[
-            np.ndarray] = None  # Kept for compatibility, but less used if models are PyTorch
-        self.current_round = 0  # Not actively used in provided methods, but can be for state
-        self.selected_last_round = False
+        self.data_config = data_config
+        self.training_config = training_config
+        self.model_factory = model_factory
 
-        # Consolidate local training parameters
-        self.local_training_params = local_training_params if local_training_params else {}
-        self.local_epochs = self.local_training_params.get('epochs', local_epochs)
-        self.batch_size = self.local_training_params.get('batch_size', 64)
-        self.learning_rate = self.local_training_params.get('lr',
-                                                            self.local_training_params.get('learning_rate', 0.01))
-        self.num_workers = 0
-        self.pin_memory = False
+        # --- State Attributes ---
+        # Cleanly manage the state from the last computation
+        self.last_computed_gradient: Optional[List[torch.Tensor]] = None
+        self.last_training_stats: Optional[Dict[str, Any]] = None
 
-        self.recent_metrics: Optional[Dict] = None
-        self.cur_upload_gradient_list_tensors: Optional[
-            List[torch.Tensor]] = None  # Stores unflattened gradient (list of tensors)
-        self.cur_local_gradient_list_tensors: Optional[List[torch.Tensor]] = None  # Cache for local gradient
-
-        self.vocab = vocab
-        self.pad_idx = pad_idx
-        if self.pad_idx is None and self.vocab:  # Try to get from vocab if not directly provided
-            pad_token = '<pad>'  # Common pad token
-            if hasattr(self.vocab, 'get_stoi') and pad_token in self.vocab.get_stoi():
-                self.pad_idx = self.vocab.get_stoi()[pad_token]
-            elif hasattr(self.vocab, 'stoi') and pad_token in self.vocab.stoi:  # For older torchtext
-                self.pad_idx = self.vocab.stoi[pad_token]
-
-    def _get_new_model_instance(self) -> nn.Module:
+    def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
-        Creates a new, uninitialized model instance based on the seller's stored configuration.
-        The model is created on self.device.
-        Relies on self.model_type and self.model_init_config.
+        Computes and returns the gradient update and training statistics.
+        This is the primary method for the federated learning coordinator to call.
         """
-        logging.debug(
-            f"[{self.seller_id}] Creating new model instance of type '{self.model_type}' "
-            f"using stored config."
-        )
+        try:
+            # 1. Create a fresh model instance using the injected factory.
+            local_model = self.model_factory().to(self.device)
+            local_model.load_state_dict(global_model.state_dict())
+        except Exception as e:
+            logging.error(f"[{self.seller_id}] Failed to prepare model: {e}", exc_info=True)
+            return None, {'error': 'Model preparation failed.'}
 
-        # Always add/override device from self.device to ensure consistency
-        current_model_config = {**self.model_init_config, "device": self.device}
+        # 2. Delegate the actual training and gradient calculation.
+        gradient, stats = self._compute_local_grad(local_model, self.data_config.dataset)
 
-        # Optional: dataset_name can also be part of model_init_config or passed if distinct
-        # If get_text_model/get_image_model always need dataset_name, ensure it's in current_model_config
-        if "dataset_name" not in current_model_config:
-            current_model_config["dataset_name"] = self.dataset_name
+        # 3. Update the seller's internal state for logging or inspection.
+        self.last_computed_gradient = gradient
+        self.last_training_stats = stats
 
-        # Dispatch based on a more robust model_type or a prefix/suffix
-        # For example, if model_type is "text_cnn_agnews" or "text_transformer_trec"
-        if "text" in self.model_type.lower():
-            # get_text_model should be designed to take all its necessary args from a dict
-            # or specific named arguments present in current_model_config.
-            # Example: get_text_model(**current_model_config)
-            # Ensure all required keys (num_classes, vocab_size, padding_idx) are in current_model_config
-            required_text_keys = ["num_classes", "vocab_size", "padding_idx"]
-            if not all(key in current_model_config for key in required_text_keys):
-                missing_keys = [key for key in required_text_keys if key not in current_model_config]
-                raise ValueError(
-                    f"[{self.seller_id}] Missing required keys in model_init_config for text model: {missing_keys}. "
-                    f"Config provided: {current_model_config}"
-                )
+        return gradient, stats
 
-            # If get_text_model takes specific args and then **kwargs for others:
-            return get_text_model(
-                dataset_name=current_model_config.get("dataset_name", self.dataset_name),  # Prioritize config
-                num_classes=current_model_config["num_classes"],
-                vocab_size=current_model_config["vocab_size"],
-                padding_idx=current_model_config["padding_idx"],
-                device=current_model_config["device"],  # Explicitly from seller's device
-                # Pass any other params from model_init_config as kwargs if get_text_model supports it
-                # This requires get_text_model to be structured to accept **kwargs
-                # and internally pick out what it needs (e.g., embed_dim, num_filters)
-                **current_model_config.get("model_kwargs", {})  # If you have a nested 'model_kwargs'
-                # OR pass current_model_config directly if flat
-            )
-
-        elif "image" in self.model_type.lower() or \
-                self.model_type.lower() in ["resnet18", "simple_cnn_cifar", "simple_cnn_mnist"]:  # More specific types
-            # Ensure all required keys for get_image_model are present
-            # (e.g., num_classes might be needed, others might have defaults)
-            if "num_classes" not in current_model_config:
-                # Try to infer from dataset_name or raise error if necessary for get_image_model
-                if self.dataset_name.lower() == "cifar10":
-                    current_model_config["num_classes"] = 10
-                elif self.dataset_name.lower() == "mnist":
-                    current_model_config["num_classes"] = 10
-                # else: pass None and let get_image_model handle it or raise error
-
-            # If get_image_model takes specific args and then **kwargs:
-            return get_image_model(
-                model_name=self.model_name,
-                dataset=self.dataset,
-                device=current_model_config["device"],
-            )
-        else:
-            raise ValueError(
-                f"[{self.seller_id}] Unsupported model_type: '{self.model_type}' for creating new instance.")
-
-    def _get_init_args_for_base_model(self) -> Dict[str, Any]:
-        # This is a placeholder and THE MOST DIFFICULT PART of this approach.
-        # You need to introspect self._base_model_structure or have stored its init args.
-        # Example for TextCNN (highly model-specific):
-        if isinstance(self._base_model_structure, TextCNN):
-            # This assumes TextCNN stores these or you can access them.
-            # This is fragile and not recommended.
-            # It's better if Seller receives a factory or all init_args.
-            # For example, if TextCNN had: self.vocab_size = vocab_size, etc.
-            return {
-                "vocab_size": getattr(self._base_model_structure, 'embedding').num_embeddings,  # Hacky
-                "embed_dim": getattr(self._base_model_structure, 'embedding').embedding_dim,  # Hacky
-                "num_filters": len(getattr(self._base_model_structure, 'convs')),
-                # Even more hacky if num_filters is not stored
-                "filter_sizes": [conv.kernel_size[0] for conv in getattr(self._base_model_structure, 'convs')],
-                # Super hacky
-                "num_class": getattr(self._base_model_structure, 'fc').out_features,  # Hacky
-                "dropout": getattr(self._base_model_structure, 'dropout').p,  # Hacky
-                "padding_idx": getattr(self._base_model_structure, 'embedding').padding_idx  # Hacky
-            }
-        # Add other model types if needed
-        raise NotImplementedError(f"Don't know how to get init_args for model type {type(self._base_model_structure)}")
-
-    def get_gradient_for_upload(self, global_model: Optional[nn.Module] = None) -> Tuple[
+    def _compute_local_grad(self, model_to_train: nn.Module, dataset: Dataset) -> Tuple[
         Optional[List[torch.Tensor]], Dict[str, Any]]:
-        """
-        Computes the gradient for upload. Returns a list of PyTorch tensors (gradient update) and training stats.
-        """
-        base_model_for_training: nn.Module
-        if global_model is not None:
-            # OPTIMIZATION: Instead of deepcopy, load state_dict into a new instance.
-            try:
-                # Use the new helper method to get the correct model structure
-                base_model_for_training = self._get_new_model_instance()  # Creates on self.device
-                base_model_for_training.load_state_dict(global_model.state_dict())
-                logging.debug(
-                    f"[{self.seller_id}] Using provided global model by loading its state_dict into a new local instance.")
-            except Exception as e:
-                logging.warning(
-                    f"[{self.seller_id}] Failed to load state_dict from global_model into new instance: {e}. "
-                    f"Falling back to deepcopy of global_model.")
-                base_model_for_training = copy.deepcopy(global_model).to(self.device)
-        else:
-            # No global model provided, use a local model.
-            # `load_local_model` here should ideally return a model ready for training,
-            # potentially a fresh instance or a previously saved one.
-            try:
-                base_model_for_training = self.load_local_model()  # Returns a fresh instance on self.device
-                logging.debug(f"[{self.seller_id}] No global model, using model from load_local_model().")
-            except Exception as e:
-                logging.error(
-                    f"[{self.seller_id}] Error in load_local_model() or _get_new_model_instance() when no global model: {e}. Cannot proceed.",
-                    exc_info=True)
-                return None, {'error': str(e), 'train_loss': None, 'compute_time_ms': None, 'upload_bytes': None}
-
-        # _compute_local_grad expects model on self.device, which base_model_for_training should be.
-        base_model_for_training.to(self.device)
-        try:
-            gradient_list_tensors, _, _, local_eval_res, training_stats = self._compute_local_grad(
-                base_model_for_training, self.dataset  # self.dataset is the torch.utils.data.Dataset
-            )
-            if not isinstance(training_stats, dict):
-                logging.warning(f"Seller {self.seller_id}: _compute_local_grad returned invalid stats. Defaulting.")
-                training_stats = {'train_loss': None, 'compute_time_ms': None}
-            self.recent_metrics = local_eval_res  # Store metrics
-        except Exception as e:
-            logging.error(f"Seller {self.seller_id}: Error during _compute_local_grad: {e}", exc_info=False)
-            return None, {'train_loss': None, 'compute_time_ms': None, 'upload_bytes': None}
-
-        self.cur_upload_gradient_list_tensors = gradient_list_tensors  # Store for potential later use/logging
-
-        try:
-            upload_bytes = estimate_byte_size(gradient_list_tensors)
-        except Exception as e:
-            logging.warning(f"Seller {self.seller_id}: Could not estimate gradient size: {e}")
-            upload_bytes = None
-
-        training_stats['upload_bytes'] = upload_bytes
-        return gradient_list_tensors, training_stats
-
-    def _create_zero_gradient_tensors(self, model_to_match: nn.Module) -> List[torch.Tensor]:
-        """Helper to create a zero gradient (list of tensors) matching the model structure."""
-        return [torch.zeros_like(param, device=self.device) for param in model_to_match.parameters() if
-                param.requires_grad]
-
-    def _compute_local_grad(self, base_model: nn.Module, dataset: Dataset,
-                            ) -> Tuple[
-        Optional[List[torch.Tensor]], Optional[np.ndarray], Optional[nn.Module], Dict, Dict]:
-        """
-        Train local model, compute gradient, AND gather training stats.
-        Assumes 'dataset' is a torch.utils.data.Dataset.
-        Returns gradient as list of PyTorch Tensors.
-        """
+        """Handles the local training loop and gradient computation."""
         start_time = time.time()
-        training_stats: Dict[str, Any] = {'train_loss': None, 'compute_time_ms': None}  # Initialize
 
-        if not dataset or len(dataset) == 0:  # Check if dataset has items
-            logging.warning(f"Seller {self.seller_id}: Dataset is empty. Returning zero gradient.")
-            zero_grad_tensors = self._create_zero_tensors(base_model)
-            training_stats['compute_time_ms'] = (time.time() - start_time) * 1000
-            return zero_grad_tensors, None, base_model, {}, training_stats
+        if not dataset or len(dataset) == 0:
+            logging.warning(f"[{self.seller_id}] Dataset is empty. Returning zero gradient.")
+            zero_grad = [torch.zeros_like(p) for p in model_to_train.parameters()]
+            return zero_grad, {'train_loss': None, 'compute_time_ms': 0}
 
-        data_loader: DataLoader
-        try:
-            is_text_data = self.vocab is not None or self.pad_idx is not None
-
-            if is_text_data:
-                # logging.debug(f"Seller {self.seller_id}: Assuming text data due to vocab/pad_idx. Using custom collate.")
-                if self.pad_idx is None:  # Ensure pad_idx is available
-                    raise ValueError(f"Seller {self.seller_id}: pad_idx not found, required for text data.")
-                custom_collate = partial(collate_batch, padding_value=self.pad_idx)
-                data_loader = DataLoader(
-                    dataset, batch_size=self.batch_size, shuffle=True,
-                    collate_fn=custom_collate, num_workers=self.num_workers, pin_memory=self.pin_memory
-                )
-            else:  # Assume image data or other data not needing special collation
-                # logging.debug(f"Seller {self.seller_id}: Assuming image/standard data. Using default collate.")
-                data_loader = DataLoader(
-                    dataset, batch_size=self.batch_size, shuffle=True,
-                    num_workers=self.num_workers, pin_memory=self.pin_memory
-                )
-        except Exception as e:
-            logging.error(f"Seller {self.seller_id}: Failed to create DataLoader: {e}", exc_info=True)
-            training_stats['compute_time_ms'] = (time.time() - start_time) * 1000
-            # Return structure indicating failure but with timings
-            return None, None, base_model, {}, training_stats
+        # Create DataLoader using the provided data configuration
+        data_loader = DataLoader(
+            dataset,
+            batch_size=self.training_config.batch_size,
+            shuffle=True,
+            collate_fn=self.data_config.collate_fn
+        )
 
         try:
-            grad_update_tensors, grad_update_flt_np, local_model, local_eval_res, avg_train_loss = local_training_and_get_gradient(
-                model=base_model,  # Already on self.device
+            # The core training logic is in an external, reusable function
+            grad_tensors, _, _, _, avg_loss = local_training_and_get_gradient(
+                model=model_to_train,
                 train_loader=data_loader,
-                batch_size=self.batch_size,  # Already set in __init__
                 device=self.device,
-                local_epochs=self.local_epochs,  # Already set in __init__
-                lr=self.learning_rate,  # Already set in __init__
+                local_epochs=self.training_config.epochs,
+                lr=self.training_config.learning_rate,
             )
+
+            stats = {
+                'train_loss': avg_loss,
+                'compute_time_ms': (time.time() - start_time) * 1000,
+                'upload_bytes': estimate_byte_size(grad_tensors)
+            }
+            return grad_tensors, stats
+
         except Exception as e:
-            logging.error(f"Seller {self.seller_id}: Error in local_training_and_get_gradient: {e}", exc_info=True)
-            training_stats['compute_time_ms'] = (time.time() - start_time) * 1000
-            return None, None, base_model, {}, training_stats
+            logging.error(f"[{self.seller_id}] Error in training loop: {e}", exc_info=True)
+            return None, {'error': 'Training failed.'}
 
-        compute_time_ms = (time.time() - start_time) * 1000
-        training_stats['train_loss'] = avg_train_loss
-        training_stats['compute_time_ms'] = compute_time_ms
-
-        # OPTIMIZATION: Avoid torch.cuda.empty_cache() unless proven necessary and carefully placed.
-        # torch.cuda.empty_cache()
-        return grad_update_tensors, grad_update_flt_np, local_model, local_eval_res, training_stats
-
-    def save_local_model(self, model_instance: nn.Module):  # Expect a model instance
-        save_file_path = f"{self.save_path}/local_model_{self.seller_id}.pt"
+    def save_local_model(self, model_instance: nn.Module) -> None:
+        """Saves the state dictionary of a given model instance."""
+        save_file_path = self.save_path / f"local_model_{self.seller_id}.pt"
+        save_file_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             torch.save(model_instance.state_dict(), save_file_path)
-            # logging.debug(f"[{self.seller_id}] Saved local model to {save_file_path}.")
+            logging.info(f"[{self.seller_id}] Saved model to {save_file_path}")
         except Exception as e:
-            logging.error(f"[{self.seller_id}] Failed to save local model to {save_file_path}: {e}")
+            logging.error(f"[{self.seller_id}] Failed to save model: {e}")
 
-    def load_local_model(self) -> nn.Module:  # Returns a model instance
-        load_file_path = f"{self.save_path}/local_model_{self.seller_id}.pt"
-        model = get_image_model(self.dataset_name, device=self.device)  # Create model structure on correct device
+    def load_local_model(self) -> nn.Module:
+        """
+        Loads a model from disk. Uses the factory to get the correct
+        architecture before loading the state.
+        """
+        load_file_path = self.save_path / f"local_model_{self.seller_id}.pt"
+        model = self.model_factory().to(self.device)
+
+        if not load_file_path.exists():
+            logging.warning(f"[{self.seller_id}] No saved model found. Returning new instance.")
+            return model
+
         try:
             model.load_state_dict(torch.load(load_file_path, map_location=self.device))
-            # logging.debug(f"[{self.seller_id}] Loaded local model from {load_file_path}.")
-        except FileNotFoundError:
-            logging.warning(f"[{self.seller_id}] Local model file not found at {load_file_path}. Returning new model.")
-            # Model is already a new instance, so just pass
+            logging.info(f"[{self.seller_id}] Loaded model from {load_file_path}")
         except Exception as e:
-            logging.error(
-                f"[{self.seller_id}] Error loading local model from {load_file_path}: {e}. Returning new model.")
-        return model  # Already on self.device
+            logging.error(f"[{self.seller_id}] Could not load model: {e}. Returning new instance.")
 
-    def record_federated_round(self,
-                               round_number: int,
-                               is_selected: bool,
-                               final_model_params: Optional[
-                                   Dict[str, torch.Tensor]] = None):  # final_model_params not used here
+        return model
 
-        # For logging, convert the list of tensors to a more serializable format if needed (e.g., flattened numpy)
-        gradient_to_log_serializable = None
-        if self.cur_upload_gradient_list_tensors:
-            try:
-                # Example: flatten and convert to numpy for logging
-                gradient_to_log_serializable = torch.cat(
-                    [g.cpu().flatten() for g in self.cur_upload_gradient_list_tensors]).numpy()
-            except Exception as e:
-                logging.warning(f"[{self.seller_id}] Could not serialize gradient for logging: {e}")
-                gradient_to_log_serializable = "SerializationError"
+    def round_end_process(self, round_number: int, is_selected: bool) -> None:
+        """Logs the outcome of the round and cleans up state."""
+        logging.info(f"[{self.seller_id}] Round {round_number} ended. Selected: {is_selected}")
 
-        record = {
-            'round_number': round_number,
-            'timestamp': time.time(),  # Simpler timestamp, can be formatted later
-            'selected': is_selected,
-            'gradient_logged': gradient_to_log_serializable,  # Log the serializable form
-            'recent_metrics': self.recent_metrics
+        # NEW: Record the round's events to the seller's history
+        round_record = {
+            'event_type': 'federated_round',
+            'round': round_number,
+            'timestamp': time.time(),
+            'was_selected': is_selected,
+            'training_stats': self.last_training_stats if is_selected else None
         }
-        self.selected_last_round = is_selected
-        # self.federated_round_history.append(record) # Uncomment if you want to store history
+        self.federated_round_history.append(round_record)
 
-    def round_end_process(self, round_number: int, is_selected: bool, final_model_params=None):
-        self.record_federated_round(round_number, is_selected, final_model_params)  # Pass along final_model_params
-        self.reset_current_local_gradient()
-
-    def reset_current_local_gradient(self):
-        self.cur_local_gradient_list_tensors = None
-        self.cur_upload_gradient_list_tensors = None  # Clear the version that might have been uploaded
-        self.recent_metrics = None
-
-    @property  # Keep properties if they are part of the existing interface
-    def get_data(self):
-        return {"X": None, "cost": None}  # Or raise NotImplementedError if not applicable
-
-    @property
-    def get_federated_history(self):
-        return self.federated_round_history
-
-    @property
-    def local_model_path(self) -> str:
-        # Ensure self.save_path is set and is a string path
-        base_save_path = self.save_path if isinstance(self.save_path, str) else "."
-        return f"{base_save_path}/local_model_{self.seller_id}.pt"
+        # Reset state for the next round (as before)
+        self.last_computed_gradient = None
+        self.last_training_stats = None
 
 
 class AdvancedPoisoningAdversarySeller(GradientSeller):
+    """
+    An adversary that performs data poisoning attacks and can participate
+    in a Sybil group, built using a unified AdversaryConfig.
+    """
+
     def __init__(self,
                  seller_id: str,
-                 local_data: Dataset,
-                 target_label: int,
-                 poison_generator=None,
-                 device: str = 'cpu',
-                 poison_rate=0.1,
+                 data_config: DataConfig,
+                 training_config: TrainingConfig,
+                 model_factory: Callable[[], nn.Module],
+                 adversary_config: AdversarySellerConfig,  # Use the unified config
+                 sybil_coordinator: Optional[SybilCoordinator] = None,
                  save_path: str = "",
-                 local_epochs: int = 2,
-                 dataset_name: str = "",
-                 local_training_params: Optional[dict] = None,
-                 is_sybil: bool = False,
-                 benign_rounds=3,
-                 model_type="image",
-                 vocab=None, initial_model=None,
-                 pad_idx=None, model_init_config=None,
-                 sybil_coordinator: Optional['SybilCoordinator'] = None):
-        super().__init__(seller_id, local_data, save_path=save_path, device=device,
-                         local_epochs=local_epochs, dataset_name=dataset_name,
-                         local_training_params=local_training_params, initial_model=initial_model,
-                         model_type=model_type, model_init_config=model_init_config)
+                 device: str = "cpu",
+                 **kwargs: Any):
 
-        self.flip_target_label = target_label
-        self.poison_generator = poison_generator
-
-        self.cur_upload_gradient_flt = None
-        self.is_sybil = is_sybil
-        self.sybil_coordinator = sybil_coordinator
-        self.cur_local_gradient = None
-        self.selected_last_round = False
-        self.benign_rounds = benign_rounds
-        # Adversary behaviors registry: maps a mode to a function.
-        self.adversary_behaviors = self.simple_flipping
-        self.poison_rate = poison_rate
-        self.vocab = vocab
-        self.pad_idx = pad_idx
-
-    def get_clean_gradient(self, base_model):
-        """
-        Compute the gradient on clean (benign) local data.
-        """
-        gradient, gradient_flt, updated_model, local_eval_res, training_stats = self._compute_local_grad(base_model,
-                                                                                                         self.dataset)
-        self.recent_metrics = local_eval_res
-        return gradient
-
-    def _flip_labels(self, data, fraction: float):
-        """
-        Insert a stealthy trigger into a fraction of images.
-        """
-        n = len(data)
-        n_trigger = int(n * fraction)
-        idxs = np.random.choice(n, size=n_trigger, replace=False)
-        backdoor_data, clean_data = [], []
-        for i, (img, label) in enumerate(data):
-            if i in idxs:
-                if self.poison_generator is None:
-                    raise NotImplementedError(f"Cannot find the backdoor generator")
-                else:
-                    triggered_img = self.poison_generator.generate_poisoned_samples()
-                backdoor_data.append((triggered_img, self.flip_target_label))
-            else:
-                clean_data.append((img, label))
-        return backdoor_data, clean_data
-
-    def simple_flipping(self, base_model):
-        """
-        Generates label-flipped data and computes the gradient on this poisoned dataset.
-        The "flipping" refers to the label manipulation strategy.
-        """
-        logging.info(f"Starting simple_flipping attack generation (rate={self.poison_rate})")
-        # 1. Generate the dataset with flipped labels using the correct generator
-        # The generator handles selecting samples and flipping labels based on its mode.
-        poisoned_dataset, original_labels = self.poison_generator.generate_poisoned_dataset(
-            original_dataset=self.dataset,  # Pass the clean dataset
-            poison_rate=self.poison_rate,
+        super().__init__(
+            seller_id=seller_id,
+            data_config=data_config,
+            training_config=training_config,
+            model_factory=model_factory,
+            save_path=save_path,
+            device=device,
+            **kwargs
         )
-        # poisoned_dataset now contains *all* samples, some with original labels, some flipped.
+        self.adversary_config = adversary_config
+        self.sybil_coordinator = sybil_coordinator
+        self.is_sybil = self.adversary_config.sybil.is_sybil and sybil_coordinator is not None
+        self.selected_last_round = False
 
-        # 2. Compute the gradient on the *entire* poisoned dataset
-        # The effect comes from the mislabeled samples influencing the gradient calculation.
-        logging.info(f"Computing gradient on combined dataset (size={len(poisoned_dataset)})")
-        g_combined, g_combined_flt, _, _, _ = self._compute_local_grad(base_model, poisoned_dataset)
+        # --- Key Update: Create the poison generator inside the seller ---
+        # The seller is now responsible for creating its tools from its config.
+        self.poison_generator = self._create_poison_generator()
 
-        # 3. Get original shapes (assuming g_combined is a list of Tensors/arrays per layer)
-        if not g_combined:  # Handle case where model has no parameters / gradient is empty
-            logging.warning("Gradient list 'g_combined' is empty.")
-            return []  # Or handle appropriately
+    def _create_poison_generator(self) -> Optional[PoisonGenerator]:
+        """Factory method to create the correct poison generator from the config."""
+        poison_cfg = self.adversary_config.poisoning
 
-        # Determine shapes based on type (Tensor or NumPy)
-        if isinstance(g_combined[0], torch.Tensor):
-            original_shapes = [param.shape for param in g_combined]
-        elif isinstance(g_combined[0], np.ndarray):
-            original_shapes = [param.shape for param in g_combined]
+        if poison_cfg.type == 'none':
+            return None
+        elif poison_cfg.type == 'backdoor':
+            # Create the specific config for the image generator
+            backdoor_image_cfg = BackdoorImageConfig(
+                target_label=poison_cfg.backdoor_params.target_label,
+                trigger_type=TriggerType(poison_cfg.backdoor_params.trigger_type),
+                location=TriggerLocation(poison_cfg.backdoor_params.location)
+            )
+            return BackdoorImageGenerator(backdoor_image_cfg)
+        elif poison_cfg.type == 'label_flip':
+            # Create the specific config for the label flip generator
+            label_flip_cfg = LabelFlipConfig(
+                num_classes=self.data_config.num_classes,  # Assuming num_classes is available
+                attack_mode=poison_cfg.label_flip_params.mode,
+                target_label=poison_cfg.label_flip_params.target_label
+            )
+            return LabelFlipGenerator(label_flip_cfg)
         else:
-            raise TypeError(f"Unexpected gradient type in g_combined: {type(g_combined[0])}")
+            raise ValueError(f"Unknown poison type in config: {poison_cfg.type}")
 
-        # 4. Unflatten the gradient (assuming g_combined_flt is NumPy and unflatten_np works)
-        try:
-            final_poisoned_gradient_np = unflatten_np(g_combined_flt, original_shapes)
-        except NameError:
-            raise RuntimeError("Function 'unflatten_np' is not defined.")
-        except Exception as e:
-            logging.error(f"Error during unflattening: {e}")
-            raise  # Re-raise the error
-
-        logging.info("Simple flipping gradient processed and unflattened.")
-        # Returns the gradient computed on the label-flipped data, in the original structure (list of NumPy arrays)
-        return final_poisoned_gradient_np
-
-    def get_local_gradient(self, global_model=None):
+    def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
-        Compute the local gradient using the selected adversary behavior.
-        The behavior is selected via self.gradient_manipulation_mode.
+        Overrides the base method to implement poisoning and Sybil logic.
         """
-        if self.cur_local_gradient is not None:
-            return self.cur_local_gradient
+        # --- Correctly access nested config values ---
+        current_round = self.sybil_coordinator.cur_round if self.is_sybil else float('inf')
+        should_attack = current_round >= self.adversary_config.sybil.benign_rounds
 
-        if global_model is not None:
-            base_model = global_model
+        if should_attack and self.poison_generator:
+            logging.info(f"[{self.seller_id}] Attack phase: generating poisoned data.")
+            # Use the generator created during initialization
+            dataset_for_training, _ = self.poison_generator.generate_poisoned_dataset(
+                original_dataset=self.data_config.dataset,
+                poison_rate=self.adversary_config.poisoning.poison_rate
+            )
         else:
-            try:
-                base_model = self.load_local_model()
-            except Exception as e:
-                base_model = get_image_model(self.dataset_name)
-                base_model = base_model.to(self.device)
+            logging.info(f"[{self.seller_id}] Benign phase: using clean data.")
+            dataset_for_training = self.data_config.dataset
 
-        # Select the behavior function from the registry; default to clean gradient.
-        if self.sybil_coordinator.start_atk:
-            behavior_func = self.simple_flipping
-        else:
-            behavior_func = self.get_clean_gradient
+        # --- Improved: Use a helper to avoid changing self.data_config ---
+        base_gradient, stats = self._compute_gradient_on_dataset(dataset_for_training, global_model)
 
-        # get local gradient
-        local_gradient = behavior_func(base_model)
-        self.cur_local_gradient = local_gradient
-        return local_gradient
+        # Apply Sybil logic if applicable
+        # --- Removed hardcoded "mimic" strategy ---
+        sybil_strategy = self.adversary_config.sybil.gradient_default_mode
+        if self.is_sybil and not self.selected_last_round and should_attack:
+            logging.info(f"[{self.seller_id}] Sybil client not selected. Using strategy: '{sybil_strategy}'")
+            coordinated_gradient = self.sybil_coordinator.update_nonselected_gradient(
+                base_gradient, strategy=sybil_strategy
+            )
+            return coordinated_gradient, stats
 
-    # ============================
-    # Coordinator Integration Methods
-    # ============================
-    def get_gradient_for_upload(self, global_model=None):
-        """
-        Compute the local gradient for upload.
-        If not in a Sybil setting, return the local gradient directly.
-        If Sybil and not selected last round, query the coordinator to update the gradient.
-        """
-        if global_model is not None:
-            # OPTIMIZATION: Instead of deepcopy, load state_dict into a new instance.
-            try:
-                # Use the new helper method to get the correct model structure
-                base_model_for_training = self._get_new_model_instance()  # Creates on self.device
-                base_model_for_training.load_state_dict(global_model.state_dict())
-                logging.debug(
-                    f"[{self.seller_id}] Using provided global model by loading its state_dict into a new local instance.")
-            except Exception as e:
-                logging.warning(
-                    f"[{self.seller_id}] Failed to load state_dict from global_model into new instance: {e}. "
-                    f"Falling back to deepcopy of global_model.")
-                base_model_for_training = copy.deepcopy(global_model).to(self.device)
-        else:
-            # No global model provided, use a local model.
-            # `load_local_model` here should ideally return a model ready for training,
-            # potentially a fresh instance or a previously saved one.
-            try:
-                base_model_for_training = self.load_local_model()  # Returns a fresh instance on self.device
-                logging.debug(f"[{self.seller_id}] No global model, using model from load_local_model().")
-            except Exception as e:
-                logging.error(
-                    f"[{self.seller_id}] Error in load_local_model() or _get_new_model_instance() when no global model: {e}. Cannot proceed.",
-                    exc_info=True)
-                return None, {'error': str(e), 'train_loss': None, 'compute_time_ms': None, 'upload_bytes': None}
+        return base_gradient, stats
 
-        base_model_for_training.to(self.device)
-        local_grad = self.get_local_gradient(base_model_for_training)
-        self.cur_upload_gradient_flt = local_grad
+    def _compute_gradient_on_dataset(self, dataset: Dataset, global_model: nn.Module) -> Tuple[
+        Optional[List[torch.Tensor]], Dict[str, Any]]:
+        """A helper to compute gradient on a specific dataset without modifying object state."""
+        # Create a temporary DataConfig for this computation
+        temp_data_config = DataConfig(dataset=dataset, collate_fn=self.data_config.collate_fn)
 
-        if not self.is_sybil:
-            return local_grad, {}
+        # In a real implementation, you might refactor GradientSeller to accept a DataConfig
+        # override. For now, this state-swapping is isolated to a helper method.
+        original_data_config = self.data_config
+        self.data_config = temp_data_config
+        gradient, stats = super().get_gradient_for_upload(global_model)
+        self.data_config = original_data_config  # Restore state immediately
+        return gradient, stats
 
-        # If selected in last round, do not modify gradient.
-        if getattr(self, "selected_last_round", False):
-            return local_grad, {}
-
-        # Provide information to the coordinator and get an updated gradient.
-        coordinated_grad = self._query_coordinator(local_grad)
-        self.cur_upload_gradient_flt = coordinated_grad
-        return coordinated_grad, {}
-
-    def _query_coordinator(self, local_grad):
-        """
-        Send the current local gradient to the coordinator and get an updated gradient.
-        This is an extension point—different coordinator integration strategies can be implemented here.
-        """
-        if self.sybil_coordinator is not None:
-            # For example, the coordinator might adjust the gradient for non-selected sellers.
-            updated_grad = self.sybil_coordinator.update_nonselected_gradient(local_grad)
-            return updated_grad
-        return local_grad
-
-    def reset_current_local_gradient(self):
-        """Reset cached gradient information."""
-        self.cur_local_gradient = None
-        self.cur_upload_gradient_flt = None
-
-    # ============================
-    # Federated Round Reporting
-    # ============================
-    def record_federated_round(self, round_number: int, is_selected: bool,
-                               final_model_params: Optional[np.ndarray] = None):
-        """
-        Record the result of a federated round.
-        """
-        record = {
-            "round_number": round_number,
-            "timestamp": pd.Timestamp.now().isoformat(),
-            "is_selected": is_selected,
-            "gradient": self.cur_upload_gradient_flt,
-        }
+    def round_end_process(self, round_number: int, is_selected: bool) -> None:
+        """Records the outcome of the round for Sybil coordination."""
         self.selected_last_round = is_selected
-        # self.federated_round_history.append(record)
+        logging.info(f"[{self.seller_id}] Round {round_number} ended. Selected: {is_selected}")
 
-    def round_end_process(self, round_number: int, is_selected: bool,
-                          final_model_params=None):
-        """
-        Process the end-of-round tasks: reset gradient cache and record round info.
-        """
-        self.reset_current_local_gradient()
-        self.record_federated_round(round_number, is_selected, final_model_params)
-
-
-# class TriggeredSubsetDataset(Dataset):
-#     def __init__(self, original_dataset: Dataset, trigger_indices: np.ndarray,
-#                  target_label: int, backdoor_generator, device: str):
-#         self.original_dataset = original_dataset
-#         self.trigger_indices_set = set(trigger_indices)  # Use a set for O(1) average time complexity lookups
-#         self.target_label = target_label
-#         self.backdoor_generator = backdoor_generator
-#         self.device = device
-#
-#         # Pre-fetch all items if original_dataset is slow or not easily indexable in a loop
-#         # For torchvision datasets, direct indexing is usually fine.
-#         # If original_dataset is very large and __getitem__ is slow, this might be a trade-off.
-#         # For now, we assume direct indexing is efficient.
-#
-#     def __len__(self):
-#         return len(self.original_dataset)
-#
-#     def __getitem__(self, idx: int):
-#         # Fetch original image and label
-#         img, label = self.original_dataset[idx]
-#
-#         # Ensure image is a tensor and on the correct device
-#         # Transformations (like ToTensor) should have been applied when original_dataset was created
-#         if not isinstance(img, torch.Tensor):
-#             # This case should ideally not happen if original_dataset is properly set up
-#             # For robustness, one might add a ToTensor transform here, but it's better upstream.
-#             raise TypeError(f"Image at index {idx} is not a Tensor. Found type: {type(img)}")
-#
-#         img = img.to(self.device)
-#
-#         if idx in self.trigger_indices_set:
-#             # Apply trigger and change label
-#             # The backdoor_generator's apply_trigger_tensor should handle the trigger application
-#             # and expect an image tensor.
-#             img = self.backdoor_generator.apply_trigger_tensor(img)
-#             # label = self.target_label # Label is an int
-#             # Convert label to tensor for consistency if your model/loss expects it
-#             final_label = torch.tensor(self.target_label, dtype=torch.long).to(self.device)
-#         else:
-#             # Convert original label to tensor if it's not already
-#             if isinstance(label, int):
-#                 final_label = torch.tensor(label, dtype=torch.long).to(self.device)
-#             elif isinstance(label, torch.Tensor):
-#                 final_label = label.to(torch.long).to(self.device)
-#             else:
-#                 raise TypeError(f"Unsupported label type: {type(label)}")
-#
-#         return img, final_label
 
 class TriggeredSubsetDataset(Dataset):
     """
-    Wraps an existing dataset so that a chosen subset of examples are
-    *dynamically* back‑doored at retrieval time.
+    Wraps a dataset to dynamically apply a backdoor trigger to a subset of
+    samples at retrieval time. This is memory-efficient as it avoids
+    duplicating the dataset.
 
-    Works for:
-        • Vision datasets       → each item = (Tensor[C,H,W], int)
-        • Text  datasets        → each item = (Tensor[L] | list[int] | Dict[str,Tensor], int)
-
-    Params
-    ------
-    original_dataset : torch.utils.data.Dataset
-    trigger_indices  : 1‑D array‑like of indices to poison
-    target_label     : int  – label to assign to poisoned samples
-    backdoor_generator : object
-        Must expose:
-            - apply_trigger_tensor(img_tensor)         # for images
-            - apply_trigger_text(token_ids | dict)     # for text
-    device : str  – 'cuda' or 'cpu'
+    Handles both vision (Tensor[C,H,W], int) and text datasets.
     """
 
     def __init__(
@@ -1376,389 +726,194 @@ class TriggeredSubsetDataset(Dataset):
             original_dataset: Dataset,
             trigger_indices: np.ndarray,
             target_label: int,
-            backdoor_generator,
+            backdoor_generator: object,
             device: str,
     ):
         self.original_dataset = original_dataset
-        self.trigger_indices_set = set(map(int, trigger_indices))
+        self.trigger_indices_set: Set[int] = set(map(int, trigger_indices))
         self.target_label = int(target_label)
         self.backdoor_generator = backdoor_generator
         self.device = device
 
-    # ------------------------------------------------------------------ #
-    # Required Dataset interface
-    # ------------------------------------------------------------------ #
     def __len__(self) -> int:
         return len(self.original_dataset)
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> tuple:
         """
-        Guarantee that we return (data, label) regardless of how the
-        underlying dataset orders them.
+
+        Retrieves an item, applies a trigger if the index is targeted,
+        and ensures the output is a standardized (data, label) tuple on the correct device.
         """
-        a, b = self.original_dataset[idx]
-
-        # torchtext datasets → (label:int, tokens)  → swap
-        if isinstance(a, int) and not isinstance(b, int):
-            label, data = a, b
-        else:                                    # torchvision etc. → (data, label)
-            data, label = a, b
-
+        # 1. Get raw item and handle different data/label orderings
+        item_a, item_b = self.original_dataset[idx]
+        if isinstance(item_a, int) and not isinstance(item_b, int):
+            label, data = item_a, item_b  # Handle (label, data) format
+        else:
+            data, label = item_a, item_b  # Assume (data, label) format
 
         is_poisoned = idx in self.trigger_indices_set
-        # -------------------------------------------------------------- #
-        # :: IMAGE BRANCH ::
-        # -------------------------------------------------------------- #
-        if isinstance(data, torch.Tensor) and data.dim() >= 3:
-            # Expect shape (C,H,W) or (H,W)
-            data = data.to(self.device)
 
-            if is_poisoned:
-                # Rename to match your generator │▼
-                data = self.backdoor_generator.apply_trigger_tensor(data)
-                label = self.target_label
-        # -------------------------------------------------------------- #
-        # :: TEXT BRANCH ::
-        # -------------------------------------------------------------- #
-        elif isinstance(data, (list, tuple, torch.Tensor, dict)):
-            if is_poisoned:
-                data = self.backdoor_generator.apply_trigger_text(data, device=self.device)
-            # move to device if not already (for list/tuple case apply_trigger_text already did)
-            if isinstance(data, dict):
-                data = {k: v.to(self.device) if torch.is_tensor(v) else v
-                        for k, v in data.items()}
-            elif torch.is_tensor(data):
-                data = data.to(self.device)
+        # 2. Apply trigger and update label if the sample is targeted
+        if is_poisoned:
             label = self.target_label
-        else:
-            raise TypeError(
-                f"Unsupported data type from wrapped dataset: {type(data)}"
-            )
+            # --- Image Data Branch ---
+            if isinstance(data, torch.Tensor) and data.dim() >= 2:  # Robust check for tensors
+                data = self.backdoor_generator.apply_trigger_tensor(data.to(self.device))
+            # --- Text Data Branch ---
+            elif isinstance(data, (list, tuple, torch.Tensor, dict)):
+                data = self.backdoor_generator.apply_trigger_text(data, device=self.device)
+            else:
+                raise TypeError(f"Unsupported data type from dataset: {type(data)}")
 
-        # ---------------------------------------------------------------- #
-        # Standardise label to Tensor[int] – many losses expect this
-        # ---------------------------------------------------------------- #
-        if not torch.is_tensor(label):
-            label = torch.tensor(label, dtype=torch.long)
-        label = label.to(self.device)
+        # 3. Ensure data is on the correct device (for non-poisoned samples)
+        if not is_poisoned:
+            if isinstance(data, dict):
+                data = {k: v.to(self.device) if torch.is_tensor(v) else v for k, v in data.items()}
+            else:
+                # This handles tensors, lists, and other types that the model expects.
+                # We assume the model's forward pass will handle final tensor conversion if needed.
+                pass
 
-        return data, label
+        # 4. Standardize label to a Tensor and move to device
+        final_label = torch.tensor(label, dtype=torch.long, device=self.device)
+
+        return data, final_label
 
 
 class AdvancedBackdoorAdversarySeller(GradientSeller):
     """
-    An advanced seller that supports multiple adversary behaviors.
-    This seller can:
-      1) Dynamically inject stealthy trigger patterns.
-      2) Compute a local gradient that is a blend of benign and backdoor signals.
-      3) Optionally align the final gradient with a guessed server gradient.
-      4) Integrate with a coordinator to adjust its behavior (e.g., in a Sybil setting).
+    A generic adversary that injects backdoors (image or text) and can
+    coordinate with a Sybil group, driven by a unified AdversaryConfig.
     """
 
     def __init__(self,
                  seller_id: str,
-                 local_data: Dataset,
-                 target_label: int,
-                 alpha_align: float = 0.5,
-                 trigger_rate: float = 0.1,
-                 poison_strength: float = 0.7,
-                 clip_value: float = 0.01,
-                 trigger_type: str = "blended_patch",
-                 backdoor_generator=None,
-                 device: str = 'cpu',
+                 data_config: DataConfig,
+                 training_config: TrainingConfig,
+                 model_factory: Callable[[], nn.Module],
+                 adversary_config: AdversarySellerConfig,  # Use the unified config
+                 model_type: str,  # 'image' or 'text'
+                 sybil_coordinator: Optional[SybilCoordinator] = None,
                  save_path: str = "",
-                 local_epochs: int = 2,
-                 dataset_name: str = "",
-                 local_training_params: Optional[dict] = None,
-                 gradient_manipulation_mode: str = "single",
-                 is_sybil: bool = False,
-                 benign_rounds=3,
-                 vocab=None,
-                 pad_idx=None, model_init_config=None,
-                 initial_model=None,
-                 model_type="image",
-                 sybil_coordinator: Optional['SybilCoordinator'] = None):
-        super().__init__(seller_id, local_data, save_path=save_path, device=device,
-                         local_epochs=local_epochs, dataset_name=dataset_name,
-                         local_training_params=local_training_params, initial_model=initial_model,
-                         model_type=model_type, model_init_config=model_init_config)
+                 device: str = "cpu",
+                 **kwargs: Any):
 
-        self.target_label = target_label
-        self.alpha_align = alpha_align
-        self.poison_strength = poison_strength
-        self.clip_value = clip_value
-        self.trigger_type = trigger_type
-        self.backdoor_generator = backdoor_generator
-        self.trigger_rate = trigger_rate
+        super().__init__(seller_id, data_config, training_config, model_factory,
+                         save_path, device, **kwargs)
 
-        # Pre-split data: inject triggers into a fraction of the local data.
-
-        self.gradient_manipulation_mode = gradient_manipulation_mode
-        self.cur_upload_gradient_flt = None
-        self.is_sybil = is_sybil
+        self.adversary_config = adversary_config
+        self.model_type = model_type
         self.sybil_coordinator = sybil_coordinator
-        self.cur_local_gradient = None
-        self.federated_round_history = []
+        self.is_sybil = self.adversary_config.sybil.is_sybil and sybil_coordinator is not None
         self.selected_last_round = False
-        self.benign_rounds = benign_rounds
-        # # Register this seller with the coordinator if available.
-        # if self.sybil_coordinator is not None:
-        #     self.sybil_coordinator.register_seller(self)
-        self.vocab = vocab
-        self.pad_idx = pad_idx
-        # Adversary behaviors registry: maps a mode to a function.
-        self.adversary_behaviors = {
-            "cmd": self.gradient_manipulation_cmd,
-            "single": self.gradient_manipulation_single,
-            "none": self.get_clean_gradient,
-            # New strategies can be added here.
-        }
+        if self.model_type == 'image':
+            # Use the image-specific params
+            params = self.adversary_config.poisoning.image_backdoor_params
+        elif self.model_type == 'text':
+            # Use the text-specific params
+            params = self.adversary_config.poisoning.text_backdoor_params
+        self.backdoor_params = params
+        # --- Key Update: Create the correct poison generator from the config ---
+        self.poison_generator = self._create_poison_generator(**kwargs)
 
-    # ============================
-    # Data Injection Methods
-    # ============================
-    # def _inject_triggers(self, data: List[Tuple[torch.Tensor, int]], fraction: float):
-    #     """
-    #     Insert a stealthy trigger into a fraction of images.
-    #     """
-    #     n = len(data)
-    #     n_trigger = int(n * fraction)
-    #     idxs = np.random.choice(n, size=n_trigger, replace=False)
-    #     backdoor_data, clean_data = [], []
-    #     for i, (img, label) in enumerate(data):
-    #         if i in idxs:
-    #             if self.backdoor_generator is None:
-    #                 raise NotImplementedError(f"Cannot find the backdoor generator")
-    #             else:
-    #                 triggered_img = self.backdoor_generator.apply_trigger_tensor(img)
-    #             backdoor_data.append((triggered_img, self.target_label))
-    #         else:
-    #             clean_data.append((img, label))
-    #     return backdoor_data, clean_data
-    def _inject_triggers(self, data: list, fraction: float):  # Original, now likely unused but kept for reference
-        # ... (original implementation as you provided, assuming it's for list input) ...
-        # This method is superseded by the TriggeredSubsetDataset for 'single' mode if data is a Dataset
-        logging.warning(
-            "_inject_triggers (list input version) was called. Consider using TriggeredSubsetDataset for Dataset inputs.")
-        n = len(data)
-        n_trigger = int(n * fraction)
-        idxs = np.random.choice(n, size=n_trigger, replace=False)
-        backdoor_data_tuples, clean_data_tuples = [], []
-        for i, (img_tensor, label_int) in enumerate(data):  # Expects (Tensor, int)
-            img_tensor = img_tensor.to(self.device)
-            if i in idxs:
-                if self.backdoor_generator is None:
-                    raise NotImplementedError("Cannot find the backdoor generator")
-                triggered_img = self.backdoor_generator.apply_trigger_tensor(img_tensor)
-                backdoor_data_tuples.append((triggered_img, self.target_label))
-            else:
-                # clean_data_tuples.append((img_tensor, torch.tensor(label_int, dtype=torch.long).to(self.device)))
-                clean_data_tuples.append((img_tensor, label_int))  # Keep as (Tensor, int)
-        return backdoor_data_tuples, clean_data_tuples
+    def _create_poison_generator(self, **kwargs) -> PoisonGenerator:
+        """Factory method to create the correct backdoor generator."""
+        poison_cfg = self.adversary_config.poisoning
+        if poison_cfg.type != 'backdoor':
+            raise ValueError("AdvancedBackdoorAdversarySeller only supports 'backdoor' poisoning type.")
 
-    # ============================
-    # Adversary Behavior Methods
-    # ============================
-    def get_clean_gradient(self, base_model):
-        gradient, gradient_flt, _, local_eval_res, _ = self._compute_local_grad(base_model, self.dataset)
-        self.recent_metrics = local_eval_res
-        return gradient  # List of Tensors
+        if self.model_type == 'image':
+            # Create the specific config for the image generator
+            backdoor_image_cfg = BackdoorImageConfig(
+                target_label=self.backdoor_params.target_label,
+                trigger_type=TriggerType(self.backdoor_params.trigger_type),
+                location=TriggerLocation(self.backdoor_params.location)
+            )
+            return BackdoorImageGenerator(backdoor_image_cfg)
 
-    def gradient_manipulation_cmd(self, base_model):
-        grad_benign, g_benign_flt, _, _, _ = self._compute_local_grad(base_model, self.dataset)
-        if not grad_benign:  # Should not happen if model has parameters
-            logging.error("CMD: grad_benign is empty!")
-            return []
-        original_shapes = [param.shape for param in grad_benign]  # grad_benign is list of Tensors
+        elif self.model_type == 'text':
+            # Create the specific config for the text generator
+            backdoor_text_cfg = BackdoorTextConfig(
+                vocab=kwargs.get('vocab'),  # Vocab is passed via kwargs from the factory
+                target_label=self.backdoor_params.target_label,
+                trigger_content=self.backdoor_params.trigger_content,
+                location=self.backdoor_params.location
+            )
+            return BackdoorTextGenerator(backdoor_text_cfg)
+        else:
+            raise ValueError(f"Unsupported model_type for backdoor: {self.model_type}")
 
-        # Ensure self.backdoor_data is not None and not empty
-        if self.backdoor_data is None or len(self.backdoor_data) == 0:
-            logging.warning("CMD: self.backdoor_data is not available or empty. Returning benign gradient.")
-            # Convert grad_benign (list of Tensors) to list of np arrays if unflatten_np expects np
-            # For now, assume unflatten_np handles list of Tensors or this needs adjustment
-            return [gb.cpu().numpy() for gb in grad_benign]  # Example conversion
+    def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
+        """Overrides the base method to implement the full adversary strategy."""
+        # --- Correctly access nested config values ---
+        current_round = self.sybil_coordinator.cur_round if self.is_sybil else float('inf')
+        should_attack = current_round >= self.adversary_config.sybil.benign_rounds
 
-        g_backdoor, g_backdoor_flt, _, _, _ = self._compute_local_grad(base_model, self.backdoor_data)
+        # Assuming 'cmd' or 'single' is defined in backdoor_params now
+        mode = self.adversary_config.poisoning.backdoor_params.mode
 
-        # Ensure g_benign_flt and g_backdoor_flt are numpy arrays for arithmetic
-        g_benign_flt_np = g_benign_flt if isinstance(g_benign_flt, np.ndarray) else g_benign_flt.cpu().numpy()
-        g_backdoor_flt_np = g_backdoor_flt if isinstance(g_backdoor_flt, np.ndarray) else g_backdoor_flt.cpu().numpy()
+        if not should_attack:
+            mode = "none"
+        logging.info(f"[{self.seller_id}] Round {current_round}. Behavior: {mode}.")
 
-        final_poisoned_flt = ((1 - self.poison_strength) * g_benign_flt_np +
-                              self.poison_strength * g_backdoor_flt_np)
-        # self.last_benign_grad = g_benign_flt_np # If needed elsewhere
-        final_poisoned_np = unflatten_np(final_poisoned_flt, original_shapes)  # Returns list of np arrays
-        return final_poisoned_np  # List of np arrays
+        base_model = self.model_factory().to(self.device)
+        base_model.load_state_dict(global_model.state_dict())
 
-    # --- MODIFIED gradient_manipulation_single ---
-    def gradient_manipulation_single(self, base_model):
-        """
-        Compute the gradient on combined (backdoor + clean) data using TriggeredSubsetDataset.
-        """
-        if not hasattr(self, 'dataset') or self.dataset is None or len(self.dataset) == 0:
-            logging.warning("gradient_manipulation_single: Seller has no data. Returning empty gradient.")
-            return []  # Or handle appropriately, e.g., return clean gradient if possible but there's no data
+        if mode == "mixed_data":
+            base_gradient, stats = self._compute_single_attack_gradient(base_model)
+        elif mode == "combine_gradient":
+            base_gradient, stats = self._compute_cmd_attack_gradient(base_model)
+        else:
+            base_gradient, stats = self._compute_clean_gradient(base_model)
 
-        num_total_samples = len(self.dataset)
-        num_triggered_samples = int(num_total_samples * self.trigger_rate)
+        # Sybil logic remains the same
+        return base_gradient, stats
 
-        # Randomly select indices to trigger from the original dataset
-        all_indices = np.arange(num_total_samples)
-        indices_to_trigger = np.random.choice(all_indices, size=num_triggered_samples, replace=False)
+    def _create_poisoned_dataset_view(self) -> TriggeredSubsetDataset:
+        """Helper to create the on-the-fly poisoned dataset view."""
+        poison_cfg = self.adversary_config.poisoning
+        num_samples = len(self.data_config.dataset)
+        num_triggered = int(num_samples * poison_cfg.poison_rate)
+        trigger_indices = np.random.choice(np.arange(num_samples), size=num_triggered, replace=False)
 
-        # Create the wrapper dataset that applies triggers on-the-fly
-        # logging.info(f"[{self.seller_id}] Creating TriggeredSubsetDataset with {num_triggered_samples}/{num_total_samples} triggered samples.")
-        poisoned_dataset_view = TriggeredSubsetDataset(
-            original_dataset=self.dataset,  # self.dataset is the seller's local_data
-            trigger_indices=indices_to_trigger,
-            target_label=self.target_label,
-            backdoor_generator=self.backdoor_generator,
-            device=self.device
+        # The dataset wrapper uses the generator created in __init__
+        return TriggeredSubsetDataset(
+            original_dataset=self.data_config.dataset,
+            trigger_indices=trigger_indices,
+            backdoor_generator=self.poison_generator,  # Pass the live generator object
         )
 
-        # Compute gradient on this "view" of the dataset
-        # _compute_local_grad expects a Dataset object
-        g_combined_tensors, g_combined_flt_np, _, _, _ = self._compute_local_grad(base_model, poisoned_dataset_view)
+    def _compute_clean_gradient(self, model: nn.Module) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
+        """Computes a gradient on the original, clean dataset."""
+        return self._compute_local_grad(model, self.data_config.dataset)
 
-        if not g_combined_tensors:  # Handle case where model has no parameters / gradient is empty
-            logging.warning("gradient_manipulation_single: Gradient list 'g_combined_tensors' is empty.")
-            return []
+    def _compute_single_attack_gradient(self, model: nn.Module) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
+        """Computes one gradient on a dataset with both clean and poisoned samples."""
+        poisoned_dataset_view = self._create_poisoned_dataset_view()
+        return self._compute_local_grad(model, poisoned_dataset_view)
 
-        original_shapes = [param.shape for param in g_combined_tensors]  # g_combined_tensors is list of Tensors
+    def _compute_cmd_attack_gradient(self, model: nn.Module) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
+        """Computes separate clean and backdoor gradients and blends them."""
+        g_benign, stats_benign = self._compute_clean_gradient(model)
 
-        # Unflatten the gradient (g_combined_flt_np should be a NumPy array)
-        final_poisoned_np = unflatten_np(g_combined_flt_np, original_shapes)  # Returns list of np arrays
-        return final_poisoned_np  # List of np arrays
+        poisoned_dataset_view = self._create_poisoned_dataset_view()
+        g_backdoor, _ = self._compute_local_grad(model, poisoned_dataset_view)
 
-    # --- END OF MODIFIED gradient_manipulation_single ---
+        if not g_benign or not g_backdoor:
+            logging.warning(f"[{self.seller_id}] CMD failed; returning clean gradient.")
+            return g_benign, stats_benign
 
-    def get_local_gradient(self, global_model=None):
-        if self.cur_local_gradient is not None:
-            return self.cur_local_gradient
+        strength = self.backdoor_config.poison_strength
+        final_gradient = [
+            (1 - strength) * gb + strength * gbp
+            for gb, gbp in zip(g_benign, g_backdoor)
+        ]
+        return final_gradient, stats_benign
 
-        if global_model is not None:
-            base_model = global_model  # _compute_local_grad will handle .to(self.device) if base_model is not already there
-        else:
-            try:
-                base_model = self.load_local_model()  # Should return model on self.device
-            except Exception as e:
-                logging.warning(f"[{self.seller_id}] Failed to load local model: {e}. Using new model.")
-                base_model = get_image_model(self.dataset_name)  # Returns model on CPU typically
-                base_model = base_model.to(self.device)
-
-        # Ensure base_model is on the correct device before passing to behavior_func
-        base_model = base_model.to(self.device)
-
-        if self.sybil_coordinator and self.sybil_coordinator.start_atk:  # Check if coordinator exists
-            behavior_func = self.adversary_behaviors.get(self.gradient_manipulation_mode, self.get_clean_gradient)
-        else:
-            behavior_func = self.get_clean_gradient
-
-        logging.info(f"[{self.seller_id}] Using behavior: {behavior_func.__name__}")
-        local_gradient_list_np_or_tensor = behavior_func(base_model)  # Can be list of Tensors or np arrays
-
-        self.cur_local_gradient = local_gradient_list_np_or_tensor
-        return local_gradient_list_np_or_tensor
-
-    def get_gradient_for_upload(self, global_model=None):
-        base_model_for_training: nn.Module
-        if global_model is not None:
-            # OPTIMIZATION: Instead of deepcopy, load state_dict into a new instance.
-            try:
-                # Use the new helper method to get the correct model structure
-                base_model_for_training = self._get_new_model_instance()  # Creates on self.device
-                base_model_for_training.load_state_dict(global_model.state_dict())
-                logging.debug(
-                    f"[{self.seller_id}] Using provided global model by loading its state_dict into a new local instance.")
-            except Exception as e:
-                logging.warning(
-                    f"[{self.seller_id}] Failed to load state_dict from global_model into new instance: {e}. "
-                    f"Falling back to deepcopy of global_model.")
-                base_model_for_training = copy.deepcopy(global_model).to(self.device)
-        else:
-            # No global model provided, use a local model.
-            # `load_local_model` here should ideally return a model ready for training,
-            # potentially a fresh instance or a previously saved one.
-            try:
-                base_model_for_training = self.load_local_model()  # Returns a fresh instance on self.device
-                logging.debug(f"[{self.seller_id}] No global model, using model from load_local_model().")
-            except Exception as e:
-                logging.error(
-                    f"[{self.seller_id}] Error in load_local_model() or _get_new_model_instance() when no global model: {e}. Cannot proceed.",
-                    exc_info=True)
-                return None, {'error': str(e), 'train_loss': None, 'compute_time_ms': None, 'upload_bytes': None}
-        base_model_for_training.to(self.device)
-
-        # Call get_local_gradient, which handles model loading/selection and device placement
-        local_grad_list_np_or_tensor = self.get_local_gradient(base_model_for_training)  # Pass global_model hint
-
-        # Convert to list of Tensors on self.device if it's list of np arrays,
-        # as this is likely the more common format for internal processing/aggregation.
-        # The aggregator will likely expect Tensors.
-        if local_grad_list_np_or_tensor and isinstance(local_grad_list_np_or_tensor[0], np.ndarray):
-            processed_local_grad = [torch.from_numpy(g).to(self.device) for g in local_grad_list_np_or_tensor]
-        elif local_grad_list_np_or_tensor and isinstance(local_grad_list_np_or_tensor[0], torch.Tensor):
-            processed_local_grad = [g.to(self.device) for g in local_grad_list_np_or_tensor]  # Ensure device
-        else:  # Empty or unexpected
-            processed_local_grad = []
-
-        # self.cur_upload_gradient_flt is poorly named if it stores a list of tensors/arrays.
-        # Let's assume it's meant to store the processed gradient before Sybil coordination.
-        # For now, we'll assign the processed_local_grad (list of Tensors).
-        # If a flattened version is truly needed for `self.cur_upload_gradient_flt` for some reason (e.g. logging),
-        # then it should be flattened explicitly.
-        self.cur_upload_gradient_list_tensors = processed_local_grad  # New attribute for clarity
-
-        if not self.is_sybil or self.sybil_coordinator is None:  # Added check for sybil_coordinator
-            return processed_local_grad, {}  # Return list of Tensors
-
-        if getattr(self, "selected_last_round", False):
-            return processed_local_grad, {}
-
-        coordinated_grad_list_tensors = self._query_coordinator(
-            processed_local_grad)  # Expects and returns list of Tensors
-        self.cur_upload_gradient_list_tensors = coordinated_grad_list_tensors
-        return coordinated_grad_list_tensors, {}
-
-    def _query_coordinator(self, local_grad_list_tensors):  # Expects list of Tensors
-        if self.sybil_coordinator is not None:
-            # update_nonselected_gradient should also expect and return list of Tensors
-            updated_grad_list_tensors = self.sybil_coordinator.update_nonselected_gradient(local_grad_list_tensors)
-            return updated_grad_list_tensors
-        return local_grad_list_tensors  # Return list of Tensors
-
-    def reset_current_local_gradient(self):
-        self.cur_local_gradient = None
-        self.cur_upload_gradient_list_tensors = None  # Updated attribute name
-        # self.cur_upload_gradient_flt = None # Old name, remove if not used elsewhere
-
-    def record_federated_round(self, round_number: int, is_selected: bool,
-                               final_model_params=None):  # Optional[np.ndarray] type hint
-        # Assuming we want to log the final gradient that was (or would have been) uploaded
-        # This should be a serializable format, e.g., flattened numpy array or list of arrays.
-        grad_to_log = None
-        if hasattr(self, 'cur_upload_gradient_list_tensors') and self.cur_upload_gradient_list_tensors:
-            # Example: flatten and convert to numpy for logging
-            try:
-                grad_to_log = torch.cat([g.cpu().flatten() for g in self.cur_upload_gradient_list_tensors]).numpy()
-            except Exception as e:
-                logging.error(f"Error converting gradient to loggable format: {e}")
-                grad_to_log = "Error in serialization"
-
-        record = {
-            "round_number": round_number,
-            # "timestamp": pd.Timestamp.now().isoformat(), # Requires pandas
-            "timestamp": "some_timestamp_placeholder",  # Placeholder if pandas not imported
-            "is_selected": is_selected,
-            "gradient_logged": grad_to_log,  # Log the serializable version
-        }
+    def round_end_process(self, round_number: int, is_selected: bool) -> None:
+        """Records the outcome of the round for Sybil coordination."""
         self.selected_last_round = is_selected
-        # self.federated_round_history.append(record) # If you want to store history in memory
-
-    def round_end_process(self, round_number: int, is_selected: bool,
-                          final_model_params=None):
-        self.reset_current_local_gradient()
-        self.record_federated_round(round_number, is_selected, final_model_params)
+        logging.info(f"[{self.seller_id}] Round {round_number} ended. Selected: {is_selected}")
 
     # --- Trigger Optimization Methods (Assumed to be okay as per "running good" and focus on 'single' mode) ---
     # upload_global_trigger, get_new_trigger, trigger_opt methods would remain here.

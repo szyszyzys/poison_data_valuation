@@ -15,7 +15,7 @@ import yaml
 from torch import nn
 from torch.utils.data import Subset, TensorDataset, DataLoader
 
-from attack.attack_gradient_market.poison_attack.attack_martfl import BackdoorImageGenerator
+from attack.attack_gradient_market.poison_attack.attack_utils import BackdoorImageGenerator
 from entry.gradient_market.automate_exp.config_parser import parse_config_for_attack_function
 from general_utils.file_utils import save_to_json
 from marketplace.market.markplace_gradient import DataMarketplaceFederated

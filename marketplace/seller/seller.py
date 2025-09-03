@@ -1,5 +1,5 @@
 import json
-from abc import ABC
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
@@ -8,6 +8,7 @@ import pandas as pd
 import torch
 
 
+@dataclass
 class SellerStats:
     """Statistics for a seller's dataset and market performance"""
     total_points: int
@@ -17,10 +18,6 @@ class SellerStats:
     revenue: float = 0.0
     avg_price: float = 0.0
 
-    # If doing federated learning, you might also track:
-    # rounds_participated: int = 0
-    # rounds_selected: int = 0
-    # etc.
 
 
 class BaseSeller(ABC):
@@ -58,17 +55,6 @@ class BaseSeller(ABC):
 
         # Path(self.exp_save_path).mkdir(parents=True, exist_ok=True)
 
-    @property
-    def get_data(self) -> Dict[str, Any]:
-        """
-        Return the data or relevant info for the marketplace.
-        Override in subclasses if needed.
-        """
-        return {
-            "X": self.cur_data,
-            "cost": self.cur_price,
-        }
-
     def _generate_prices(self) -> np.ndarray:
         """Generate prices based on a specified strategy."""
         if self.price_strategy == 'uniform':
@@ -85,6 +71,15 @@ class BaseSeller(ABC):
             ))
         else:
             raise ValueError(f"Unknown price strategy: {self.price_strategy}")
+
+    @abstractmethod
+    def round_end_process(self, round_number: int, was_selected: bool):
+        """
+        A method to be called by the marketplace at the end of a round.
+        All subclasses must implement this.
+        """
+        # Example: self.federated_round_history.append(...)
+        pass
 
     def record_selection(self, indices: List[int], buyer_id: str):
         """
@@ -126,17 +121,51 @@ class BaseSeller(ABC):
             'market_share': self.stats.market_share,
         }
 
-    # def save_statistics(self):
-    #     """Save statistics and selection/federated round history to a JSON file."""
-    #     stats_data = {
-    #         'statistics': self.get_statistics(),
-    #         'selection_history': self.selection_history,
-    #         'federated_round_history': self.federated_round_history,
-    #     }
-    #     output_path = f"{self.exp_save_path}/result.json"
-    #     with open(output_path, 'w') as f:
-    #         json.dump(stats_data, f, indent=2)
+    @property
+    def market_offer(self) -> Dict[str, Any]:
+        """Returns the data and cost currently offered to the market."""
+        return {
+            "X": self.cur_data,
+            "cost": self.cur_price,
+        }
 
     @property
-    def exp_save_path(self):
-        return f'{self.save_path}/{self.seller_id}'
+    def experiment_save_path(self) -> Path:
+        """Returns the Path object for this seller's save directory."""
+        return Path(self.save_path) / self.seller_id
+
+    def save_state(self):
+        """Saves the seller's statistics and history to a JSON file."""
+        state = {
+            'stats': self.get_statistics(),
+            'selection_history': self.selection_history,
+            'federated_round_history': self.federated_round_history
+        }
+        # Ensure the directory exists
+        self.experiment_save_path.mkdir(parents=True, exist_ok=True)
+        file_path = self.experiment_save_path / "seller_state.json"
+        with open(file_path, 'w') as f:
+            json.dump(state, f, indent=4)
+        logging.info(f"Saved state for seller {self.seller_id} to {file_path}")
+
+    @classmethod
+    def load_state(cls, seller_id: str, dataset, save_path: str, **kwargs):
+        """Loads a seller's state from a file and returns a new instance."""
+        seller = cls(seller_id=seller_id, dataset=dataset, save_path=save_path, **kwargs)
+        file_path = seller.experiment_save_path / "seller_state.json"
+        if file_path.exists():
+            with open(file_path, 'r') as f:
+                state = json.load(f)
+            # Restore stats and history
+            # Note: This is a simple restoration; a more robust solution might
+            # involve updating the self.stats object directly.
+            seller.selection_history = state.get('selection_history', [])
+            seller.federated_round_history = state.get('federated_round_history', [])
+            logging.info(f"Loaded state for seller {seller_id} from {file_path}")
+        return seller
+
+
+
+
+
+
