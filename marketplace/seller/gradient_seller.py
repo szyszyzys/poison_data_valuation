@@ -6,6 +6,7 @@ import time
 # Add these class definitions as well
 from abc import ABC, abstractmethod
 from collections import abc  # abc.Mapping for general dicts
+from dataclasses import field, dataclass
 from typing import Any, Callable, Set
 from typing import Dict
 from typing import List, Optional
@@ -20,10 +21,9 @@ from torch.utils.data import DataLoader, Dataset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
     BackdoorTextGenerator
-from common.enums import ImageTriggerType, ImageTriggerLocation, GeneralAttackName, ImageBackdoorAttackName
+from common.enums import ImageTriggerType, ImageTriggerLocation, ImageBackdoorAttackName
 from common.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, BackdoorTextConfig, SybilConfig, \
     RuntimeDataConfig, TrainingConfig
-from common.status_save import ClientState
 from common.utils import unflatten_tensor
 from marketplace.seller.seller import BaseSeller
 from model.utils import local_training_and_get_gradient
@@ -275,6 +275,16 @@ class GradientSeller(BaseSeller):
 
         self.last_computed_gradient = None
         self.last_training_stats = None
+
+
+@dataclass
+class ClientState:
+    seller_obj: GradientSeller  # The actual seller instance
+    selection_history: collections.deque = field(default_factory=lambda: collections.deque(maxlen=20))  # Example maxlen
+    selection_rate: float = 0.0
+    rounds_participated: int = 0
+    phase: str = "benign"  # "benign" or "attack"
+    role: Optional[str] = "hybrid"  # "attacker", "explorer", or "hybrid"
 
 
 class SybilCoordinator:
@@ -727,7 +737,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         attack_name = self.backdoor_params.attack_name
 
         if not should_attack:
-            attack_name = GeneralAttackName.NONE
+            attack_name = "none"
         logging.info(f"[{self.seller_id}] Round {current_round}. Behavior: {attack_name}.")
 
         base_model = self.model_factory().to(self.device)

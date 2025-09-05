@@ -10,7 +10,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from common.enums import PoisonType, ServerAttackMode
-from common.gradient_market_configs import AppConfig
+from common.gradient_market_configs import AppConfig, ServerAttackConfig
 from entry.gradient_market.privacy_attack import GradientInversionAttacker
 from marketplace.market.data_market import DataMarketplace
 from marketplace.seller.seller import BaseSeller
@@ -24,7 +24,8 @@ class MarketplaceConfig:
     dataset_name: str
     input_shape: Tuple[int, int, int]
     num_classes: int
-    privacy_attack_config: ServerPrivacyConfig = field(default_factory=ServerPrivacyConfig)
+    privacy_attack_config: ServerAttackConfig = field(default_factory=ServerAttackConfig)
+
 
 class DataMarketplaceFederated(DataMarketplace):
     def __init__(self, cfg: AppConfig, aggregator, evaluator, sellers, input_shape: tuple, attacker=None):

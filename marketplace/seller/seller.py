@@ -1,5 +1,6 @@
 import json
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
@@ -17,7 +18,6 @@ class SellerStats:
     market_share: float = 0.0
     revenue: float = 0.0
     avg_price: float = 0.0
-
 
 
 class BaseSeller(ABC):
@@ -163,9 +163,3 @@ class BaseSeller(ABC):
             seller.federated_round_history = state.get('federated_round_history', [])
             logging.info(f"Loaded state for seller {seller_id} from {file_path}")
         return seller
-
-
-
-
-
-
