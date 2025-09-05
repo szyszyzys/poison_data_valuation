@@ -67,16 +67,41 @@ class FederatedDataPartitioner:
 
     def partition(self, strategy: str, buyer_config: Dict, partition_params: Dict):
         """Main partitioning dispatcher."""
-        all_indices = np.arange(len(self.dataset))
-        seller_pool_indices = all_indices
-        self.test_indices = np.array([], dtype=int)  # Initialize test_indices
+        is_subset = isinstance(self.dataset, Subset)
+        actual_dataset = self.dataset.dataset if is_subset else self.dataset
+
+        available_indices = np.array(self.dataset.indices if is_subset else np.arange(len(self.dataset)))
+
+        seller_pool_indices = np.copy(available_indices)
+        self.test_indices = np.array([], dtype=int)
 
         # --- Stage 1: Define Buyer and Seller Pools Based on Metadata ---
-        if isinstance(self.dataset, Camelyon16Custom):
+        if isinstance(actual_dataset, CelebACustom):
+            logger.info("Partitioning CelebA based on 'identity' metadata.")
+
+            # Get identities ONLY for the available samples within the subset or full dataset
+            identities = actual_dataset.identity[available_indices].squeeze().numpy()
+            buyer_ids = set(range(1, 101))  # Example: first 100 identities are buyers
+
+            # Create a boolean mask to find which of the available samples belong to the buyer
+            is_buyer_mask = np.isin(identities, list(buyer_ids))
+
+            # Use the mask to select the corresponding original indices
+            buyer_pool = available_indices[is_buyer_mask]
+            seller_pool_indices = available_indices[~is_buyer_mask]
+
+            np.random.shuffle(buyer_pool)
+            self.buyer_indices = buyer_pool[:buyer_config.get("num_root_samples", 1000)]
+
+        elif isinstance(actual_dataset, Camelyon16Custom):
             logger.info("Partitioning Camelyon16 based on 'center' metadata.")
-            meta = self.dataset.metadata
-            buyer_pool = all_indices[meta['center'] == 'Utrecht']
-            seller_pool_indices = all_indices[meta['center'] == 'Radboud']
+
+            # Get metadata ONLY for the available samples
+            meta_subset = actual_dataset.metadata.iloc[available_indices]
+
+            buyer_mask = (meta_subset['center'] == 'Utrecht')
+            buyer_pool = available_indices[buyer_mask]
+            seller_pool_indices = available_indices[~buyer_mask]
 
             # Split the buyer pool into a root set and a test set
             np.random.shuffle(buyer_pool)
@@ -84,22 +109,10 @@ class FederatedDataPartitioner:
             self.buyer_indices = buyer_pool[:split_idx]
             self.test_indices = buyer_pool[split_idx:]
 
-        elif isinstance(self.dataset, CelebACustom):
-            logger.info("Partitioning CelebA based on 'identity' metadata.")
-            ids = self.dataset.identity.squeeze().numpy()
-            buyer_ids = set(range(1, 101))  # Example: first 100 identities are buyers
-
-            buyer_pool = all_indices[np.isin(ids, list(buyer_ids))]
-            seller_pool_indices = all_indices[~np.isin(ids, list(buyer_ids))]
-
-            np.random.shuffle(buyer_pool)
-            self.buyer_indices = buyer_pool[:buyer_config.get("num_root_samples", 1000)]
-
         logger.info(
             f"Partitioning {len(seller_pool_indices)} seller samples among {self.num_clients} clients using '{strategy}' strategy.")
 
         if strategy == 'property-skew':
-            # Pass the config object directly
             self._partition_property_skew(seller_pool_indices, PropertySkewParams(**partition_params))
         else:
             raise ValueError(f"Unknown partitioning strategy: {strategy}")
