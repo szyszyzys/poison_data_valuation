@@ -13,8 +13,7 @@ from torch.utils.data import Dataset
 from attack.attack_gradient_market.poison_attack.attack_utils import BackdoorImageGenerator, LabelFlipGenerator, \
     PoisonGenerator
 from attack.attack_gradient_market.poison_attack.attack_utils import BackdoorTextGenerator
-from common.datasets.image_data_processor import get_image_dataset
-from common.datasets.text_data_processor import get_text_data_set
+from common.datasets.dataset import get_image_dataset, get_text_dataset
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig, BackdoorTextConfig, BackdoorImageConfig, \
     LabelFlipConfig, RuntimeDataConfig
@@ -141,7 +140,7 @@ def setup_data_and_model(cfg: AppConfig):
     if is_text:
         ### FIXED ###
         # Renamed 'client_loaders' to 'seller_loaders' for consistency.
-        _, seller_loaders, test_loader, classes, vocab, pad_idx = get_text_data_set(cfg)
+        _, seller_loaders, test_loader, classes, vocab, pad_idx = get_text_dataset(cfg)
         num_classes = len(classes)
         model_init_cfg = {"num_classes": num_classes, "vocab_size": len(vocab), "padding_idx": pad_idx}
         model_factory = lambda: get_text_model(model_name=cfg.experiment.model_structure, **model_init_cfg)

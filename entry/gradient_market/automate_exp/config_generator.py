@@ -3,6 +3,7 @@
 import copy
 import itertools
 from dataclasses import asdict
+from enum import Enum
 from pathlib import Path
 from types import NoneType
 
@@ -10,10 +11,9 @@ import numpy as np
 import yaml
 
 from common.gradient_market_configs import AppConfig
-from scenarios import Scenario
+from entry.gradient_market.automate_exp.scenarios import Scenario
 
 
-# --- YAML Dumper for handling None and Numpy types gracefully ---
 class CustomDumper(yaml.SafeDumper):
     """A custom YAML dumper to correctly handle None and numpy types."""
 
@@ -27,8 +27,13 @@ class CustomDumper(yaml.SafeDumper):
         if isinstance(data, np.bool_): return self.represent_bool(bool(data))
         return self.represent_data(data)
 
+    def represent_enum(self, data):
+        """Tells YAML how to represent any Enum: by using its value."""
+        return self.represent_scalar('tag:yaml.org,2002:str', data.value)
+
 
 CustomDumper.add_representer(NoneType, CustomDumper.represent_none)
+CustomDumper.add_multi_representer(Enum, CustomDumper.represent_enum)
 for numpy_type in (np.integer, np.floating, np.ndarray, np.bool_):
     CustomDumper.add_multi_representer(numpy_type, CustomDumper.represent_numpy)
 

@@ -29,6 +29,8 @@ class ExperimentConfig:
     device: str
     save_path: str = "./results"
     num_classes: int = 0  # Default to 0, will be set dynamically at runtime
+    use_subset: bool = False
+    subset_size: int = 500  # Number of samples to use in the subset
 
 
 @dataclass
@@ -160,11 +162,23 @@ class PropertySkewParams:
 
 
 @dataclass
+class TextPropertySkewParams:
+    """Parameters for the 'property-skew' text data splitting strategy."""
+    property_key: str = "software"  # The keyword/phrase to search for
+    num_high_prevalence_clients: int = 2
+    num_security_attackers: int = 2
+    high_prevalence_ratio: float = 0.8
+    low_prevalence_ratio: float = 0.1
+    standard_prevalence_ratio: float = 0.4
+
+
+@dataclass
 class TextDataConfig:
     """All settings related to a text dataset source."""
     vocab: VocabConfig
     strategy: str = "discovery"
     discovery: Optional[DiscoverySplitParams] = None
+    property_skew: Optional[TextPropertySkewParams] = None
     buyer_config: Dict[str, Any] = field(default_factory=dict)
 
 

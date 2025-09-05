@@ -280,7 +280,7 @@ class GradientInversionAttacker:
         # This logic is now fully supported by your updated config
         if self.victim_strategy == VictimStrategy.RANDOM:
             victim_id = random.choice(all_seller_ids)
-        else:  # FIXED
+        else:
             idx = self.config.fixed_victim_idx
             if not (0 <= idx < len(all_seller_ids)):
                 logging.warning(f"GIA: Fixed victim index {idx} out of bounds. Skipping.")

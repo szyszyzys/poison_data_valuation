@@ -9,17 +9,14 @@ of data-based attacks like property inference by controlling attribute prevalenc
 import json
 import logging
 import os
-import random
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import Dataset
 from torchvision import datasets, transforms
-
-from common.gradient_market_configs import PropertySkewConfig, AppConfig
 
 # --- Setup logging for better feedback ---
 logging.basicConfig(
@@ -99,11 +96,6 @@ class Camelyon16Custom(Dataset):
             # 'label' column: 1 for tumor, 0 for normal
             return self.metadata.iloc[item_idx]['label'] == 1
         elif property_key in self.metadata.columns:
-            # ### NEW ###
-            # This allows partitioning by any metadata column, e.g., 'center'.
-            # This is more flexible but assumes binary or specific value checks.
-            # You might need to adjust what value you're checking against.
-            # For simplicity, let's assume it checks for presence (not None/NaN).
             return pd.notna(self.metadata.iloc[item_idx][property_key])
 
         return False
@@ -147,124 +139,6 @@ def load_dataset(name: str, root: str = "./data", download: bool = True) -> Tupl
     raise NotImplementedError(f"Dataset '{name}' is not supported in this configuration.")
 
 
-def _extract_targets(dataset: Dataset) -> np.ndarray:
-    if hasattr(dataset, "targets"):
-        return np.array(dataset.targets)
-    return np.array([dataset[i][1] for i in range(len(dataset))])
-
-
-class FederatedDataPartitioner:
-    """Handles the partitioning of a dataset for a federated learning scenario."""
-
-    def __init__(self, dataset: Dataset, num_clients: int, seed: int = 42):
-        self.dataset = dataset
-        self.num_clients = num_clients
-        self.seed = seed
-        self.targets = _extract_targets(dataset)
-        self.buyer_indices: np.ndarray = np.array([], dtype=int)
-        self.client_indices: Dict[int, List[int]] = {i: [] for i in range(num_clients)}
-        self.client_properties: Dict[int, str] = {}  # Ground truth for PIA
-        random.seed(seed)
-        np.random.seed(seed)
-
-    def partition(self, strategy: str, buyer_config: Dict, partition_params: Dict):
-        """Main partitioning dispatcher."""
-        all_indices = np.arange(len(self.dataset))
-        seller_pool_indices = all_indices
-        self.test_indices = np.array([], dtype=int)  # Initialize test_indices
-
-        # --- Stage 1: Define Buyer and Seller Pools Based on Metadata ---
-        if isinstance(self.dataset, Camelyon16Custom):
-            logger.info("Partitioning Camelyon16 based on 'center' metadata.")
-            meta = self.dataset.metadata
-            buyer_pool = all_indices[meta['center'] == 'Utrecht']
-            seller_pool_indices = all_indices[meta['center'] == 'Radboud']
-
-            # Split the buyer pool into a root set and a test set
-            np.random.shuffle(buyer_pool)
-            split_idx = int(len(buyer_pool) * buyer_config.get("root_set_fraction", 0.2))
-            self.buyer_indices = buyer_pool[:split_idx]
-            self.test_indices = buyer_pool[split_idx:]
-
-        elif isinstance(self.dataset, CelebACustom):
-            logger.info("Partitioning CelebA based on 'identity' metadata.")
-            ids = self.dataset.identity.squeeze().numpy()
-            buyer_ids = set(range(1, 101))  # Example: first 100 identities are buyers
-
-            buyer_pool = all_indices[np.isin(ids, list(buyer_ids))]
-            seller_pool_indices = all_indices[~np.isin(ids, list(buyer_ids))]
-
-            np.random.shuffle(buyer_pool)
-            self.buyer_indices = buyer_pool[:buyer_config.get("num_root_samples", 1000)]
-
-        logger.info(
-            f"Partitioning {len(seller_pool_indices)} seller samples among {self.num_clients} clients using '{strategy}' strategy.")
-
-        if strategy == 'property-skew':
-            # Pass the config object directly
-            self._partition_property_skew(seller_pool_indices, PropertySkewConfig(**partition_params))
-        else:
-            raise ValueError(f"Unknown partitioning strategy: {strategy}")
-        return self
-
-    def _partition_property_skew(self, seller_pool_indices: np.ndarray, config: PropertySkewConfig):
-        """Partitions sellers based on the prevalence of a specific data property."""
-        num_low_prevalence = self.num_clients - config.num_high_prevalence_clients - config.num_security_attackers
-
-        # --- Define client groups ---
-        client_ids = list(range(self.num_clients))
-        np.random.shuffle(client_ids)
-
-        high_clients = client_ids[:config.num_high_prevalence_clients]
-        low_clients = client_ids[
-                      config.num_high_prevalence_clients: config.num_high_prevalence_clients + num_low_prevalence]
-        security_clients = client_ids[config.num_high_prevalence_clients + num_low_prevalence:]
-
-        for cid in high_clients: self.client_properties[cid] = f"High-Prevalence ({config.property_key})"
-        for cid in low_clients: self.client_properties[cid] = f"Low-Prevalence ({config.property_key})"
-        for cid in security_clients: self.client_properties[cid] = "Security-Attacker (Standard-Prevalence)"
-
-        # --- Separate seller data by property ---
-        prop_true_indices, prop_false_indices = [], []
-        for idx in seller_pool_indices:
-            # Note: The has_property method in the dataset now needs to know the property_key
-            if self.dataset.has_property(idx, property_key=config.property_key):
-                prop_true_indices.append(idx)
-            else:
-                prop_false_indices.append(idx)
-
-        np.random.shuffle(prop_true_indices)
-        np.random.shuffle(prop_false_indices)
-
-        # --- Distribute data using pointers for efficiency ---
-        samples_per_client = len(seller_pool_indices) // self.num_clients
-        true_ptr, false_ptr = 0, 0
-
-        def assign_data(client_list, prevalence):
-            nonlocal true_ptr, false_ptr
-            for client_id in client_list:
-                num_prop_true = int(samples_per_client * prevalence)
-                num_prop_false = samples_per_client - num_prop_true
-
-                # Assign samples with the property
-                end_true = true_ptr + num_prop_true
-                self.client_indices[client_id].extend(prop_true_indices[true_ptr:end_true])
-                true_ptr = end_true
-
-                # Assign samples without the property
-                end_false = false_ptr + num_prop_false
-                self.client_indices[client_id].extend(prop_false_indices[false_ptr:end_false])
-                false_ptr = end_false
-
-        assign_data(high_clients, config.high_prevalence_ratio)
-        assign_data(low_clients, config.low_prevalence_ratio)
-        assign_data(security_clients, config.standard_prevalence_ratio)
-
-    def get_splits(self) -> Tuple[np.ndarray, Dict[int, List[int]], np.ndarray]:
-        """Returns the final buyer, client, and test index splits."""
-        return self.buyer_indices, self.client_indices, getattr(self, 'test_indices', np.array([]))
-
-
 # --- 3. Statistics and Orchestration ---
 
 def save_data_statistics(buyer_indices, seller_splits, client_properties, targets, output_dir) -> Dict:
@@ -285,104 +159,6 @@ def save_data_statistics(buyer_indices, seller_splits, client_properties, target
         json.dump(stats, f, indent=4)
     logger.info(f"Data statistics saved to {os.path.join(output_dir, 'data_statistics.json')}")
     return stats
-
-
-# Updated to accept the AppConfig object
-def setup_federated_marketplace(cfg: AppConfig, save_dir: str, seed: int = 42):
-    """Main orchestration function to setup the entire federated data marketplace."""
-    # Access config values from the dataclass
-    train_set, _ = load_dataset(cfg.experiment.dataset_name)
-
-    partitioner = FederatedDataPartitioner(train_set, cfg.experiment.n_sellers, seed)
-
-    # Assumes your config YAML has a "data_partition" section
-    partitioner.partition(
-        strategy=cfg.data_partition.strategy,
-        buyer_config=cfg.data_partition.buyer_config,
-        partition_params=cfg.data_partition.partition_params
-    )
-    buyer_indices, seller_splits, test_indices = partitioner.get_splits()
-
-    stats = save_data_statistics(
-        buyer_indices, seller_splits, partitioner.client_properties,
-        _extract_targets(train_set), save_dir
-    )
-    batch_size = cfg.training.batch_size
-    buyer_loader = DataLoader(Subset(train_set, buyer_indices), batch_size=batch_size, shuffle=True)
-    seller_loaders = {cid: DataLoader(Subset(train_set, indices), batch_size=batch_size, shuffle=True)
-                      for cid, indices in seller_splits.items() if indices}
-    test_loader = DataLoader(Subset(train_set, test_indices), batch_size=batch_size, shuffle=False)
-
-    logger.info("Federated marketplace setup complete. DataLoaders are ready. ✅")
-    return buyer_loader, seller_loaders, test_loader, stats
-
-
-# Place this function within your federated_data_setup.py file
-
-def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader], DataLoader, Dict]:
-    """
-    A unified function to load, partition, and prepare federated image datasets.
-    """
-    logger.info(f"--- Starting Federated Dataset Setup for '{cfg.experiment.dataset_name}' ---")
-
-    # This is the new, correct way to get data-related settings.
-    image_cfg = cfg.data.image
-    if not image_cfg:
-        raise ValueError("Image data configuration ('data.image') is missing from the AppConfig.")
-
-    # 1. Load the base dataset using the helper function
-    # The property_key is now accessed from its new location.
-    property_key = image_cfg.property_skew.property_key
-
-    # This logic is now simpler, as the key is always present in the config
-    train_set, _ = load_dataset_with_property(cfg.experiment.dataset_name, property_key=property_key)
-
-    # 2. Initialize the partitioner
-    partitioner = FederatedDataPartitioner(
-        dataset=train_set,
-        num_clients=cfg.experiment.n_sellers,
-        seed=cfg.seed
-    )
-
-    # 3. Execute the partitioning strategy defined in the config
-    logger.info(f"Applying '{image_cfg.strategy}' partitioning strategy...")
-
-    partition_params_dict = asdict(image_cfg.property_skew)
-
-    partitioner.partition(
-        strategy=image_cfg.strategy,
-        buyer_config=image_cfg.buyer_config,
-        partition_params=partition_params_dict  # Pass the dictionary here
-    )
-    buyer_indices, seller_splits, test_indices = partitioner.get_splits()
-
-    # 4. Generate and save statistics (no changes needed here)
-    stats = save_data_statistics(
-        buyer_indices=buyer_indices,
-        seller_splits=seller_splits,
-        client_properties=partitioner.client_properties,
-        targets=_extract_targets(train_set),
-        output_dir=cfg.experiment.save_path
-    )
-
-    # 5. Create the final DataLoader objects (no changes needed here)
-    batch_size = cfg.training.batch_size
-    buyer_loader = DataLoader(Subset(train_set, buyer_indices), batch_size=batch_size, shuffle=True)
-
-    seller_loaders = {
-        cid: DataLoader(Subset(train_set, indices), batch_size=batch_size, shuffle=True)
-        for cid, indices in seller_splits.items() if indices
-    }
-
-    test_loader = None
-    if len(test_indices) > 0:
-        test_loader = DataLoader(Subset(train_set, test_indices), batch_size=batch_size, shuffle=False)
-        logger.info(f"Created test loader with {len(test_indices)} samples.")
-    else:
-        logger.warning("No test indices found; test_loader will be None.")
-
-    logger.info("✅ Federated dataset setup complete. DataLoaders are ready.")
-    return buyer_loader, seller_loaders, test_loader, stats
 
 
 # You would also need a slight modification to load_dataset to handle the property_key for CelebA

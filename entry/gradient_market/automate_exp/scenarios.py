@@ -3,11 +3,9 @@
 from dataclasses import dataclass, field
 from typing import List, Callable, Dict, Any
 
+from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
 from common.enums import PoisonType
-# Make sure your config schemas and enums are accessible from a central place
 from common.gradient_market_configs import AppConfig
-# Import your base config factories from your main runner script
-from generate_configs import get_base_image_config, get_base_text_config
 
 
 # --- Define the structure of a Scenario ---
@@ -51,68 +49,185 @@ def use_sybil_amplify(config: AppConfig) -> AppConfig:
     config.adversary_seller_config.sybil.role_config = {"amplify": 1.0}
     return config
 
+
+ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+
+# ==============================================================================
+# ALL_SCENARIOS
+# ==============================================================================
 ALL_SCENARIOS = [
-    # --- IMAGE: Baseline Scenarios (No Attack) ---
-    Scenario(
-        name="baseline_celeba",
-        base_config_factory=get_base_image_config,  # Link to the image base
-        modifiers=[use_celeba_config],
-        parameter_grid={"experiment.aggregation_method": ['fedavg', 'krum']}
-    ),
-    Scenario(
-        name="baseline_camelyon",
-        base_config_factory=get_base_image_config,  # Link to the image base
-        modifiers=[use_camelyon_config],
-        parameter_grid={"experiment.aggregation_method": ['fedavg', 'krum']}
-    ),
+    # ==========================================================================
+    # == Experiment Group 1: Varying Adversary Rate (Fixed Poison Rate) ==
+    # ==========================================================================
 
-    # --- TEXT: Baseline Scenario (AG_NEWS) ---
+    # --- IMAGE (CelebA) ---
     Scenario(
-        name="baseline_agnews",
-        base_config_factory=get_base_text_config,  # Link to the text base
-        modifiers=[],  # No dataset modifier needed if base is already AG_NEWS
-        parameter_grid={"experiment.aggregation_method": ['fedavg', 'median']}
-    ),
-
-    # --- IMAGE: Backdoor Attack Scenarios ---
-    Scenario(
-        name="backdoor_celeba",
+        name="poison_vary_adv_rate_celeba",
         base_config_factory=get_base_image_config,
         modifiers=[use_celeba_config, use_backdoor_attack],
         parameter_grid={
-            "experiment.adv_rate": [0.1, 0.3],
-            "adversary_seller_config.poisoning.poison_rate": [0.2, 0.5]
-        }
-    ),
-    Scenario(
-        name="backdoor_camelyon",
-        base_config_factory=get_base_image_config,
-        modifiers=[use_camelyon_config, use_backdoor_attack],
-        parameter_grid={
+            # Iterate through all 4 aggregation methods
+            "experiment.aggregation_method": ALL_AGGREGATORS,
+            # Fix the poison rate for this experiment group
+            "adversary_seller_config.poisoning.poison_rate": [0.3],
+            # Sweep the adversary rate
             "experiment.adv_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
-            "adversary_seller_config.poisoning.poison_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 1]
         }
     ),
 
-    # --- TEXT: Backdoor Attack Scenarios ---
+    # --- TEXT (AG_NEWS) ---
     Scenario(
-        name="backdoor_agnews",
+        name="poison_vary_adv_rate_agnews",
         base_config_factory=get_base_text_config,
         modifiers=[use_backdoor_attack],
         parameter_grid={
+            # Iterate through all 4 aggregation methods
+            "experiment.aggregation_method": ALL_AGGREGATORS,
+            # Fix the poison rate for this experiment group
+            "adversary_seller_config.poisoning.poison_rate": [0.3],
+            # Sweep the adversary rate
             "experiment.adv_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
-            "adversary_seller_config.poisoning.text_backdoor_params.trigger_content": ["order", "movie", "apple"]
         }
     ),
 
-    # --- IMAGE: Sybil Amplify Attack Scenarios ---
+    # ==========================================================================
+    # == Experiment Group 2: Varying Poison Rate (Fixed Adversary Rate) ==
+    # ==========================================================================
+
+    # --- IMAGE (CelebA) ---
     Scenario(
-        name="sybil_amplify_celeba",
+        name="poison_vary_poison_rate_celeba",
         base_config_factory=get_base_image_config,
-        modifiers=[use_celeba_config, use_sybil_amplify],
+        modifiers=[use_celeba_config, use_backdoor_attack],
         parameter_grid={
-            "experiment.adv_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
-            "adversary_seller_config.sybil.strategy_configs.amplify.factor": [2.0, 5.0, 10.0]
+            # Iterate through all 4 aggregation methods
+            "experiment.aggregation_method": ALL_AGGREGATORS,
+            # Fix the adversary rate for this experiment group
+            "experiment.adv_rate": [0.3],
+            # Sweep the local data poison rate
+            "adversary_seller_config.poisoning.poison_rate": [0.1, 0.3, 0.5, 0.7, 1.0],
+        }
+    ),
+
+    # --- TEXT (AG_NEWS) ---
+    Scenario(
+        name="poison_vary_poison_rate_agnews",
+        base_config_factory=get_base_text_config,
+        modifiers=[use_backdoor_attack],
+        parameter_grid={
+            # Iterate through all 4 aggregation methods
+            "experiment.aggregation_method": ALL_AGGREGATORS,
+            # Fix the adversary rate for this experiment group
+            "experiment.adv_rate": [0.3],
+            # Sweep the local data poison rate
+            "adversary_seller_config.poisoning.poison_rate": [0.1, 0.3, 0.5, 0.7, 1.0],
         }
     ),
 ]
+
+ALL_SCENARIOS.extend([
+    # ==========================================================================
+    # == Scenario for Offline Privacy Analysis Logging ==
+    # ==========================================================================
+
+    Scenario(
+        name="privacy_analysis_logging_celeba",
+        base_config_factory=get_base_image_config,
+        modifiers=[use_celeba_config],  # Or any other dataset modifier
+        parameter_grid={
+            # Use a standard, non-robust aggregator to see the raw leakage
+            "aggregation.method": ["fedavg"],
+
+            # --- Key Settings for Logging ---
+            # Turn ON gradient saving
+            "debug.save_individual_gradients": [True],
+            # Save the gradient from EVERY round
+            "debug.gradient_save_frequency": [1],
+
+            # --- Ensure NO Attacks are Active ---
+            # Turn OFF client-side poisoning
+            "adversary_seller_config.poisoning.type": [PoisonType.NONE],
+            # Turn OFF server-side attacks during the run
+            "server_attack_config.attack_name": ['none'],
+
+            # This is the parameter you will vary in your experiments
+            "training.batch_size": [64],
+        }
+    ),
+
+    Scenario(
+        name="privacy_analysis_robust_aggregators",
+        base_config_factory=get_base_image_config,
+        modifiers=[use_celeba_config],
+        parameter_grid={
+            # --- Use a robust aggregator ---
+            "aggregation.method": ["fltrust", "martfl"],  # This will create runs for all three
+
+            "debug.save_individual_gradients": [True],
+            "debug.gradient_save_frequency": [1],
+            "adversary_seller_config.poisoning.type": [PoisonType.NONE],
+            "server_attack_config.attack_name": ['none'],
+
+            # --- Make one client particularly vulnerable ---
+            "training.batch_size": [1],
+        }
+    )
+
+])
+
+
+def use_small_subset(config: AppConfig) -> AppConfig:
+    """A modifier to drastically reduce dataset size for quick tests."""
+    config.experiment.use_subset = True
+    return config
+
+
+smoke_test_scenario = Scenario(
+    name="smoke_test_image",
+    base_config_factory=get_base_image_config,
+    modifiers=[use_celeba_config, use_small_subset, use_backdoor_attack],
+    parameter_grid={
+        # Use a small number of rounds and sellers
+        "experiment.global_rounds": [2],
+        "experiment.n_sellers": [4],
+        "training.local_epochs": [1],
+
+        # Use a robust aggregator to test its logic
+        "aggregation.method": ["martfl"],
+
+        # Activate one malicious client
+        "experiment.adv_rate": [0.25],
+        "adversary_seller_config.poisoning.poison_rate": [0.5],
+
+        # Initialize the server-side attacker to make sure it doesn't crash
+        "server_attack_config.attack_name": ['gradient_inversion'],
+
+        # Test the gradient saving feature
+        "debug.save_individual_gradients": [True],
+        "debug.gradient_save_frequency": [1],
+    }
+)
+
+smoke_test_text_scenario = Scenario(
+    name="smoke_test_text",
+    base_config_factory=get_base_text_config, # <-- Use the text base config
+    modifiers=[use_backdoor_attack], # Use an attack to test that path
+    parameter_grid={
+        # Minimal settings for a fast run
+        "experiment.dataset_name": ["AG_NEWS"],
+        "experiment.global_rounds": [2],
+        "experiment.n_sellers": [4],
+        "experiment.adv_rate": [0.5],
+
+        # --- CRITICAL: Use a small subset of the data ---
+        "experiment.use_subset": [True],
+        "experiment.subset_size": [150],
+
+        "experiment.device": ["cpu"]
+    }
+)
+
+
+ALL_SCENARIOS.append(smoke_test_scenario)
+
+ALL_SCENARIOS.append(smoke_test_text_scenario)
