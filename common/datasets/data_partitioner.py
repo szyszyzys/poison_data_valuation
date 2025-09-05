@@ -126,12 +126,10 @@ class FederatedDataPartitioner:
         prop_true_indices, prop_false_indices = [], []
         for idx in seller_pool_indices:
             # Note: The has_property method in the dataset now needs to know the property_key
-            if isinstance(self.dataset, CelebACustom):
-                # CelebACustom uses the property_key it was initialized with
-                has_prop = self.dataset.has_property(idx)
+            if isinstance(actual_dataset, CelebACustom):
+                has_prop = actual_dataset.has_property(idx)
             else:
-                # Other datasets like Camelyon16 expect the key to be passed
-                has_prop = self.dataset.has_property(idx, property_key=config.property_key)
+                has_prop = actual_dataset.has_property(idx, property_key=config.property_key)
 
             if has_prop:
                 prop_true_indices.append(idx)
