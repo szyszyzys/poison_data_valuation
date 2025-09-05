@@ -3,7 +3,7 @@
 # ==============================================================================
 # Script to download and prepare the CelebA dataset for PyTorch/Torchvision
 #
-# v2.0 - Updated with working links to fix 404 Not Found errors.
+# v3.0 - Updated text file links to the official PyTorch repo to fix 404 errors.
 # ==============================================================================
 
 # Exit immediately if a command exits with a non-zero status.
@@ -15,7 +15,7 @@ CELEBA_DIR="$DATA_ROOT/celeba"
 
 # Correct, working URLs for the dataset files.
 ZIP_URL="https://www.dropbox.com/s/d1kjpkqklf0uw77/img_align_celeba.zip?dl=1"
-TXT_BASE_URL="https://raw.githubusercontent.com/NVlabs/stylegan2-ada-pytorch/main/celeba_helpers"
+TXT_BASE_URL="https://raw.githubusercontent.com/pytorch/vision/main/references/public_data/celeba"
 
 FILES_TO_DOWNLOAD=(
   "img_align_celeba.zip"
@@ -30,7 +30,7 @@ EVAL_DIR="$CELEBA_DIR/eval"
 
 # --- Script Execution ---
 echo "======================================="
-echo "  CelebA Dataset Setup Script (v2.0)"
+echo "  CelebA Dataset Setup Script (v3.0)"
 echo "======================================="
 
 # 1. Create directory structure
@@ -53,10 +53,9 @@ for file in "${FILES_TO_DOWNLOAD[@]}"; do
     echo "    - Downloading $file..."
     if [[ "$file" == *.zip ]]; then
       # Use the Dropbox URL for the zip file
-      # Use -O to save the file with the correct name
       wget --show-progress -O "$file" "$ZIP_URL"
     else
-      # Use the GitHub URL for the text files
+      # Use the official PyTorch GitHub URL for the text files
       wget --show-progress "$TXT_BASE_URL/$file"
     fi
   fi
