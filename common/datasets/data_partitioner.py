@@ -107,6 +107,7 @@ class FederatedDataPartitioner:
 
     def _partition_property_skew(self, seller_pool_indices: np.ndarray, config: PropertySkewParams):
         """Partitions sellers based on the prevalence of a specific data property."""
+        actual_dataset = self.dataset.dataset if isinstance(self.dataset, Subset) else self.dataset
         num_low_prevalence = self.num_clients - config.num_high_prevalence_clients - config.num_security_attackers
 
         # --- Define client groups ---
