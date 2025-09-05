@@ -33,7 +33,7 @@ METRIC_MAPPING = {
     "metric_psnr": "PSNR (GIA)", "metric_ssim": "SSIM (GIA)", "metric_lpips": "LPIPS (GIA)",
     "duration_sec": "Attack Duration (s) (GIA)"
 }
-AGG_NAME_MAPPING = {"fedavg": "FedAvg", "martfl": "MartFL", "skymask": "SkyMask", "fltrust": "FLTrust"}
+AGG_NAME_MAPPING = {"fedavg": "FedAvg", "martfl": "MartFL", "skymask_utils": "SkyMask", "fltrust": "FLTrust"}
 
 
 # --- Placeholder Plotting Functions (Replace with your actual implementations) ---

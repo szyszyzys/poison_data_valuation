@@ -2,9 +2,7 @@ import copy
 import logging
 import random
 import time
-import warnings
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -18,6 +16,9 @@ from skimage.metrics import structural_similarity as compare_ssim
 from torch import optim
 from torchvision import transforms
 from torchvision.utils import save_image
+
+from common.enums import VictimStrategy
+from common.gradient_market_configs import ServerAttackConfig
 
 # --- 1. Configuration & Constants ---
 
@@ -43,22 +44,6 @@ class GIAConfig:
     log_interval: Optional[int] = 500
     return_best: bool = True
     ground_truth_labels: Optional[torch.Tensor] = None
-
-
-@dataclass
-class GradientInversionAttackerConfig:
-    """Typed configuration for scheduling and managing the GIA."""
-    perform_gradient_inversion: bool = False
-    frequency: int = 10
-    victim_strategy: str = 'random'
-    fixed_victim_idx: int = 0
-    lrs_to_try: List[float] = field(default_factory=lambda: [0.01, 0.1, 0.001])
-    base_attack_params: Dict[str, Any] = field(default_factory=dict)
-
-
-class VictimStrategy(Enum):
-    RANDOM = "random"
-    FIXED = "fixed"
 
 
 # --- 2. Core Attack & Evaluation Functions ---
@@ -270,19 +255,20 @@ class GradientInversionAttacker:
     """Encapsulates all logic for performing a Gradient Inversion Attack."""
 
     def __init__(
-            self, attack_config: GradientInversionAttackerConfig, model_template: nn.Module, device: str,
+            self, attack_config: ServerAttackConfig, model_template: nn.Module, device: str,
             save_dir: str, dataset_name: str, input_shape: Tuple[int, int, int], num_classes: int,
     ):
-        self.config = attack_config
+        self.config = attack_config.gradient_inversion_params
         self.model_template = model_template
         self.device = torch.device(device)
         self.save_dir = Path(save_dir) / "gradient_inversion"
         self.dataset_name, self.input_shape, self.num_classes = dataset_name, input_shape, num_classes
-        self.victim_strategy = VictimStrategy(self.config.victim_strategy)
+        # This will now work correctly with the Enum
+        self.victim_strategy = self.config.victim_strategy
 
     def should_run(self, round_number: int) -> bool:
         """Determines if the attack should be performed this round."""
-        return self.config.perform_gradient_inversion and (round_number % self.config.frequency == 0)
+        return (round_number > 0) and (round_number % self.config.frequency == 0)
 
     def execute(
             self, round_number: int, gradients_dict: Dict[str, List[torch.Tensor]],
@@ -291,26 +277,29 @@ class GradientInversionAttacker:
         """Selects a victim, tunes the attack LR, runs GIA, and returns the best result log."""
         if not all_seller_ids: return None
 
+        # This logic is now fully supported by your updated config
         if self.victim_strategy == VictimStrategy.RANDOM:
             victim_id = random.choice(all_seller_ids)
         else:  # FIXED
             idx = self.config.fixed_victim_idx
             if not (0 <= idx < len(all_seller_ids)):
-                logging.warning(f"GIA: Fixed victim index {idx} out of bounds. Skipping.");
+                logging.warning(f"GIA: Fixed victim index {idx} out of bounds. Skipping.")
                 return None
             victim_id = all_seller_ids[idx]
 
         target_gradient = gradients_dict.get(victim_id)
         victim_gt = ground_truth_dict.get(victim_id, {})
         if target_gradient is None:
-            logging.warning(f"GIA: Could not retrieve gradient for victim '{victim_id}'. Skipping.");
+            logging.warning(f"GIA: Could not retrieve gradient for victim '{victim_id}'. Skipping.")
             return None
 
         logging.info(f"GIA: Starting attack on victim '{victim_id}' (Round {round_number})...")
         best_log, best_psnr = None, -float('inf')
 
+        # This LR tuning loop is now correctly configured
         for lr in self.config.lrs_to_try:
             logging.info(f"  Trying LR: {lr}")
+
             core_attack_config = GIAConfig(lr=lr, **self.config.base_attack_params)
 
             current_log = perform_and_evaluate_inversion_attack(
@@ -327,117 +316,6 @@ class GradientInversionAttacker:
                 if best_log.get("metrics"): best_log["metrics"]["best_tuned_lr"] = lr
 
         if best_log:
-            lr = best_log.get("metrics", {}).get("best_tuned_lr", "N/A")
-            logging.info(f"GIA Complete for '{victim_id}'. Best PSNR: {best_psnr:.2f} with LR: {lr}")
+            lr_str = f'{best_log.get("metrics", {}).get("best_tuned_lr", "N/A"):g}'
+            logging.info(f"GIA Complete for '{victim_id}'. Best PSNR: {best_psnr:.2f} with LR: {lr_str}")
         return best_log
-
-
-# --- 5. Example Usage ---
-
-if __name__ == '__main__':
-    # --- A. Setup a dummy environment ---
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    SAVE_DIR = "./demo_attack_results"
-    DATASET = 'CIFAR10'
-    INPUT_SHAPE = (3, 32, 32)
-    NUM_CLASSES = 10
-
-
-    # Define a simple CNN model for demonstration
-    class SimpleCNN(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.conv1 = nn.Conv2d(3, 6, 5)
-            self.pool = nn.MaxPool2d(2, 2)
-            self.conv2 = nn.Conv2d(6, 16, 5)
-            self.fc1 = nn.Linear(16 * 5 * 5, 120)
-            self.fc2 = nn.Linear(120, 84)
-            self.fc3 = nn.Linear(84, 10)
-
-        def forward(self, x):
-            x = self.pool(F.relu(self.conv1(x)))
-            x = self.pool(F.relu(self.conv2(x)))
-            x = torch.flatten(x, 1)
-            x = F.relu(self.fc1(x))
-            x = F.relu(self.fc2(x))
-            x = self.fc3(x)
-            return x
-
-
-    model_template = SimpleCNN()
-
-    # --- B. Simulate victim's data and gradient ---
-    logging.info("Simulating victim's data and gradient...")
-    victim_model = copy.deepcopy(model_template).to(DEVICE)
-    victim_model.zero_grad()
-
-    # Create realistic-looking dummy data for CIFAR-10
-    gt_images = torch.randn(1, *INPUT_SHAPE, device=DEVICE).clamp(0, 1)  # Batch size = 1
-    gt_labels = torch.tensor([3], device=DEVICE)  # Assume true label is 3
-
-    # Normalize images before passing to model
-    stats = DATASET_STATS[DATASET]
-    normalize = transforms.Normalize(mean=stats['mean'], std=stats['std'])
-
-    # Calculate the gradient
-    output = victim_model(normalize(gt_images))
-    loss = nn.CrossEntropyLoss()(output, gt_labels)
-    victim_gradient = torch.autograd.grad(loss, victim_model.parameters())
-    victim_gradient = [g.detach() for g in victim_gradient]
-
-    # --- C. Configure and run the attacker ---
-    logging.info("Configuring and running the attacker...")
-
-    # Setup the two configuration objects
-    attacker_scheduler_config = GradientInversionAttackerConfig(
-        perform_gradient_inversion=True,
-        frequency=1,
-        victim_strategy='fixed',
-        fixed_victim_idx=0,
-        lrs_to_try=[0.1, 0.01],  # LRs to test
-        base_attack_params={  # Parameters for the core attack
-            'num_images': 1,
-            'iterations': 1000,
-            'log_interval': 500,
-        }
-    )
-
-    # Instantiate the main attacker class
-    attacker = GradientInversionAttacker(
-        attack_config=attacker_scheduler_config,
-        model_template=model_template,
-        device=DEVICE,
-        save_dir=SAVE_DIR,
-        dataset_name=DATASET,
-        input_shape=INPUT_SHAPE,
-        num_classes=NUM_CLASSES
-    )
-
-    # Simulate the inputs that the attacker's execute method would receive
-    current_round = 10  # Example round number
-    all_participants = ['victim_0', 'seller_1', 'seller_2']
-    all_gradients = {'victim_0': victim_gradient}
-    all_ground_truth = {
-        'victim_0': {'images': gt_images, 'labels': gt_labels}
-    }
-
-    # Execute the attack if it should run this round
-    if attacker.should_run(current_round):
-        final_results = attacker.execute(
-            round_number=current_round,
-            gradients_dict=all_gradients,
-            all_seller_ids=all_participants,
-            ground_truth_dict=all_ground_truth
-        )
-
-        logging.info("\n--- Attack Finished ---")
-        if final_results:
-            metrics = final_results.get('metrics', {})
-            logging.info(f"  Best Tuned LR: {metrics.get('best_tuned_lr')}")
-            logging.info(f"  PSNR: {metrics.get('psnr'):.2f}")
-            logging.info(f"  SSIM: {metrics.get('ssim'):.3f}")
-            logging.info(f"  Label Accuracy: {metrics.get('label_acc')}")
-            logging.info(f"  Duration: {final_results.get('duration_sec'):.2f}s")
-            logging.info(f"  Visuals saved in: {attacker.save_dir}")
-        else:
-            logging.info("Attack did not produce a result.")

@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import entry.gradient_market.skymask.mytorch as my
+import marketplace.market_mechanism.aggregators.skymask_utils.mytorch as my
 
 
 def create_masknet(param_list, net_type, ctx):

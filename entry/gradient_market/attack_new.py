@@ -18,9 +18,11 @@ from common.datasets.text_data_processor import get_text_data_set
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig, BackdoorTextConfig, BackdoorImageConfig, \
     LabelFlipConfig, RuntimeDataConfig
-from entry.gradient_market.backdoor_attack import FederatedEarlyStopper, load_config
-from marketplace.market.markplace_gradient import DataMarketplaceFederated, MarketplaceConfig
-from marketplace.market_mechanism.martfl import Aggregator
+from common.utils import FederatedEarlyStopper
+from entry.gradient_market.automate_exp.config_parser import load_config
+from marketplace.market.markplace_gradient import DataMarketplaceFederated
+from marketplace.market.utils import FederatedEvaluator
+from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.seller.gradient_seller import GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator, \
     AdvancedPoisoningAdversarySeller
 from model.utils import get_text_model, get_image_model
@@ -230,29 +232,31 @@ def run_attack(cfg: AppConfig):
 
     # 2. FL Component Initialization
     aggregator = Aggregator(cfg.experiment.aggregation_method, model_factory())
-    sybil_coordinator = SybilCoordinator(cfg.adversary_seller_config.sybil, aggregator)
     loss_fn = nn.CrossEntropyLoss()
+    evaluator = FederatedEvaluator(loss_fn, device=cfg.experiment.device)
+    sybil_coordinator = SybilCoordinator(cfg.adversary_seller_config.sybil, aggregator)
 
-    # Get a sample batch from the test_loader to determine the input shape.
+    # Get a sample batch to determine input shape (your method is perfect)
     sample_data, _ = next(iter(test_loader))
+    input_shape = tuple(sample_data.shape[1:])
 
-    marketplace_config = MarketplaceConfig(
-        save_path=cfg.experiment.save_path,
-        dataset_name=cfg.experiment.dataset_name,
-        # Use the sample_data we just created
-        input_shape=tuple(sample_data.shape[1:]),
-        # Read num_classes from the config, which was updated in setup_data_and_model
-        num_classes=cfg.experiment.num_classes,
-        privacy_attack_config=cfg.server_privacy
+    # 3. Marketplace Initialization
+    # The marketplace now receives the full config and all its dependencies
+    marketplace = DataMarketplaceFederated(
+        cfg=cfg,
+        aggregator=aggregator,
+        evaluator=evaluator,
+        sellers={},
+        input_shape=input_shape
     )
-    marketplace = DataMarketplaceFederated(aggregator, marketplace_config)
 
-    # 3. Seller Initialization
+    # 4. Seller Initialization
     initialize_sellers(cfg, marketplace, client_loaders, model_factory, seller_extra_args, sybil_coordinator)
 
-    # 4. Federated Training Loop
-    run_training_loop(cfg, marketplace, test_loader, loss_fn, sybil_coordinator)
-
+    # 5. Federated Training Loop
+    # Note: run_training_loop no longer needs the loss_fn or sybil_coordinator,
+    # as those are handled within the marketplace or sellers.
+    run_training_loop(cfg, marketplace, test_loader)
     logging.info("--- Experiment Finished ---")
 
 

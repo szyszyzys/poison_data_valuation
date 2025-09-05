@@ -1,6 +1,6 @@
 import collections
-import copy
 import logging
+import random
 import sys
 import time
 # Add these class definitions as well
@@ -19,12 +19,12 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
-    LabelFlipGenerator, BackdoorTextGenerator
-from common.enums import TriggerType, TriggerLocation
-from common.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, LabelFlipConfig, \
-    BackdoorTextConfig, SybilConfig, RuntimeDataConfig
+    BackdoorTextGenerator
+from common.enums import ImageTriggerType, ImageTriggerLocation, GeneralAttackName, ImageBackdoorAttackName
+from common.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, BackdoorTextConfig, SybilConfig, \
+    RuntimeDataConfig, TrainingConfig
 from common.status_save import ClientState
-from marketplace.seller.adversary_gradient_seller import DataConfig, TrainingConfig, GradientSeller
+from common.utils import unflatten_tensor
 from marketplace.seller.seller import BaseSeller
 from model.utils import local_training_and_get_gradient
 
@@ -131,6 +131,150 @@ def estimate_byte_size(data: Any) -> int:
             total_size = 0  # Cannot determine size
 
     return total_size
+
+
+class GradientSeller(BaseSeller):
+    """
+    A seller that participates in federated learning by providing gradient updates.
+
+    This version is decoupled from model creation via a factory pattern and uses
+    configuration objects for clarity, making it a robust base class.
+    """
+
+    def __init__(self,
+                 seller_id: str,
+                 data_config: RuntimeDataConfig,
+                 training_config: TrainingConfig,
+                 model_factory: Callable[[], nn.Module],
+                 save_path: str = "",
+                 device: str = "cpu",
+                 **kwargs: Any):
+
+        super().__init__(
+            seller_id=seller_id,
+            dataset=data_config.dataset,
+            save_path=save_path,
+            device=device,
+            **kwargs  # Pass any remaining BaseSeller args like pricing
+        )
+        self.data_config = data_config
+        self.training_config = training_config
+        self.model_factory = model_factory
+
+        # --- State Attributes ---
+        # Cleanly manage the state from the last computation
+        self.last_computed_gradient: Optional[List[torch.Tensor]] = None
+        self.last_training_stats: Optional[Dict[str, Any]] = None
+
+    def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
+        """
+        Computes and returns the gradient update and training statistics.
+        This is the primary method for the federated learning coordinator to call.
+        """
+        try:
+            # 1. Create a fresh model instance using the injected factory.
+            local_model = self.model_factory().to(self.device)
+            local_model.load_state_dict(global_model.state_dict())
+        except Exception as e:
+            logging.error(f"[{self.seller_id}] Failed to prepare model: {e}", exc_info=True)
+            return None, {'error': 'Model preparation failed.'}
+
+        # 2. Delegate the actual training and gradient calculation.
+        gradient, stats = self._compute_local_grad(local_model, self.data_config.dataset)
+
+        # 3. Update the seller's internal state for logging or inspection.
+        self.last_computed_gradient = gradient
+        self.last_training_stats = stats
+
+        return gradient, stats
+
+    def _compute_local_grad(self, model_to_train: nn.Module, dataset_to_use: Optional[Dataset] = None) -> Tuple[
+        Optional[List[torch.Tensor]], Dict[str, Any]]:
+        """Handles the local training loop and gradient computation."""
+        if dataset_to_use is None:
+            dataset_to_use = self.data_config.dataset
+        start_time = time.time()
+
+        if not dataset_to_use or len(dataset_to_use) == 0:
+            logging.warning(f"[{self.seller_id}] Dataset is empty. Returning zero gradient.")
+            zero_grad = [torch.zeros_like(p) for p in model_to_train.parameters()]
+            return zero_grad, {'train_loss': None, 'compute_time_ms': 0}
+
+        # Create DataLoader using the provided data configuration
+        data_loader = DataLoader(
+            dataset_to_use,
+            batch_size=self.training_config.batch_size,
+            shuffle=True,
+            collate_fn=self.data_config.collate_fn
+        )
+
+        try:
+            # The core training logic is in an external, reusable function
+            grad_tensors, avg_loss = local_training_and_get_gradient(
+                model=model_to_train,
+                train_loader=data_loader,
+                device=self.device,
+                local_epochs=self.training_config.local_epochs,
+                lr=self.training_config.learning_rate,
+            )
+
+            stats = {
+                'train_loss': avg_loss,
+                'compute_time_ms': (time.time() - start_time) * 1000,
+                'upload_bytes': estimate_byte_size(grad_tensors)
+            }
+            return grad_tensors, stats
+
+        except Exception as e:
+            logging.error(f"[{self.seller_id}] Error in training loop: {e}", exc_info=True)
+            return None, {'error': 'Training failed.'}
+
+    def save_local_model(self, model_instance: nn.Module) -> None:
+        """Saves the state dictionary of a given model instance."""
+        save_file_path = self.save_path / f"local_model_{self.seller_id}.pt"
+        save_file_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            torch.save(model_instance.state_dict(), save_file_path)
+            logging.info(f"[{self.seller_id}] Saved model to {save_file_path}")
+        except Exception as e:
+            logging.error(f"[{self.seller_id}] Failed to save model: {e}")
+
+    def load_local_model(self) -> nn.Module:
+        """
+        Loads a model from disk. Uses the factory to get the correct
+        architecture before loading the state.
+        """
+        load_file_path = self.save_path / f"local_model_{self.seller_id}.pt"
+        model = self.model_factory().to(self.device)
+
+        if not load_file_path.exists():
+            logging.warning(f"[{self.seller_id}] No saved model found. Returning new instance.")
+            return model
+
+        try:
+            model.load_state_dict(torch.load(load_file_path, map_location=self.device))
+            logging.info(f"[{self.seller_id}] Loaded model from {load_file_path}")
+        except Exception as e:
+            logging.error(f"[{self.seller_id}] Could not load model: {e}. Returning new instance.")
+
+        return model
+
+    def round_end_process(self, round_number: int, is_selected: bool) -> None:
+        """Logs the outcome of the round and cleans up state."""
+        logging.info(f"[{self.seller_id}] Round {round_number} ended. Selected: {is_selected}")
+
+        # NEW: Record the round's events to the seller's history
+        round_record = {
+            'event_type': 'federated_round',
+            'round': round_number,
+            'timestamp': time.time(),
+            'was_selected': is_selected,
+            'training_stats': self.last_training_stats if is_selected else None
+        }
+        self.federated_round_history.append(round_record)
+
+        self.last_computed_gradient = None
+        self.last_training_stats = None
 
 
 class SybilCoordinator:
@@ -274,8 +418,11 @@ class SybilCoordinator:
         for cid in selected_client_ids:
             if cid in self.clients:
                 seller = self.clients[cid].seller_obj
-                gradient = seller.get_local_gradient(base_model)
-                self.selected_gradients[cid] = self._ensure_tensor(gradient)
+                gradient_tensors, _ = seller.get_gradient_for_upload(base_model)
+
+                # Now, pass only the tensors to _ensure_tensor
+                if gradient_tensors is not None:
+                    self.selected_gradients[cid] = self._ensure_tensor(gradient_tensors)
 
     def get_selected_average(self) -> Optional[torch.Tensor]:
         """Compute the average gradient of all selected sellers."""
@@ -284,40 +431,32 @@ class SybilCoordinator:
         gradients = list(self.selected_gradients.values())
         return torch.mean(torch.stack(gradients), dim=0)
 
-    def update_nonselected_gradient(self, current_gradient, strategy: Optional[str] = None) -> List[np.ndarray]:
+    def update_nonselected_gradient(self, current_gradient: Union[torch.Tensor, List[torch.Tensor]],
+                                    strategy: Optional[str] = None) -> List[torch.Tensor]:
         """Update a non-selected gradient using a specified strategy object."""
         strat_name = strategy or self.sybil_cfg.gradient_default_mode
         avg_grad = self.get_selected_average()
 
-        # If no selected gradients exist, just return the original gradient
+        # If no selected gradients exist, just return the original gradient as a list of tensors.
         if avg_grad is None:
-            # Logic to handle both list and single tensor inputs
             if isinstance(current_gradient, list):
-                return [g.cpu().numpy() for g in current_gradient]
-            return [self._ensure_tensor(current_gradient).cpu().numpy()]
+                return current_gradient  # Already a list of tensors
+            # Ensure even a single tensor is returned as a list
+            return [self._ensure_tensor(current_gradient)]
 
         strategy_obj = self.strategies.get(strat_name)
         if not strategy_obj:
             raise ValueError(f"Strategy '{strat_name}' not found or configured.")
 
+        if isinstance(current_gradient, list):
+            original_shapes = [g.shape for g in current_gradient]
+        else:
+            original_shapes = [current_gradient.shape]  # A list with just one shape
+
         current_grad_tensor = self._ensure_tensor(current_gradient)
         new_grad = strategy_obj.manipulate(current_grad_tensor, avg_grad)
 
-        return [new_grad.cpu().numpy()]
-
-    def _unflatten_gradient(self, flat_grad: torch.Tensor, original_shapes: List[torch.Size]) -> List[torch.Tensor]:
-        """
-        Reconstruct a list of tensors with original shapes from a flattened gradient.
-        """
-        result = []
-        offset = 0
-        for shape in original_shapes:
-            num_elements = torch.prod(torch.tensor(shape)).item()
-            tensor_flat = flat_grad[offset:offset + num_elements]
-            tensor = tensor_flat.reshape(shape)
-            result.append(tensor)
-            offset += num_elements
-        return result
+        return unflatten_tensor(new_grad, original_shapes)
 
     def prepare_for_new_round(self) -> None:
         """Prepares state for the next round and handles dynamic triggers."""
@@ -325,206 +464,67 @@ class SybilCoordinator:
         if self.cur_round >= self.sybil_cfg.benign_rounds:
             self.start_atk = True
 
-        # Dynamic trigger logic is now decoupled
-        if self.sybil_cfg.trigger_mode == "dynamic" and self.start_atk:
-            self._execute_dynamic_trigger_update()
-
-    def _execute_dynamic_trigger_update(self):
-        """Logic for generating and distributing a new trigger."""
-        best_client_id = self.get_client_with_highest_selection_rate()
-        if not best_client_id:
-            return
-
-        # 1. Have the "best" seller generate a new, optimized trigger
-        best_seller = self.clients[best_client_id].seller_obj
-        logging.info(f"Coordinator: Tasking seller {best_seller.seller_id} to generate a new trigger.")
-        # This method is assumed to exist on the adversary seller class
-        new_trigger = best_seller.generate_optimized_trigger(self.aggregator.global_model)
-
-        # 2. Distribute the new trigger to all other sybils
-        if new_trigger is not None:
-            self.distribute_global_trigger(new_trigger)
-
-    def distribute_global_trigger(self, new_trigger: torch.Tensor) -> None:
-        """Distribute a new trigger to all registered malicious sellers."""
-        logging.info("Coordinator: Distributing new global trigger to all Sybil sellers.")
-        for client_state in self.clients.values():
-            # This method is assumed to exist on the adversary seller class
-            client_state.seller_obj.update_poison_trigger(new_trigger)
-
     def on_round_end(self) -> None:
         """Clear round-specific state."""
         self.update_historical_patterns(self.selected_gradients)
         self.adaptive_role_assignment()
         self.selected_gradients = {}
 
-    def distribute_global_trigger(self, new_trigger: torch.Tensor) -> None:
-        """
-        Update the global trigger maintained by the coordinator.
-        This new trigger will be used by all malicious sellers.
-        """
-        trigger = new_trigger.clone().detach().to(self.device)
-        self.backdoor_generator.update_trigger(trigger)
-        print("Coordinator: Global trigger updated.")
 
-
-class GradientSeller(BaseSeller):
+class PoisonedDataset(Dataset):
     """
-    A seller that participates in federated learning by providing gradient updates.
-
-    This version is decoupled from model creation via a factory pattern and uses
-    configuration objects for clarity, making it a robust base class.
+    A wrapper dataset that applies a poison generator to an original dataset
+    on the fly, based on a specified poison rate.
     """
 
     def __init__(self,
-                 seller_id: str,
-                 data_config: RuntimeDataConfig,
-                 training_config: TrainingConfig,
-                 model_factory: Callable[[], nn.Module],
-                 save_path: str = "",
-                 device: str = "cpu",
-                 **kwargs: Any):
+                 original_dataset: Dataset,
+                 poison_generator: Optional[PoisonGenerator],
+                 poison_rate: float = 0.0):
 
-        super().__init__(
-            seller_id=seller_id,
-            dataset=data_config.dataset,
-            save_path=save_path,
-            device=device,
-            **kwargs  # Pass any remaining BaseSeller args like pricing
-        )
-        self.data_config = data_config
-        self.training_config = training_config
-        self.model_factory = model_factory
+        if not (0.0 <= poison_rate <= 1.0):
+            raise ValueError("Poison rate must be between 0.0 and 1.0")
 
-        # --- State Attributes ---
-        # Cleanly manage the state from the last computation
-        self.last_computed_gradient: Optional[List[torch.Tensor]] = None
-        self.last_training_stats: Optional[Dict[str, Any]] = None
+        self.original_dataset = original_dataset
+        self.poison_generator = poison_generator
+        self.poison_rate = poison_rate
 
-    def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
-        """
-        Computes and returns the gradient update and training statistics.
-        This is the primary method for the federated learning coordinator to call.
-        """
-        try:
-            # 1. Create a fresh model instance using the injected factory.
-            local_model = self.model_factory().to(self.device)
-            local_model.load_state_dict(global_model.state_dict())
-        except Exception as e:
-            logging.error(f"[{self.seller_id}] Failed to prepare model: {e}", exc_info=True)
-            return None, {'error': 'Model preparation failed.'}
+        # Pre-determine which indices to poison for consistency
+        n_poison = int(len(original_dataset) * poison_rate)
+        all_indices = list(range(len(original_dataset)))
+        random.shuffle(all_indices)
+        self.poison_indices = set(all_indices[:n_poison])
 
-        # 2. Delegate the actual training and gradient calculation.
-        gradient, stats = self._compute_local_grad(local_model, self.data_config.dataset)
+    def __len__(self):
+        return len(self.original_dataset)
 
-        # 3. Update the seller's internal state for logging or inspection.
-        self.last_computed_gradient = gradient
-        self.last_training_stats = stats
+    def __getitem__(self, index):
+        # Get the original data and label
+        data, label = self.original_dataset[index]
 
-        return gradient, stats
+        # Apply poison only if the index was chosen and a generator exists
+        if self.poison_generator and index in self.poison_indices:
+            return self.poison_generator.apply(data, label)
 
-    def _compute_local_grad(self, model_to_train: nn.Module, dataset: Dataset) -> Tuple[
-        Optional[List[torch.Tensor]], Dict[str, Any]]:
-        """Handles the local training loop and gradient computation."""
-        start_time = time.time()
-
-        if not dataset or len(dataset) == 0:
-            logging.warning(f"[{self.seller_id}] Dataset is empty. Returning zero gradient.")
-            zero_grad = [torch.zeros_like(p) for p in model_to_train.parameters()]
-            return zero_grad, {'train_loss': None, 'compute_time_ms': 0}
-
-        # Create DataLoader using the provided data configuration
-        data_loader = DataLoader(
-            dataset,
-            batch_size=self.training_config.batch_size,
-            shuffle=True,
-            collate_fn=self.data_config.collate_fn
-        )
-
-        try:
-            # The core training logic is in an external, reusable function
-            grad_tensors, _, _, _, avg_loss = local_training_and_get_gradient(
-                model=model_to_train,
-                train_loader=data_loader,
-                device=self.device,
-                local_epochs=self.training_config.epochs,
-                lr=self.training_config.learning_rate,
-            )
-
-            stats = {
-                'train_loss': avg_loss,
-                'compute_time_ms': (time.time() - start_time) * 1000,
-                'upload_bytes': estimate_byte_size(grad_tensors)
-            }
-            return grad_tensors, stats
-
-        except Exception as e:
-            logging.error(f"[{self.seller_id}] Error in training loop: {e}", exc_info=True)
-            return None, {'error': 'Training failed.'}
-
-    def save_local_model(self, model_instance: nn.Module) -> None:
-        """Saves the state dictionary of a given model instance."""
-        save_file_path = self.save_path / f"local_model_{self.seller_id}.pt"
-        save_file_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            torch.save(model_instance.state_dict(), save_file_path)
-            logging.info(f"[{self.seller_id}] Saved model to {save_file_path}")
-        except Exception as e:
-            logging.error(f"[{self.seller_id}] Failed to save model: {e}")
-
-    def load_local_model(self) -> nn.Module:
-        """
-        Loads a model from disk. Uses the factory to get the correct
-        architecture before loading the state.
-        """
-        load_file_path = self.save_path / f"local_model_{self.seller_id}.pt"
-        model = self.model_factory().to(self.device)
-
-        if not load_file_path.exists():
-            logging.warning(f"[{self.seller_id}] No saved model found. Returning new instance.")
-            return model
-
-        try:
-            model.load_state_dict(torch.load(load_file_path, map_location=self.device))
-            logging.info(f"[{self.seller_id}] Loaded model from {load_file_path}")
-        except Exception as e:
-            logging.error(f"[{self.seller_id}] Could not load model: {e}. Returning new instance.")
-
-        return model
-
-    def round_end_process(self, round_number: int, is_selected: bool) -> None:
-        """Logs the outcome of the round and cleans up state."""
-        logging.info(f"[{self.seller_id}] Round {round_number} ended. Selected: {is_selected}")
-
-        # NEW: Record the round's events to the seller's history
-        round_record = {
-            'event_type': 'federated_round',
-            'round': round_number,
-            'timestamp': time.time(),
-            'was_selected': is_selected,
-            'training_stats': self.last_training_stats if is_selected else None
-        }
-        self.federated_round_history.append(round_record)
-
-        # Reset state for the next round (as before)
-        self.last_computed_gradient = None
-        self.last_training_stats = None
+        return data, label
 
 
 class AdvancedPoisoningAdversarySeller(GradientSeller):
     """
-    An adversary that performs data poisoning attacks and can participate
-    in a Sybil group, built using a unified AdversaryConfig.
+    An adversary that performs data poisoning using a provided generator
+    and can participate in a Sybil group.
     """
 
     def __init__(self,
                  seller_id: str,
+                 # Assumes you use the RuntimeDataConfig from our previous discussion
                  data_config: RuntimeDataConfig,
                  training_config: TrainingConfig,
                  model_factory: Callable[[], nn.Module],
-                 adversary_config: AdversarySellerConfig,  # Use the unified config
+                 adversary_config: AdversarySellerConfig,
+                 # The seller now RECEIVES the generator from the factory
+                 poison_generator: Optional[PoisonGenerator],
                  sybil_coordinator: Optional[SybilCoordinator] = None,
-                 save_path: str = "",
                  device: str = "cpu",
                  **kwargs: Any):
 
@@ -533,7 +533,6 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
             data_config=data_config,
             training_config=training_config,
             model_factory=model_factory,
-            save_path=save_path,
             device=device,
             **kwargs
         )
@@ -542,59 +541,35 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
         self.is_sybil = self.adversary_config.sybil.is_sybil and sybil_coordinator is not None
         self.selected_last_round = False
 
-        # --- Key Update: Create the poison generator inside the seller ---
-        # The seller is now responsible for creating its tools from its config.
-        self.poison_generator = self._create_poison_generator()
-
-    def _create_poison_generator(self) -> Optional[PoisonGenerator]:
-        """Factory method to create the correct poison generator from the config."""
-        poison_cfg = self.adversary_config.poisoning
-
-        if poison_cfg.type == 'none':
-            return None
-        elif poison_cfg.type == 'backdoor':
-            # Create the specific config for the image generator
-            backdoor_image_cfg = BackdoorImageConfig(
-                target_label=poison_cfg.backdoor_params.target_label,
-                trigger_type=TriggerType(poison_cfg.backdoor_params.trigger_type),
-                location=TriggerLocation(poison_cfg.backdoor_params.location)
-            )
-            return BackdoorImageGenerator(backdoor_image_cfg)
-        elif poison_cfg.type == 'label_flip':
-            # Create the specific config for the label flip generator
-            label_flip_cfg = LabelFlipConfig(
-                num_classes=self.data_config.num_classes,  # Assuming num_classes is available
-                attack_mode=poison_cfg.label_flip_params.mode,
-                target_label=poison_cfg.label_flip_params.target_label
-            )
-            return LabelFlipGenerator(label_flip_cfg)
-        else:
-            raise ValueError(f"Unknown poison type in config: {poison_cfg.type}")
+        # The seller simply stores the generator it was given.
+        self.poison_generator = poison_generator
 
     def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
         Overrides the base method to implement poisoning and Sybil logic.
         """
-        # --- Correctly access nested config values ---
         current_round = self.sybil_coordinator.cur_round if self.is_sybil else float('inf')
         should_attack = current_round >= self.adversary_config.sybil.benign_rounds
 
+        # --- UPDATED: Use the PoisonedDataset wrapper for clean data handling ---
         if should_attack and self.poison_generator:
-            logging.info(f"[{self.seller_id}] Attack phase: generating poisoned data.")
-            # Use the generator created during initialization
-            dataset_for_training, _ = self.poison_generator.generate_poisoned_dataset(
-                original_dataset=self.data_config.dataset,
+            logging.info(f"[{self.seller_id}] Attack phase: using poisoned dataset wrapper.")
+            dataset_for_training = PoisonedDataset(
+                original_dataset=self.dataset,  # self.dataset from GradientSeller
+                poison_generator=self.poison_generator,
                 poison_rate=self.adversary_config.poisoning.poison_rate
             )
         else:
             logging.info(f"[{self.seller_id}] Benign phase: using clean data.")
-            dataset_for_training = self.data_config.dataset
+            dataset_for_training = self.dataset
 
-        # --- Improved: Use a helper to avoid changing self.data_config ---
-        base_gradient, stats = self._compute_gradient_on_dataset(dataset_for_training, global_model)
-
-        # Apply Sybil logic if applicable
-        # --- Removed hardcoded "mimic" strategy ---
+        # The base GradientSeller's training method can now be called directly.
+        # This assumes train_local_model is the method that computes the gradient.
+        base_gradient, stats = self._compute_local_grad(
+            model_to_train=global_model,
+            dataset_to_use=dataset_for_training
+        )
+        # Apply Sybil logic (this part remains the same)
         sybil_strategy = self.adversary_config.sybil.gradient_default_mode
         if self.is_sybil and not self.selected_last_round and should_attack:
             logging.info(f"[{self.seller_id}] Sybil client not selected. Using strategy: '{sybil_strategy}'")
@@ -605,24 +580,9 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
 
         return base_gradient, stats
 
-    def _compute_gradient_on_dataset(self, dataset: Dataset, global_model: nn.Module) -> Tuple[
-        Optional[List[torch.Tensor]], Dict[str, Any]]:
-        """A helper to compute gradient on a specific dataset without modifying object state."""
-        # Create a temporary DataConfig for this computation
-        temp_data_config = DataConfig(dataset=dataset, collate_fn=self.data_config.collate_fn)
-
-        # In a real implementation, you might refactor GradientSeller to accept a DataConfig
-        # override. For now, this state-swapping is isolated to a helper method.
-        original_data_config = self.data_config
-        self.data_config = temp_data_config
-        gradient, stats = super().get_gradient_for_upload(global_model)
-        self.data_config = original_data_config  # Restore state immediately
-        return gradient, stats
-
     def round_end_process(self, round_number: int, is_selected: bool) -> None:
         """Records the outcome of the round for Sybil coordination."""
         self.selected_last_round = is_selected
-        logging.info(f"[{self.seller_id}] Round {round_number} ended. Selected: {is_selected}")
 
 
 class TriggeredSubsetDataset(Dataset):
@@ -721,10 +681,13 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         self.selected_last_round = False
         if self.model_type == 'image':
             # Use the image-specific params
-            params = self.adversary_config.poisoning.image_backdoor_params
+            params = self.adversary_config.poisoning.image_backdoor_params.simple_data_poison_params
         elif self.model_type == 'text':
             # Use the text-specific params
             params = self.adversary_config.poisoning.text_backdoor_params
+        else:
+            raise ValueError(f"no data type set, got: {self.model_type}.")
+
         self.backdoor_params = params
         # --- Key Update: Create the correct poison generator from the config ---
         self.poison_generator = self._create_poison_generator(**kwargs)
@@ -739,8 +702,8 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
             # Create the specific config for the image generator
             backdoor_image_cfg = BackdoorImageConfig(
                 target_label=self.backdoor_params.target_label,
-                trigger_type=TriggerType(self.backdoor_params.trigger_type),
-                location=TriggerLocation(self.backdoor_params.location)
+                trigger_type=ImageTriggerType(self.backdoor_params.trigger_type),
+                location=ImageTriggerLocation(self.backdoor_params.location)
             )
             return BackdoorImageGenerator(backdoor_image_cfg)
 
@@ -758,24 +721,20 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
     def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """Overrides the base method to implement the full adversary strategy."""
-        # --- Correctly access nested config values ---
         current_round = self.sybil_coordinator.cur_round if self.is_sybil else float('inf')
         should_attack = current_round >= self.adversary_config.sybil.benign_rounds
 
-        # Assuming 'cmd' or 'single' is defined in backdoor_params now
-        mode = self.adversary_config.poisoning.backdoor_params.mode
+        attack_name = self.backdoor_params.attack_name
 
         if not should_attack:
-            mode = "none"
-        logging.info(f"[{self.seller_id}] Round {current_round}. Behavior: {mode}.")
+            attack_name = GeneralAttackName.NONE
+        logging.info(f"[{self.seller_id}] Round {current_round}. Behavior: {attack_name}.")
 
         base_model = self.model_factory().to(self.device)
         base_model.load_state_dict(global_model.state_dict())
 
-        if mode == "mixed_data":
-            base_gradient, stats = self._compute_single_attack_gradient(base_model)
-        elif mode == "combine_gradient":
-            base_gradient, stats = self._compute_cmd_attack_gradient(base_model)
+        if attack_name == ImageBackdoorAttackName.SIMPLE_DATA_POISON:
+            base_gradient, stats = self._compute_simple_poisoning_attack_gradient(base_model)
         else:
             base_gradient, stats = self._compute_clean_gradient(base_model)
 
@@ -793,174 +752,21 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         return TriggeredSubsetDataset(
             original_dataset=self.data_config.dataset,
             trigger_indices=trigger_indices,
-            backdoor_generator=self.poison_generator,  # Pass the live generator object
+            backdoor_generator=self.poison_generator,
+            device=self.device,
+            target_label=self.backdoor_params.target_label
         )
 
     def _compute_clean_gradient(self, model: nn.Module) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
         """Computes a gradient on the original, clean dataset."""
         return self._compute_local_grad(model, self.data_config.dataset)
 
-    def _compute_single_attack_gradient(self, model: nn.Module) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
+    def _compute_simple_poisoning_attack_gradient(self, model: nn.Module) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
         """Computes one gradient on a dataset with both clean and poisoned samples."""
         poisoned_dataset_view = self._create_poisoned_dataset_view()
         return self._compute_local_grad(model, poisoned_dataset_view)
-
-    def _compute_cmd_attack_gradient(self, model: nn.Module) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
-        """Computes separate clean and backdoor gradients and blends them."""
-        g_benign, stats_benign = self._compute_clean_gradient(model)
-
-        poisoned_dataset_view = self._create_poisoned_dataset_view()
-        g_backdoor, _ = self._compute_local_grad(model, poisoned_dataset_view)
-
-        if not g_benign or not g_backdoor:
-            logging.warning(f"[{self.seller_id}] CMD failed; returning clean gradient.")
-            return g_benign, stats_benign
-
-        strength = self.backdoor_config.poison_strength
-        final_gradient = [
-            (1 - strength) * gb + strength * gbp
-            for gb, gbp in zip(g_benign, g_backdoor)
-        ]
-        return final_gradient, stats_benign
 
     def round_end_process(self, round_number: int, is_selected: bool) -> None:
         """Records the outcome of the round for Sybil coordination."""
         self.selected_last_round = is_selected
         logging.info(f"[{self.seller_id}] Round {round_number} ended. Selected: {is_selected}")
-
-    # --- Trigger Optimization Methods (Assumed to be okay as per "running good" and focus on 'single' mode) ---
-    # upload_global_trigger, get_new_trigger, trigger_opt methods would remain here.
-    # Make sure they are compatible with the self.device and backdoor_generator used.
-    def upload_global_trigger(self, global_model, first_attack=False, lr=0.01, num_steps=50, lambda_param=1):
-        logging.info(f"[{self.seller_id}] Broadcasting new trigger...")
-        new_trigger = self.get_new_trigger(global_model, first_attack=first_attack, lr=lr, num_steps=num_steps,
-                                           lambda_param=lambda_param)
-        if self.sybil_coordinator is not None:
-            self.sybil_coordinator.update_global_trigger(new_trigger)
-        return new_trigger
-
-    def get_new_trigger(self, global_model, first_attack, lr=0.01, num_steps=50, lambda_param=1):
-        # (Implementation from your original code)
-        # Ensure self.backdoor_generator.get_trigger() and apply_trigger_tensor are robust
-        trigger = self.backdoor_generator.get_trigger().detach().to(self.device).requires_grad_(True)
-        model = global_model.to(self.device)
-        if first_attack:
-            tmp_trigger = self.trigger_opt(model, trigger, first_attack=True, trigger_lr=lr, num_steps=num_steps,
-                                           lambda_param=0.0)
-            tmp_trigger = self.trigger_opt(model, tmp_trigger, first_attack=False, trigger_lr=lr, num_steps=num_steps,
-                                           lambda_param=1.0)
-        else:
-            tmp_trigger = self.trigger_opt(model, trigger, first_attack=False, trigger_lr=lr, num_steps=num_steps,
-                                           lambda_param=1.0)
-        return tmp_trigger
-
-    def trigger_opt(self, model, trigger, first_attack=False, trigger_lr=0.01, num_steps=50, lambda_param=1.0):
-        # (Implementation from your original code - ensure imports like optim, nn, DataLoader are present at file level)
-        # For brevity, not re-pasting the full trigger_opt, but it would be here.
-        # Key: ensure that self.dataset used inside DataLoader here is the original clean dataset.
-        # And self.backdoor_generator.apply_trigger_tensor(data, trigger) is used.
-        # Also, the model passed should be on self.device.
-        # (The rest of your trigger_opt code as provided previously)
-        model.eval()
-        if not trigger.requires_grad: trigger = trigger.clone().detach().requires_grad_(True)
-        trigger_optimizer = torch.optim.Adam([trigger], lr=trigger_lr)  # Ensure optim is imported
-        criterion = torch.nn.CrossEntropyLoss()  # Ensure nn is imported
-        # Use self.dataset (original clean data) for trigger optimization source
-        dataloader = DataLoader(self.dataset, batch_size=self.local_training_params.get('batch_size', 64), shuffle=True)
-
-        # Phase 1
-        if first_attack:
-            logging.info("Trigger Opt - Phase 1: Loss alignment")
-            for step in range(num_steps):
-                # ... (your phase 1 loop)
-                # Example of one batch from your code:
-                data, _ = next(iter(dataloader))  # Get a batch
-                if data.dim() == 3: data = data.unsqueeze(1)
-                data = data.to(self.device)
-                backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)  # Pass trigger explicitly
-                backdoor_labels = torch.full((data.shape[0],), self.target_label, dtype=torch.long, device=self.device)
-                outputs = model(backdoored_data)
-                loss = criterion(outputs, backdoor_labels)
-                trigger_optimizer.zero_grad();
-                loss.backward();
-                trigger_optimizer.step()
-                with torch.no_grad():
-                    trigger.clamp_(0, 1)
-                if (step + 1) % 10 == 0: logging.info(f"Phase 1 - Step {step + 1}, Loss: {loss.item():.4f}")
-
-        # Phase 2
-        logging.info(f"Trigger Opt - Phase 2: Gradient alignment optimization (λ={lambda_param})")
-        # Re-initialize dataloader or ensure it can be iterated again if needed, or use a fresh one
-        dataloader_phase2 = DataLoader(self.dataset, batch_size=self.local_training_params.get('batch_size', 64),
-                                       shuffle=True)
-        if not trigger.requires_grad: trigger = trigger.clone().detach().requires_grad_(True)
-
-        for step in range(num_steps):
-            # ... (your phase 2 loop)
-            # Example of one batch from your code:
-            data, label = next(iter(dataloader_phase2))
-            if data.dim() == 3: data = data.unsqueeze(1)
-            data, label = data.to(self.device), label.to(self.device)
-            backdoored_data = self.backdoor_generator.apply_trigger_tensor(data, trigger)  # Pass trigger explicitly
-            backdoor_labels = torch.full((data.shape[0],), self.target_label, dtype=torch.long, device=self.device)
-
-            model.zero_grad();
-            clean_outputs = model(data);
-            clean_loss = criterion(clean_outputs, label)
-            clean_loss.backward(retain_graph=True)
-            clean_grads = {name: param.grad.clone() for name, param in model.named_parameters() if
-                           param.grad is not None}
-
-            model.zero_grad();
-            backdoor_outputs = model(backdoored_data);
-            backdoor_loss_val = criterion(backdoor_outputs, backdoor_labels)
-            # If lambda_param is 0, backdoor_loss_val.backward() alone is enough to get grads for backdoor_loss_val
-            # If lambda_param is >0 and <1, you need grads from both backdoor_loss_val and gradient_distance
-            # If lambda_param is 1, you only need grads from gradient_distance
-
-            # Simplified: calculate combined loss and backprop once if possible.
-            # For gradient_distance, you need param.grad from backdoor_loss.backward() first.
-            backdoor_loss_val.backward(retain_graph=True)  # Get param.grad for backdoor data
-
-            gradient_distance = torch.tensor(0.0, device=self.device)
-            for name, param in model.named_parameters():
-                if param.grad is not None and name in clean_grads:
-                    gradient_distance += torch.sum((param.grad - clean_grads[name]) ** 2)
-
-            combined_loss = lambda_param * gradient_distance
-            if (1 - lambda_param) > 1e-6:  # only add backdoor loss if its weight is meaningful
-                combined_loss += (1 - lambda_param) * backdoor_loss_val
-
-            trigger_optimizer.zero_grad()
-            # Need to compute gradient of combined_loss w.r.t trigger
-            # This requires combined_loss to be a function of trigger.
-            # The param.grad values used in gradient_distance are themselves functions of trigger (via backdoored_data).
-            # backdoor_loss_val is also a function of trigger.
-            if trigger.grad is not None: trigger.grad.zero_()  # Clear previous trigger gradients
-
-            # We need d(combined_loss)/d(trigger).
-            # torch.autograd.grad is the right tool here.
-            # Ensure that operations contributing to combined_loss are part of the graph involving trigger.
-            if combined_loss.requires_grad:  # Check if it's part of a graph that requires grad
-                trigger_grads_from_loss = torch.autograd.grad(combined_loss, trigger,
-                                                              retain_graph=False)  # retain_graph=False if not needed further
-                if trigger_grads_from_loss[0] is not None:
-                    trigger.grad = trigger_grads_from_loss[0]
-                    trigger_optimizer.step()
-                else:
-                    logging.warning("Gradient of combined_loss w.r.t trigger is None.")
-            else:  # if lambda_param is 0, combined_loss might be just backdoor_loss_val
-                if (1 - lambda_param) > 1e-6:  # if backdoor_loss term is active
-                    trigger_grads_from_bloss = torch.autograd.grad(backdoor_loss_val, trigger, retain_graph=False)
-                    if trigger_grads_from_bloss[0] is not None:
-                        trigger.grad = trigger_grads_from_bloss[0]
-                        trigger_optimizer.step()
-                    else:
-                        logging.warning("Gradient of backdoor_loss_val w.r.t trigger is None.")
-
-            with torch.no_grad():
-                trigger.clamp_(0, 1)
-            if (step + 1) % 10 == 0: logging.info(
-                f"Phase 2 - Step {step + 1}, GradDist: {gradient_distance.item():.4f}, BdoorLoss: {backdoor_loss_val.item():.4f}")
-
-        return trigger.detach()

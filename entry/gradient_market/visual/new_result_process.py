@@ -31,7 +31,7 @@ METRIC_MAPPING = {  # For prettier plot labels
 AGG_NAME_MAPPING = {  # For prettier legend entries
     "fedavg": "FedAvg",
     "martfl": "MartFL",
-    "skymask": "SkyMask",
+    "skymask_utils": "SkyMask",
     "fltrust": "FLTrust"
 }
 

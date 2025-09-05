@@ -89,19 +89,18 @@ class ExperimentGenerator:
                 yaml.dump(config_dict, f, Dumper=CustomDumper, sort_keys=False, indent=2)
             print(f"  Saved config: {file_path}")
 
-    def _generate_exp_id(self, params: dict) -> str:
+    @staticmethod
+    def _generate_exp_id(params: dict) -> str:  # <-- Changed to staticmethod
         """Creates a human-readable ID from the parameters being swept."""
         if not params:
             return "default"
 
         parts = []
         for key, value in sorted(params.items()):
-            # Abbreviate common keys for concise filenames
             short_key = key.split('.')[-1]
             if "adv_rate" in short_key: short_key = "adv"
             if "poison_rate" in short_key: short_key = "pr"
 
-            # Format value nicely (e.g., 0.1 becomes 0p1)
             value_str = f"{value:g}".replace('.', 'p') if isinstance(value, float) else str(value)
             parts.append(f"{short_key}-{value_str}")
         return "_".join(parts)

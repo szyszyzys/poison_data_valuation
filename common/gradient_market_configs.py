@@ -1,9 +1,20 @@
+import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List, Union
 
 from torch.utils.data import Dataset
 
-from common.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation, PoisonType, LabelFlipMode
+from common.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation, PoisonType, LabelFlipMode, \
+    VictimStrategy, ImageBackdoorAttackName, TextBackdoorAttackName
+
+logger = logging.getLogger("Configs")
+
+
+@dataclass
+class DebugConfig:
+    """Configuration for debugging and detailed logging."""
+    save_individual_gradients: bool = False
+    gradient_save_frequency: int = 10  # Save every round by default if enabled
 
 
 @dataclass
@@ -29,13 +40,32 @@ class TrainingConfig:
     optimizer: str = "Adam"
 
 
+# In BackdoorSimpleDataPoisonParams: Removed the redundant 'poison_rate'
 @dataclass
-class ImageBackdoorParams:
-    """Parameters specific to an IMAGE backdoor attack."""
+class BackdoorSimpleDataPoisonParams:
     target_label: int = 0
     trigger_type: ImageTriggerType = ImageTriggerType.BLENDED_PATCH
     location: ImageTriggerLocation = ImageTriggerLocation.BOTTOM_RIGHT
-    strength: float = 0.2  # e.g., blend_alpha
+    trigger_shape: Tuple[int, int] = (4, 4)
+
+
+@dataclass
+class ImageBackdoorParams:
+    """Container for all possible image backdoor attack configurations."""
+    # This field determines which of the sub-configurations is active
+    attack_name: ImageBackdoorAttackName = ImageBackdoorAttackName.SIMPLE_DATA_POISON
+
+    # It holds an instance of every possible sub-configuration
+    simple_data_poison_params: BackdoorSimpleDataPoisonParams = field(default_factory=BackdoorSimpleDataPoisonParams)
+
+    @property
+    def active_attack_params(self) -> Union[BackdoorSimpleDataPoisonParams]:
+        """
+        Returns the active parameter object based on the 'attack_name' field.
+        """
+        if self.attack_name == ImageBackdoorAttackName.SIMPLE_DATA_POISON:
+            return self.simple_data_poison_params
+        raise ValueError(f"Unknown image backdoor attack name: {self.attack_name}")
 
 
 @dataclass
@@ -44,6 +74,7 @@ class TextBackdoorParams:
     target_label: int = 0
     trigger_content: str = "cf"  # The trigger phrase
     location: TextTriggerLocation = TextTriggerLocation.END
+    attack_name: TextBackdoorAttackName = TextBackdoorAttackName.SIMPLE_DATA_POISON
 
 
 @dataclass
@@ -57,17 +88,33 @@ class LabelFlipParams:
 class PoisoningConfig:
     """Configuration for client-side data poisoning attacks."""
     type: PoisonType = PoisonType.NONE
-    poison_rate: float = 0.1
+    poison_rate: float = 0.1  # <-- This is now the single source of truth
     image_backdoor_params: ImageBackdoorParams = field(default_factory=ImageBackdoorParams)
     text_backdoor_params: TextBackdoorParams = field(default_factory=TextBackdoorParams)
-    label_flip_params: LabelFlipParams = field(default_factory=LabelFlipParams)
+    label_flip: LabelFlipParams = field(default_factory=LabelFlipParams)
+
+
+# --- Create a specific parameter class for GIA ---
+@dataclass
+class GradientInversionParams:
+    """Parameters for the Gradient Inversion Attack."""
+    frequency: int = 10
+    victim_strategy: VictimStrategy = VictimStrategy.RANDOM
+    fixed_victim_idx: int = 0
+    lrs_to_try: List[float] = field(default_factory=lambda: [0.1, 0.01])
+    base_attack_params: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
-class ServerPrivacyConfig:
-    """Configuration for server-side privacy attacks (e.g., GIA)."""
-    perform_gia: bool = False
-    gia_frequency: int = 10
+class ServerAttackConfig:
+    """Configuration for all server-side privacy attacks."""
+    # This is the main switch: 'none', 'gradient_inversion', etc.
+    attack_name: str = 'none'
+
+    # Nested parameters for each possible attack
+    gradient_inversion_params: GradientInversionParams = field(default_factory=GradientInversionParams)
+    # You could add others here in the future
+    # membership_inference: MembershipInferenceParams = field(default_factory=MembershipInferenceParams)
 
 
 @dataclass
@@ -132,6 +179,7 @@ class ImageDataConfig:
 @dataclass
 class AdversarySellerConfig:
     """A unified profile for an adversarial seller."""
+    name: str = "benign"
     poisoning: PoisoningConfig = field(default_factory=PoisoningConfig)
     sybil: SybilConfig = field(default_factory=SybilConfig)
 
@@ -142,11 +190,14 @@ class DataConfig:
     text: Optional[TextDataConfig] = None
     image: Optional[ImageDataConfig] = None
 
+
 @dataclass
 class RuntimeDataConfig:
     """Holds runtime data objects passed to sellers."""
     dataset: Dataset
     num_classes: int
+    collate_fn: None
+
 
 # --- These are RUNTIME configs, not loaded from YAML. Keeping them is correct. ---
 @dataclass
@@ -179,7 +230,36 @@ class BackdoorTextConfig:
     max_seq_len: Optional[int] = None
 
 
-# --- REMOVED: Deleted the duplicate and redundant class definitions ---
+@dataclass
+class MartFLParams:
+    """Parameters specific to the martFL aggregator."""
+    change_base: bool = True
+    clip: bool = True
+
+
+@dataclass
+class SkymaskParams:
+    """Parameters specific to the Skymask aggregator."""
+    clip: bool = True
+    sm_model_type: str = 'None'
+    mask_epochs: int = 20
+    mask_lr: float = 1e-4
+    mask_clip: float = 1.0
+    mask_threshold: float = 0.5
+
+
+@dataclass
+class AggregationConfig:
+    """Top-level configuration for aggregation."""
+    # This is the main switch to select the algorithm
+    method: str = "martfl"
+
+    # A common parameter used by multiple methods
+    clip_norm: float = 0.01
+
+    # --- Nested parameter objects for each strategy ---
+    martfl: MartFLParams = field(default_factory=MartFLParams)
+    skymask: SkymaskParams = field(default_factory=SkymaskParams)
 
 
 @dataclass
@@ -187,9 +267,11 @@ class AppConfig:
     """Top-level configuration for the entire experiment run."""
     experiment: ExperimentConfig
     training: TrainingConfig
-    server_privacy: ServerPrivacyConfig
+    server_attack_config: ServerAttackConfig
     adversary_seller_config: AdversarySellerConfig
     data: DataConfig
+    debug: DebugConfig
+    aggregation: AggregationConfig
     seed: int = 42
     n_samples: int = 1
     data_root: str = "./data"

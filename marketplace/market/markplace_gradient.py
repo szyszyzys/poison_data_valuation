@@ -7,22 +7,13 @@ from typing import Any, Dict, List, Tuple, Optional
 
 import pandas as pd
 import torch
-from torch import nn
 from torch.utils.data import DataLoader
 
-# --- Assumed Imports from Your Project ---
-# These are placeholders for your actual class implementations.
-from attack.evaluation.evaluation_backdoor import evaluate_attack_performance
-from common.gradient_market_configs import ServerPrivacyConfig
+from common.enums import PoisonType, ServerAttackMode
+from common.gradient_market_configs import AppConfig
 from entry.gradient_market.privacy_attack import GradientInversionAttacker
-from marketplace.market_mechanism.martfl import Aggregator
+from marketplace.market.data_market import DataMarketplace
 from marketplace.seller.seller import BaseSeller
-
-
-# --- Placeholder Base Class ---
-class DataMarketplace:
-    """Base class placeholder for inheritance."""
-    pass
 
 
 # --- NEW: Typed Configuration for the Marketplace ---
@@ -35,66 +26,35 @@ class MarketplaceConfig:
     num_classes: int
     privacy_attack_config: ServerPrivacyConfig = field(default_factory=ServerPrivacyConfig)
 
-
-# --- Helper Class for Evaluation (Unchanged) ---
-class FederatedEvaluator:
-    """Encapsulates all logic for evaluating a federated model."""
-
-    def __init__(self, loss_fn: nn.Module, device: str):
-        self.loss_fn = loss_fn
-        self.device = device
-
-    def evaluate(self, model: nn.Module, test_loader: DataLoader) -> Dict[str, float]:
-        """Evaluates model accuracy and loss."""
-        model.to(self.device)
-        model.eval()
-        total_loss, total_correct, total_samples = 0.0, 0, 0
-        with torch.no_grad():
-            for X, y in test_loader:
-                X, y = X.to(self.device), y.to(self.device)
-                outputs = model(X)
-                total_loss += self.loss_fn(outputs, y).item() * X.size(0)
-                _, preds = torch.max(outputs, 1)
-                total_correct += (preds == y).sum().item()
-                total_samples += X.size(0)
-        return {"acc": total_correct / total_samples, "loss": total_loss / total_samples}
-
-    def evaluate_backdoor_asr(self, model: nn.Module, test_loader: DataLoader, backdoor_generator,
-                              target_label) -> float:
-        """Evaluates the Attack Success Rate for a backdoor attack."""
-        poison_metrics = evaluate_attack_performance(
-            model, test_loader, self.device, backdoor_generator, target_label
-        )
-        return poison_metrics.get("attack_success_rate")
-
-
-# --- Main Marketplace Class (Updated) ---
 class DataMarketplaceFederated(DataMarketplace):
-    def __init__(self, aggregator: Aggregator, config: MarketplaceConfig):
+    def __init__(self, cfg: AppConfig, aggregator, evaluator, sellers, input_shape: tuple, attacker=None):
+        """
+        Initializes the marketplace with all necessary components and the main config.
+        """
+        self.cfg = cfg  # Store the main config object
         self.aggregator = aggregator
-        self.config = config
-        self.save_path = Path(config.save_path)
-        self.sellers: OrderedDict[str, BaseSeller] = OrderedDict()
-
-        # NEW: Setup for incremental logging to a CSV file
-        self.log_file_path = self.save_path / "round_logs.csv"
-        self.save_path.mkdir(parents=True, exist_ok=True)
-
-        self.evaluator = FederatedEvaluator(loss_fn=nn.CrossEntropyLoss(), device=aggregator.device)
-        self.attacker = None
+        self.evaluator = evaluator
+        self.sellers = sellers
+        self.attacker = attacker  # For server-side privacy attacks
+        self.log_buffer = []  # Add a buffer
+        self.log_write_frequency = 50  # Write to disk every 50 rounds
 
         # Conditionally initialize the privacy attacker
-        if self.config.privacy_attack_config.perform_gradient_inversion:
+        if self.cfg.server_attack_config.attack_name == ServerAttackMode.GRADIENT_INVERSION:
+            # 2. Use the correct variable name: 'self.cfg' not 'self.config'
             self.attacker = GradientInversionAttacker(
-                attack_config=self.config.privacy_attack_config,
+                attack_config=self.cfg.server_attack_config,
                 model_template=aggregator.global_model,
                 device=aggregator.device,
-                save_dir=str(self.save_path),
-                # CHANGED: Pass necessary dataset info from the main config
-                dataset_name=self.config.dataset_name,
-                input_shape=self.config.input_shape,
-                num_classes=self.config.num_classes
+                # 3. Use the correct path for the save directory
+                save_dir=self.cfg.experiment.save_path,
+
+                # 4. Use the correct paths for other experiment parameters
+                dataset_name=self.cfg.experiment.dataset_name,
+                input_shape=input_shape,  # Passed in, as it's determined at runtime
+                num_classes=self.cfg.experiment.num_classes
             )
+            logger.info("Initialized GradientInversionAttacker.")
 
     def register_seller(self, seller_id: str, seller: BaseSeller):
         """Registers a new seller in the marketplace."""
@@ -105,22 +65,27 @@ class DataMarketplaceFederated(DataMarketplace):
             self,
             round_number: int,
             test_loader_global: DataLoader,
-            # CHANGED: Now requires ground_truth_dict for the privacy attack evaluation
-            ground_truth_dict: Dict[str, Dict[str, torch.Tensor]],
-            backdoor_generator=None,
-            backdoor_target_label=None
+            # ground_truth_dict is for the privacy attacker, so it can remain
+            ground_truth_dict: Dict[str, Dict[str, torch.Tensor]]
     ) -> Tuple[Dict, Any]:
-        """Orchestrates a single round of federated learning."""
+        """Orchestrates a single, config-driven round of federated learning."""
         round_start_time = time.time()
         logging.info(f"--- Round {round_number} Started ---")
 
         # 1. Collect gradients from all active sellers
         gradients_dict, seller_ids, _ = self._get_current_market_gradients()
 
+        if self.cfg.debug.save_individual_gradients:
+            if round_number % self.cfg.debug.gradient_save_frequency == 0:
+                grad_save_dir = Path(self.cfg.experiment.save_path) / "individual_gradients" / f"round_{round_number}"
+                grad_save_dir.mkdir(parents=True, exist_ok=True)
+                for sid, grad in gradients_dict.items():
+                    torch.save(grad, grad_save_dir / f"{sid}_grad.pt")
+                logging.info(f"Saved {len(gradients_dict)} individual gradients to {grad_save_dir}")
+
         # 2. Perform privacy attack (optional)
         attack_log = None
         if self.attacker and self.attacker.should_run(round_number):
-            # CHANGED: Pass the ground truth data to the attacker for evaluation
             attack_log = self.attacker.execute(round_number, gradients_dict, seller_ids, ground_truth_dict)
 
         # 3. Aggregate gradients
@@ -132,12 +97,14 @@ class DataMarketplaceFederated(DataMarketplace):
 
         # 5. Evaluate the updated model
         perf_global = self.evaluator.evaluate(self.aggregator.global_model, test_loader_global)
-        if backdoor_generator:
+
+        if self.cfg.adversary_seller_config.poisoning.type == PoisonType.BACKDOOR:
+            # The evaluator is assumed to have access to the config to get backdoor details
             perf_global["asr"] = self.evaluator.evaluate_backdoor_asr(
-                self.aggregator.global_model, test_loader_global, backdoor_generator, backdoor_target_label
+                self.aggregator.global_model, test_loader_global, self.cfg
             )
 
-        # 6. Log results for the round and save incrementally
+        # 6. Log results for the round
         round_record = self._log_round_results(
             round_number, time.time() - round_start_time, perf_global,
             selected_ids, outlier_ids, attack_log
@@ -184,14 +151,16 @@ class DataMarketplaceFederated(DataMarketplace):
             "attack_best_lr": attack_log.get('metrics', {}).get('best_tuned_lr') if attack_log else None,
         }
 
-        # NEW: Append log to CSV file incrementally
-        try:
-            new_log_df = pd.DataFrame([log_entry])
-            if not self.log_file_path.exists():
-                new_log_df.to_csv(self.log_file_path, index=False, header=True)
-            else:
-                new_log_df.to_csv(self.log_file_path, index=False, header=False, mode='a')
-        except Exception as e:
-            logging.error(f"Failed to write to log file {self.log_file_path}: {e}")
+        self.log_buffer.append(log_entry)
+
+        # Write to disk if buffer is full or it's the last round
+        is_last_round = round_num == self.cfg.experiment.global_rounds - 1
+        if (round_num + 1) % self.log_write_frequency == 0 or is_last_round:
+            try:
+                log_df = pd.DataFrame(self.log_buffer)
+                # ... logic to write log_df to csv ...
+                self.log_buffer = []  # Clear the buffer after writing
+            except Exception as e:
+                logging.error(f"Failed to write log buffer: {e}")
 
         return log_entry

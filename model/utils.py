@@ -15,20 +15,16 @@ Usage (within a seller’s get_gradient method):
 
 import copy
 import logging
-import os
-import time
-from typing import List, Tuple, Any, Dict, Optional, Union
+from typing import List, Tuple, Any, Optional, Union
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchvision.utils as vutils
 from torch.utils.data import DataLoader, Subset, Dataset
 
 # from model.text_model import TEXTCNN
-from model.vision_model import LeNet, TextCNN, SimpleCNN
+from model.models import LeNet, TextCNN, SimpleCNN
 
 
 def train_local_model(model: nn.Module,
@@ -85,6 +81,7 @@ def train_local_model(model: nn.Module,
         )
 
     return model, overall_avg_loss
+
 
 def compute_gradient_update(initial_model: nn.Module,
                             trained_model: nn.Module) -> List[torch.Tensor]:
@@ -161,163 +158,102 @@ def local_training_and_get_gradient(
         lr: float = 0.01,
         opt_str: str = "SGD",
         momentum: float = 0.9,
-        weight_decay: float = 0.0005,
-        evaluate_on_full_train_set: bool = False
-) -> Tuple[Optional[List[torch.Tensor]], Optional[np.ndarray], Optional[nn.Module], Dict, Optional[float]]:
+        weight_decay: float = 0.0005
+) -> Tuple[Optional[List[torch.Tensor]], Optional[float]]:
     """
-    Performs local training on a copy of the input model and returns the WEIGHT DELTA (not gradient),
-    the trained local model, evaluation results, and average training loss.
+    Performs local training on a copy of the input model and returns the WEIGHT DELTA.
     The input model (passed as `model`) is not modified.
     """
-    try:
-        local_model = copy.deepcopy(model)
-        local_model.to(device)
-        # Store the initial state dictionary before training
-        initial_state_dict = copy.deepcopy(model.state_dict())
-    except Exception as e:
-        logging.error(f"Failed to deepcopy model for local training: {e}", exc_info=True)
-        return None, None, None, {"loss": float('nan'), "accuracy": float('nan')}, None
+    # Store the initial state of the original model
+    initial_state_dict = model.state_dict()
+
+    # --- FIX: Create a deepcopy of the model to be trained ---
+    # This ensures the original model passed into this function is not modified.
+    model_for_training = copy.deepcopy(model)
+    model_for_training.to(device)
 
     criterion = nn.CrossEntropyLoss()
     if opt_str.upper() == "ADAM":
-        optimizer = optim.Adam(local_model.parameters(), lr=lr, weight_decay=weight_decay)
+        optimizer = optim.Adam(model_for_training.parameters(), lr=lr, weight_decay=weight_decay)
     else:  # Default to SGD
-        optimizer = optim.SGD(local_model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
+        optimizer = optim.SGD(model_for_training.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
 
-    # Train the local model
+    # Train the copied model
     trained_model, avg_train_loss = train_local_model(
-        local_model, train_loader, criterion, optimizer, device, epochs=local_epochs
+        model_for_training, train_loader, criterion, optimizer, device, epochs=local_epochs
     )
-
-    # Get the state dictionary of the trained model
     trained_state_dict = trained_model.state_dict()
 
     # Compute the weight delta using state dictionaries
     weight_delta_tensors: List[torch.Tensor] = []
     with torch.no_grad():
         for key in initial_state_dict:
+            # Use the original model's state dict for the subtraction
             delta = trained_state_dict[key].cpu() - initial_state_dict[key].cpu()
             weight_delta_tensors.append(delta)
 
-    flat_delta_np = flatten_gradients(weight_delta_tensors)
-
-    eval_res = {"loss": float('nan'), "accuracy": float('nan')}
-    if evaluate_on_full_train_set:
-        eval_res = test_local_model(trained_model, train_loader, criterion, device)
-    elif avg_train_loss is not None:
-        eval_res["loss"] = avg_train_loss
-
-    return weight_delta_tensors, flat_delta_np, trained_model, eval_res, avg_train_loss
-
-def apply_gradient_update(
-        initial_model: nn.Module,  # The model state to start from
-        grad_update: List[torch.Tensor]  # The delta: (trained_params - initial_params)
-) -> nn.Module:
-    """
-    Create a new model by adding the computed gradient update to a copy of the
-    initial model's parameters.
-    The gradient update is assumed to be computed as (trained_model_param - initial_model_param).
-
-    Args:
-        initial_model (nn.Module): The model before local training.
-        grad_update (List[torch.Tensor]): List of gradient update tensors (deltas).
-
-    Returns:
-        nn.Module: A new model instance with updated parameters.
-    """
-    # Create a deep copy of the initial model to avoid modifying it in-place.
-    # For maximal efficiency IF signature could change, one would reconstruct the model.
-    try:
-        updated_model = copy.deepcopy(initial_model)
-    except Exception as e:
-        logging.error(f"Failed to deepcopy initial_model in apply_gradient_update: {e}", exc_info=True)
-        raise  # Re-raise, as we can't proceed
-
-    # Ensure the model is on a device (if it's CPU, this does nothing; if CUDA, ensures params are there)
-    # This step might be redundant if initial_model is already on the target device.
-    # However, grad_update tensors are typically on CPU.
-    # We'll move deltas to the parameter's device.
-
-    num_model_params = len(list(updated_model.parameters()))
-    if len(grad_update) != num_model_params:
-        logging.error(
-            f"Parameter mismatch in apply_gradient_update: "
-            f"Model has {num_model_params} param groups, grad_update has {len(grad_update)}."
-        )
-        # Fallback: return the un-updated copy or raise error
-        # For safety, let's return the un-updated copy with a warning.
-        # A better approach might be to raise an error if strictness is required.
-        return updated_model  # or raise ValueError(...)
-
-    with torch.no_grad():  # Ensure operations are not tracked during parameter update
-        for param, delta_tensor_cpu in zip(updated_model.parameters(), grad_update):
-            if param.shape != delta_tensor_cpu.shape:
-                logging.error(
-                    f"Shape mismatch for parameter update: param shape {param.shape}, "
-                    f"delta shape {delta_tensor_cpu.shape}. Skipping this parameter."
-                )
-                continue
-            # Move delta to the same device as the parameter and add
-            param.add_(delta_tensor_cpu.to(param.device))
-
-    return updated_model
+    # Return only the necessary values
+    return weight_delta_tensors, avg_train_loss
 
 
-def get_model_params(model):
-    """
-    Extracts all parameters from a PyTorch model into a dictionary.
-
-    Parameters:
-        model: A PyTorch model
-
-    Returns:
-        Dict[str, torch.Tensor]: Dictionary mapping parameter names to their values
-    """
-    return {name: param.clone().detach() for name, param in model.state_dict().items()}
-
-
-# ---------------------------
-# Model Saving/Loading Utilities
-# ---------------------------
-
-def save_model(model: nn.Module, path: str):
-    """
-    Save the model's state_dict to the specified file path.
-    """
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    torch.save(model.state_dict(), path)
-    print(f"Model saved to {path}")
-
-
-def load_model(model: nn.Module, path: str, device: torch.device):
-    """
-    Load a model's state_dict from the specified file path.
-    """
-    state_dict = torch.load(path, map_location=device)
-    model.load_state_dict(state_dict)
-    print(f"Model loaded from {path}")
-    return model
-
-
-def load_param(path: str, device: torch.device):
-    """
-    Load a model's state_dict from the specified file path.
-    """
-    state_dict = torch.load(path, map_location=device)
-    print(f"Model loaded from {path}")
-    return state_dict
-
-
+# --- 1. Update the MODEL_REGISTRY to include text models ---
 MODEL_REGISTRY = {
+    # Image Models
     "simple_cnn": {
         "class": SimpleCNN,
+        "domain": "image",
         "supported_datasets": ["cifar", "celeba", "camelyon16"],
     },
     "lenet": {
         "class": LeNet,
-        "supported_datasets": ["mnist", "fmnist", "cifar"],  # LeNet can now support CIFAR
+        "domain": "image",
+        "supported_datasets": ["mnist", "fmnist", "cifar"],
     },
+    # Text Models
+    "text_cnn": {
+        "class": TextCNN,
+        "domain": "text",
+        "supported_datasets": ["ag_news", "trec"],
+        # Define required parameters for text models
+        "required_params": ["vocab_size", "num_classes", "padding_idx"]
+    }
 }
+
+
+# --- 2. Create a single, unified get_model factory ---
+def get_model(
+        model_name: str,
+        dataset_name: str,  # Pass name instead of full dataset object
+        device: Optional[Union[str, torch.device]] = None,
+        **kwargs: Any  # Pass all other params like num_classes, vocab_size here
+) -> nn.Module:
+    """
+    Gets an initialized model instance from the central registry.
+    """
+    model_name = model_name.lower()
+    if model_name not in MODEL_REGISTRY:
+        raise NotImplementedError(f"Model '{model_name}' not in registry.")
+
+    model_info = MODEL_REGISTRY[model_name]
+    model_class = model_info["class"]
+
+    if dataset_name.lower() not in model_info["supported_datasets"]:
+        raise ValueError(f"Model '{model_name}' does not support '{dataset_name}'.")
+
+    # Filter kwargs to only pass what the model constructor needs
+    # This avoids "unexpected keyword argument" errors
+    import inspect
+    sig = inspect.signature(model_class.__init__)
+    model_params = {p.name for p in sig.parameters.values()}
+    filtered_kwargs = {k: v for k, v in kwargs.items() if k in model_params}
+
+    # Instantiate the model
+    model = model_class(**filtered_kwargs)
+
+    if device:
+        model.to(torch.device(device) if isinstance(device, str) else device)
+
+    return model
 
 
 # --- 0c. Flexible Model Dispatcher Function ---
@@ -373,7 +309,6 @@ def get_image_model(
     return model
 
 
-# --- Improved Snippet (get_text_model) ---
 def get_text_model(
         dataset_name: str,
         num_classes: int,
@@ -386,7 +321,6 @@ def get_text_model(
     model: nn.Module
     match dataset_name.lower():
         case "ag_news" | "trec":
-            # ... (original TextCNN instantiation logic) ...
             if vocab_size is None: raise ValueError("`vocab_size` is required for TextCNN model.")
             if padding_idx is None: raise ValueError("`padding_idx` is required for TextCNN model.")
             embed_dim = model_kwargs.get("embed_dim", 100)
@@ -406,93 +340,3 @@ def get_text_model(
     if device:  # Apply device if specified
         model.to(torch.device(device) if isinstance(device, str) else device)
     return model
-
-
-def get_model_name(dataset_name):
-    match dataset_name.lower():
-        case "cifar":
-            model = 'LeNet'
-        case "fmnist":
-            model = 'LeNet'
-        case "trec" | "ag_news":
-            model = 'TEXTCNN'
-        case _:
-            raise NotImplementedError(f"Cannot find the model for dataset {dataset_name}")
-    return model
-
-
-def get_domain(dataset_name: str) -> str:
-    """
-    Determines the data domain ('image' or 'text') based on the dataset name.
-
-    Args:
-        dataset_name (str): The name of the dataset (case-insensitive).
-
-    Returns:
-        str: The domain type ('image' or 'text').
-
-    Raises:
-        NotImplementedError: If the dataset name is not recognized.
-    """
-    domain: str  # Variable to hold the result
-
-    # Convert to lower once for case-insensitive matching
-    dataset_name_lower = dataset_name.lower()
-
-    match dataset_name_lower:
-        case "cifar":
-            domain = 'image'
-        case "fmnist":
-            domain = 'image'
-        case "celeba":
-            domain = 'image'
-        case "camelyon16":
-            domain = 'image'
-        # Use | (OR pattern) to match multiple string literals
-        case "trec" | "ag_news":
-            domain = 'text'
-        # Add other datasets as needed using |
-        # case "mnist" | "svhn":
-        #     domain = 'image'
-        # case "imdb" | "sst2":
-        #     domain = 'text'
-        case _:
-            # Log the error for better debugging if needed
-            logging.error(f"Unrecognized dataset name: {dataset_name}")
-            # Raise error as before
-            raise NotImplementedError(
-                f"Cannot determine domain for dataset '{dataset_name}'")  # Added quotes for clarity
-
-    return domain
-
-def save_samples(data_loader, filename, n_samples=16, nrow=4, title="Samples"):
-    """
-    Save a grid of images from the provided DataLoader for visualization_226.
-
-    Args:
-        data_loader: DataLoader object from which to fetch a batch of images.
-        filename: Path to save the visualization_226 image.
-        n_samples: Number of images to display (default: 16).
-        nrow: Number of images per row in the grid (default: 4).
-        title: Title for the plot.
-    """
-    # Get one batch from the loader
-    images, labels = next(iter(data_loader))
-
-    # Ensure we don't exceed available images
-    images = images[:n_samples]
-
-    # Create a grid of images
-    grid = vutils.make_grid(images, nrow=nrow, normalize=True, scale_each=True)
-
-    # Convert grid to numpy for plotting
-    np_grid = grid.cpu().numpy()
-    np_grid = np.transpose(np_grid, (1, 2, 0))  # from (C, H, W) to (H, W, C)
-
-    # Plot and save the grid
-    plt.figure(figsize=(8, 8))
-    plt.imshow(np_grid)
-    plt.title(title)
-    plt.axis("off")
-    plt.savefig(filename, bbox_inches='tight')
-    plt.close()

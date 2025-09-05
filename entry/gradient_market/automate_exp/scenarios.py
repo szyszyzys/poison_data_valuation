@@ -38,7 +38,7 @@ def use_camelyon_config(config: AppConfig) -> AppConfig:
 
 
 # Attack Modifiers
-def use_backdoor_attack(config: AppAppConfig) -> AppConfig:
+def use_backdoor_attack(config: AppConfig) -> AppConfig:
     """Modifier to enable a standard backdoor attack."""
     config.adversary_seller_config.poisoning.type = PoisonType.BACKDOOR
     return config
@@ -50,10 +50,6 @@ def use_sybil_amplify(config: AppConfig) -> AppConfig:
     config.adversary_seller_config.sybil.is_sybil = True
     config.adversary_seller_config.sybil.role_config = {"amplify": 1.0}
     return config
-
-
-# --- Define Your List of Scenarios to Generate ---
-# This is the single source of truth for all your experiments.
 
 ALL_SCENARIOS = [
     # --- IMAGE: Baseline Scenarios (No Attack) ---
@@ -93,8 +89,8 @@ ALL_SCENARIOS = [
         base_config_factory=get_base_image_config,
         modifiers=[use_camelyon_config, use_backdoor_attack],
         parameter_grid={
-            "experiment.adv_rate": [0.1, 0.3],
-            "adversary_seller_config.poisoning.poison_rate": [0.2, 0.5]
+            "experiment.adv_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+            "adversary_seller_config.poisoning.poison_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 1]
         }
     ),
 
@@ -104,7 +100,7 @@ ALL_SCENARIOS = [
         base_config_factory=get_base_text_config,
         modifiers=[use_backdoor_attack],
         parameter_grid={
-            "experiment.adv_rate": [0.1, 0.3],
+            "experiment.adv_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
             "adversary_seller_config.poisoning.text_backdoor_params.trigger_content": ["order", "movie", "apple"]
         }
     ),
@@ -115,7 +111,7 @@ ALL_SCENARIOS = [
         base_config_factory=get_base_image_config,
         modifiers=[use_celeba_config, use_sybil_amplify],
         parameter_grid={
-            "experiment.adv_rate": [0.2, 0.4],
+            "experiment.adv_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
             "adversary_seller_config.sybil.strategy_configs.amplify.factor": [2.0, 5.0, 10.0]
         }
     ),

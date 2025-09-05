@@ -10,8 +10,3 @@ class DataMarketplace(ABC):
         """Register a seller in the marketplace."""
         pass
 
-    @abstractmethod
-    def get_market_status(self) -> Dict:
-        """Get current market status (e.g., number of sellers, stats, etc.)."""
-        pass
-
