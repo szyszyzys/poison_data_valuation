@@ -63,7 +63,7 @@ for file in "${FILES_TO_DOWNLOAD[@]}"; do
   else
     echo "    - Downloading $file..."
     # Use wget with a progress bar for a better user experience
-    wget -q --show-progress "$BASE_URL/$file"
+    wget --show-progress "$BASE_URL/$file"
   fi
 done
 echo "    All main files are present."
