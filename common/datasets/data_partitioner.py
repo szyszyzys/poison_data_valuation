@@ -1,9 +1,8 @@
 import logging
-import random
-from typing import Any, Dict, List, Tuple
-
 import numpy as np
+import random
 from torch.utils.data import Dataset
+from typing import Any, Dict, List, Tuple
 
 from common.datasets.image_data_processor import Camelyon16Custom
 from common.datasets.image_data_processor import CelebACustom
@@ -18,8 +17,37 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_targets(dataset: Dataset) -> np.ndarray:
+    """
+    Extracts a single target label from each sample in a dataset,
+    handling Subset wrappers and special cases like CelebA.
+    """
+    # Case 1: The dataset is a Subset wrapper
+    if isinstance(dataset, Subset):
+        underlying_dataset = dataset.dataset
+        indices = dataset.indices
+
+        # If the underlying dataset is our custom CelebA...
+        if isinstance(underlying_dataset, CelebACustom):
+            # ...use the specific property attribute as the "target" for statistics.
+            prop_idx = underlying_dataset.property_idx
+            return underlying_dataset.attr[indices, prop_idx].numpy()
+
+        # For other datasets, try to get targets from the underlying dataset
+        if hasattr(underlying_dataset, "targets"):
+            return np.array(underlying_dataset.targets)[indices]
+        # Fallback for subsets of datasets without a .targets attribute
+        return np.array([underlying_dataset[i][1] for i in indices])
+
+    # Case 2: The dataset is the full object itself
+    if isinstance(dataset, CelebACustom):
+        prop_idx = dataset.property_idx
+        return dataset.attr[:, prop_idx].numpy()
+
+    # Fallback for other full datasets
     if hasattr(dataset, "targets"):
         return np.array(dataset.targets)
+
+    # Original (and slowest) fallback if no .targets attribute is found
     return np.array([dataset[i][1] for i in range(len(dataset))])
 
 
