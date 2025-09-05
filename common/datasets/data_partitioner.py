@@ -1,7 +1,7 @@
 import logging
 import numpy as np
 import random
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 from typing import Any, Dict, List, Tuple
 
 from common.datasets.image_data_processor import Camelyon16Custom
