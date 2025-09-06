@@ -187,27 +187,24 @@ class BackdoorTextGenerator(PoisonGenerator):
         if not isinstance(data, list):
             raise TypeError(f"Expected data to be a list of token IDs, but got {type(data)}")
 
-        poisoned_ids = list(data)
+        # Make space for the trigger by truncating the original data first.
+        max_original_len = self.config.max_seq_len - len(self.trigger_token_ids)
+        if max_original_len < 0:
+            raise ValueError("max_seq_len is smaller than the trigger length!")
 
-        # Determine insertion position using the Enum
+        clean_ids = list(data[:max_original_len])
+
+        # Determine insertion position within the now-shorter sequence
         if self.config.location == TextTriggerLocation.START:
             insert_pos = 0
         elif self.config.location == TextTriggerLocation.END:
-            insert_pos = len(poisoned_ids)
+            insert_pos = len(clean_ids)
         elif self.config.location == TextTriggerLocation.MIDDLE:
-            insert_pos = len(poisoned_ids) // 2
+            insert_pos = len(clean_ids) // 2
         else:  # RANDOM
-            insert_pos = random.randint(0, len(poisoned_ids))
+            insert_pos = random.randint(0, len(clean_ids))
 
-        # Insert trigger
-        poisoned_ids = poisoned_ids[:insert_pos] + self.trigger_token_ids + poisoned_ids[insert_pos:]
-
-        # Handle truncation if max_seq_len is set
-        if self.config.location == TextTriggerLocation.END:
-            # Keep the last max_seq_len tokens
-            poisoned_ids = poisoned_ids[-self.config.max_seq_len:]
-        else:
-            # For START, MIDDLE, or RANDOM, just truncate the end
-            poisoned_ids = poisoned_ids[:self.config.max_seq_len]
+        # Insert trigger into the shortened data
+        poisoned_ids = clean_ids[:insert_pos] + self.trigger_token_ids + clean_ids[insert_pos:]
 
         return poisoned_ids, self.config.target_label

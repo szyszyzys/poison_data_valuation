@@ -25,6 +25,7 @@ from common.enums import ImageTriggerType, ImageTriggerLocation, ImageBackdoorAt
 from common.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, BackdoorTextConfig, SybilConfig, \
     RuntimeDataConfig, TrainingConfig
 from common.utils import unflatten_tensor
+from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.seller.seller import BaseSeller
 from model.utils import local_training_and_get_gradient
 
@@ -288,7 +289,7 @@ class ClientState:
 
 
 class SybilCoordinator:
-    def __init__(self, sybil_cfg: SybilConfig, aggregator):
+    def __init__(self, sybil_cfg: SybilConfig, aggregator: Aggregator):
         self.sybil_cfg = sybil_cfg
         self.aggregator = aggregator
         self.device = aggregator.device  # Get device from a reliable source
@@ -609,55 +610,42 @@ class TriggeredSubsetDataset(Dataset):
             original_dataset: Dataset,
             trigger_indices: np.ndarray,
             target_label: int,
-            backdoor_generator: object,
+            backdoor_generator: PoisonGenerator,
             device: str,
+            label_first: bool = False
     ):
         self.original_dataset = original_dataset
         self.trigger_indices_set: Set[int] = set(map(int, trigger_indices))
         self.target_label = int(target_label)
         self.backdoor_generator = backdoor_generator
         self.device = device
+        self.label_first = label_first
 
     def __len__(self) -> int:
         return len(self.original_dataset)
 
-    def __getitem__(self, idx: int) -> tuple:
+    def __getitem__(self, idx: int) -> Tuple[Any, torch.Tensor]:
         """
-
         Retrieves an item, applies a trigger if the index is targeted,
         and ensures the output is a standardized (data, label) tuple on the correct device.
         """
-        # 1. Get raw item and handle different data/label orderings
-        item_a, item_b = self.original_dataset[idx]
-        if isinstance(item_a, int) and not isinstance(item_b, int):
-            label, data = item_a, item_b  # Handle (label, data) format
+        # 1. Get raw data and label from the original dataset
+        original_data, original_label = self.original_dataset[idx]
+        if self.label_first:
+            data, label = original_label, original_data
         else:
-            data, label = item_a, item_b  # Assume (data, label) format
+            data, label = original_data, original_label
 
-        is_poisoned = idx in self.trigger_indices_set
+        # 2. If the index is targeted, apply the poison using the unified interface
+        if idx in self.trigger_indices_set:
+            # The generator handles all the logic for images, text, etc.
+            data, label = self.backdoor_generator.apply(data, label)
 
-        # 2. Apply trigger and update label if the sample is targeted
-        if is_poisoned:
-            label = self.target_label
-            # --- Image Data Branch ---
-            if isinstance(data, torch.Tensor) and data.dim() >= 2:  # Robust check for tensors
-                data = self.backdoor_generator.apply_trigger_tensor(data.to(self.device))
-            # --- Text Data Branch ---
-            elif isinstance(data, (list, tuple, torch.Tensor, dict)):
-                data = self.backdoor_generator.apply_trigger_text(data, device=self.device)
-            else:
-                raise TypeError(f"Unsupported data type from dataset: {type(data)}")
+        # 3. Standardize output and move to the correct device at the end
+        # This ensures both clean and poisoned samples are handled consistently.
+        if isinstance(data, torch.Tensor):
+            data = data.to(self.device)
 
-        # 3. Ensure data is on the correct device (for non-poisoned samples)
-        if not is_poisoned:
-            if isinstance(data, dict):
-                data = {k: v.to(self.device) if torch.is_tensor(v) else v for k, v in data.items()}
-            else:
-                # This handles tensors, lists, and other types that the model expects.
-                # We assume the model's forward pass will handle final tensor conversion if needed.
-                pass
-
-        # 4. Standardize label to a Tensor and move to device
         final_label = torch.tensor(label, dtype=torch.long, device=self.device)
 
         return data, final_label

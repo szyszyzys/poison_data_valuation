@@ -57,6 +57,7 @@ class Aggregator:
             clip_norm=agg_config.clip_norm,
             **strategy_kwargs  # <-- Unpack the specific params here
         )
+        self.device = device
 
     def _standardize_updates(self, updates: Dict[str, list]) -> Dict[str, List[torch.Tensor]]:
         # This pre-processing step can stay in the main orchestrator.
