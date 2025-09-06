@@ -51,18 +51,30 @@ class SkymaskAggregator(BaseAggregator):
     these learned "masks" to cluster sellers into benign and malicious groups.
     """
 
+    def __init__(self,
+                 clip: bool,
+                 sm_model_type: str,
+                 mask_epochs: int,
+                 mask_lr: float,
+                 mask_clip: float,
+                 mask_threshold: float,
+                 *args, **kwargs):
+
+        # Pass all common arguments (global_model, device, etc.) up to the BaseAggregator
+        super().__init__(*args, **kwargs)
+
+        # Handle the specific parameters for Skymask
+        self.clip = clip
+        self.sm_model_type = sm_model_type
+        self.mask_epochs = mask_epochs
+        self.mask_lr = mask_lr
+        self.mask_clip = mask_clip
+        self.mask_threshold = mask_threshold
+        logger.info(f"SkymaskAggregator initialized with mask_epochs={self.mask_epochs}, mask_lr={self.mask_lr}")
+
     def aggregate(self, global_epoch: int, seller_updates: Dict[str, List[torch.Tensor]], **kwargs) -> Tuple[
         List[torch.Tensor], List[str], List[str]]:
         logger.info(f"--- SkyMask Aggregation (Epoch {global_epoch}) ---")
-
-        # --- Extract parameters from kwargs with sensible defaults ---
-        clip = kwargs.get("clip", False)
-        sm_model_type = kwargs.get("sm_model_type", 'None')
-        mask_epochs = kwargs.get("mask_epochs", 20)
-        mask_lr = kwargs.get("mask_lr", 1e-4)
-        mask_clip = kwargs.get("mask_clip", 1.0)
-        mask_threshold = kwargs.get("mask_threshold", 0.5)
-        # -----------------------------------------------------------------
 
         # 1. Compute full model parameters for each seller and the buyer
         global_params = [p.data.clone() for p in self.global_model.parameters()]
@@ -74,7 +86,7 @@ class SkymaskAggregator(BaseAggregator):
         # Store processed (clipped) updates to avoid doing it twice
         processed_updates = {}
         for sid in seller_ids:
-            update = clip_gradient_update(seller_updates[sid], self.clip_norm) if clip else seller_updates[sid]
+            update = clip_gradient_update(seller_updates[sid], self.clip_norm) if self.clip else seller_updates[sid]
             processed_updates[sid] = update
             worker_params.append([p_glob + p_upd for p_glob, p_upd in zip(global_params, update)])
 
@@ -82,12 +94,13 @@ class SkymaskAggregator(BaseAggregator):
         worker_params.append(buyer_params)  # Buyer is the last model
 
         # 2. Create and train the MaskNet
-        masknet = create_masknet(worker_params, sm_model_type, self.device)
-        masknet = train_masknet(masknet, self.buyer_data_loader, mask_epochs, mask_lr, mask_clip, self.device)
+        masknet = create_masknet(worker_params, self.sm_model_type, self.device)
+        masknet = train_masknet(masknet, self.buyer_data_loader, self.mask_epochs, self.mask_lr, self.mask_clip,
+                                self.device)
 
         # 3. Extract masks and classify with GMM
         seller_masks_np = []
-        t = torch.tensor([mask_threshold], device=self.device)
+        t = torch.tensor([self.mask_threshold], device=self.device)
         for i in range(len(seller_ids)):  # Iterate over sellers only
             seller_mask_layers = []
             for layer in masknet.children():
