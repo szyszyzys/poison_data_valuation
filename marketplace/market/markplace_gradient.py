@@ -13,6 +13,7 @@ from common.enums import PoisonType, ServerAttackMode
 from common.gradient_market_configs import AppConfig, ServerAttackConfig
 from entry.gradient_market.privacy_attack import GradientInversionAttacker
 from marketplace.market.data_market import DataMarketplace
+from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.seller.seller import BaseSeller
 
 
@@ -28,7 +29,7 @@ class MarketplaceConfig:
 
 
 class DataMarketplaceFederated(DataMarketplace):
-    def __init__(self, cfg: AppConfig, aggregator, evaluator, sellers, input_shape: tuple, attacker=None):
+    def __init__(self, cfg: AppConfig, aggregator: Aggregator, evaluator, sellers, input_shape: tuple, attacker=None):
         """
         Initializes the marketplace with all necessary components and the main config.
         """
@@ -45,7 +46,7 @@ class DataMarketplaceFederated(DataMarketplace):
             # 2. Use the correct variable name: 'self.cfg' not 'self.config'
             self.attacker = GradientInversionAttacker(
                 attack_config=self.cfg.server_attack_config,
-                model_template=aggregator.global_model,
+                model_template=aggregator.strategy.global_model,
                 device=aggregator.device,
                 # 3. Use the correct path for the save directory
                 save_dir=self.cfg.experiment.save_path,
@@ -55,7 +56,7 @@ class DataMarketplaceFederated(DataMarketplace):
                 input_shape=input_shape,  # Passed in, as it's determined at runtime
                 num_classes=self.cfg.experiment.num_classes
             )
-            logger.info("Initialized GradientInversionAttacker.")
+            logging.info("Initialized GradientInversionAttacker.")
 
     def register_seller(self, seller_id: str, seller: BaseSeller):
         """Registers a new seller in the marketplace."""
@@ -94,15 +95,15 @@ class DataMarketplaceFederated(DataMarketplace):
 
         # 4. Update global model
         if agg_grad:
-            self.aggregator.apply_gradient(agg_grad)
+            self.aggregator.strategy.apply_gradient(agg_grad)
 
         # 5. Evaluate the updated model
-        perf_global = self.evaluator.evaluate(self.aggregator.global_model, test_loader_global)
+        perf_global = self.evaluator.evaluate(self.aggregator.strategy.global_model, test_loader_global)
 
         if self.cfg.adversary_seller_config.poisoning.type == PoisonType.BACKDOOR:
             # The evaluator is assumed to have access to the config to get backdoor details
             perf_global["asr"] = self.evaluator.evaluate_backdoor_asr(
-                self.aggregator.global_model, test_loader_global, self.cfg
+                self.aggregator.strategy.global_model, test_loader_global, self.cfg
             )
 
         # 6. Log results for the round
@@ -124,7 +125,7 @@ class DataMarketplaceFederated(DataMarketplace):
         seller_ids, seller_stats_list = [], []
         for sid, seller in self.sellers.items():
             try:
-                grad, stats = seller.get_gradient_for_upload(self.aggregator.global_model)
+                grad, stats = seller.get_gradient_for_upload(self.aggregator.strategy.global_model)
                 if grad is not None:
                     gradients_dict[sid] = grad
                     seller_ids.append(sid)

@@ -255,12 +255,12 @@ class GradientInversionAttacker:
     """Encapsulates all logic for performing a Gradient Inversion Attack."""
 
     def __init__(
-            self, attack_config: ServerAttackConfig, model_template: nn.Module, device: str,
+            self, attack_config: ServerAttackConfig, model_template: nn.Module, device: torch.device,
             save_dir: str, dataset_name: str, input_shape: Tuple[int, int, int], num_classes: int,
     ):
         self.config = attack_config.gradient_inversion_params
         self.model_template = model_template
-        self.device = torch.device(device)
+        self.device = device
         self.save_dir = Path(save_dir) / "gradient_inversion"
         self.dataset_name, self.input_shape, self.num_classes = dataset_name, input_shape, num_classes
         # This will now work correctly with the Enum
