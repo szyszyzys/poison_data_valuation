@@ -10,7 +10,7 @@ def get_base_image_config() -> AppConfig:
     """Creates the default, base AppConfig for IMAGE-based experiments."""
     return AppConfig(
         experiment=ExperimentConfig(
-            dataset_name="CelebA", model_structure="SimpleCNN", aggregation_method="fedavg",
+            dataset_name="CelebA", model_structure="Simple_CNN", aggregation_method="fedavg",
             global_rounds=100, n_sellers=30, adv_rate=0.0,
             device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="image"
         ),
