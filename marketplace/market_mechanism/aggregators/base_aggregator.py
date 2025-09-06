@@ -15,12 +15,13 @@ class BaseAggregator(ABC):
     """Abstract base class for all aggregation strategies."""
 
     def __init__(self, global_model: nn.Module, device: torch.device,
-                 loss_fn: nn.Module, buyer_data_loader: DataLoader, clip_norm: float):
+                 loss_fn: nn.Module, buyer_data_loader: DataLoader, clip_norm: float, change_base: bool):
         self.global_model = global_model
         self.device = device
         self.loss_fn = loss_fn
         self.buyer_data_loader = buyer_data_loader
         self.clip_norm = clip_norm
+        self.change_base = change_base
 
     @abstractmethod
     def aggregate(self, global_epoch: int, seller_updates: Dict[str, List[torch.Tensor]], **kwargs) -> Tuple[
