@@ -38,7 +38,7 @@ def get_base_text_config() -> AppConfig:
     """Creates the default, base AppConfig for TEXT-based experiments."""
     return AppConfig(
         experiment=ExperimentConfig(
-            dataset_name="AG_NEWS", model_structure="BiLSTM", aggregation_method="fedavg",
+            dataset_name="AG_NEWS", model_structure="text_cnn", aggregation_method="fedavg",
             global_rounds=50, n_sellers=20, adv_rate=0.0,
             device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="text"
 
