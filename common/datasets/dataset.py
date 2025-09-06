@@ -10,11 +10,12 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
 from torchtext.data.utils import get_tokenizer
-from torchtext.vocab import build_vocab_from_iterator
+from torchtext.vocab import build_vocab_from_iterator, Vocab
 
 from common.datasets.data_partitioner import FederatedDataPartitioner, _extract_targets
 from common.datasets.image_data_processor import load_dataset_with_property, save_data_statistics, CelebACustom
-from common.datasets.text_data_processor import ProcessedTextData, hf_datasets_available, get_cache_path
+from common.datasets.text_data_processor import ProcessedTextData, hf_datasets_available, get_cache_path, \
+    generate_buyer_bias_distribution, split_text_dataset_martfl_discovery, collate_batch
 from common.gradient_market_configs import AppConfig
 
 try:
@@ -100,13 +101,15 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
 
     # --- Create the final DataLoader objects (no changes needed here) ---
     batch_size = cfg.training.batch_size
-    buyer_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=True) if len(buyer_indices) > 0 else None
+    buyer_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=True) if len(
+        buyer_indices) > 0 else None
 
     seller_loaders = {
         cid: DataLoader(Subset(train_set, indices), batch_size=batch_size, shuffle=True)
         for cid, indices in seller_splits.items() if indices
     }
-    test_loader = DataLoader(Subset(train_set, test_indices), batch_size=batch_size, shuffle=False) if len(test_indices) > 0 else None
+    test_loader = DataLoader(Subset(train_set, test_indices), batch_size=batch_size, shuffle=False) if len(
+        test_indices) > 0 else None
 
     logger.info(f"✅ Federated dataset setup complete. Found {num_classes} classes.")
 
@@ -199,7 +202,7 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
             yield_tokens(hf_iterator(train_ds_hf, text_field)),
             min_freq=vocab_cfg.min_freq,
             specials=[vocab_cfg.unk_token, vocab_cfg.pad_token],
-            special_first=True  # This ensures <unk> is at index 0, <pad> is at 1, etc.
+            special_first=True
         )
 
         # 3. Set the default index for out-of-vocabulary words
@@ -227,7 +230,7 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
 
         logging.info(f"Numericalizing {split_name} data...")
         processed_data = []
-        text_pipeline = lambda x: [vocab.stoi.get(token, unk_idx) for token in tokenizer(x)]
+        text_pipeline = lambda x: vocab(tokenizer(x))
         for label, text in data_iterator_func():
             if text and label is not None:
                 processed_text = text_pipeline(text)

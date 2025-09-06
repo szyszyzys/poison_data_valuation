@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Callable, Optional
 
+import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
 
@@ -63,7 +64,6 @@ class SellerFactory:
                     trigger_type=params.trigger_type,
                     blend_alpha=params.strength,
                     location=params.location
-                    # channels and trigger_size are assumed to have defaults in BackdoorImageConfig
                 )
                 return BackdoorImageGenerator(generator_cfg)
 
@@ -86,7 +86,8 @@ class SellerFactory:
         """Creates a seller instance, assembling configs and dependencies on the fly."""
         data_cfg = RuntimeDataConfig(
             dataset=dataset,
-            num_classes=self.cfg.experiment.num_classes
+            num_classes=self.cfg.experiment.num_classes,
+            collate_fn=None
         )
         training_cfg = self.cfg.training
 
@@ -134,35 +135,34 @@ class SellerFactory:
 def setup_data_and_model(cfg: AppConfig):
     """Loads dataset and creates a model factory from the AppConfig."""
     dataset_name = cfg.experiment.dataset_name
-    is_text = 'text' in dataset_name.lower()
+
+    is_text = cfg.experiment.dataset_type == "text"
 
     if is_text:
-        _, seller_loaders, test_loader, classes, vocab, pad_idx = get_text_dataset(cfg)
-        num_classes = len(classes)
+        processed_data = get_text_dataset(cfg)
+        buyer_loader = processed_data.buyer_loader
+        seller_loaders = processed_data.seller_loaders
+        test_loader = processed_data.test_loader
+        num_classes = processed_data.num_classes
+        vocab = processed_data.vocab
+        pad_idx = processed_data.pad_idx
+
         model_init_cfg = {"num_classes": num_classes, "vocab_size": len(vocab), "padding_idx": pad_idx}
         model_factory = lambda: get_text_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
         seller_extra_args = {"vocab": vocab, "pad_idx": pad_idx, "model_type": "text"}
     else:  # Image
         buyer_loader, seller_loaders, test_loader, stats, num_classes = get_image_dataset(cfg)
 
-        # --- NEW: Determine in_channels here ---
-        # This logic can be as simple or complex as you need.
         dataset_name_lower = cfg.experiment.dataset_name.lower()
         in_channels = 3 if dataset_name_lower in ["celeba", "camelyon16"] else 1
-
-        # --- UPDATE: Add in_channels to the model config dict ---
         model_init_cfg = {"num_classes": num_classes, "in_channels": in_channels}
-
-        # This factory call now perfectly matches the new get_image_model signature
         model_factory = lambda: get_image_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
         seller_extra_args = {"model_type": "image"}
 
-    # Dynamically update num_classes in the config object for runtime use
     cfg.experiment.num_classes = num_classes
     logging.info(f"Data loaded for '{dataset_name}'. Number of classes: {cfg.experiment.num_classes}")
 
-    # Now this return statement works for both text and image datasets
-    return seller_loaders, test_loader, model_factory, seller_extra_args
+    return buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args
 
 
 def initialize_sellers(cfg: AppConfig, marketplace, client_loaders, model_factory, seller_extra_args,
@@ -221,10 +221,23 @@ def run_attack(cfg: AppConfig):
     logging.info(f"--- Starting Experiment: {cfg.experiment.dataset_name} | {cfg.experiment.model_structure} ---")
 
     # 1. Data and Model Setup
-    client_loaders, test_loader, model_factory, seller_extra_args = setup_data_and_model(cfg)
+    buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args = setup_data_and_model(cfg)
+
+    global_model = model_factory().to(cfg.experiment.device)
+    logging.info(f"Global model created and moved to {cfg.experiment.device}")
+
+    # 3. Define the loss function
+    loss_fn = nn.CrossEntropyLoss()
 
     # 2. FL Component Initialization
-    aggregator = Aggregator(cfg.experiment.aggregation_method, model_factory())
+    aggregator = Aggregator(
+        global_model=global_model,
+        device=torch.device(cfg.experiment.device),
+        loss_fn=loss_fn,
+        buyer_data_loader=buyer_loader,
+        agg_config=cfg.aggregation  # <-- Pass the whole aggregation config object
+    )
+
     loss_fn = nn.CrossEntropyLoss()
     evaluator = FederatedEvaluator(loss_fn, device=cfg.experiment.device)
     sybil_coordinator = SybilCoordinator(cfg.adversary_seller_config.sybil, aggregator)
@@ -244,12 +257,12 @@ def run_attack(cfg: AppConfig):
     )
 
     # 4. Seller Initialization
-    initialize_sellers(cfg, marketplace, client_loaders, model_factory, seller_extra_args, sybil_coordinator)
+    initialize_sellers(cfg, marketplace, seller_loaders, model_factory, seller_extra_args, sybil_coordinator)
 
     # 5. Federated Training Loop
     # Note: run_training_loop no longer needs the loss_fn or sybil_coordinator,
     # as those are handled within the marketplace or sellers.
-    run_training_loop(cfg, marketplace, test_loader)
+    run_training_loop(cfg, marketplace, test_loader, loss_fn, sybil_coordinator)
     logging.info("--- Experiment Finished ---")
 
 

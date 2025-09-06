@@ -3,9 +3,9 @@
 from dataclasses import dataclass, field
 from typing import List, Callable, Dict, Any
 
-from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig
+from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
 
 
 # --- Define the structure of a Scenario ---
@@ -210,8 +210,8 @@ smoke_test_scenario = Scenario(
 
 smoke_test_text_scenario = Scenario(
     name="smoke_test_text",
-    base_config_factory=get_base_text_config, # <-- Use the text base config
-    modifiers=[use_backdoor_attack], # Use an attack to test that path
+    base_config_factory=get_base_text_config,  # <-- Use the text base config
+    modifiers=[use_backdoor_attack],  # Use an attack to test that path
     parameter_grid={
         # Minimal settings for a fast run
         "experiment.dataset_name": ["AG_NEWS"],
@@ -226,7 +226,6 @@ smoke_test_text_scenario = Scenario(
         "experiment.device": ["cpu"]
     }
 )
-
 
 ALL_SCENARIOS.append(smoke_test_scenario)
 

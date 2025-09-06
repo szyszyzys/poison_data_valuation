@@ -31,6 +31,7 @@ class ExperimentConfig:
     num_classes: int = 0  # Default to 0, will be set dynamically at runtime
     use_subset: bool = False
     subset_size: int = 500  # Number of samples to use in the subset
+    dataset_type: str = "text"
 
 
 @dataclass
@@ -93,7 +94,7 @@ class PoisoningConfig:
     poison_rate: float = 0.1  # <-- This is now the single source of truth
     image_backdoor_params: ImageBackdoorParams = field(default_factory=ImageBackdoorParams)
     text_backdoor_params: TextBackdoorParams = field(default_factory=TextBackdoorParams)
-    label_flip: LabelFlipParams = field(default_factory=LabelFlipParams)
+    label_flip_params: LabelFlipParams = field(default_factory=LabelFlipParams)
 
 
 # --- Create a specific parameter class for GIA ---
