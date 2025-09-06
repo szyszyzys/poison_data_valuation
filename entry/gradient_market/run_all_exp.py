@@ -243,7 +243,28 @@ def run_attack(cfg: AppConfig):
     sybil_coordinator = SybilCoordinator(cfg.adversary_seller_config.sybil, aggregator)
 
     # Get a sample batch to determine input shape (your method is perfect)
-    sample_data, _ = next(iter(test_loader))
+    sample_data = None
+    if test_loader:
+        try:
+            # Try to get a sample from the test loader first
+            sample_data, _ = next(iter(test_loader))
+        except StopIteration:
+            logging.warning("Test loader is available but empty.")
+
+    # If no sample was retrieved, try getting one from a seller loader as a fallback
+    if sample_data is None:
+        logging.warning("No test data found. Using a sample from a seller loader for initialization.")
+        for loader in seller_loaders.values():
+            if loader:
+                try:
+                    sample_data, _ = next(iter(loader))
+                    break  # Success!
+                except StopIteration:
+                    continue  # This seller's loader is empty, try the next
+
+    if sample_data is None:
+        raise RuntimeError("Could not retrieve a sample data batch from any available loader.")
+
     input_shape = tuple(sample_data.shape[1:])
 
     # 3. Marketplace Initialization
