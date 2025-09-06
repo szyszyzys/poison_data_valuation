@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 from typing import Callable, Optional
 
-import numpy as np
 import torch.nn as nn
 from torch.utils.data import Dataset
 
@@ -138,27 +137,14 @@ def setup_data_and_model(cfg: AppConfig):
     is_text = 'text' in dataset_name.lower()
 
     if is_text:
-        ### FIXED ###
-        # Renamed 'client_loaders' to 'seller_loaders' for consistency.
         _, seller_loaders, test_loader, classes, vocab, pad_idx = get_text_dataset(cfg)
         num_classes = len(classes)
         model_init_cfg = {"num_classes": num_classes, "vocab_size": len(vocab), "padding_idx": pad_idx}
         model_factory = lambda: get_text_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
         seller_extra_args = {"vocab": vocab, "pad_idx": pad_idx, "model_type": "text"}
     else:  # Image
-        buyer_loader, seller_loaders, test_loader, stats = get_image_dataset(cfg)
-        if test_loader:
-            full_dataset = test_loader.dataset.dataset
-        elif buyer_loader:
-            full_dataset = buyer_loader.dataset.dataset
-        else:
-            # Fallback to the first available seller if others don't exist
-            first_seller_loader = next(iter(seller_loaders.values()), None)
-            if not first_seller_loader:
-                raise ValueError("No data loaders available to determine dataset properties.")
-            full_dataset = first_seller_loader.dataset.dataset
+        buyer_loader, seller_loaders, test_loader, stats, num_classes = get_image_dataset(cfg)
 
-        num_classes = len(np.unique(full_dataset.targets))
         model_init_cfg = {"num_classes": num_classes}
         model_factory = lambda: get_image_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
         seller_extra_args = {"model_type": "image"}

@@ -13,7 +13,7 @@ from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
 
 from common.datasets.data_partitioner import FederatedDataPartitioner, _extract_targets
-from common.datasets.image_data_processor import load_dataset_with_property, save_data_statistics
+from common.datasets.image_data_processor import load_dataset_with_property, save_data_statistics, CelebACustom
 from common.datasets.text_data_processor import ProcessedTextData, hf_datasets_available, get_cache_path
 from common.gradient_market_configs import AppConfig
 
@@ -33,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader], DataLoader, Dict]:
+def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader], DataLoader, Dict, int]:
     """
     A unified function to load, partition, and prepare federated image datasets.
     """
@@ -87,25 +87,30 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         targets=_extract_targets(train_set),
         output_dir=cfg.experiment.save_path
     )
+    actual_dataset = train_set.dataset if isinstance(train_set, Subset) else train_set
+    if isinstance(actual_dataset, CelebACustom):
+        # For CelebA, the "class" is the binary property (e.g., Blond_Hair vs. not)
+        num_classes = 2
+    elif hasattr(actual_dataset, 'targets'):
+        # For other datasets, calculate from the unique targets
+        num_classes = len(np.unique(actual_dataset.targets))
+    else:
+        # Fallback if a dataset has neither .targets nor a special case
+        raise ValueError("Could not determine the number of classes for the dataset.")
 
-    # 5. Create the final DataLoader objects (no changes needed here)
+    # --- Create the final DataLoader objects (no changes needed here) ---
     batch_size = cfg.training.batch_size
-    buyer_loader = DataLoader(Subset(train_set, buyer_indices), batch_size=batch_size, shuffle=True)
+    buyer_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=True) if len(buyer_indices) > 0 else None
 
     seller_loaders = {
         cid: DataLoader(Subset(train_set, indices), batch_size=batch_size, shuffle=True)
         for cid, indices in seller_splits.items() if indices
     }
+    test_loader = DataLoader(Subset(train_set, test_indices), batch_size=batch_size, shuffle=False) if len(test_indices) > 0 else None
 
-    test_loader = None
-    if len(test_indices) > 0:
-        test_loader = DataLoader(Subset(train_set, test_indices), batch_size=batch_size, shuffle=False)
-        logger.info(f"Created test loader with {len(test_indices)} samples.")
-    else:
-        logger.warning("No test indices found; test_loader will be None.")
+    logger.info(f"✅ Federated dataset setup complete. Found {num_classes} classes.")
 
-    logger.info("✅ Federated dataset setup complete. DataLoaders are ready.")
-    return buyer_loader, seller_loaders, test_loader, stats
+    return buyer_loader, seller_loaders, test_loader, stats, num_classes
 
 
 def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
