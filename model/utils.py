@@ -258,48 +258,26 @@ def get_model(
 
 # --- 0c. Flexible Model Dispatcher Function ---
 
+# In the file where get_image_model is defined
+
 def get_image_model(
         model_name: str,
-        dataset: Dataset,
+        num_classes: int,
+        in_channels: int,
         device: Optional[Union[str, torch.device]] = None
 ) -> nn.Module:
     """
-    Gets an initialized model instance based on its name and the dataset.
+    Gets an initialized model instance from the registry using provided parameters.
     """
     model_name = model_name.lower()
     if model_name not in MODEL_REGISTRY:
         raise NotImplementedError(
             f"Model '{model_name}' is not in the registry. Available models: {list(MODEL_REGISTRY.keys())}")
 
-    model_info = MODEL_REGISTRY[model_name]
-    model_class = model_info["class"]
-
-    dataset_name = dataset.__class__.__name__.lower().replace('custom', '').replace('fashion', '')
-    if isinstance(dataset, Subset):
-        dataset_name = dataset.dataset.__class__.__name__.lower().replace('custom', '').replace('fashion', '')
-
-    if dataset_name not in model_info["supported_datasets"]:
-        raise ValueError(
-            f"Model '{model_name}' does not support dataset '{dataset_name}'. Supported: {model_info['supported_datasets']}")
-
-    try:
-        num_classes = len(dataset.classes)
-    except AttributeError:
-        # Handle Subset case
-        if isinstance(dataset, Subset):
-            num_classes = len(dataset.dataset.classes)
-        else:
-            raise AttributeError(f"Dataset '{dataset_name}' must have a '.classes' attribute.")
-
-    try:
-        sample_image, _ = dataset[0]
-        in_channels = sample_image.shape[0]
-    except (IndexError, TypeError):
-        in_channels = 3 if dataset_name in ["cifar", "celeba", "camelyon16"] else 1
-        print(f"Warning: Could not determine input channels from dataset sample. Defaulting to {in_channels}.")
+    model_class = MODEL_REGISTRY[model_name]["class"]
 
     print(
-        f"Instantiating model '{model_name}' for '{dataset_name}' with {in_channels} channels and {num_classes} classes.")
+        f"Instantiating model '{model_name}' with {in_channels} channels and {num_classes} classes.")
     model = model_class(in_channels=in_channels, num_classes=num_classes)
 
     if device:
@@ -307,7 +285,6 @@ def get_image_model(
         print(f"Model moved to device: {device}")
 
     return model
-
 
 def get_text_model(
         dataset_name: str,

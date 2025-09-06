@@ -145,7 +145,15 @@ def setup_data_and_model(cfg: AppConfig):
     else:  # Image
         buyer_loader, seller_loaders, test_loader, stats, num_classes = get_image_dataset(cfg)
 
-        model_init_cfg = {"num_classes": num_classes}
+        # --- NEW: Determine in_channels here ---
+        # This logic can be as simple or complex as you need.
+        dataset_name_lower = cfg.experiment.dataset_name.lower()
+        in_channels = 3 if dataset_name_lower in ["celeba", "camelyon16"] else 1
+
+        # --- UPDATE: Add in_channels to the model config dict ---
+        model_init_cfg = {"num_classes": num_classes, "in_channels": in_channels}
+
+        # This factory call now perfectly matches the new get_image_model signature
         model_factory = lambda: get_image_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
         seller_extra_args = {"model_type": "image"}
 
