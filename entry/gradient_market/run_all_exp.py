@@ -59,11 +59,18 @@ class SellerFactory:
                 return BackdoorTextGenerator(generator_cfg)
             else:  # Image
                 params = poison_cfg.image_backdoor_params
+                active_params = params.active_attack_params
+
+                # 2. Now, access the parameters from the 'active_params' object
                 generator_cfg = BackdoorImageConfig(
-                    target_label=params.target_label,
-                    trigger_type=params.trigger_type,
-                    blend_alpha=params.strength,
-                    location=params.location
+                    target_label=active_params.target_label,
+                    trigger_type=active_params.trigger_type,
+                    location=active_params.location,
+                    # Note: See below for the 'strength' parameter
+                    blend_alpha=active_params.strength,
+                    # You also need to pass channels and trigger_size
+                    channels=params.pattern_channel,  # Assuming 3 for RGB, you might need to get this dynamically
+                    trigger_size=active_params.trigger_shape
                 )
                 return BackdoorImageGenerator(generator_cfg)
 

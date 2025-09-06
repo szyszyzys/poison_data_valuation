@@ -43,13 +43,14 @@ class TrainingConfig:
     optimizer: str = "Adam"
 
 
-# In BackdoorSimpleDataPoisonParams: Removed the redundant 'poison_rate'
 @dataclass
 class BackdoorSimpleDataPoisonParams:
     target_label: int = 0
     trigger_type: ImageTriggerType = ImageTriggerType.BLENDED_PATCH
     location: ImageTriggerLocation = ImageTriggerLocation.BOTTOM_RIGHT
     trigger_shape: Tuple[int, int] = (4, 4)
+    strength: float = 1
+    pattern_channel: int = 3
 
 
 @dataclass
@@ -57,7 +58,6 @@ class ImageBackdoorParams:
     """Container for all possible image backdoor attack configurations."""
     # This field determines which of the sub-configurations is active
     attack_name: ImageBackdoorAttackName = ImageBackdoorAttackName.SIMPLE_DATA_POISON
-
     # It holds an instance of every possible sub-configuration
     simple_data_poison_params: BackdoorSimpleDataPoisonParams = field(default_factory=BackdoorSimpleDataPoisonParams)
 
