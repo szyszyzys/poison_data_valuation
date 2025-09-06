@@ -666,6 +666,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  model_type: str,  # 'image' or 'text'
                  sybil_coordinator: Optional[SybilCoordinator] = None,
                  save_path: str = "",
+                 poison_generator: PoisonGenerator = None,
                  device: str = "cpu",
                  **kwargs: Any):
 
@@ -688,7 +689,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
 
         self.backdoor_params = params
         # --- Key Update: Create the correct poison generator from the config ---
-        self.poison_generator = self._create_poison_generator(**kwargs)
+        self.poison_generator = poison_generator
 
     def _create_poison_generator(self, **kwargs) -> PoisonGenerator:
         """Factory method to create the correct backdoor generator."""
