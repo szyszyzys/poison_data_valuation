@@ -69,7 +69,8 @@ class SellerFactory:
                     # Note: See below for the 'strength' parameter
                     blend_alpha=active_params.strength,
                     # You also need to pass channels and trigger_size
-                    channels=params.pattern_channel,  # Assuming 3 for RGB, you might need to get this dynamically
+                    channels=active_params.pattern_channel,
+                    # Assuming 3 for RGB, you might need to get this dynamically
                     trigger_size=active_params.trigger_shape
                 )
                 return BackdoorImageGenerator(generator_cfg)
