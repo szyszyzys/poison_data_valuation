@@ -2,17 +2,16 @@ import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 
 import numpy as np
 import pandas as pd
-import torch
 
 
 @dataclass
 class SellerStats:
     """Statistics for a seller's dataset and market performance"""
-    total_points: int
+    total_points: int = 0
     points_selected: int = 0
     selection_rate: float = 0.0
     market_share: float = 0.0
