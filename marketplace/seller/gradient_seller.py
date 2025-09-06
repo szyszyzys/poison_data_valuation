@@ -151,19 +151,23 @@ class GradientSeller(BaseSeller):
                  device: str = "cpu",
                  **kwargs: Any):
 
+        kwargs.pop("model_type", None)
+        kwargs.pop("vocab", None)
+        kwargs.pop("pad_idx", None)
+
+        # Now it's safe to pass the remaining kwargs (like pricing) to the parent
         super().__init__(
             seller_id=seller_id,
             dataset=data_config.dataset,
             save_path=save_path,
             device=device,
-            **kwargs  # Pass any remaining BaseSeller args like pricing
+            **kwargs
         )
         self.data_config = data_config
         self.training_config = training_config
         self.model_factory = model_factory
 
         # --- State Attributes ---
-        # Cleanly manage the state from the last computation
         self.last_computed_gradient: Optional[List[torch.Tensor]] = None
         self.last_training_stats: Optional[Dict[str, Any]] = None
 
