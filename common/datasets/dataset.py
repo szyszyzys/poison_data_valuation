@@ -99,17 +99,31 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         # Fallback if a dataset has neither .targets nor a special case
         raise ValueError("Could not determine the number of classes for the dataset.")
 
-    # --- Create the final DataLoader objects (no changes needed here) ---
     batch_size = cfg.training.batch_size
+    actual_dataset = train_set.dataset if isinstance(train_set, Subset) else train_set
+
     buyer_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=True) if len(
         buyer_indices) > 0 else None
 
     seller_loaders = {
-        cid: DataLoader(Subset(train_set, indices), batch_size=batch_size, shuffle=True)
+        cid: DataLoader(Subset(actual_dataset, indices), batch_size=batch_size, shuffle=True)
         for cid, indices in seller_splits.items() if indices
     }
-    test_loader = DataLoader(Subset(train_set, test_indices), batch_size=batch_size, shuffle=False) if len(
-        test_indices) > 0 else None
+
+    # --- UPDATED TEST LOADER LOGIC WITH FALLBACK ---
+    if len(test_indices) > 0:
+        logger.info(f"Creating test loader from dedicated test set of size {len(test_indices)}.")
+        test_loader = DataLoader(Subset(actual_dataset, test_indices), batch_size=batch_size, shuffle=False)
+    elif len(buyer_indices) > 0:
+        logger.warning(
+            "❗️ No test indices found. As a fallback for this test run, "
+            "the test loader will use the buyer's data. "
+            "Do NOT use this for final results."
+        )
+        test_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=False)
+    else:
+        logger.error("No test or buyer indices available to create a test loader.")
+        test_loader = None
 
     logger.info(f"✅ Federated dataset setup complete. Found {num_classes} classes.")
 
