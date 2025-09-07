@@ -1,11 +1,17 @@
+import json
+import logging
 import os
 import random
 import shutil
-from typing import List
+from pathlib import Path
+from typing import List, Dict, Any, Optional
 
 import numpy as np
+import pandas as pd
 import torch
 from sklearn.metrics import cohen_kappa_score
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
@@ -208,3 +214,206 @@ def clip_gradient_update(grad_update: List[torch.Tensor], clip_norm: float) -> L
 def calculate_kappa(y_true: List, y_pred: List) -> float:
     """Calculates Cohen's Kappa score."""
     return cohen_kappa_score(y_true, y_pred)
+
+
+class ExperimentLoader:
+    def __init__(self, experiment_root_path: str):
+        self.experiment_root_path = Path(experiment_root_path)
+        if not self.experiment_root_path.exists():
+            raise FileNotFoundError(f"Experiment root path not found: {experiment_root_path}")
+
+        self.runs = self._find_runs()
+        logging.info(f"Found {len(self.runs)} experiment runs in {self.experiment_root_path}")
+
+    def _find_runs(self) -> List[Path]:
+        """Identifies all 'run_X_seed_Y' subdirectories."""
+        run_paths = []
+        for item in self.experiment_root_path.iterdir():
+            if item.is_dir() and item.name.startswith("run_") and "seed" in item.name:
+                run_paths.append(item)
+        return sorted(run_paths)  # Sort for consistent order
+
+    def load_run_data(self, run_path: Path) -> Dict[str, Any]:
+        """
+        Loads all available log data for a single experiment run.
+        This includes marketplace logs, all seller logs, and provides gradient paths.
+        """
+        run_data = {
+            "run_path": run_path,
+            "marketplace": {},
+            "sellers": {},
+            "gradient_paths": {}  # Stores paths, not actual tensors to avoid memory issues
+        }
+
+        logging.info(f"Loading data for run: {run_path.name}")
+
+        # Load Marketplace Logs
+        marketplace_log_path = run_path / "training_log.csv"
+        if marketplace_log_path.exists():
+            run_data["marketplace"]["training_log"] = pd.read_csv(marketplace_log_path)
+        else:
+            logging.warning(f"Marketplace training log not found for {run_path.name}")
+
+        final_metrics_path = run_path / "final_metrics.json"
+        if final_metrics_path.exists():
+            with open(final_metrics_path, 'r') as f:
+                run_data["marketplace"]["final_metrics"] = json.load(f)
+        else:
+            logging.warning(f"Marketplace final metrics not found for {run_path.name}")
+
+        # Load Seller Logs
+        sellers_dir = run_path / "sellers"
+        if sellers_dir.exists():
+            for seller_dir in sellers_dir.iterdir():
+                if seller_dir.is_dir():
+                    seller_id = seller_dir.name
+                    seller_history_path = seller_dir / "history" / "round_history.csv"
+                    if seller_history_path.exists():
+                        run_data["sellers"][seller_id] = pd.read_csv(seller_history_path)
+                    else:
+                        logging.warning(f"Seller {seller_id} history not found for {run_path.name}")
+        else:
+            logging.warning(f"Sellers directory not found for {run_path.name}")
+
+        # Collect Gradient Paths
+        gradients_base_dir = run_path / "individual_gradients"
+        if gradients_base_dir.exists():
+            for round_dir in gradients_base_dir.iterdir():
+                if round_dir.is_dir() and round_dir.name.startswith("round_"):
+                    round_number = int(round_dir.name.split('_')[1])
+                    run_data["gradient_paths"][round_number] = {
+                        "aggregated_grad": round_dir / "aggregated_grad.pt",
+                        "individual_grads": {}
+                    }
+                    for grad_file in round_dir.iterdir():
+                        if grad_file.is_file() and grad_file.name.endswith(
+                                "_grad.pt") and not grad_file.name.startswith("aggregated_"):
+                            seller_id = grad_file.name.replace("_grad.pt", "")
+                            run_data["gradient_paths"][round_number]["individual_grads"][seller_id] = grad_file
+        else:
+            logging.warning(f"Individual gradients directory not found for {run_path.name}")
+
+        return run_data
+
+    def load_all_runs_data(self) -> List[Dict[str, Any]]:
+        """Loads data for all experiment runs."""
+        all_runs_data = []
+        for run_path in self.runs:
+            all_runs_data.append(self.load_run_data(run_path))
+        return all_runs_data
+
+    def get_aggregated_final_metrics(self) -> pd.DataFrame:
+        """Collects and aggregates final_metrics from all runs."""
+        all_final_metrics = []
+        for run_path in self.runs:
+            final_metrics_path = run_path / "final_metrics.json"
+            if final_metrics_path.exists():
+                with open(final_metrics_path, 'r') as f:
+                    metrics = json.load(f)
+                    metrics['run_name'] = run_path.name
+                    all_final_metrics.append(metrics)
+            else:
+                logging.warning(f"Final metrics not found for run: {run_path.name}")
+        return pd.DataFrame(all_final_metrics)
+
+    def load_gradient(self, run_data: Dict[str, Any], round_number: int, seller_id: Optional[str] = None) -> Any:
+        """
+        Loads a specific gradient tensor.
+        If seller_id is None, loads the aggregated gradient.
+        """
+        if round_number not in run_data["gradient_paths"]:
+            logging.error(f"Gradients for round {round_number} not found in {run_data['run_path'].name}")
+            return None
+
+        round_grads_info = run_data["gradient_paths"][round_number]
+
+        if seller_id is None:
+            grad_path = round_grads_info["aggregated_grad"]
+        else:
+            if seller_id not in round_grads_info["individual_grads"]:
+                logging.error(
+                    f"Individual gradient for seller {seller_id} in round {round_number} not found in {run_data['run_path'].name}")
+                return None
+            grad_path = round_grads_info["individual_grads"][seller_id]
+
+        if grad_path.exists():
+            return torch.load(grad_path)
+        else:
+            logging.error(f"Gradient file not found at {grad_path}")
+            return None
+
+
+# --- Example Usage ---
+if __name__ == "__main__":
+    # Assume your experiment results are saved in a directory like this:
+    # my_experiments/
+    # ├── run_0_seed_123/
+    # │   ├── training_log.csv
+    # │   └── ...
+    # └── run_1_seed_456/
+    #     └── ...
+
+    experiment_root = "path/to/your/experiment_results"  # <<< IMPORTANT: Change this to your actual root path
+
+    # Initialize the loader
+    loader = ExperimentLoader(experiment_root)
+
+    # --- Part 1: Aggregated Analysis for Security Attacks (Averaging across runs) ---
+    logging.info("\n--- Aggregated Analysis (e.g., for Security Attack Performance) ---")
+    final_metrics_df = loader.get_aggregated_final_metrics()
+    if not final_metrics_df.empty:
+        logging.info("Collected final metrics from all runs:")
+        print(final_metrics_df.head())
+
+        # Example: Calculate average accuracy and its standard deviation
+        avg_accuracy = final_metrics_df['accuracy'].mean()
+        std_accuracy = final_metrics_df['accuracy'].std()
+        logging.info(
+            f"\nAverage final accuracy across {len(final_metrics_df)} runs: {avg_accuracy:.4f} (Std Dev: {std_accuracy:.4f})")
+
+        # You can do similar aggregations for other metrics like loss, F1-score, etc.
+        # If your 'attack_performed' or 'attack_victim' were logged in final_metrics,
+        # you'd average the success rate of the security attack here.
+    else:
+        logging.warning("No final metrics collected for aggregation.")
+
+    # --- Part 2: Detailed Per-Run Analysis (e.g., for Privacy Attacks) ---
+    logging.info("\n--- Detailed Per-Run Analysis (e.g., for Privacy Attacks) ---")
+    all_runs_data = loader.load_all_runs_data()
+
+    if all_runs_data:
+        # Let's pick the first run for a detailed privacy attack example
+        first_run_data = all_runs_data[0]
+        logging.info(f"\nAnalyzing first run: {first_run_data['run_path'].name}")
+
+        # Example: Analyze a seller's history (assuming you've added payment/weight to logs)
+        if first_run_data["sellers"]:
+            first_seller_id = list(first_run_data["sellers"].keys())[0]
+            seller_history_df = first_run_data["sellers"][first_seller_id]
+            logging.info(f"Seller {first_seller_id}'s round history (first 5 rounds):")
+            print(seller_history_df.head())
+
+            # Example: Load a specific individual gradient for a privacy attack
+            target_round = 10  # Assuming gradients are saved for round 10
+            target_seller = first_seller_id  # The seller you want to attack
+            if target_round in first_run_data["gradient_paths"]:
+                individual_grad = loader.load_gradient(first_run_data, target_round, seller_id=target_seller)
+                if individual_grad is not None:
+                    logging.info(
+                        f"\nLoaded individual gradient for seller {target_seller} in round {target_round}. Shape: {individual_grad.shape}")
+                    # Here you would implement your Membership Inference or Property Inference attack
+                    # using this individual_grad.
+
+                # Example: Load aggregated gradient for buyer intent leakage attack
+                agg_grad = loader.load_gradient(first_run_data, target_round, seller_id=None)
+                if agg_grad is not None:
+                    logging.info(f"Loaded aggregated gradient for round {target_round}. Shape: {agg_grad.shape}")
+                    # Here you would use the sequence of agg_grads to infer buyer intent.
+
+            else:
+                logging.warning(f"Gradients for round {target_round} not available in this run.")
+
+        else:
+            logging.warning("No seller data found for detailed analysis in the first run.")
+    else:
+        logging.error("No experiment runs found to analyze.")
