@@ -50,7 +50,7 @@ class BackdoorSimpleDataPoisonParams:
     target_label: int = 0
     trigger_type: ImageTriggerType = ImageTriggerType.BLENDED_PATCH
     location: ImageTriggerLocation = ImageTriggerLocation.BOTTOM_RIGHT
-    trigger_shape: Tuple[int, int] = (4, 4)
+    trigger_shape: Tuple[int, int] = (10, 10)
     strength: float = 1
     pattern_channel: int = 3
 

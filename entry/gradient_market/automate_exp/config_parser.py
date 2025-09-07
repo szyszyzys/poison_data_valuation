@@ -1,15 +1,38 @@
 # config_loader.py
 import logging
+from typing import Any
 
 import yaml
 from dacite import from_dict, Config as DaciteConfig, MissingValueError, WrongTypeError
 
 # Import your full AppConfig and its components
-from common.gradient_market_configs import AppConfig
+from common.gradient_market_configs import AppConfig  # Assuming these are there
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+# --- New helper function to pre-process the dictionary ---
+def _convert_lists_to_tuples_for_specific_fields(data: Any) -> Any:
+    """
+    Recursively converts lists to tuples for specific fields that are type-hinted as Tuple
+    but often parsed as lists from YAML (e.g., trigger_shape).
+    """
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key == "trigger_shape" and isinstance(value, list):
+                # Only convert if the field name is 'trigger_shape' and the value is a list
+                data[key] = tuple(value)
+            elif isinstance(value, (dict, list)):
+                data[key] = _convert_lists_to_tuples_for_specific_fields(value)
+    elif isinstance(data, list):
+        # Recursively apply to elements in a list
+        return [_convert_lists_to_tuples_for_specific_fields(item) for item in data]
+    return data
+
+
+# --- End of new helper function ---
 
 
 def load_config(config_path: str) -> AppConfig:
@@ -21,11 +44,15 @@ def load_config(config_path: str) -> AppConfig:
         with open(config_path, 'r') as f:
             config_dict = yaml.safe_load(f)
 
+        # --- NEW STEP: Pre-process the dictionary before passing to dacite ---
+        processed_config_dict = _convert_lists_to_tuples_for_specific_fields(config_dict)
+        # --- END NEW STEP ---
+
         # Dacite automatically handles the conversion from dict to your nested dataclasses
         cfg = from_dict(
             data_class=AppConfig,
-            data=config_dict,
-            config=DaciteConfig(cast=[bool, int, float, str])
+            data=processed_config_dict,  # Pass the pre-processed dictionary here
+            config=DaciteConfig(cast=[bool, int, float, str])  # Keep your existing cast config
         )
 
         # The __post_init__ method in AppConfig is automatically called here.
