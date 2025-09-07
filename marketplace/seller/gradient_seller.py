@@ -489,13 +489,14 @@ class SybilCoordinator:
 class PoisonedDataset(Dataset):
     """
     A wrapper dataset that applies a poison generator to an original dataset
-    on the fly, based on a specified poison rate.
+    on the fly, based on a specified poison rate and data format.
     """
 
     def __init__(self,
                  original_dataset: Dataset,
                  poison_generator: Optional[PoisonGenerator],
-                 poison_rate: float = 0.0):
+                 poison_rate: float = 0.0,
+                 data_format: str = 'image'):  # <-- ADD THIS NEW ARGUMENT
 
         if not (0.0 <= poison_rate <= 1.0):
             raise ValueError("Poison rate must be between 0.0 and 1.0")
@@ -503,6 +504,7 @@ class PoisonedDataset(Dataset):
         self.original_dataset = original_dataset
         self.poison_generator = poison_generator
         self.poison_rate = poison_rate
+        self.data_format = data_format  # <-- STORE IT
 
         # Pre-determine which indices to poison for consistency
         n_poison = int(len(original_dataset) * poison_rate)
@@ -514,13 +516,21 @@ class PoisonedDataset(Dataset):
         return len(self.original_dataset)
 
     def __getitem__(self, index):
-        # Get the original data and label
-        data, label = self.original_dataset[index]
+        # --- MODIFICATION: UNPACK BASED ON FORMAT ---
+        original_sample = self.original_dataset[index]
 
-        # Apply poison only if the index was chosen and a generator exists
+        if self.data_format == 'text':
+            # For text, the format is (label, data)
+            label, data = original_sample
+        else:
+            # For images, the format is (data, label)
+            data, label = original_sample
+
+        # The rest of the logic remains the same
         if self.poison_generator and index in self.poison_indices:
             return self.poison_generator.apply(data, label)
 
+        # Return in the standard (data, label) format for consistency
         return data, label
 
 
