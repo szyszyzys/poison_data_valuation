@@ -761,13 +761,17 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         num_triggered = int(num_samples * poison_cfg.poison_rate)
         trigger_indices = np.random.choice(np.arange(num_samples), size=num_triggered, replace=False)
 
-        # The dataset wrapper uses the generator created in __init__
+        # 1. Determine the data format from the seller's model_type
+        is_label_first = (self.model_type == 'text')
+
+        # 2. Pass the flag to the TriggeredSubsetDataset constructor
         return TriggeredSubsetDataset(
             original_dataset=self.data_config.dataset,
             trigger_indices=trigger_indices,
             backdoor_generator=self.poison_generator,
             device=self.device,
-            target_label=self.backdoor_params.target_label
+            target_label=self.backdoor_params.target_label,
+            label_first=is_label_first
         )
 
     def _compute_clean_gradient(self, model: nn.Module) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
