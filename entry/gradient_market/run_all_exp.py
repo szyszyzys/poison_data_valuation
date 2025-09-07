@@ -139,7 +139,6 @@ def run_training_loop(
         logging.info(f"============= Round {gr + 1}/{cfg.experiment.global_rounds} Start ===============")
         sybil_coordinator.prepare_for_new_round()
 
-        # UPDATED: Capture the round_record and remove the unnecessary test_loader_global
         round_record, _ = marketplace.train_federated_round(
             round_number=gr,
             ground_truth_dict={}

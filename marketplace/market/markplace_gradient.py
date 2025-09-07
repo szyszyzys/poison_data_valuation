@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import torch
-from torch.utils.data import DataLoader
 
 from common.enums import ServerAttackMode
 from common.gradient_market_configs import AppConfig, ServerAttackConfig
@@ -62,7 +61,6 @@ class DataMarketplaceFederated(DataMarketplace):
     def train_federated_round(
             self,
             round_number: int,
-            test_loader_global: DataLoader,
             ground_truth_dict: Dict[str, Dict[str, torch.Tensor]]
     ) -> Tuple[Dict, Any]:
         """Orchestrates a single, config-driven round of federated learning."""
