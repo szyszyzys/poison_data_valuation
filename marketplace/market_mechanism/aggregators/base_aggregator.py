@@ -84,19 +84,7 @@ class BaseAggregator(ABC):
             actual_dataset = actual_dataset.dataset
 
         # If it's our custom CelebA dataset, extract the specific property
-        if hasattr(actual_dataset, 'property_idx'):
-            attributes_tensor = raw_labels[1].to(self.device)
-
-            # --- FIX: Handle the case for a batch size of 1 ---
-            # If the tensor is 1D, add a batch dimension to make it 2D
-            if attributes_tensor.dim() == 1:
-                attributes_tensor = attributes_tensor.unsqueeze(0)
-
-            # Now this line will always work
-            labels = attributes_tensor[:, actual_dataset.property_idx]
-        else:
-            # For simple datasets, just move the label tensor to the device
-            labels = raw_labels.to(self.device)
+        labels = raw_labels.to(self.device)
 
         optimizer.zero_grad()
         output = temp_model(data)

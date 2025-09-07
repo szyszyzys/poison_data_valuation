@@ -727,7 +727,7 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         current_round = self.sybil_coordinator.cur_round if self.is_sybil else float('inf')
         should_attack = current_round >= self.adversary_config.sybil.benign_rounds
 
-        attack_name = self.backdoor_params.attack_name
+        attack_name = self.adversary_config.poisoning.image_backdoor_params.attack_name
 
         if not should_attack:
             attack_name = "none"
