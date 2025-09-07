@@ -4,15 +4,11 @@ import logging
 import multiprocessing
 import os
 from pathlib import Path
-# Adjust this import based on your actual test.py structure
-# Assuming 'test.py' is in the same directory, or adjust the path.
-# For example, if run_attack is in entry/gradient_market/run_all_exp.py
-# from entry.gradient_market.run_all_exp import run_attack
-from test import run_attack
 
 import torch  # Import torch to check for CUDA availability
 
 from entry.gradient_market.automate_exp.config_parser import load_config
+from entry.gradient_market.run_all_exp import run_attack
 
 # Configure basic logging for the parallel runner
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
