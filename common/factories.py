@@ -50,7 +50,7 @@ class SellerFactory:
                 data_config=data_cfg,
                 training_config=training_cfg,
                 model_factory=self.model_factory,
-                work_path=self.cfg.experiment.save_path,
+                save_path=self.cfg.experiment.save_path,
                 device=self.cfg.experiment.device,
                 **self.runtime_kwargs
             )
@@ -70,7 +70,7 @@ class SellerFactory:
                 data_config=data_cfg,
                 training_config=training_cfg,
                 model_factory=self.model_factory,
-                work_path=self.cfg.experiment.save_path,
+                save_path=self.cfg.experiment.save_path,
                 device=self.cfg.experiment.device,
                 **self.runtime_kwargs
             )
@@ -83,7 +83,7 @@ class SellerFactory:
             adversary_config=self.cfg.adversary_seller_config,
             sybil_coordinator=sybil_coordinator,
             poison_generator=poison_generator,
-            work_path=self.cfg.experiment.save_path,
+            save_path=self.cfg.experiment.save_path,
             device=self.cfg.experiment.device,
             **self.runtime_kwargs
         )
