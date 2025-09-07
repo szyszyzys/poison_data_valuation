@@ -19,7 +19,8 @@ class SellerFactory:
     """Handles creating and configuring different seller types from a unified AppConfig."""
 
     ADVERSARY_CLASS_MAP = {
-        "backdoor": AdvancedBackdoorAdversarySeller,
+        "image_backdoor": AdvancedBackdoorAdversarySeller,
+        "text_backdoor": AdvancedBackdoorAdversarySeller,
         "label_flip": AdvancedPoisoningAdversarySeller,
     }
 

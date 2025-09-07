@@ -16,7 +16,6 @@ class ImageTriggerLocation(str, Enum):
 # This enum is used as the main switch in your PoisoningConfig
 class PoisonType(str, Enum):
     NONE = "none"
-    BACKDOOR = "backdoor"
     LABEL_FLIP = "label_flip"
     IMAGE_BACKDOOR = "image_backdoor"
     TEXT_BACKDOOR = "text_backdoor"
