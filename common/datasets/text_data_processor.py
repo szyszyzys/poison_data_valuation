@@ -8,6 +8,7 @@ from typing import (Any, Dict, List, Optional, Tuple, Callable)
 
 import numpy as np
 import torch
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from torchtext.vocab import Vocab
 
@@ -26,21 +27,24 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-def collate_batch(batch: List[Tuple[int, List[int]]], padding_value: int) -> Tuple[torch.Tensor, torch.Tensor]:
+def collate_batch(batch, padding_value=0):
     """
-    Collates a batch of text data, padding sequences to the max length in the batch.
+    Custom collate function to handle variable-length text data.
     """
     label_list, text_list = [], []
-    for (_label, _text_list_ids) in batch:
-        label_list.append(_label)
-        processed_text = torch.tensor(_text_list_ids, dtype=torch.int64)
-        text_list.append(processed_text)
 
+    # Unpack in the correct (data, label) order
+    for (data, label) in batch:
+        label_list.append(label)  # Append the integer label
+        # Append the list/tensor of token IDs
+        text_list.append(torch.tensor(data, dtype=torch.int64))
+
+    # This will now work, as label_list is a flat list of integers
     labels = torch.tensor(label_list, dtype=torch.int64)
-    texts_padded = torch.nn.utils.rnn.pad_sequence(
-        text_list, batch_first=True, padding_value=padding_value
-    )
-    # Return in (data, label) order for convention
+
+    # This will pad the sequences of token IDs
+    texts_padded = pad_sequence(text_list, batch_first=True, padding_value=padding_value)
+
     return texts_padded, labels
 
 
@@ -103,6 +107,7 @@ class ProcessedTextData:
     pad_idx: int
     num_classes: int
     collate_fn: Callable
+
 
 # --- Data Splitting Logic (Previously defined but unused, now integrated) ---
 
