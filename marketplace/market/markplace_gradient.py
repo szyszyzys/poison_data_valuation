@@ -70,14 +70,6 @@ class DataMarketplaceFederated(DataMarketplace):
         # 1. Collect gradients from all active sellers
         gradients_dict, seller_ids, _ = self._get_current_market_gradients()
 
-        if self.cfg.debug.save_individual_gradients:
-            if round_number % self.cfg.debug.gradient_save_frequency == 0:
-                grad_save_dir = Path(self.cfg.experiment.save_path) / "individual_gradients" / f"round_{round_number}"
-                grad_save_dir.mkdir(parents=True, exist_ok=True)
-                for sid, grad in gradients_dict.items():
-                    torch.save(grad, grad_save_dir / f"{sid}_grad.pt")
-                logging.info(f"Saved {len(gradients_dict)} individual gradients to {grad_save_dir}")
-
         # 2. Perform privacy attack (optional)
         attack_log = None
         if self.attacker and self.attacker.should_run(round_number):
@@ -89,6 +81,15 @@ class DataMarketplaceFederated(DataMarketplace):
         # 4. Update global model
         if agg_grad:
             self.aggregator.apply_gradient(agg_grad)
+
+        if self.cfg.debug.save_individual_gradients:
+            if round_number % self.cfg.debug.gradient_save_frequency == 0:
+                grad_save_dir = Path(self.cfg.experiment.save_path) / "individual_gradients" / f"round_{round_number}"
+                grad_save_dir.mkdir(parents=True, exist_ok=True)
+                for sid, grad in gradients_dict.items():
+                    torch.save(grad, grad_save_dir / f"{sid}_grad.pt")
+                logging.info(f"Saved {len(gradients_dict)} individual gradients to {grad_save_dir}")
+                torch.save(agg_grad, grad_save_dir / f"aggregated_grad.pt")
 
         # 6. Create a simple record of the round's events.
         #    The _log_round_results helper can be removed or simplified as it no longer handles performance metrics.

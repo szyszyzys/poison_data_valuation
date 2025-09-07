@@ -257,6 +257,8 @@ def run_attack(cfg: AppConfig):
     run_final_evaluation_and_logging(
         cfg, final_model, results_buffer, test_loader, evaluators
     )
+    for sid, seller in marketplace.sellers.items():
+        seller.save_round_history_csv()
 
     logging.info("--- Experiment Finished ---")
 

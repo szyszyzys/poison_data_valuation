@@ -1,5 +1,7 @@
 import collections
+import csv
 import logging
+import os
 import random
 import sys
 import time
@@ -7,6 +9,7 @@ import time
 from abc import ABC, abstractmethod
 from collections import abc  # abc.Mapping for general dicts
 from dataclasses import field, dataclass
+from pathlib import Path
 from typing import Any, Callable, Set
 from typing import Dict
 from typing import List, Optional
@@ -170,6 +173,10 @@ class GradientSeller(BaseSeller):
         # --- State Attributes ---
         self.last_computed_gradient: Optional[List[torch.Tensor]] = None
         self.last_training_stats: Optional[Dict[str, Any]] = None
+        self.selected_last_round = False
+        self.save_path = Path(save_path)
+        self.seller_specific_path = self.save_path / self.seller_id
+        self.seller_specific_path.mkdir(parents=True, exist_ok=True)  # Ensure seller's work dir exists
 
     def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
@@ -268,18 +275,57 @@ class GradientSeller(BaseSeller):
         """Logs the outcome of the round and cleans up state."""
         logging.info(f"[{self.seller_id}] Round {round_number} ended. Selected: {is_selected}")
 
-        # NEW: Record the round's events to the seller's history
         round_record = {
             'event_type': 'federated_round',
             'round': round_number,
             'timestamp': time.time(),
             'was_selected': is_selected,
-            'training_stats': self.last_training_stats if is_selected else None
+            'training_stats': self.last_training_stats
         }
         self.federated_round_history.append(round_record)
 
         self.last_computed_gradient = None
         self.last_training_stats = None
+        self.selected_last_round = is_selected
+
+    def save_round_history_csv(self, subdirectory: str = "history") -> None:
+        """Saves the federated round history for this seller to a CSV file in a seller-specific subdirectory."""
+        history_dir = self.seller_specific_path / subdirectory
+        os.makedirs(history_dir, exist_ok=True)
+        file_name = history_dir / f"round_history.csv"  # Fixed name within seller's history dir
+
+        if not self.federated_round_history:
+            logging.info(f"[{self.seller_id}] No round history data to save for CSV.")
+            return
+
+        # Determine fieldnames for the CSV header
+        first_record = self.federated_round_history[0]
+        fieldnames = ['event_type', 'round', 'timestamp', 'was_selected']
+
+        if first_record.get('training_stats'):
+            for key in first_record['training_stats'].keys():
+                fieldnames.append(f'training_stats_{key}')
+
+        try:
+            with open(file_name, 'w', newline='') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                for record in self.federated_round_history:
+                    csv_row = {
+                        'event_type': record.get('event_type'),
+                        'round': record.get('round'),
+                        'timestamp': record.get('timestamp'),
+                        'was_selected': record.get('was_selected')
+                    }
+                    if record.get('training_stats'):
+                        for key, value in record['training_stats'].items():
+                            csv_row[f'training_stats_{key}'] = value
+                    writer.writerow(csv_row)
+            logging.info(f"[{self.seller_id}] Round history saved successfully to {file_name}")
+        except IOError as e:
+            logging.error(f"[{self.seller_id}] Error saving round history to {file_name}: {e}")
+        except Exception as e:
+            logging.error(f"[{self.seller_id}] An unexpected error occurred while saving round history: {e}")
 
 
 @dataclass
@@ -605,10 +651,6 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
 
         return base_gradient, stats
 
-    def round_end_process(self, round_number: int, is_selected: bool) -> None:
-        """Records the outcome of the round for Sybil coordination."""
-        self.selected_last_round = is_selected
-
 
 class TriggeredSubsetDataset(Dataset):
     """
@@ -779,8 +821,3 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
         """Computes one gradient on a dataset with both clean and poisoned samples."""
         poisoned_dataset_view = self._create_poisoned_dataset_view()
         return self._compute_local_grad(model, poisoned_dataset_view)
-
-    def round_end_process(self, round_number: int, is_selected: bool) -> None:
-        """Records the outcome of the round for Sybil coordination."""
-        self.selected_last_round = is_selected
-        logging.info(f"[{self.seller_id}] Round {round_number} ended. Selected: {is_selected}")
