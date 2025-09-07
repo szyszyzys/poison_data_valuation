@@ -33,12 +33,13 @@ class SellerFactory:
                       seller_id: str,
                       dataset: Dataset,
                       is_adversary: bool,
-                      sybil_coordinator: SybilCoordinator):
+                      sybil_coordinator: SybilCoordinator,
+                      collate_fn: Callable = None):
         """Creates a seller instance, assembling configs and dependencies on the fly."""
         data_cfg = RuntimeDataConfig(
             dataset=dataset,
             num_classes=self.cfg.experiment.num_classes,
-            collate_fn=None
+            collate_fn=collate_fn
         )
         training_cfg = self.cfg.training
 

@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
+from common.datasets.text_data_processor import collate_batch
 from common.evaluators import create_evaluators
 from common.factories import SellerFactory
 from common.gradient_market_configs import AppConfig
@@ -58,7 +59,7 @@ def setup_data_and_model(cfg: AppConfig):
 
 
 def initialize_sellers(cfg: AppConfig, marketplace, client_loaders, model_factory, seller_extra_args,
-                       sybil_coordinator):
+                       sybil_coordinator, collate_fn):
     """Creates and registers all sellers in the marketplace using the factory."""
     # The 'attack_generator' argument is gone. The factory handles it all.
     logging.info("--- Initializing Sellers ---")
@@ -73,7 +74,8 @@ def initialize_sellers(cfg: AppConfig, marketplace, client_loaders, model_factor
             seller_id=f"{'adv' if is_adv else 'bn'}_{cid}",
             dataset=loader.dataset,
             is_adversary=is_adv,
-            sybil_coordinator=sybil_coordinator
+            sybil_coordinator=sybil_coordinator,
+            collate_fn=collate_fn
         )
         marketplace.register_seller(seller.seller_id, seller)
 
@@ -240,8 +242,14 @@ def run_attack(cfg: AppConfig):
         input_shape=input_shape
     )
 
+    collate_fn = None
+    is_text = cfg.experiment.dataset_type == "text"
+    if is_text:
+        collate_fn = collate_batch
+
     # 4. Seller Initialization
-    initialize_sellers(cfg, marketplace, seller_loaders, model_factory, seller_extra_args, sybil_coordinator)
+    initialize_sellers(cfg, marketplace, seller_loaders, model_factory, seller_extra_args, sybil_coordinator,
+                       collate_fn)
 
     # 5. Federated Training Loop
     final_model, results_buffer = run_training_loop(

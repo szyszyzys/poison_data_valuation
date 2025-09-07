@@ -336,5 +336,6 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         class_names=class_names,
         vocab=vocab,
         pad_idx=pad_idx,
-        num_classes=num_classes
+        num_classes=num_classes,
+        collate_fn=collate_fn
     )

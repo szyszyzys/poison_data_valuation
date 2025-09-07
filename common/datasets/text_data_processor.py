@@ -4,7 +4,7 @@ import logging
 import os
 import random
 from dataclasses import dataclass
-from typing import (Any, Dict, List, Optional, Tuple)
+from typing import (Any, Dict, List, Optional, Tuple, Callable)
 
 import numpy as np
 import torch
@@ -102,9 +102,10 @@ class ProcessedTextData:
     vocab: Vocab
     pad_idx: int
     num_classes: int
-
+    collate_fn: Callable
 
 # --- Data Splitting Logic (Previously defined but unused, now integrated) ---
+
 
 def _calculate_target_counts(total_samples: int, proportions: Dict[int, float]) -> Dict[int, int]:
     """Helper to calculate exact sample counts per class from float proportions."""
