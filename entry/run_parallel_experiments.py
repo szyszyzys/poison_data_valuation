@@ -1,17 +1,39 @@
 import argparse
-import copy
+import glob
 import logging
 import multiprocessing
 import os
+import time
 from pathlib import Path
+import copy
+import torch # Import torch to check for CUDA availability
 
-import torch  # Import torch to check for CUDA availability
+# --- CRITICAL CHANGE: Set the multiprocessing start method ---
+# This must be done AT THE VERY BEGINNING of the script,
+# before any other multiprocessing code or CUDA operations.
+if __name__ == "__main__": # Ensure this runs only in the main process
+    # Check if a start method has already been set (e.g., by a library)
+    # If not, set it to 'spawn' for CUDA compatibility
+    if multiprocessing.get_start_method(allow_none=True) is None:
+        try:
+            multiprocessing.set_start_method("spawn")
+            logging.info("Set multiprocessing start method to 'spawn' for CUDA compatibility.")
+        except RuntimeError:
+            # Handle cases where it might already be set or cannot be set
+            logging.warning("Could not set multiprocessing start method to 'spawn'. It might already be set.")
+            pass # It might already be set by another library
 
+
+# Adjust this import based on your actual test.py structure
+# For example, if run_attack is in entry/gradient_market/run_all_exp.py
+# from entry.gradient_market.run_all_exp import run_attack
+from test import run_attack
 from entry.gradient_market.automate_exp.config_parser import load_config
-from entry.gradient_market.run_all_exp import run_attack
+
 
 # Configure basic logging for the parallel runner
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__) # Use 'logger' consistently
 
 
 def run_single_experiment(config_path: str, run_id: int, gpu_id: int = None):
@@ -20,16 +42,19 @@ def run_single_experiment(config_path: str, run_id: int, gpu_id: int = None):
     This function will be executed in a separate process.
     """
     try:
+        # It's crucial that CUDA_VISIBLE_DEVICES is set *before* any
+        # CUDA operations (like model.to('cuda')) happen in this child process.
         if gpu_id is not None:
-            # Crucially, set CUDA_VISIBLE_DEVICES for this process
             os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
-            logging.info(f"[Run {run_id}] Assigned to GPU {gpu_id}. Starting experiment with config: {config_path}")
-        else:
-            # If no GPU ID is provided (e.g., running on CPU only or single GPU without explicit assignment)
+            # Clear any CUDA caches specific to this process for good measure
             if torch.cuda.is_available():
-                logging.warning(
-                    f"[Run {run_id}] CUDA is available but no specific GPU_ID assigned. PyTorch will use default CUDA device.")
-            logging.info(f"[Run {run_id}] Starting experiment with config: {config_path}")
+                torch.cuda.empty_cache()
+            logger.info(f"[Run {run_id}] Assigned to GPU {gpu_id}. Starting experiment with config: {config_path}")
+        else:
+            if torch.cuda.is_available():
+                logger.warning(f"[Run {run_id}] CUDA is available but no specific GPU_ID assigned. PyTorch will use default CUDA device.")
+            logger.info(f"[Run {run_id}] Starting experiment with config: {config_path}")
+
 
         # Load the configuration
         app_config = load_config(config_path)
@@ -53,19 +78,20 @@ def run_single_experiment(config_path: str, run_id: int, gpu_id: int = None):
             run_save_path.mkdir(parents=True, exist_ok=True)
             run_cfg.experiment.save_path = str(run_save_path)
 
-            logging.info(
-                f"[Run {run_id} - Sub-run {i + 1}] Config: {config_path}, Seed: {current_seed}, Save Path: {run_save_path}")
+            logger.info(f"[Run {run_id} - Sub-run {i+1}] Config: {config_path}, Seed: {current_seed}, Save Path: {run_save_path}")
             # Ensure the config's device setting matches the assigned GPU, if applicable
             if gpu_id is not None:
-                run_cfg.experiment.device = f"cuda:{0}"  # Each process sees its assigned GPU as 'cuda:0'
+                # Inside each process, the assigned GPU is exposed as 'cuda:0' due to CUDA_VISIBLE_DEVICES
+                run_cfg.experiment.device = f"cuda:{0}"
             else:
-                run_cfg.experiment.device = "cpu"  # Default to CPU if no GPU assigned
+                run_cfg.experiment.device = "cpu" # Default to CPU if no GPU assigned (or if no CUDA available)
 
             run_attack(run_cfg)
 
-        logging.info(f"[Run {run_id}] Finished experiment with config: {config_path}")
+
+        logger.info(f"[Run {run_id}] Finished experiment with config: {config_path}")
     except Exception as e:
-        logging.error(f"[Run {run_id}] Error running experiment {config_path} (GPU {gpu_id}): {e}", exc_info=True)
+        logger.error(f"[Run {run_id}] Error running experiment {config_path} (GPU {gpu_id}): {e}", exc_info=True)
 
 
 def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = None):
@@ -79,33 +105,32 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
                 all_config_files.append(os.path.join(root, file))
 
     if not all_config_files:
-        logging.warning(f"No config.yaml files found in {configs_base_dir}. Exiting.")
+        logger.warning(f"No config.yaml files found in {configs_base_dir}. Exiting.")
         return
 
-    logging.info(f"Found {len(all_config_files)} configuration files.")
+    logger.info(f"Found {len(all_config_files)} configuration files.")
 
     # Determine GPU IDs to use
     assigned_gpu_ids = None
     if gpu_ids_str:
         assigned_gpu_ids = [int(g.strip()) for g in gpu_ids_str.split(',')]
         if len(assigned_gpu_ids) != num_processes:
-            logging.warning(
-                f"Number of specified GPU IDs ({len(assigned_gpu_ids)}) does not match num_processes ({num_processes}). "
-                f"Will use GPU IDs in a round-robin fashion for {num_processes} processes.")
-        logging.info(f"Using GPUs: {assigned_gpu_ids} for parallel execution.")
+            logger.warning(f"Number of specified GPU IDs ({len(assigned_gpu_ids)}) does not match num_processes ({num_processes}). "
+                            f"Will use GPU IDs in a round-robin fashion for {num_processes} processes.")
+        logger.info(f"Using GPUs: {assigned_gpu_ids} for parallel execution.")
     elif torch.cuda.is_available():
-        # If GPUs are available but not explicitly specified, try to use all available
         num_cuda_devices = torch.cuda.device_count()
         if num_processes > num_cuda_devices:
-            logging.warning(f"Requested {num_processes} processes but only {num_cuda_devices} CUDA devices available. "
+            logger.warning(f"Requested {num_processes} processes but only {num_cuda_devices} CUDA devices available. "
                             f"Limiting processes to {num_cuda_devices} and assigning one GPU per process.")
             num_processes = num_cuda_devices
         assigned_gpu_ids = list(range(num_cuda_devices))
-        logging.info(f"Automatically detected and using {num_cuda_devices} GPUs: {assigned_gpu_ids}.")
+        logger.info(f"Automatically detected and using {num_cuda_devices} GPUs: {assigned_gpu_ids}.")
     else:
-        logging.info("No GPUs specified or detected. Running on CPU.")
+        logger.info("No GPUs specified or detected. Running on CPU.")
 
-    logging.info(f"Starting parallel execution with {num_processes} processes.")
+
+    logger.info(f"Starting parallel execution with {num_processes} processes.")
 
     with multiprocessing.Pool(processes=num_processes) as pool:
         tasks = []
@@ -118,10 +143,13 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
 
         pool.starmap(run_single_experiment, tasks)
 
-    logging.info("All parallel experiments completed.")
-
+    logger.info("All parallel experiments completed.")
 
 if __name__ == "__main__":
+    # The multiprocessing.set_start_method("spawn") must be called here,
+    # before any other multiprocessing or CUDA-related code in the main block.
+    # The `if __name__ == "__main__":` block at the very top already handles this.
+
     parser = argparse.ArgumentParser(description="Run multiple FL experiments in parallel.")
     parser.add_argument("--configs_dir", type=str, default="configs_generated",
                         help="Base directory containing generated config files.")
@@ -135,21 +163,19 @@ if __name__ == "__main__":
     # If num_processes is explicitly set to 4 and gpu_ids is also 4, great.
     # If gpu_ids is provided, ensure num_processes matches, or use len(gpu_ids) as num_processes.
     if args.gpu_ids:
-        # Override num_processes based on the number of GPUs provided
         num_specified_gpus = len(args.gpu_ids.split(','))
         if args.num_processes != num_specified_gpus:
-            logging.info(f"Adjusting num_processes from {args.num_processes} to {num_specified_gpus} "
-                         f"to match the number of specified GPU IDs.")
+             logger.info(f"Adjusting num_processes from {args.num_processes} to {num_specified_gpus} "
+                          f"to match the number of specified GPU IDs.")
         args.num_processes = num_specified_gpus
     elif torch.cuda.is_available():
-        # If no gpu_ids specified, but CUDA is available, adjust num_processes to available GPUs
         num_cuda_devices = torch.cuda.device_count()
         if args.num_processes > num_cuda_devices:
-            logging.warning(
-                f"Requested {args.num_processes} processes but only {num_cuda_devices} CUDA devices available. "
-                f"Limiting processes to {num_cuda_devices}.")
+            logger.warning(f"Requested {args.num_processes} processes but only {num_cuda_devices} CUDA devices available. "
+                            f"Limiting processes to {num_cuda_devices}.")
             args.num_processes = num_cuda_devices
     else:
-        logging.warning("No CUDA devices detected. Running on CPU only.")
+        logger.warning("No CUDA devices detected. Running on CPU only.")
+
 
     main_parallel(args.configs_dir, args.num_processes, args.gpu_ids)
