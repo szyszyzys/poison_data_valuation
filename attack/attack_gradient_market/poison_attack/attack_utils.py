@@ -4,8 +4,10 @@ from abc import ABC, abstractmethod
 from typing import List, Tuple, Any
 
 import torch
+from torchtext.data import get_tokenizer
+from torchtext.vocab import Vocab
 
-from common.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation
+from common.enums import ImageTriggerType, ImageTriggerLocation
 from common.gradient_market_configs import LabelFlipConfig, BackdoorImageConfig, BackdoorTextConfig
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -147,19 +149,25 @@ class LabelFlipGenerator(PoisonGenerator):
 class BackdoorTextGenerator(PoisonGenerator):
     """
     Generates backdoor attacks for text data by inserting trigger words/phrases.
+    (Updated for modern torchtext)
     """
 
     def __init__(self, config: BackdoorTextConfig):
         """
         Initializes the text backdoor generator from a configuration object.
         """
-        if not hasattr(config.vocab, 'stoi'):
-            raise TypeError("Provided vocab object must have a 'stoi' attribute.")
+        # --- MODIFICATION #1: Check the object type instead of the old attribute ---
+        if not isinstance(config.vocab, Vocab):
+            raise TypeError("Provided vocab object must be a torchtext.vocab.Vocab instance.")
+
         if not config.trigger_content or not isinstance(config.trigger_content, str):
             raise ValueError("trigger_content must be a non-empty string.")
 
         self.config = config
         self.vocab = config.vocab
+        # This tokenizer should ideally be consistent with the one used to build the vocab
+        self.tokenizer = get_tokenizer('basic_english')
+
         self.trigger_token_ids = self._string_to_ids(config.trigger_content)
 
         if not self.trigger_token_ids:
@@ -169,42 +177,31 @@ class BackdoorTextGenerator(PoisonGenerator):
             f"Initialized BackdoorTextGenerator with trigger: '{config.trigger_content}' -> {self.trigger_token_ids}")
 
     def _string_to_ids(self, text: str) -> List[int]:
-        """Converts a string to a list of token IDs using the vocabulary."""
-        token_ids = []
-        unk_idx = self.vocab.stoi.get('<unk>')
-        for token in text.split():
-            idx = self.vocab.stoi.get(token, unk_idx)
-            if idx is None:
-                logging.warning(f"Token '{token}' not in vocab and no '<unk>' token found. Skipping.")
-                continue
-            token_ids.append(idx)
-        return token_ids
+        """Converts a string to a list of token IDs using the modern vocab object."""
+        tokens = self.tokenizer(text)
+        # The modern vocab object is callable
+        return self.vocab(tokens)
 
     def apply(self, data: List[int], label: int) -> Tuple[List[int], int]:
         """
-        Applies the trigger to a sequence of token IDs and returns the poisoned sample.
+        Applies the backdoor trigger to a single data sample.
+
+        Args:
+            data (List[int]): The original list of token IDs.
+            label (int): The original label.
+
+        Returns:
+            A tuple of (poisoned_token_ids, poisoned_label).
         """
-        if not isinstance(data, list):
-            raise TypeError(f"Expected data to be a list of token IDs, but got {type(data)}")
+        # Poison the sample by changing its label to the target label
+        poisoned_label = self.config.target_label
 
-        # Make space for the trigger by truncating the original data first.
-        max_original_len = self.config.max_seq_len - len(self.trigger_token_ids)
-        if max_original_len < 0:
-            raise ValueError("max_seq_len is smaller than the trigger length!")
+        # Insert the trigger tokens into the data
+        if self.config.location == "start":
+            poisoned_data = self.trigger_token_ids + data
+        elif self.config.location == "end":
+            poisoned_data = data + self.trigger_token_ids
+        else:  # Default to end
+            poisoned_data = data + self.trigger_token_ids
 
-        clean_ids = list(data[:max_original_len])
-
-        # Determine insertion position within the now-shorter sequence
-        if self.config.location == TextTriggerLocation.START:
-            insert_pos = 0
-        elif self.config.location == TextTriggerLocation.END:
-            insert_pos = len(clean_ids)
-        elif self.config.location == TextTriggerLocation.MIDDLE:
-            insert_pos = len(clean_ids) // 2
-        else:  # RANDOM
-            insert_pos = random.randint(0, len(clean_ids))
-
-        # Insert trigger into the shortened data
-        poisoned_ids = clean_ids[:insert_pos] + self.trigger_token_ids + clean_ids[insert_pos:]
-
-        return poisoned_ids, self.config.target_label
+        return poisoned_data, poisoned_label
