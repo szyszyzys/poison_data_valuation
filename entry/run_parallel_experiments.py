@@ -8,6 +8,8 @@ from pathlib import Path
 import copy
 import torch # Import torch to check for CUDA availability
 
+from entry.gradient_market.run_all_exp import run_attack
+
 # --- CRITICAL CHANGE: Set the multiprocessing start method ---
 # This must be done AT THE VERY BEGINNING of the script,
 # before any other multiprocessing code or CUDA operations.
@@ -27,7 +29,6 @@ if __name__ == "__main__": # Ensure this runs only in the main process
 # Adjust this import based on your actual test.py structure
 # For example, if run_attack is in entry/gradient_market/run_all_exp.py
 # from entry.gradient_market.run_all_exp import run_attack
-from test import run_attack
 from entry.gradient_market.automate_exp.config_parser import load_config
 
 
