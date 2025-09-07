@@ -29,6 +29,7 @@ def setup_data_and_model(cfg: AppConfig):
     dataset_name = cfg.experiment.dataset_name
 
     is_text = cfg.experiment.dataset_type == "text"
+    collate_fn = None
 
     if is_text:
         processed_data = get_text_dataset(cfg)
@@ -38,6 +39,7 @@ def setup_data_and_model(cfg: AppConfig):
         num_classes = processed_data.num_classes
         vocab = processed_data.vocab
         pad_idx = processed_data.pad_idx
+        collate_fn = lambda batch: collate_batch(batch, padding_value=pad_idx)
 
         model_init_cfg = {"num_classes": num_classes, "vocab_size": len(vocab), "padding_idx": pad_idx,
                           "dataset_name": dataset_name}
@@ -55,7 +57,7 @@ def setup_data_and_model(cfg: AppConfig):
     cfg.experiment.num_classes = num_classes
     logging.info(f"Data loaded for '{dataset_name}'. Number of classes: {cfg.experiment.num_classes}")
 
-    return buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args
+    return buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn
 
 
 def initialize_sellers(cfg: AppConfig, marketplace, client_loaders, model_factory, seller_extra_args,
@@ -187,7 +189,7 @@ def run_attack(cfg: AppConfig):
     logging.info(f"--- Starting Experiment: {cfg.experiment.dataset_name} | {cfg.experiment.model_structure} ---")
 
     # 1. Data and Model Setup
-    buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args = setup_data_and_model(cfg)
+    buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn = setup_data_and_model(cfg)
 
     global_model = model_factory().to(cfg.experiment.device)
     logging.info(f"Global model created and moved to {cfg.experiment.device}")
@@ -204,7 +206,6 @@ def run_attack(cfg: AppConfig):
         agg_config=cfg.aggregation
     )
 
-    loss_fn = nn.CrossEntropyLoss()
     sybil_coordinator = SybilCoordinator(cfg.adversary_seller_config.sybil, aggregator)
     evaluators = create_evaluators(cfg, cfg.experiment.device, **seller_extra_args)
 
@@ -241,11 +242,6 @@ def run_attack(cfg: AppConfig):
         sellers={},
         input_shape=input_shape
     )
-
-    collate_fn = None
-    is_text = cfg.experiment.dataset_type == "text"
-    if is_text:
-        collate_fn = collate_batch
 
     # 4. Seller Initialization
     initialize_sellers(cfg, marketplace, seller_loaders, model_factory, seller_extra_args, sybil_coordinator,
