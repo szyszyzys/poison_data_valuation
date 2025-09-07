@@ -92,3 +92,6 @@ class Aggregator:
             seller_updates=s_updates_tensor,
             **kwargs
         )
+
+    def apply_gradient(self, aggregated_gradient: List[torch.Tensor]):
+        self.strategy.apply_gradient(aggregated_gradient)

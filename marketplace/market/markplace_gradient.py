@@ -94,7 +94,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
         # 4. Update global model
         if agg_grad:
-            self.aggregator.strategy.apply_gradient(agg_grad)
+            self.aggregator.apply_gradient(agg_grad)
 
         # 5. Evaluate the updated model
         perf_global = self.evaluator.evaluate(self.aggregator.strategy.global_model, test_loader_global)

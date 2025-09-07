@@ -31,6 +31,26 @@ class BaseAggregator(ABC):
         """
         raise NotImplementedError
 
+    def apply_gradient(self, aggregated_gradient: List[torch.Tensor], learning_rate: float = 1.0):
+        """
+        Applies the provided aggregated gradient to the global model.
+
+        Args:
+            aggregated_gradient (List[torch.Tensor]): The gradient to apply.
+            learning_rate (float): The server-side learning rate. Defaults to 1.0,
+                                   assuming learning rate is handled on the client or
+                                   incorporated into the gradient itself (e.g., FedAvg).
+        """
+        if not aggregated_gradient:
+            logger.warning("apply_gradient called with an empty or None gradient. Skipping model update.")
+            return
+
+        with torch.no_grad():
+            for param, grad in zip(self.global_model.parameters(), aggregated_gradient):
+                # The update rule is: param = param - learning_rate * grad
+                # The in-place equivalent is param.add_(grad, alpha=-learning_rate)
+                param.add_(grad, alpha=-learning_rate)
+
     def _compute_trust_gradient(self) -> List[torch.Tensor]:
         """
         NEW: Computes a trusted gradient on the server's clean data (buyer's data).
