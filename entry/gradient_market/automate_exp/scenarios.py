@@ -35,16 +35,23 @@ def use_camelyon_config(config: AppConfig) -> AppConfig:
     return config
 
 
-# Attack Modifiers
-def use_backdoor_attack(config: AppConfig) -> AppConfig:
-    """Modifier to enable a standard backdoor attack."""
-    config.adversary_seller_config.poisoning.type = PoisonType.BACKDOOR
+# --- UPDATED: Replaced the single backdoor modifier with two specific ones ---
+def use_image_backdoor_attack(config: AppConfig) -> AppConfig:
+    """Modifier to enable an image backdoor attack."""
+    config.adversary_seller_config.poisoning.type = PoisonType.IMAGE_BACKDOOR
+    return config
+
+
+def use_text_backdoor_attack(config: AppConfig) -> AppConfig:
+    """Modifier to enable a text backdoor attack."""
+    config.adversary_seller_config.poisoning.type = PoisonType.TEXT_BACKDOOR
     return config
 
 
 def use_sybil_amplify(config: AppConfig) -> AppConfig:
     """Modifier to enable the Sybil Amplify attack."""
-    config = use_backdoor_attack(config)  # Sybil builds on backdoor
+    # Note: Sybil can be paired with any attack, here we default to image backdoor
+    config = use_image_backdoor_attack(config)
     config.adversary_seller_config.sybil.is_sybil = True
     config.adversary_seller_config.sybil.role_config = {"amplify": 1.0}
     return config
@@ -64,7 +71,7 @@ ALL_SCENARIOS = [
     Scenario(
         name="poison_vary_adv_rate_celeba",
         base_config_factory=get_base_image_config,
-        modifiers=[use_celeba_config, use_backdoor_attack],
+        modifiers=[use_celeba_config, use_image_backdoor_attack],
         parameter_grid={
             # Iterate through all 4 aggregation methods
             "experiment.aggregation_method": ALL_AGGREGATORS,
@@ -79,7 +86,7 @@ ALL_SCENARIOS = [
     Scenario(
         name="poison_vary_adv_rate_agnews",
         base_config_factory=get_base_text_config,
-        modifiers=[use_backdoor_attack],
+        modifiers=[use_text_backdoor_attack],
         parameter_grid={
             # Iterate through all 4 aggregation methods
             "experiment.aggregation_method": ALL_AGGREGATORS,
@@ -98,7 +105,7 @@ ALL_SCENARIOS = [
     Scenario(
         name="poison_vary_poison_rate_celeba",
         base_config_factory=get_base_image_config,
-        modifiers=[use_celeba_config, use_backdoor_attack],
+        modifiers=[use_celeba_config, use_image_backdoor_attack],
         parameter_grid={
             # Iterate through all 4 aggregation methods
             "experiment.aggregation_method": ALL_AGGREGATORS,
@@ -113,7 +120,7 @@ ALL_SCENARIOS = [
     Scenario(
         name="poison_vary_poison_rate_agnews",
         base_config_factory=get_base_text_config,
-        modifiers=[use_backdoor_attack],
+        modifiers=[use_text_backdoor_attack],
         parameter_grid={
             # Iterate through all 4 aggregation methods
             "experiment.aggregation_method": ALL_AGGREGATORS,
@@ -185,7 +192,7 @@ def use_small_subset(config: AppConfig) -> AppConfig:
 smoke_test_scenario = Scenario(
     name="smoke_test_image",
     base_config_factory=get_base_image_config,
-    modifiers=[use_celeba_config, use_small_subset, use_backdoor_attack],
+    modifiers=[use_celeba_config, use_small_subset, use_image_backdoor_attack],
     parameter_grid={
         # Use a small number of rounds and sellers
         "experiment.global_rounds": [2],
@@ -211,7 +218,7 @@ smoke_test_scenario = Scenario(
 smoke_test_text_scenario = Scenario(
     name="smoke_test_text",
     base_config_factory=get_base_text_config,  # <-- Use the text base config
-    modifiers=[use_backdoor_attack],  # Use an attack to test that path
+    modifiers=[use_text_backdoor_attack],  # Use an attack to test that path
     parameter_grid={
         # Minimal settings for a fast run
         "experiment.dataset_name": ["AG_NEWS"],

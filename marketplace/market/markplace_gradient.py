@@ -3,22 +3,19 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple
 
-import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-from common.enums import PoisonType, ServerAttackMode
+from common.enums import ServerAttackMode
 from common.gradient_market_configs import AppConfig, ServerAttackConfig
 from entry.gradient_market.privacy_attack import GradientInversionAttacker
 from marketplace.market.data_market import DataMarketplace
-from marketplace.market.utils import FederatedEvaluator
 from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.seller.seller import BaseSeller
 
 
-# --- NEW: Typed Configuration for the Marketplace ---
 @dataclass
 class MarketplaceConfig:
     """Configuration for the DataMarketplaceFederated."""
@@ -30,18 +27,15 @@ class MarketplaceConfig:
 
 
 class DataMarketplaceFederated(DataMarketplace):
-    def __init__(self, cfg: AppConfig, aggregator: Aggregator, evaluator: FederatedEvaluator, sellers: dict,
+    def __init__(self, cfg: AppConfig, aggregator: Aggregator, sellers: dict,
                  input_shape: tuple, attacker=None):
         """
         Initializes the marketplace with all necessary components and the main config.
         """
         self.cfg = cfg  # Store the main config object
         self.aggregator = aggregator
-        self.evaluator = evaluator
         self.sellers = sellers
         self.attacker = attacker  # For server-side privacy attacks
-        self.log_buffer = []  # Add a buffer
-        self.log_write_frequency = 50  # Write to disk every 50 rounds
 
         # Conditionally initialize the privacy attacker
         if self.cfg.server_attack_config.attack_name == ServerAttackMode.GRADIENT_INVERSION:
@@ -98,26 +92,25 @@ class DataMarketplaceFederated(DataMarketplace):
         if agg_grad:
             self.aggregator.apply_gradient(agg_grad)
 
-        # 5. Evaluate the updated model
-        perf_global = self.evaluator.evaluate(self.aggregator.strategy.global_model, test_loader_global)
-
-        if self.cfg.adversary_seller_config.poisoning.type == PoisonType.BACKDOOR:
-            # The evaluator is assumed to have access to the config to get backdoor details
-            perf_global["asr"] = self.evaluator.evaluate_backdoor_asr(
-                self.aggregator.strategy.global_model, test_loader_global, self.cfg
-            )
-
-        # 6. Log results for the round
-        round_record = self._log_round_results(
-            round_number, time.time() - round_start_time, perf_global,
-            selected_ids, outlier_ids, attack_log
-        )
+        # 6. Create a simple record of the round's events.
+        #    The _log_round_results helper can be removed or simplified as it no longer handles performance metrics.
+        duration = time.time() - round_start_time
+        round_record = {
+            "round": round_number,
+            "duration_sec": duration,
+            "num_selected": len(selected_ids),
+            "num_outliers": len(outlier_ids),
+            "attack_performed": bool(attack_log),
+            "attack_victim": attack_log.get('victim_id') if attack_log else None
+        }
 
         # 7. Notify sellers of round end
         for sid, seller in self.sellers.items():
             seller.round_end_process(round_number, (sid in selected_ids))
 
         logging.info(f"--- Round {round_number} Ended (Duration: {round_record['duration_sec']:.2f}s) ---")
+
+        # Return the record and the raw gradient for potential future use
         return round_record, agg_grad
 
     def _get_current_market_gradients(self) -> Tuple[Dict, List, List]:
@@ -134,36 +127,3 @@ class DataMarketplaceFederated(DataMarketplace):
             except Exception as e:
                 logging.error(f"Error getting gradient from seller {sid}: {e}", exc_info=True)
         return gradients_dict, seller_ids, seller_stats_list
-
-    def _log_round_results(
-            self, round_num: int, duration: float, perf: Dict,
-            selected: List[str], outliers: List[str], attack_log: Optional[Dict]
-    ) -> Dict:
-        """Compiles the log dictionary for the round and saves it to a file."""
-        log_entry = {
-            "round": round_num,
-            "duration_sec": duration,
-            "global_acc": perf.get('acc'),
-            "global_loss": perf.get('loss'),
-            "global_asr": perf.get('asr'),
-            "num_selected": len(selected),
-            "num_outliers": len(outliers),
-            "attack_performed": bool(attack_log),
-            "attack_victim": attack_log.get('victim_id') if attack_log else None,
-            "attack_best_psnr": attack_log.get('metrics', {}).get('psnr') if attack_log else None,
-            "attack_best_lr": attack_log.get('metrics', {}).get('best_tuned_lr') if attack_log else None,
-        }
-
-        self.log_buffer.append(log_entry)
-
-        # Write to disk if buffer is full or it's the last round
-        is_last_round = round_num == self.cfg.experiment.global_rounds - 1
-        if (round_num + 1) % self.log_write_frequency == 0 or is_last_round:
-            try:
-                log_df = pd.DataFrame(self.log_buffer)
-                # ... logic to write log_df to csv ...
-                self.log_buffer = []  # Clear the buffer after writing
-            except Exception as e:
-                logging.error(f"Failed to write log buffer: {e}")
-
-        return log_entry

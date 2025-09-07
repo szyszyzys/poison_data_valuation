@@ -32,6 +32,7 @@ class ExperimentConfig:
     use_subset: bool = False
     subset_size: int = 3000  # Number of samples to use in the subset
     dataset_type: str = "text"
+    evaluation_frequency: int = 1
 
 
 @dataclass
@@ -91,10 +92,26 @@ class LabelFlipParams:
 class PoisoningConfig:
     """Configuration for client-side data poisoning attacks."""
     type: PoisonType = PoisonType.NONE
-    poison_rate: float = 0.1  # <-- This is now the single source of truth
+    poison_rate: float = 0.1
     image_backdoor_params: ImageBackdoorParams = field(default_factory=ImageBackdoorParams)
     text_backdoor_params: TextBackdoorParams = field(default_factory=TextBackdoorParams)
     label_flip_params: LabelFlipParams = field(default_factory=LabelFlipParams)
+
+    @property
+    def active_params(self) -> Union[BackdoorSimpleDataPoisonParams, TextBackdoorParams, LabelFlipParams, None]:
+        """
+        Returns the active parameter object based on the main 'type' field.
+        """
+        if self.type == PoisonType.IMAGE_BACKDOOR:
+            # We can still leverage the nested property here
+            return self.image_backdoor_params.active_attack_params
+        elif self.type == PoisonType.TEXT_BACKDOOR:
+            return self.text_backdoor_params
+        elif self.type == PoisonType.LABEL_FLIP:
+            return self.label_flip_params
+        elif self.type == PoisonType.NONE:
+            return None
+        raise ValueError(f"Unknown poison type: {self.type}")
 
 
 # --- Create a specific parameter class for GIA ---
