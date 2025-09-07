@@ -175,7 +175,7 @@ def run_training_loop(
         logging.info(f"============= Round {gr + 1}/{cfg.experiment.global_rounds} End ===============")
 
     # Return the final trained model and the log of results
-    final_model = marketplace.aggregator.global_model
+    final_model = marketplace.aggregator.strategy.global_model
     return final_model, results_buffer
 
 
