@@ -13,6 +13,7 @@ from common.enums import PoisonType, ServerAttackMode
 from common.gradient_market_configs import AppConfig, ServerAttackConfig
 from entry.gradient_market.privacy_attack import GradientInversionAttacker
 from marketplace.market.data_market import DataMarketplace
+from marketplace.market.utils import FederatedEvaluator
 from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.seller.seller import BaseSeller
 
@@ -29,7 +30,8 @@ class MarketplaceConfig:
 
 
 class DataMarketplaceFederated(DataMarketplace):
-    def __init__(self, cfg: AppConfig, aggregator: Aggregator, evaluator, sellers, input_shape: tuple, attacker=None):
+    def __init__(self, cfg: AppConfig, aggregator: Aggregator, evaluator: FederatedEvaluator, sellers: dict,
+                 input_shape: tuple, attacker=None):
         """
         Initializes the marketplace with all necessary components and the main config.
         """

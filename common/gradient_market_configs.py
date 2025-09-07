@@ -30,7 +30,7 @@ class ExperimentConfig:
     save_path: str = "./results"
     num_classes: int = 0  # Default to 0, will be set dynamically at runtime
     use_subset: bool = False
-    subset_size: int = 500  # Number of samples to use in the subset
+    subset_size: int = 3000  # Number of samples to use in the subset
     dataset_type: str = "text"
 
 
