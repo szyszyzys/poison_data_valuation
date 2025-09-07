@@ -82,20 +82,20 @@ ALL_SCENARIOS = [
         }
     ),
 
-    # --- TEXT (AG_NEWS) ---
-    Scenario(
-        name="poison_vary_adv_rate_agnews",
-        base_config_factory=get_base_text_config,
-        modifiers=[use_text_backdoor_attack],
-        parameter_grid={
-            # Iterate through all 4 aggregation methods
-            "experiment.aggregation_method": ALL_AGGREGATORS,
-            # Fix the poison rate for this experiment group
-            "adversary_seller_config.poisoning.poison_rate": [0.3],
-            # Sweep the adversary rate
-            "experiment.adv_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
-        }
-    ),
+    # # --- TEXT (AG_NEWS) ---
+    # Scenario(
+    #     name="poison_vary_adv_rate_agnews",
+    #     base_config_factory=get_base_text_config,
+    #     modifiers=[use_text_backdoor_attack],
+    #     parameter_grid={
+    #         # Iterate through all 4 aggregation methods
+    #         "experiment.aggregation_method": ALL_AGGREGATORS,
+    #         # Fix the poison rate for this experiment group
+    #         "adversary_seller_config.poisoning.poison_rate": [0.3],
+    #         # Sweep the adversary rate
+    #         "experiment.adv_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+    #     }
+    # ),
 
     # ==========================================================================
     # == Experiment Group 2: Varying Poison Rate (Fixed Adversary Rate) ==
@@ -116,20 +116,20 @@ ALL_SCENARIOS = [
         }
     ),
 
-    # --- TEXT (AG_NEWS) ---
-    Scenario(
-        name="poison_vary_poison_rate_agnews",
-        base_config_factory=get_base_text_config,
-        modifiers=[use_text_backdoor_attack],
-        parameter_grid={
-            # Iterate through all 4 aggregation methods
-            "experiment.aggregation_method": ALL_AGGREGATORS,
-            # Fix the adversary rate for this experiment group
-            "experiment.adv_rate": [0.3],
-            # Sweep the local data poison rate
-            "adversary_seller_config.poisoning.poison_rate": [0.1, 0.3, 0.5, 0.7, 1.0],
-        }
-    ),
+    # # --- TEXT (AG_NEWS) ---
+    # Scenario(
+    #     name="poison_vary_poison_rate_agnews",
+    #     base_config_factory=get_base_text_config,
+    #     modifiers=[use_text_backdoor_attack],
+    #     parameter_grid={
+    #         # Iterate through all 4 aggregation methods
+    #         "experiment.aggregation_method": ALL_AGGREGATORS,
+    #         # Fix the adversary rate for this experiment group
+    #         "experiment.adv_rate": [0.3],
+    #         # Sweep the local data poison rate
+    #         "adversary_seller_config.poisoning.poison_rate": [0.1, 0.3, 0.5, 0.7, 1.0],
+    #     }
+    # ),
 ]
 
 ALL_SCENARIOS.extend([
