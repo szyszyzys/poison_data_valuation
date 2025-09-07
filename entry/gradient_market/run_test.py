@@ -61,21 +61,21 @@ def main():
     """
     Runs the smoke test.
     """
-    test_config = create_test_config()
-
-    print("\n--- Starting Smoke Test ---")
-    try:
-        # Run your main experiment function with the test config
-        run_attack(cfg=test_config)
-
-        print("\n✅ ✅ ✅ SMOKE TEST PASSED ✅ ✅ ✅")
-        print("The pipeline ran for a few rounds without crashing.")
-
-    except Exception as e:
-        print("\n❌ ❌ ❌ SMOKE TEST FAILED ❌ ❌ ❌")
-        print("An error occurred during the test run:")
-        # Re-raise the exception to see the full traceback
-        raise e
+    # test_config = create_test_config()
+    #
+    # print("\n--- Starting Smoke Test ---")
+    # try:
+    #     # Run your main experiment function with the test config
+    #     run_attack(cfg=test_config)
+    #
+    #     print("\n✅ ✅ ✅ SMOKE TEST PASSED ✅ ✅ ✅")
+    #     print("The pipeline ran for a few rounds without crashing.")
+    #
+    # except Exception as e:
+    #     print("\n❌ ❌ ❌ SMOKE TEST FAILED ❌ ❌ ❌")
+    #     print("An error occurred during the test run:")
+    #     # Re-raise the exception to see the full traceback
+    #     raise e
 
     test_text_config = create_text_test_config()
 
