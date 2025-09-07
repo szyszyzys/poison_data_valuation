@@ -21,6 +21,18 @@ class BaseAggregator(ABC):
         self.loss_fn = loss_fn
         self.buyer_data_loader = buyer_data_loader
         self.clip_norm = clip_norm
+        self._buyer_data_iter = None  # Initialize iterator as None
+
+    def _get_trusted_batch(self):
+        """A robust method to get the next batch, re-creating the iterator if needed."""
+        if self._buyer_data_iter is None:
+            self._buyer_data_iter = iter(self.buyer_data_loader)
+        try:
+            return next(self._buyer_data_iter)
+        except StopIteration:
+            # Ran out of data, create a new iterator
+            self._buyer_data_iter = iter(self.buyer_data_loader)
+            return next(self._buyer_data_iter)
 
     @abstractmethod
     def aggregate(self, global_epoch: int, seller_updates: Dict[str, List[torch.Tensor]], **kwargs) -> Tuple[
@@ -64,10 +76,8 @@ class BaseAggregator(ABC):
         optimizer = torch.optim.SGD(temp_model.parameters(), lr=0.01)  # LR doesn't matter much
 
         # Use one batch of trusted data
-        data, raw_labels = next(iter(self.buyer_data_loader))
-        data = data.to(self.device)
+        data, raw_labels = self._get_trusted_batch()
 
-        # --- FIX: Extract the correct target label for different dataset types ---
         # Get the underlying dataset object (unpacking DataLoader -> Subset -> OriginalDataset)
         actual_dataset = self.buyer_data_loader.dataset
         if isinstance(actual_dataset, torch.utils.data.Subset):

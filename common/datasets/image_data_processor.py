@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import datasets, transforms
@@ -42,31 +43,31 @@ class CelebACustom(datasets.CelebA):
 
     def __init__(self, root: str, split: str, transform: Optional[callable] = None,
                  download: bool = True, property_key: str = 'Blond_Hair'):
-        super().__init__(root=root, split=split, target_type=["identity", "attr"],
+        # More efficient: Only request the 'attr' target type.
+        super().__init__(root=root, split=split, target_type="attr",
                          transform=transform, download=download)
 
         self.property_key = property_key.lower()
         try:
-            # Find the index for the specified attribute
             self.property_idx = self.attr_names.index(property_key)
-            logger.info(f"'{property_key}' attribute found at index {self.property_idx}.")
         except ValueError:
             raise RuntimeError(f"Could not find '{property_key}' in CelebA attributes.")
 
+    # has_property method is fine, no changes needed.
     def has_property(self, item_idx: int) -> bool:
-        """Checks if a sample has the property specified during initialization."""
-        # self.attr is a tensor of [N, 40]
         return self.attr[item_idx][self.property_idx].item() == 1
 
-    def __getitem__(self, index: int) -> Tuple[Any, Any]:
-        # The parent method returns (img, [identity, attr])
-        img, target_list = super().__getitem__(index)
+    def __getitem__(self, index: int):
+        # Now the parent directly returns (img, attributes_tensor)
+        img, attrs = super().__getitem__(index)
 
-        # The attributes tensor is the second element (index 1)
-        attributes = target_list[1]
+        # Select the single property you want for your label
+        label = attrs[self.property_idx]
 
-        # Now you return a clean (tensor, tensor) tuple
-        return img, attributes
+        # Ensure the label is a 0D tensor of the correct type
+        label = torch.tensor(label, dtype=torch.long)
+
+        return img, label
 
 
 class Camelyon16Custom(Dataset):
