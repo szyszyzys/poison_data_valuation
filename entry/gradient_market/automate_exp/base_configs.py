@@ -12,7 +12,8 @@ def get_base_image_config() -> AppConfig:
         experiment=ExperimentConfig(
             dataset_name="CelebA", model_structure="Simple_CNN", aggregation_method="fedavg",
             global_rounds=100, n_sellers=30, adv_rate=0.0,
-            device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="image"
+            device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="image",
+            evaluations=["clean", "backdoor"]
         ),
         training=TrainingConfig(local_epochs=2, batch_size=64, learning_rate=0.001),
         server_attack_config=ServerAttackConfig(),
@@ -40,8 +41,8 @@ def get_base_text_config() -> AppConfig:
         experiment=ExperimentConfig(
             dataset_name="AG_NEWS", model_structure="text_cnn", aggregation_method="fedavg",
             global_rounds=50, n_sellers=20, adv_rate=0.0,
-            device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="text"
-
+            device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="text",
+            evaluations=["clean", "backdoor"]
         ),
         training=TrainingConfig(local_epochs=3, batch_size=32, learning_rate=0.001),
         server_attack_config=ServerAttackConfig(),

@@ -1,7 +1,7 @@
 # in marketplace/market/evaluation/base.py
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict
+from typing import Dict, Any, List
 
 import torch
 from torch import nn
@@ -88,7 +88,7 @@ EVALUATOR_MAP = {
 def create_evaluators(cfg: AppConfig, device: str, **kwargs: Dict[str, Any]) -> List[BaseEvaluator]:
     """Creates a list of evaluator instances based on the config."""
     evaluator_list = []
-    evaluator_names = cfg.experiment.get("evaluations", ["clean"])
+    evaluator_names = cfg.experiment.evaluations
 
     for name in evaluator_names:
         EvaluatorClass = EVALUATOR_MAP.get(name)

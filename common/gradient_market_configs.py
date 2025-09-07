@@ -33,6 +33,7 @@ class ExperimentConfig:
     subset_size: int = 3000  # Number of samples to use in the subset
     dataset_type: str = "text"
     evaluation_frequency: int = 1
+    evaluations: List[str] = field(default_factory=lambda: ["clean"])
 
 
 @dataclass
