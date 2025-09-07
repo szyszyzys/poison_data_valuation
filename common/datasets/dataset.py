@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
 from torchtext.data.utils import get_tokenizer
-from torchtext.vocab import build_vocab_from_iterator, Vocab
+from torchtext.vocab import Vocab, build_vocab_from_iterator
 
 from common.datasets.data_partitioner import FederatedDataPartitioner, _extract_targets
 from common.datasets.image_data_processor import load_dataset_with_property, save_data_statistics, CelebACustom
@@ -197,7 +197,7 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
             vocab, pad_idx, unk_idx = torch.load(vocab_cache_file, weights_only=False)
             if not isinstance(vocab, Vocab):
                 raise TypeError("Cached object is not a Vocab.")
-            logging.info(f"Vocabulary loaded. Size: {len(vocab.itos)}")
+            logging.info(f"Vocabulary loaded. Size: {len(vocab.get_itos())}")
         except Exception as e:
             logging.warning(f"Failed to load vocab from cache: {e}. Rebuilding.")
             vocab = None
@@ -205,30 +205,25 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     if vocab is None:
         logging.info("Building vocabulary...")
 
-        # 1. Create an iterator that yields lists of tokens
         def yield_tokens(data_iterator):
             for _, text in data_iterator:
                 yield tokenizer(text)
 
-        # 2. Build the vocabulary directly from the iterator
+        # This logic is now correct for modern torchtext
         vocab = build_vocab_from_iterator(
-            yield_tokens(hf_iterator(train_ds_hf, text_field)),
+            yield_tokens(hf_iterator(train_ds_hf, text_field, label_field)),
             min_freq=vocab_cfg.min_freq,
             specials=[vocab_cfg.unk_token, vocab_cfg.pad_token],
             special_first=True
         )
 
-        # 3. Set the default index for out-of-vocabulary words
         unk_idx = vocab[vocab_cfg.unk_token]
         vocab.set_default_index(unk_idx)
-
         pad_idx = vocab[vocab_cfg.pad_token]
 
         logging.info(f"Vocabulary built. Size: {len(vocab)}. UNK index: {unk_idx}, PAD index: {pad_idx}.")
 
-        # The rest of your caching logic remains the same
         if cfg.use_cache:
-            # Note: You can save the vocab object directly as before
             torch.save((vocab, pad_idx, unk_idx), vocab_cache_file)
             logging.info(f"Vocabulary saved to cache: {vocab_cache_file}")
 
