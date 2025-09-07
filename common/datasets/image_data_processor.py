@@ -58,6 +58,16 @@ class CelebACustom(datasets.CelebA):
         # self.attr is a tensor of [N, 40]
         return self.attr[item_idx][self.property_idx].item() == 1
 
+    def __getitem__(self, index: int) -> Tuple[Any, Any]:
+        # The parent method returns (img, [identity, attr])
+        img, target_list = super().__getitem__(index)
+
+        # The attributes tensor is the second element (index 1)
+        attributes = target_list[1]
+
+        # Now you return a clean (tensor, tensor) tuple
+        return img, attributes
+
 
 class Camelyon16Custom(Dataset):
     """

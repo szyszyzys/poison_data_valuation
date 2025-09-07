@@ -121,7 +121,6 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     Loads, processes, caches, and splits a text dataset according to the provided AppConfig.
     """
     # 1. --- Input Validation and Setup ---
-    ### UPDATED: Access the dedicated text and experiment configs ###
     exp_cfg = cfg.experiment
     train_cfg = cfg.training
     text_cfg = cfg.data.text
