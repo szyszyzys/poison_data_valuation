@@ -3,6 +3,7 @@ import logging
 import os
 import pickle
 import random
+from collections import Counter
 from dataclasses import asdict
 from typing import (Any, Callable, Dict, Generator, List, Optional, Tuple)
 
@@ -10,7 +11,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
 from torchtext.data.utils import get_tokenizer
-from torchtext.vocab import build_vocab_from_iterator, Vocab
+from torchtext.vocab import Vocab, vocab as vocab_factory
 
 from common.datasets.data_partitioner import FederatedDataPartitioner, _extract_targets
 from common.datasets.image_data_processor import load_dataset_with_property, save_data_statistics, CelebACustom
@@ -142,7 +143,6 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     if not text_cfg:
         raise ValueError("Text data configuration ('data.text') is missing from the AppConfig.")
 
-    # Get parameters from their new, correct locations
     discovery_params = text_cfg.discovery
     vocab_cfg = text_cfg.vocab
     buyer_percentage = discovery_params.buyer_percentage
@@ -197,7 +197,7 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
             vocab, pad_idx, unk_idx = torch.load(vocab_cache_file, weights_only=False)
             if not isinstance(vocab, Vocab):
                 raise TypeError("Cached object is not a Vocab.")
-            logging.info(f"Vocabulary loaded. Size: {len(vocab.itos)}")
+            logging.info(f"Vocabulary loaded. Size: {len(vocab.get_itos())}")
         except Exception as e:
             logging.warning(f"Failed to load vocab from cache: {e}. Rebuilding.")
             vocab = None
@@ -205,30 +205,32 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     if vocab is None:
         logging.info("Building vocabulary...")
 
-        # 1. Create an iterator that yields lists of tokens
-        def yield_tokens(data_iterator):
-            for _, text in data_iterator:
-                yield tokenizer(text)
+        # ==================== FIX STARTS HERE ====================
+        # Create a Counter of all tokens by iterating through the dataset first.
+        counter = Counter()
+        for _, text in hf_iterator(train_ds_hf, text_field, label_field):
+            counter.update(tokenizer(text))
+        logging.info(f"Token counting complete. Found {len(counter)} unique tokens.")
 
-        # 2. Build the vocabulary directly from the iterator
-        vocab = build_vocab_from_iterator(
-            yield_tokens(hf_iterator(train_ds_hf, text_field)),
+        # Build the vocabulary using the `vocab` factory function from the counter.
+        # This is a more robust method that correctly handles `min_freq`.
+        vocab = vocab_factory(
+            counter,
             min_freq=vocab_cfg.min_freq,
             specials=[vocab_cfg.unk_token, vocab_cfg.pad_token],
             special_first=True
         )
 
-        # 3. Set the default index for out-of-vocabulary words
+        # Set the default index for out-of-vocabulary words.
         unk_idx = vocab[vocab_cfg.unk_token]
         vocab.set_default_index(unk_idx)
 
         pad_idx = vocab[vocab_cfg.pad_token]
+        # ===================== FIX ENDS HERE =====================
 
-        logging.info(f"Vocabulary built. Size: {len(vocab)}. UNK index: {unk_idx}, PAD index: {pad_idx}.")
+        logging.info(f"Vocabulary built. Size: {len(vocab.get_itos())}. UNK index: {unk_idx}, PAD index: {pad_idx}.")
 
-        # The rest of your caching logic remains the same
         if cfg.use_cache:
-            # Note: You can save the vocab object directly as before
             torch.save((vocab, pad_idx, unk_idx), vocab_cache_file)
             logging.info(f"Vocabulary saved to cache: {vocab_cache_file}")
 
@@ -260,6 +262,7 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         raise ValueError("Training data is empty after processing.")
 
     # 5. --- Split Data ---
+    # ... (The rest of your function remains the same)
     split_params = (
         exp_cfg.dataset_name, vocab_cache_file, cfg.seed, buyer_percentage, exp_cfg.n_sellers,
         text_cfg.strategy, discovery_params.discovery_quality, discovery_params.buyer_data_mode,
@@ -288,7 +291,7 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
             buyer_indices, seller_splits = split_text_dataset_martfl_discovery(
                 dataset=processed_train_data,
                 buyer_count=buyer_count,
-                num_clients=exp_cfg.n_sellers,  # Use correct config path
+                num_clients=exp_cfg.n_sellers,
                 noise_factor=discovery_params.discovery_quality,
                 buyer_data_mode=discovery_params.buyer_data_mode,
                 buyer_bias_distribution=buyer_bias_dist,
@@ -302,7 +305,6 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
                 pickle.dump((buyer_indices, seller_splits), f)
             logging.info(f"Split indices saved to cache: {split_cache_file}")
 
-    # Sanity check for overlaps
     assigned_indices = set(buyer_indices.tolist())
     for seller_id, indices in seller_splits.items():
         if not assigned_indices.isdisjoint(indices):
@@ -311,8 +313,6 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
 
     # 6. --- Create DataLoaders ---
     collate_fn = lambda batch: collate_batch(batch, padding_value=pad_idx)
-
-    # Use training batch size from the training config
     batch_size = train_cfg.batch_size
 
     buyer_loader = None
