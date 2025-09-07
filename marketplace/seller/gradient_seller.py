@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
     BackdoorTextGenerator
-from common.enums import ImageTriggerType, ImageTriggerLocation, ImageBackdoorAttackName
+from common.enums import ImageTriggerType, ImageTriggerLocation
 from common.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, BackdoorTextConfig, SybilConfig, \
     RuntimeDataConfig, TrainingConfig
 from common.utils import unflatten_tensor
@@ -735,23 +735,20 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
     def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """Overrides the base method to implement the full adversary strategy."""
         current_round = self.sybil_coordinator.cur_round if self.is_sybil else float('inf')
-        should_attack = current_round >= self.adversary_config.sybil.benign_rounds
-
-        attack_name = self.adversary_config.poisoning.image_backdoor_params.attack_name
-
-        if not should_attack:
-            attack_name = "none"
-        logging.info(f"[{self.seller_id}] Round {current_round}. Behavior: {attack_name}.")
+        should_attack_this_round = current_round >= self.adversary_config.sybil.benign_rounds
 
         base_model = self.model_factory().to(self.device)
         base_model.load_state_dict(global_model.state_dict())
 
-        if attack_name == ImageBackdoorAttackName.SIMPLE_DATA_POISON:
+        # --- THE FIX IS HERE ---
+        if should_attack_this_round and self.poison_generator:
+            logging.info(f"[{self.seller_id}] Round {current_round}. Behavior: Attacking.")
             base_gradient, stats = self._compute_simple_poisoning_attack_gradient(base_model)
         else:
+            logging.info(f"[{self.seller_id}] Round {current_round}. Behavior: Benign.")
             base_gradient, stats = self._compute_clean_gradient(base_model)
 
-        # Sybil logic remains the same
+        # Sybil logic can be applied here if needed
         return base_gradient, stats
 
     def _create_poisoned_dataset_view(self) -> TriggeredSubsetDataset:
