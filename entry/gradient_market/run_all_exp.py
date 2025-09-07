@@ -148,7 +148,7 @@ def run_training_loop(
         is_last_round = (gr + 1) == cfg.experiment.global_rounds
         if (gr + 1) % eval_freq == 0 or is_last_round:
             logging.info(f"--- Performing Evaluation for Round {gr + 1} ---")
-            global_model = marketplace.aggregator.global_model
+            global_model = marketplace.aggregator.strategy.global_model
 
             all_metrics = {}
             for evaluator in evaluators:
