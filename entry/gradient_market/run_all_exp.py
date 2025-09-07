@@ -18,7 +18,6 @@ from common.gradient_market_configs import AppConfig
 from common.utils import FederatedEarlyStopper
 from entry.gradient_market.automate_exp.config_parser import load_config
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
-from marketplace.market.utils import FederatedEvaluator
 from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.seller.gradient_seller import SybilCoordinator
 from model.utils import get_text_model, get_image_model
@@ -134,7 +133,7 @@ def run_training_loop(
     early_stopper = FederatedEarlyStopper(patience=20, monitor='acc')
     results_buffer = []
 
-    eval_freq = cfg.experiment.get("evaluation_frequency", 1)
+    eval_freq = cfg.experiment.evaluation_frequency
 
     for gr in range(cfg.experiment.global_rounds):
         logging.info(f"============= Round {gr + 1}/{cfg.experiment.global_rounds} Start ===============")
@@ -204,7 +203,6 @@ def run_attack(cfg: AppConfig):
     )
 
     loss_fn = nn.CrossEntropyLoss()
-    evaluator = FederatedEvaluator(loss_fn, device=cfg.experiment.device)
     sybil_coordinator = SybilCoordinator(cfg.adversary_seller_config.sybil, aggregator)
     evaluators = create_evaluators(cfg, cfg.experiment.device, **seller_extra_args)
 
