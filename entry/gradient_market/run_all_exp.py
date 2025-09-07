@@ -211,9 +211,8 @@ def run_training_loop(cfg: AppConfig, marketplace, test_loader, loss_fn, sybil_c
 
         round_record, _ = marketplace.train_federated_round(
             round_number=gr,
-            test_dataloader_global=test_loader,
-            loss_fn=loss_fn,
-            sybil_coordinator=sybil_coordinator
+            test_loader_global=test_loader,
+            ground_truth_dict={}  # Pass the ground truth data here if your privacy attacker needs it
         )
 
         if early_stopper.update(round_record.get("perf_global", {}).get('acc', 0)):

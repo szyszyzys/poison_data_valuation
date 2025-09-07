@@ -67,7 +67,6 @@ class DataMarketplaceFederated(DataMarketplace):
             self,
             round_number: int,
             test_loader_global: DataLoader,
-            # ground_truth_dict is for the privacy attacker, so it can remain
             ground_truth_dict: Dict[str, Dict[str, torch.Tensor]]
     ) -> Tuple[Dict, Any]:
         """Orchestrates a single, config-driven round of federated learning."""
