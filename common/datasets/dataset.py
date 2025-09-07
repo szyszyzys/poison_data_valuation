@@ -15,7 +15,7 @@ from torchtext.vocab import Vocab, build_vocab_from_iterator
 from common.datasets.data_partitioner import FederatedDataPartitioner, _extract_targets
 from common.datasets.image_data_processor import load_dataset_with_property, save_data_statistics, CelebACustom
 from common.datasets.text_data_processor import ProcessedTextData, hf_datasets_available, get_cache_path, \
-    generate_buyer_bias_distribution, split_text_dataset_martfl_discovery, collate_batch
+    generate_buyer_bias_distribution, split_text_dataset_martfl_discovery, collate_batch, StandardFormatDataset
 from common.gradient_market_configs import AppConfig
 
 try:
@@ -253,6 +253,8 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     processed_test_data = numericalize_dataset(lambda: hf_iterator(test_ds_hf, text_field, label_field), "test")
     if not processed_train_data:
         raise ValueError("Training data is empty after processing.")
+    standardized_train_data = StandardFormatDataset(processed_train_data, label_first=True)
+    standardized_test_data = StandardFormatDataset(processed_test_data, label_first=True)
 
     # 5. --- Split Data ---
     split_params = (
@@ -281,7 +283,7 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
                 )
 
             buyer_indices, seller_splits = split_text_dataset_martfl_discovery(
-                dataset=processed_train_data,
+                dataset=standardized_train_data,
                 buyer_count=buyer_count,
                 num_clients=exp_cfg.n_sellers,  # Use correct config path
                 noise_factor=discovery_params.discovery_quality,
@@ -312,19 +314,19 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
 
     buyer_loader = None
     if buyer_indices is not None and len(buyer_indices) > 0:
-        buyer_loader = DataLoader(Subset(processed_train_data, buyer_indices.tolist()), batch_size=batch_size,
+        buyer_loader = DataLoader(Subset(standardized_train_data, buyer_indices.tolist()), batch_size=batch_size,
                                   shuffle=True, collate_fn=collate_fn)
 
     seller_loaders = {}
     for i in range(exp_cfg.n_sellers):
         indices = seller_splits.get(i)
         if indices:
-            seller_loaders[i] = DataLoader(Subset(processed_train_data, indices), batch_size=batch_size, shuffle=True,
+            seller_loaders[i] = DataLoader(Subset(standardized_train_data, indices), batch_size=batch_size, shuffle=True,
                                            collate_fn=collate_fn)
         else:
             seller_loaders[i] = None
 
-    test_loader = DataLoader(processed_test_data, batch_size=batch_size, shuffle=False,
+    test_loader = DataLoader(standardized_test_data, batch_size=batch_size, shuffle=False,
                              collate_fn=collate_fn) if processed_test_data else None
 
     logging.info("DataLoader creation complete.")

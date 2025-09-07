@@ -9,7 +9,7 @@ from typing import (Any, Dict, List, Optional, Tuple, Callable)
 import numpy as np
 import torch
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torchtext.vocab import Vocab
 
 # --- HuggingFace datasets dynamic import ---
@@ -25,6 +25,29 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 logger = logging.getLogger(__name__)
+
+
+class StandardFormatDataset(Dataset):
+    """
+    A simple wrapper to ensure a dataset returns items in (data, label) format.
+    If the original format is (label, data), it swaps them.
+    """
+
+    def __init__(self, original_dataset, label_first=False):
+        self.original_dataset = original_dataset
+        self.label_first = label_first
+
+    def __len__(self):
+        return len(self.original_dataset)
+
+    def __getitem__(self, index):
+        item = self.original_dataset[index]
+        if self.label_first:
+            # Original is (label, data), so swap to (data, label)
+            return item[1], item[0]
+        else:
+            # Original is already (data, label)
+            return item
 
 
 def collate_batch(batch, padding_value=0):
@@ -177,8 +200,8 @@ def split_text_dataset_martfl_discovery(dataset: List[Tuple[int, Any]], buyer_co
 
     # 1. --- Initial Setup (same as before) ---
     all_indices = np.arange(len(dataset))
-    targets = np.array([item[0] for item in dataset])
-    unique_classes = sorted(list(np.unique(targets)))  # Sort for consistent order
+    targets = np.array([item[1] for item in dataset])
+    unique_classes = sorted(list(np.unique(targets)))
     num_classes = len(unique_classes)
 
     # 2. --- Construct Buyer Set (same as before) ---
