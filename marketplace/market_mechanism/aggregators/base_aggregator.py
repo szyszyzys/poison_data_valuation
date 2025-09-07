@@ -44,8 +44,24 @@ class BaseAggregator(ABC):
         optimizer = torch.optim.SGD(temp_model.parameters(), lr=0.01)  # LR doesn't matter much
 
         # Use one batch of trusted data
-        data, labels = next(iter(self.buyer_data_loader))
-        data, labels = data.to(self.device), labels.to(self.device)
+        data, raw_labels = next(iter(self.buyer_data_loader))
+        data = data.to(self.device)
+
+        # --- FIX: Extract the correct target label for different dataset types ---
+        # Get the underlying dataset object (unpacking DataLoader -> Subset -> OriginalDataset)
+        actual_dataset = self.buyer_data_loader.dataset
+        if isinstance(actual_dataset, torch.utils.data.Subset):
+            actual_dataset = actual_dataset.dataset
+
+        # If it's our custom CelebA dataset, extract the specific property
+        if hasattr(actual_dataset, 'property_idx'):  # A good check for CelebACustom
+            # The 'raw_labels' from the loader is a tuple of (identity_tensor, attributes_tensor)
+            attributes_tensor = raw_labels[1].to(self.device)
+            # We use the specific property index as the true label
+            labels = attributes_tensor[:, actual_dataset.property_idx]
+        else:
+            # For simple datasets, just move the label tensor to the device
+            labels = raw_labels.to(self.device)
 
         optimizer.zero_grad()
         output = temp_model(data)
