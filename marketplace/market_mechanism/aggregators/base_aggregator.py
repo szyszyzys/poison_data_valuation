@@ -77,11 +77,7 @@ class BaseAggregator(ABC):
 
         # Use one batch of trusted data
         data, raw_labels = self._get_trusted_batch()
-
-        # Get the underlying dataset object (unpacking DataLoader -> Subset -> OriginalDataset)
-        actual_dataset = self.buyer_data_loader.dataset
-        if isinstance(actual_dataset, torch.utils.data.Subset):
-            actual_dataset = actual_dataset.dataset
+        data = data.to(self.device)
 
         # If it's our custom CelebA dataset, extract the specific property
         labels = raw_labels.to(self.device)
