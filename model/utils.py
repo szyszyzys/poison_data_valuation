@@ -21,7 +21,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, Subset, Dataset
+from torch.utils.data import DataLoader
 
 # from model.text_model import TEXTCNN
 from model.models import LeNet, TextCNN, SimpleCNN
@@ -207,7 +207,7 @@ MODEL_REGISTRY = {
     "lenet": {
         "class": LeNet,
         "domain": "image",
-        "supported_datasets": ["mnist", "fmnist", "cifar"],
+        "supported_datasets": ["mnist", "fmnist", "cifar", "celeba", "camelyon16"],
     },
     # Text Models
     "text_cnn": {
@@ -285,6 +285,7 @@ def get_image_model(
         print(f"Model moved to device: {device}")
 
     return model
+
 
 def get_text_model(
         dataset_name: str,

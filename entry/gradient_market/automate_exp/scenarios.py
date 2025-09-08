@@ -68,19 +68,19 @@ ALL_SCENARIOS = [
     # ==========================================================================
 
     # --- IMAGE (CelebA) ---
-    Scenario(
-        name="poison_vary_adv_rate_celeba",
-        base_config_factory=get_base_image_config,
-        modifiers=[use_celeba_config, use_image_backdoor_attack],
-        parameter_grid={
-            # Iterate through all 4 aggregation methods
-            "experiment.aggregation_method": ALL_AGGREGATORS,
-            # Fix the poison rate for this experiment group
-            "adversary_seller_config.poisoning.poison_rate": [0.3],
-            # Sweep the adversary rate
-            "experiment.adv_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
-        }
-    ),
+    # Scenario(
+    #     name="poison_vary_adv_rate_celeba",
+    #     base_config_factory=get_base_image_config,
+    #     modifiers=[use_celeba_config, use_image_backdoor_attack],
+    #     parameter_grid={
+    #         # Iterate through all 4 aggregation methods
+    #         "experiment.aggregation_method": ALL_AGGREGATORS,
+    #         # Fix the poison rate for this experiment group
+    #         "adversary_seller_config.poisoning.poison_rate": [0.3],
+    #         # Sweep the adversary rate
+    #         "experiment.adv_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+    #     }
+    # ),
 
     # # --- TEXT (AG_NEWS) ---
     # Scenario(
@@ -102,19 +102,19 @@ ALL_SCENARIOS = [
     # ==========================================================================
 
     # --- IMAGE (CelebA) ---
-    Scenario(
-        name="poison_vary_poison_rate_celeba",
-        base_config_factory=get_base_image_config,
-        modifiers=[use_celeba_config, use_image_backdoor_attack],
-        parameter_grid={
-            # Iterate through all 4 aggregation methods
-            "experiment.aggregation_method": ALL_AGGREGATORS,
-            # Fix the adversary rate for this experiment group
-            "experiment.adv_rate": [0.3],
-            # Sweep the local data poison rate
-            "adversary_seller_config.poisoning.poison_rate": [0.1, 0.3, 0.5, 0.7, 1.0],
-        }
-    ),
+    # Scenario(
+    #     name="poison_vary_poison_rate_celeba",
+    #     base_config_factory=get_base_image_config,
+    #     modifiers=[use_celeba_config, use_image_backdoor_attack],
+    #     parameter_grid={
+    #         # Iterate through all 4 aggregation methods
+    #         "experiment.aggregation_method": ALL_AGGREGATORS,
+    #         # Fix the adversary rate for this experiment group
+    #         "experiment.adv_rate": [0.3],
+    #         # Sweep the local data poison rate
+    #         "adversary_seller_config.poisoning.poison_rate": [0.1, 0.3, 0.5, 0.7, 1.0],
+    #     }
+    # ),
 
     # # --- TEXT (AG_NEWS) ---
     # Scenario(
@@ -142,6 +142,7 @@ ALL_SCENARIOS.extend([
         base_config_factory=get_base_image_config,
         modifiers=[use_celeba_config],  # Or any other dataset modifier
         parameter_grid={
+            "n_samples": 1,
             # Use a standard, non-robust aggregator to see the raw leakage
             "aggregation.method": ["fedavg"],
 
@@ -168,6 +169,7 @@ ALL_SCENARIOS.extend([
         modifiers=[use_celeba_config],
         parameter_grid={
             # --- Use a robust aggregator ---
+            "n_samples": 1,
             "aggregation.method": ["fltrust", "martfl"],  # This will create runs for all three
 
             "debug.save_individual_gradients": [True],
