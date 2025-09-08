@@ -138,11 +138,12 @@ ALL_SCENARIOS.extend([
     # ==========================================================================
 
     Scenario(
-        name="privacy_analysis_logging_celeba",
+        name="privacy_analysis_logging_celeba_lenet",
         base_config_factory=get_base_image_config,
         modifiers=[use_celeba_config],  # Or any other dataset modifier
         parameter_grid={
             "n_samples": [1],
+            "experiment.model_structure": ["lenet"],  # <-- Only one model
             # Use a standard, non-robust aggregator to see the raw leakage
             "aggregation.method": ["fedavg"],
 
@@ -171,7 +172,7 @@ ALL_SCENARIOS.extend([
             # --- Use a robust aggregator ---
             "n_samples": [1],
             "aggregation.method": ["fltrust", "martfl"],  # This will create runs for all three
-
+            "experiment.model_structure": ["lenet"],  # <-- Only one model
             "debug.save_individual_gradients": [True],
             "debug.gradient_save_frequency": [1],
             "adversary_seller_config.poisoning.type": [PoisonType.NONE],

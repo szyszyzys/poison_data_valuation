@@ -68,6 +68,7 @@ class ExperimentGenerator:
         # 2. Create all combinations from the parameter grid
         keys, values = zip(*scenario.parameter_grid.items())
         param_combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
+        print(f"  Found {len(param_combinations)} parameter combinations for this scenario.")
 
         # 3. Generate a file for each unique combination
         for params in param_combinations:
@@ -77,35 +78,52 @@ class ExperimentGenerator:
             for key, value in params.items():
                 set_nested_attr(final_config, key, value)
 
-            # IMPROVED: Generate a descriptive experiment ID from the swept parameters
-            exp_id = self._generate_exp_id(params)
+            # --- THIS IS THE UPDATED LOGIC ---
+            # 1. Generate the descriptive run name from the FINAL config object.
+            run_name = self.create_run_name(final_config)
 
-            # Set the final save path for results
-            save_path = self.output_dir / scenario.name / exp_id
+            # 2. Create the full, unique path for this run's results.
+            save_path = self.output_dir / scenario.name / run_name
+
+            # 3. Update the config object to be self-aware of its save path.
             final_config.experiment.save_path = str(save_path)
 
-            # Convert the final dataclass object to a dictionary for saving
-            config_dict = asdict(final_config)
-
-            # Save the config file
+            # 4. Set the path for the config file itself inside the unique directory.
             file_path = save_path / "config.yaml"
+            # -----------------------------------
+
+            # Your existing saving logic is correct
             file_path.parent.mkdir(parents=True, exist_ok=True)
+            config_dict = asdict(final_config)
             with open(file_path, 'w') as f:
                 yaml.dump(config_dict, f, Dumper=CustomDumper, sort_keys=False, indent=2)
-            print(f"  Saved config: {file_path}")
+            print(f"  Saved config to: {file_path}")
 
     @staticmethod
-    def _generate_exp_id(params: dict) -> str:  # <-- Changed to staticmethod
-        """Creates a human-readable ID from the parameters being swept."""
-        if not params:
-            return "default"
+    def create_run_name(config: AppConfig) -> str:
+        """
+        Generates a descriptive and unique name for a single experiment run
+        from its final configuration.
+        """
+        # 1. Model Architecture
+        model_name = config.experiment.model_structure.lower()
 
-        parts = []
-        for key, value in sorted(params.items()):
-            short_key = key.split('.')[-1]
-            if "adv_rate" in short_key: short_key = "adv"
-            if "poison_rate" in short_key: short_key = "pr"
+        # 2. Aggregation Method
+        agg_method = config.aggregation.method.lower()
 
-            value_str = f"{value:g}".replace('.', 'p') if isinstance(value, float) else str(value)
-            parts.append(f"{short_key}-{value_str}")
-        return "_".join(parts)
+        # 3. Adversary Attack Type
+        attack_type = config.adversary_seller_config.poisoning.type.name.lower()
+        if attack_type == 'none':
+            attack_str = "no_attack"
+        else:
+            # Include the adversary rate if an attack is active
+            adv_rate_str = f"{config.experiment.adv_rate:g}".replace('.', 'p')
+            attack_str = f"{attack_type}_adv-{adv_rate_str}"
+
+        # 4. Random Seed
+        seed = f"seed-{config.seed}"
+
+        # Assemble the final name
+        run_name = f"model-{model_name}_agg-{agg_method}_{attack_str}_{seed}"
+
+        return run_name
