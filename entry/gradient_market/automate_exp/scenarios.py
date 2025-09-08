@@ -142,7 +142,7 @@ ALL_SCENARIOS.extend([
         base_config_factory=get_base_image_config,
         modifiers=[use_celeba_config],  # Or any other dataset modifier
         parameter_grid={
-            "n_samples": 1,
+            "n_samples": [1],
             # Use a standard, non-robust aggregator to see the raw leakage
             "aggregation.method": ["fedavg"],
 
@@ -169,7 +169,7 @@ ALL_SCENARIOS.extend([
         modifiers=[use_celeba_config],
         parameter_grid={
             # --- Use a robust aggregator ---
-            "n_samples": 1,
+            "n_samples": [1],
             "aggregation.method": ["fltrust", "martfl"],  # This will create runs for all three
 
             "debug.save_individual_gradients": [True],
