@@ -234,6 +234,6 @@ smoke_test_text_scenario = Scenario(
     }
 )
 
-ALL_SCENARIOS.append(smoke_test_scenario)
-
-ALL_SCENARIOS.append(smoke_test_text_scenario)
+# ALL_SCENARIOS.append(smoke_test_scenario)
+#
+# ALL_SCENARIOS.append(smoke_test_text_scenario)
