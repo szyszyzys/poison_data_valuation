@@ -16,7 +16,7 @@ from common.datasets.text_data_processor import collate_batch
 from common.evaluators import create_evaluators
 from common.factories import SellerFactory
 from common.gradient_market_configs import AppConfig
-from common.utils import FederatedEarlyStopper
+from common.utils import FederatedEarlyStopper, set_seed
 from entry.gradient_market.automate_exp.config_parser import load_config
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.aggregator import Aggregator
@@ -274,7 +274,7 @@ def main():
     for i in range(app_config.n_samples):
         run_cfg = copy.deepcopy(app_config)
         current_seed = initial_seed + i
-        # set_seed(current_seed)
+        set_seed(current_seed)
 
         run_save_path = Path(run_cfg.experiment.save_path) / f"run_{i}_seed_{current_seed}"
         run_save_path.mkdir(parents=True, exist_ok=True)
