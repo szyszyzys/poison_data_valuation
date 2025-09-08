@@ -121,15 +121,15 @@ class PIAFeatureExtractor:
         prop_key = tuple(sorted(property_indices))
         if prop_key in self.reference_gradients: return self.reference_gradients[prop_key]
 
-        model = self.mf().to(self.device);
+        model = self.mf().to(self.device)
         model.train()
         data, target = next(iter(torch.utils.data.DataLoader(
             torch.utils.data.Subset(self.dataset, property_indices), batch_size=len(property_indices)
         )))
         data, target = data.to(self.device), target.to(self.device)
-        model.zero_grad();
-        output = model(data);
-        loss = nn.CrossEntropyLoss()(output, target);
+        model.zero_grad()
+        output = model(data)
+        loss = nn.CrossEntropyLoss()(output, target)
         loss.backward()
         ref_grad = torch.cat([p.grad.detach().clone().flatten() for p in model.parameters() if p.grad is not None])
         self.reference_gradients[prop_key] = ref_grad
@@ -148,8 +148,8 @@ class PIAFeatureExtractor:
         ref_grad = self._get_reference_gradient(prop_example_indices) if prop_example_indices else None
 
         for _ in tqdm(range(num_shadow_models), desc="PIA Shadow Training"):
-            model = self.mf().to(self.device);
-            model.load_state_dict(start_model_state);
+            model = self.mf().to(self.device)
+            model.load_state_dict(start_model_state)
             model.train()
             np.random.shuffle(all_indices)
             shadow_indices = all_indices[:batch_size]
@@ -158,9 +158,9 @@ class PIAFeatureExtractor:
             data, target = next(iter(torch.utils.data.DataLoader(torch.utils.data.Subset(self.dataset, shadow_indices),
                                                                  batch_size=batch_size)))
             data, target = data.to(self.device), target.to(self.device)
-            model.zero_grad();
-            output = model(data);
-            loss = nn.CrossEntropyLoss()(output, target);
+            model.zero_grad()
+            output = model(data)
+            loss = nn.CrossEntropyLoss()(output, target)
             loss.backward()
 
             grad_features = {}
@@ -193,7 +193,7 @@ class PIAFeatureExtractor:
             grad_features["grad_cosine_similarity"] = torch.nn.functional.cosine_similarity(ref_grad, current_grad_flat,
                                                                                             dim=0).item()
 
-        current_payment = seller_history['payment_received'].iloc[-1];
+        current_payment = seller_history['payment_received'].iloc[-1]
         grad_norm_total = np.linalg.norm(list(grad_features.values()))
         grad_features["payment_per_norm"] = current_payment / grad_norm_total if grad_norm_total > 0 else 0
         grad_features["payment_volatility"] = seller_history['payment_received'].std()
@@ -339,8 +339,9 @@ def plot_results(df: pd.DataFrame, run_name: str):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+    # --- (Your existing setup code remains the same) ---
     EXPERIMENT_ROOT = "./exp_results/text_agnews_cnn_10seller"
-    TARGET_RUN_INDEX = 0;
+    TARGET_RUN_INDEX = 0
     TARGET_SELLER_ID = "bn_5"
 
     try:
@@ -354,8 +355,34 @@ if __name__ == "__main__":
         logging.error(f"Failed to load experiment data: {e}");
         exit()
 
+    # ======================================================================
+    # == NEW: Step 1 - Initialize the Payment Simulator                  ==
+    # ======================================================================
+    # Choose the payment model you want to test for this analysis.
+    # Options: 'binary', 'proportional'
+    payment_sim = PaymentSimulator(
+        model_name='proportional',
+        scale_factor=50.0,
+        noise_level=0.5
+    )
+    logging.info(f"Using '{payment_sim.model_name}' payment model for analysis.")
+
+    # ======================================================================
+    # == NEW: Step 2 - Augment the Loaded Data with Simulated Payments   ==
+    # ======================================================================
+    for seller_id, history_df in target_run_data["sellers"].items():
+        # The simulator adds the 'payment_received' column in place
+        augmented_history = payment_sim.add_payments_to_history(history_df.copy())
+        target_run_data["sellers"][seller_id] = augmented_history
+
+    # ======================================================================
+    # == Step 3 - Initialize the Attacker with AUGMENTED Data            ==
+    # ======================================================================
+    # The attacker now receives the data that includes the simulated payments.
+    # No changes are needed in the attacker class itself.
     attacker = MarketplaceBuyerAttacker(target_run_data, device="cpu")
 
+    # --- (The rest of your code remains exactly the same) ---
     full_dataset = get_buyer_dataset(target_run_data)
     labels = [label for _, label in full_dataset]
 

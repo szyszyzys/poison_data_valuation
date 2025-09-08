@@ -1,3 +1,4 @@
+import argparse
 import logging
 from typing import Any, Dict, List
 
@@ -5,20 +6,17 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import torch
 import torch.nn as nn
-# --- Import your project's utilities and loader ---
+import yaml
+from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
-from common.utils import ExperimentLoader
+from common.utils import ExperimentLoader  # Your existing loaders
 from utils import get_buyer_dataset, model_factory
 
 
 class MarketplaceSellerAttacker:
-    """
-    Implements a Buyer Intent Inference Attack from a Sybil adversary's perspective.
-    This class now calculates inference scores both WITH and WITHOUT marketplace signals
-    to provide a direct comparison and quantify the impact of economic leakage.
-    """
+    """Implements and compares different Buyer Intent Inference Attacks."""
 
     def __init__(self, run_data: Dict[str, Any], attacker_ids: List[str], device: str = "cpu"):
         self.run_data = run_data
@@ -27,7 +25,7 @@ class MarketplaceSellerAttacker:
         self.mf = model_factory(run_data)
         self.probe_dataset = get_buyer_dataset(run_data)
         self.global_model_history = []
-        logging.info(f"MarketplaceSellerAttacker initialized for Sybil adversary controlling: {attacker_ids}.")
+        logging.info(f"Attacker initialized, controlling: {attacker_ids}.")
 
     def _get_model_loss(self, model: nn.Module, data_loader: DataLoader) -> float:
         """Helper to calculate the average loss of a model on a dataset."""
@@ -43,13 +41,12 @@ class MarketplaceSellerAttacker:
                 total_samples += data.size(0)
         return total_loss / total_samples if total_samples > 0 else float('inf')
 
-    def reconstruct_global_model_history(self, loader: ExperimentLoader):
+    def reconstruct_global_model_history(self, loader: ExperimentLoader, learning_rate: float):
         """Reconstructs the sequence of global models by applying aggregated gradients."""
-        logging.info("Reconstructing global model history from aggregated gradients...")
+        logging.info("Reconstructing global model history...")
         model = self.mf().to(self.device)
         self.global_model_history.append(model.state_dict())
-        learning_rate = 0.01
-        max_round = max(self.run_data['gradient_paths'].keys()) if self.run_data['gradient_paths'] else -1
+        max_round = max(self.run_data['gradient_paths'].keys()) if self.run_data.get('gradient_paths') else -1
 
         for round_num in tqdm(range(max_round + 1), desc="Reconstructing Models"):
             agg_grad = loader.load_gradient(self.run_data, round_num, seller_id=None)
@@ -60,185 +57,180 @@ class MarketplaceSellerAttacker:
                 self.global_model_history.append(model.state_dict())
         logging.info(f"Reconstructed {len(self.global_model_history)} global model states.")
 
-    def run_inference_comparison_attack(
-            self,
-            probe_objectives: Dict[str, List[int]]
-    ) -> pd.DataFrame:
-        """
-        Analyzes model history to infer the buyer's objective using two methods:
-        1. Passive-Only: Traditional FL attack based on model improvement.
-        2. Marketplace-Aware: Augments the passive attack with aggregated Sybil signals.
-        """
+    def run_passive_inference_attack(self, probe_objectives: Dict[str, List[int]]) -> pd.DataFrame:
+        """Runs the passive inference attack with the improved, stabilized marketplace-aware score."""
         if not self.global_model_history:
             raise RuntimeError("Global model history is empty. Call reconstruct first.")
 
-        logging.info("Running comparative inference attack (Passive vs. Marketplace-Aware)...")
-
-        # --- Step 1: Passively observe global model improvement on probe sets (Baseline) ---
-        probe_loaders = {}
+        # Step 1: Calculate loss trajectories
         all_labels = [label for _, label in self.probe_dataset]
-        for name, classes in probe_objectives.items():
-            indices = [i for i, label in enumerate(all_labels) if label in classes]
-            probe_loaders[name] = DataLoader(Subset(self.probe_dataset, indices), batch_size=128)
+        probe_loaders = {
+            name: DataLoader(Subset(self.probe_dataset, [i for i, label in enumerate(all_labels) if label in classes]),
+                             128) for name, classes in probe_objectives.items()}
 
         loss_results = []
         model = self.mf().to(self.device)
         for round_num, model_state in enumerate(tqdm(self.global_model_history, desc="Probing Models")):
             model.load_state_dict(model_state)
-            round_losses = {"round": round_num}
-            for name, loader in probe_loaders.items():
-                loss = self._get_model_loss(model, loader)
-                round_losses[f"loss_{name}"] = loss
+            round_losses = {"round": round_num,
+                            **{f"loss_{name}": self._get_model_loss(model, loader) for name, loader in
+                               probe_loaders.items()}}
             loss_results.append(round_losses)
-
         loss_df = pd.DataFrame(loss_results).set_index('round')
-        passive_scores_df = -loss_df.diff().fillna(0)  # Score is the improvement in loss
-        passive_scores_df = passive_scores_df.rename(columns=lambda c: c.replace('loss_', 'passive_score_'))
 
-        # --- Step 2: Aggregate signals from all Sybil identities ---
-        sybil_histories = [self.run_data["sellers"][sid].set_index('round')[['payment_received', 'assigned_weight']] for
-                           sid in self.attacker_ids]
-        sybil_agg_history = pd.concat(sybil_histories).groupby('round').sum()
+        # Step 2: Calculate passive scores (loss improvement)
+        passive_scores_df = -loss_df.diff().fillna(0).rename(columns=lambda c: c.replace('loss_', 'passive_score_'))
 
-        # --- Step 3: Create Marketplace-Aware scores by augmenting the passive scores ---
-        market_scores_df = passive_scores_df.copy().rename(
+        # Step 3: Get aggregated Sybil signals
+        sybil_histories = [self.run_data["sellers"][sid].set_index('round')['payment_received'] for sid in
+                           self.attacker_ids]
+        sybil_agg_payment = pd.concat(sybil_histories).groupby('round').sum().rename("total_payment")
+
+        # Step 4: (IMPROVED) Create stabilized marketplace-aware scores
+        scaler = MinMaxScaler()
+        norm_passive = pd.DataFrame(scaler.fit_transform(passive_scores_df), columns=passive_scores_df.columns,
+                                    index=passive_scores_df.index)
+        norm_payment = pd.Series(scaler.fit_transform(sybil_agg_payment.values.reshape(-1, 1))[:, 0],
+                                 index=sybil_agg_payment.index)
+
+        market_scores_df = norm_passive.add(norm_payment, axis=0).rename(
             columns=lambda c: c.replace('passive_score_', 'market_score_'))
-        for col in market_scores_df.columns:
-            # Inference Score = Model Improvement * SUM(Payments) * SUM(Weights)
-            market_scores_df[col] = market_scores_df[col] * sybil_agg_history['payment_received'] * sybil_agg_history[
-                'assigned_weight']
 
-        # --- Step 4: Determine inferred objective for both methods ---
-        passive_score_cols = list(passive_scores_df.columns)
-        market_score_cols = list(market_scores_df.columns)
+        # Step 5: Determine inferred objectives
+        passive_scores_df['passive_inferred_objective'] = passive_scores_df.idxmax(axis=1).str.replace('passive_score_',
+                                                                                                       '')
+        market_scores_df['market_inferred_objective'] = market_scores_df.idxmax(axis=1).str.replace('market_score_', '')
 
-        passive_scores_df['passive_inferred_objective'] = passive_scores_df[passive_score_cols].idxmax(
-            axis=1).str.replace('passive_score_', '')
-        market_scores_df['market_inferred_objective'] = market_scores_df[market_score_cols].idxmax(axis=1).str.replace(
-            'market_score_', '')
+        return loss_df.join(passive_scores_df).join(market_scores_df).join(sybil_agg_payment).reset_index()
 
-        # --- Step 5: Combine all results into a single DataFrame ---
-        final_df = loss_df.join(passive_scores_df).join(market_scores_df).join(sybil_agg_history).reset_index()
-        return final_df
+    def run_active_probing_attack(self, sybil_roles: Dict[str, List[str]]) -> pd.DataFrame:
+        """Runs the active probing attack by comparing payments to specialized Sybil groups."""
+        logging.info("Running active probing attack with specialized Sybils...")
+        all_sybil_history = []
+        for objective, sids in sybil_roles.items():
+            for sid in sids:
+                if sid in self.run_data["sellers"]:
+                    history = self.run_data["sellers"][sid].copy()
+                    history['objective_probe'] = objective
+                    all_sybil_history.append(history)
+
+        if not all_sybil_history:
+            raise ValueError("None of the specified Sybils in roles were found in the run data.")
+
+        full_history_df = pd.concat(all_sybil_history)
+
+        # The inference score *is* the total payment per objective group.
+        active_scores_df = full_history_df.groupby(['round', 'objective_probe'])['payment_received'].sum().unstack(
+            fill_value=0)
+        active_scores_df.columns = [f"active_score_{col}" for col in active_scores_df.columns]
+
+        active_scores_df['active_inferred_objective'] = active_scores_df.idxmax(axis=1).str.replace('active_score_', '')
+        return active_scores_df.reset_index()
 
 
-def analyze_and_plot_results(df: pd.DataFrame, ground_truth_objective: str, run_name: str, num_sybils: int):
-    """Calculates metrics and plots the results for both attack variations."""
-    logging.info("\n--- 📊 FINAL ANALYSIS REPORT (Task 3.2 - Comparative Sybil Attack) 📊 ---")
+class SellerAttackAnalyzer:
+    """Orchestrates the entire seller-side attack analysis from a config file."""
 
-    # --- Metrics for Passive-Only Attack (Baseline) ---
-    passive_final_pred = df['passive_inferred_objective'].iloc[-1]
-    passive_accuracy = 1.0 if passive_final_pred == ground_truth_objective else 0.0
-    passive_correct = (df['passive_inferred_objective'] == ground_truth_objective)
-    passive_latency = 0
-    if passive_correct.any():
-        for i in range(len(passive_correct)):
-            if passive_correct.iloc[i:].all(): passive_latency = df['round'].iloc[i]; break
+    def __init__(self, config_path: str):
+        with open(config_path, 'r') as f:
+            self.config = yaml.safe_load(f)
 
-    logging.info(f"\n--- [Baseline: Passive-Only Attack] ---")
-    logging.info(f"Final Accuracy: {passive_accuracy:.2f} (Predicted: {passive_final_pred})")
-    logging.info(f"Inference Latency: {passive_latency} rounds")
+        self.device = "cpu"
+        self.loader = ExperimentLoader(self.config['experiment_root'])
+        all_runs = self.loader.load_all_runs_data()
+        self.run_data = all_runs[self.config['target_run_index']]
+        self.run_name = self.run_data['run_path'].name
 
-    # --- Metrics for Marketplace-Aware Attack ---
-    market_final_pred = df['market_inferred_objective'].iloc[-1]
-    market_accuracy = 1.0 if market_final_pred == ground_truth_objective else 0.0
-    market_correct = (df['market_inferred_objective'] == ground_truth_objective)
-    market_latency = 0
-    if market_correct.any():
-        for i in range(len(market_correct)):
-            if market_correct.iloc[i:].all(): market_latency = df['round'].iloc[i]; break
+        all_seller_ids = list(self.run_data['sellers'].keys())
+        attacker_prefix = self.config['attacker_prefix']
+        self.attacker_ids = [sid for sid in all_seller_ids if sid.startswith(attacker_prefix)]
 
-    logging.info(f"\n--- [Augmented: Marketplace-Aware Attack] ---")
-    logging.info(f"Final Accuracy: {market_accuracy:.2f} (Predicted: {market_final_pred})")
-    logging.info(f"Inference Latency: {market_latency} rounds")
-    logging.info(f"\nGround Truth Objective: {ground_truth_objective}")
+        if not self.attacker_ids:
+            raise ValueError(f"No adversary sellers found with prefix '{attacker_prefix}'.")
 
-    # --- Plotting ---
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 15), sharex=True)
-    fig.suptitle(f'Buyer Intent Inference Comparison (Sybil Attack, {num_sybils} sellers)\nRun: {run_name}',
-                 fontsize=16)
+        # Simulate payments if not present (using the proportional model as a default)
+        if 'payment_received' not in list(self.run_data['sellers'].values())[0].columns:
+            logging.info("Payments not found in logs. Simulating based on 'assigned_weight'.")
+            for sid in all_seller_ids:
+                history = self.run_data['sellers'][sid]
+                payments = history['assigned_weight'] * 50.0 + np.random.normal(0, 0.5, len(history))
+                history['payment_received'] = np.maximum(0, payments)
 
-    # Plot 1: Marketplace-Aware Scores
-    market_score_cols = [col for col in df.columns if col.startswith('market_score_')]
-    for col in market_score_cols:
-        obj_name = col.replace('market_score_', '')
-        ax1.plot(df['round'], df[col], label=obj_name,
-                 linestyle='-' if obj_name == ground_truth_objective else '--',
-                 linewidth=3.0 if obj_name == ground_truth_objective else 1.5)
-    ax1.axvline(x=market_latency, color='r', linestyle=':', linewidth=2, label=f'Latency ({market_latency} rounds)')
-    ax1.set_ylabel('Marketplace-Aware Score')
-    ax1.set_title('Attack Method 1: Marketplace-Aware Inference (Augmented Signal)')
-    ax1.legend();
-    ax1.grid(True, linestyle='--', alpha=0.6)
+        self.attacker = MarketplaceSellerAttacker(self.run_data, self.attacker_ids, self.device)
+        logging.info(f"Analyzer initialized for run '{self.run_name}' with {len(self.attacker_ids)} Sybils.")
 
-    # Plot 2: Passive-Only Scores
-    passive_score_cols = [col for col in df.columns if col.startswith('passive_score_')]
-    for col in passive_score_cols:
-        obj_name = col.replace('passive_score_', '')
-        ax2.plot(df['round'], df[col], label=obj_name,
-                 linestyle='-' if obj_name == ground_truth_objective else '--',
-                 linewidth=3.0 if obj_name == ground_truth_objective else 1.5)
-    ax2.axvline(x=passive_latency, color='g', linestyle=':', linewidth=2, label=f'Latency ({passive_latency} rounds)')
-    ax2.set_ylabel('Passive Score (Loss Improvement)')
-    ax2.set_title('Attack Method 2: Passive-Only Inference (Baseline)')
-    ax2.legend();
-    ax2.grid(True, linestyle='--', alpha=0.6)
+    def run_analysis(self):
+        """Executes the analysis workflow based on the provided configuration."""
+        self.attacker.reconstruct_global_model_history(self.loader, self.config['server_learning_rate'])
 
-    # Plot 3: Raw Loss Trajectories
-    loss_cols = [col for col in df.columns if col.startswith('loss_')]
-    for col in loss_cols:
-        obj_name = col.replace('loss_', '')
-        ax3.plot(df['round'], df[col], label=obj_name,
-                 linestyle='-' if obj_name == ground_truth_objective else '--',
-                 linewidth=2.0 if obj_name == ground_truth_objective else 1.0)
-    ax3.set_xlabel('Training Round');
-    ax3.set_ylabel('Loss on Probe Dataset')
-    ax3.set_title('Underlying Signal: Loss Trajectory for Each Potential Objective')
-    ax3.legend();
-    ax3.grid(True, linestyle='--', alpha=0.6)
+        if 'active_probing_roles' in self.config and self.config['active_probing_roles']:
+            logging.info("--- Running ACTIVE PROBING ATTACK ---")
+            results_df = self.attacker.run_active_probing_attack(self.config['active_probing_roles'])
+            self._analyze_and_plot(results_df, 'active')
+        else:
+            logging.info("--- Running PASSIVE INFERENCE ATTACK ---")
+            results_df = self.attacker.run_passive_inference_attack(self.config['passive_probe_objectives'])
+            self._analyze_and_plot(results_df, 'passive')
+            self._analyze_and_plot(results_df, 'market')
 
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-    save_path = f"task3_2_sybil_intent_inference_comparison_{run_name}.png"
-    plt.savefig(save_path)
-    logging.info(f"Results plot saved to {save_path}")
-    plt.show()
+    def _analyze_and_plot(self, df: pd.DataFrame, attack_type: str):
+        """A generalized analysis and plotting function."""
+        ground_truth = self.config['ground_truth_objective']
+        score_prefix = f"{attack_type}_score_"
+        inference_col = f"{attack_type}_inferred_objective"
+
+        # --- Metrics ---
+        final_pred = df[inference_col].iloc[-1]
+        accuracy = 1.0 if final_pred == ground_truth else 0.0
+        correct = (df[inference_col] == ground_truth)
+        latency = 0
+        if correct.any():
+            for i in range(len(correct)):
+                if correct.iloc[i:].all(): latency = df['round'].iloc[i]; break
+
+        logging.info(f"\n--- [{attack_type.upper()} Attack Results] ---")
+        logging.info(f"Final Accuracy: {accuracy:.2f} (Predicted: {final_pred})")
+        logging.info(f"Inference Latency: {latency} rounds to stable, correct prediction.")
+
+        # --- Plotting ---
+        plt.style.use('seaborn-v0_8-whitegrid')
+        fig, ax = plt.subplots(figsize=(12, 7))
+
+        score_cols = [col for col in df.columns if col.startswith(score_prefix)]
+        for col in score_cols:
+            obj_name = col.replace(score_prefix, '')
+            ax.plot(df['round'], df[col], label=obj_name,
+                    linestyle='-' if obj_name == ground_truth else '--',
+                    linewidth=3.0 if obj_name == ground_truth else 1.5)
+
+        ax.axvline(x=latency, color='r', linestyle=':', linewidth=2, label=f'Latency ({latency} rounds)')
+        ax.set_ylabel('Inference Score')
+        ax.set_xlabel('Training Round')
+        ax.set_title(
+            f'Buyer Intent Inference using {attack_type.replace("_", " ").title()} Method\nRun: {self.run_name}')
+        ax.legend()
+
+        save_path = f"seller_attack_{attack_type}_{self.run_name}.png"
+        plt.tight_layout()
+        plt.savefig(save_path)
+        logging.info(f"Plot saved to {save_path}")
+        plt.show()
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    EXPERIMENT_ROOT = "./exp_results/text_agnews_cnn_10seller"
-    TARGET_RUN_INDEX = 0
-    GROUND_TRUTH_OBJECTIVE = "Focus on Sci/Tech (Class 2)"
+    parser = argparse.ArgumentParser(description="Run seller-side buyer intent inference analysis.")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="seller_attack_config.yaml",
+        help="Path to the analysis config YAML file."
+    )
+    args = parser.parse_args()
 
     try:
-        loader = ExperimentLoader(EXPERIMENT_ROOT)
-        all_runs = loader.load_all_runs_data()
-        target_run_data = all_runs[TARGET_RUN_INDEX]
-        run_name = target_run_data['run_path'].name
-        logging.info(f"Loaded data for run: {run_name}")
-    except (FileNotFoundError, ValueError) as e:
-        logging.error(f"Failed to load experiment data: {e}")
-        exit()
-
-    try:
-        all_seller_ids = list(target_run_data['sellers'].keys())
-        adversary_seller_ids = [sid for sid in all_seller_ids if sid.startswith('adv')]
-
-        if not adversary_seller_ids:
-            raise ValueError("No adversary sellers found (e.g., named 'adv_...'). Cannot run Sybil attack.")
-
-        attacker = MarketplaceSellerAttacker(target_run_data, attacker_ids=adversary_seller_ids, device="cpu")
-
-        probe_objectives = {
-            "Focus on World News (Class 0)": [0], "Focus on Sports (Class 1)": [1],
-            "Focus on Sci/Tech (Class 2)": [2], "Focus on Business (Class 3)": [3],
-            "General (All Classes)": [0, 1, 2, 3]
-        }
-
-        attacker.reconstruct_global_model_history(loader)
-        inference_df = attacker.run_inference_comparison_attack(probe_objectives)
-        analyze_and_plot_results(inference_df, GROUND_TRUTH_OBJECTIVE, run_name, len(adversary_seller_ids))
-
+        analyzer = SellerAttackAnalyzer(config_path=args.config)
+        analyzer.run_analysis()
     except Exception as e:
-        logging.error(f"An unexpected error occurred during analysis: {e}", exc_info=True)
+        logging.error(f"An error occurred during analysis: {e}", exc_info=True)

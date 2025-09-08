@@ -60,13 +60,27 @@ def run_single_experiment(config_path: str, run_id: int, gpu_id: int = None):
 
         initial_seed = app_config.seed
         for i in range(app_config.n_samples):
+            current_seed = initial_seed + i
+            original_base_save_path = Path(app_config.experiment.save_path)
+            run_save_path = original_base_save_path / f"run_{i}_seed_{current_seed}"
+
+            # 1. DEFINE a "success marker" file that indicates a run is finished.
+            #    IMPORTANT: Change "final_metrics.json" to whatever file your `run_attack`
+            #    function creates at the very end of a successful run.
+            success_marker_path = run_save_path / "final_metrics.json"
+
+            # 2. CHECK if this file already exists.
+            if success_marker_path.exists():
+                logger.info(f"[Run {run_id} - Sub-run {i + 1}] Already completed. Skipping: {run_save_path}")
+                # 3. SKIP to the next iteration if the run is done.
+                continue
+
             run_cfg = copy.deepcopy(app_config)
             current_seed = initial_seed + i
             # If you have a set_seed function, uncomment and use it
             set_seed(current_seed)
 
             original_base_save_path = Path(run_cfg.experiment.save_path)
-            run_save_path = original_base_save_path / f"run_{i}_seed_{current_seed}"
             run_save_path.mkdir(parents=True, exist_ok=True)
             run_cfg.experiment.save_path = str(run_save_path)
 
