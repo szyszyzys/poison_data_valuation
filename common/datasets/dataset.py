@@ -34,6 +34,29 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class BuyerSplitStrategy(ABC):
+    @abstractmethod
+    def split(self, available_indices, dataset, buyer_config):
+        """Returns (buyer_pool_indices, seller_pool_indices)"""
+        pass
+
+
+class OverallFractionSplit(BuyerSplitStrategy):
+    def split(self, available_indices, dataset, buyer_config):
+        fraction = buyer_config["buyer_overall_fraction"]
+        num_buyer_samples = int(len(available_indices) * fraction)
+        return available_indices[:num_buyer_samples], available_indices[num_buyer_samples:]
+
+
+class CelebAIdentitySplit(BuyerSplitStrategy):
+    def split(self, available_indices, dataset, buyer_config):
+        # Assumes dataset is the actual CelebACustom instance
+        identities = dataset.identity[available_indices].squeeze().numpy()
+        buyer_ids = set(range(1, 101))  # Example IDs
+        is_buyer_mask = np.isin(identities, list(buyer_ids))
+        return available_indices[is_buyer_mask], available_indices[~is_buyer_mask]
+
+
 def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader], DataLoader, Dict, int]:
     """
     A unified function to load, partition, and prepare federated image datasets.
@@ -73,11 +96,20 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
 
     partition_params_dict = asdict(image_cfg.property_skew)
 
+    if cfg.experiment.dataset_name == "CelebA":
+        buyer_strategy = CelebAIdentitySplit()
+    else:
+        # Default to the flexible overall fraction method for other datasets
+        buyer_strategy = OverallFractionSplit()
+
+    # 2. Call the updated partition method
     partitioner.partition(
-        strategy=image_cfg.strategy,
+        buyer_split_strategy=buyer_strategy,  # Pass the strategy object
+        client_partition_strategy=image_cfg.strategy,  # More explicit name for the old 'strategy'
         buyer_config=image_cfg.buyer_config,
-        partition_params=partition_params_dict  # Pass the dictionary here
+        partition_params=partition_params_dict
     )
+
     buyer_indices, seller_splits, test_indices = partitioner.get_splits()
 
     # 4. Generate and save statistics (no changes needed here)
