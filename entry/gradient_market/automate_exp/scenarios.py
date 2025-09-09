@@ -28,6 +28,17 @@ def use_celeba_config(config: AppConfig) -> AppConfig:
     return config
 
 
+def use_fmnist_config(config: AppConfig) -> AppConfig:
+    """Modifier to set up for the Fashion-MNIST dataset."""
+    config.experiment.dataset_name = "FMNIST"
+
+    # Define the property based on class labels for the skew.
+    # Classes 0-4 are apparel (T-shirt, Trouser, Pullover, Dress, Coat).
+    config.data.image.property_skew.property_key = "class_in_[0,1,2,3,4]"
+
+    return config
+
+
 def use_camelyon_config(config: AppConfig) -> AppConfig:
     """Modifier to set up for the Camelyon16 dataset."""
     config.experiment.dataset_name = "Camelyon16"
@@ -140,7 +151,7 @@ ALL_SCENARIOS.extend([
     Scenario(
         name="privacy_analysis_logging_fmnist_lenet",
         base_config_factory=get_base_image_config,
-        modifiers=[use_celeba_config],  # Or any other dataset modifier
+        modifiers=[use_fmnist_config],  # Or any other dataset modifier
         parameter_grid={
             "n_samples": [1],
             "experiment.model_structure": ["lenet"],  # <-- Only one model
@@ -168,7 +179,7 @@ ALL_SCENARIOS.extend([
     Scenario(
         name="privacy_analysis_robust_aggregators_fmnist_lenet",
         base_config_factory=get_base_image_config,
-        modifiers=[use_celeba_config],
+        modifiers=[use_fmnist_config],
         parameter_grid={
             # --- Use a robust aggregator ---
             "n_samples": [1],
