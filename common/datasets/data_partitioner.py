@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 from torch.utils.data import Dataset, Subset
 
+from common.datasets.dataset import BuyerSplitStrategy
 from common.datasets.image_data_processor import CelebACustom
 from common.datasets.text_data_processor import get_text_property_indices
 from common.gradient_market_configs import PropertySkewParams, TextPropertySkewParams
