@@ -13,6 +13,7 @@ from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import Vocab, build_vocab_from_iterator
 
 from common.datasets.data_partitioner import FederatedDataPartitioner, _extract_targets
+from common.datasets.data_split import OverallFractionSplit, CelebAIdentitySplit
 from common.datasets.image_data_processor import load_dataset_with_property, save_data_statistics, CelebACustom
 from common.datasets.text_data_processor import ProcessedTextData, hf_datasets_available, get_cache_path, \
     generate_buyer_bias_distribution, split_text_dataset_martfl_discovery, collate_batch, StandardFormatDataset
@@ -34,27 +35,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class BuyerSplitStrategy(ABC):
-    @abstractmethod
-    def split(self, available_indices, dataset, buyer_config):
-        """Returns (buyer_pool_indices, seller_pool_indices)"""
-        pass
-
-
-class OverallFractionSplit(BuyerSplitStrategy):
-    def split(self, available_indices, dataset, buyer_config):
-        fraction = buyer_config["buyer_overall_fraction"]
-        num_buyer_samples = int(len(available_indices) * fraction)
-        return available_indices[:num_buyer_samples], available_indices[num_buyer_samples:]
-
-
-class CelebAIdentitySplit(BuyerSplitStrategy):
-    def split(self, available_indices, dataset, buyer_config):
-        # Assumes dataset is the actual CelebACustom instance
-        identities = dataset.identity[available_indices].squeeze().numpy()
-        buyer_ids = set(range(1, 101))  # Example IDs
-        is_buyer_mask = np.isin(identities, list(buyer_ids))
-        return available_indices[is_buyer_mask], available_indices[~is_buyer_mask]
 
 
 def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader], DataLoader, Dict, int]:
