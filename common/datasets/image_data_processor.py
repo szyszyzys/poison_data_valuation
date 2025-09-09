@@ -9,8 +9,9 @@ of data-based attacks like property inference by controlling attribute prevalenc
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, re
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
