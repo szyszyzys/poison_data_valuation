@@ -146,6 +146,7 @@ ALL_SCENARIOS.extend([
             "experiment.model_structure": ["lenet"],  # <-- Only one model
             # Use a standard, non-robust aggregator to see the raw leakage
             "aggregation.method": ["fedavg"],
+            "experiment.dataset_name": ["fmnist"],  # <-- Only one model
 
             # --- Key Settings for Logging ---
             # Turn ON gradient saving
@@ -172,7 +173,8 @@ ALL_SCENARIOS.extend([
             # --- Use a robust aggregator ---
             "n_samples": [1],
             "aggregation.method": ["fltrust", "martfl"],  # This will create runs for all three
-            "experiment.model_structure": ["lenet"],  # <-- Only one model
+            "experiment.model_structure": ["lenet"],  # <-- Only one model dataset_name
+            "experiment.dataset_name": ["fmnist"],  # <-- Only one model
             "debug.save_individual_gradients": [True],
             "debug.gradient_save_frequency": [1],
             "adversary_seller_config.poisoning.type": [PoisonType.NONE],

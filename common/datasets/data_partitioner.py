@@ -1,11 +1,11 @@
 import logging
 import random
+from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
 from torch.utils.data import Dataset, Subset
 
-from common.datasets.image_data_processor import Camelyon16Custom
 from common.datasets.image_data_processor import CelebACustom
 from common.datasets.text_data_processor import get_text_property_indices
 from common.gradient_market_configs import PropertySkewParams, TextPropertySkewParams
@@ -52,6 +52,29 @@ def _extract_targets(dataset: Dataset) -> np.ndarray:
     return np.array([dataset[i][1] for i in range(len(dataset))])
 
 
+class BuyerSplitStrategy(ABC):
+    @abstractmethod
+    def split(self, available_indices, dataset, buyer_config):
+        """Returns (buyer_pool_indices, seller_pool_indices)"""
+        pass
+
+
+class OverallFractionSplit(BuyerSplitStrategy):
+    def split(self, available_indices, dataset, buyer_config):
+        fraction = buyer_config["buyer_overall_fraction"]
+        num_buyer_samples = int(len(available_indices) * fraction)
+        return available_indices[:num_buyer_samples], available_indices[num_buyer_samples:]
+
+
+class CelebAIdentitySplit(BuyerSplitStrategy):
+    def split(self, available_indices, dataset, buyer_config):
+        # Assumes dataset is the actual CelebACustom instance
+        identities = dataset.identity[available_indices].squeeze().numpy()
+        buyer_ids = set(range(1, 101))  # Example IDs
+        is_buyer_mask = np.isin(identities, list(buyer_ids))
+        return available_indices[is_buyer_mask], available_indices[~is_buyer_mask]
+
+
 class FederatedDataPartitioner:
     """Handles the partitioning of a dataset for a federated learning scenario."""
 
@@ -66,94 +89,38 @@ class FederatedDataPartitioner:
         random.seed(seed)
         np.random.seed(seed)
 
-    def partition(self, strategy: str, buyer_config: Dict, partition_params: Dict):
-        """Main partitioning dispatcher with a new 'overall_percentage' buyer strategy."""
-        is_subset = isinstance(self.dataset, Subset)
-        actual_dataset = self.dataset.dataset if is_subset else self.dataset
-
-        available_indices = np.array(self.dataset.indices if is_subset else np.arange(len(self.dataset)))
-        np.random.shuffle(available_indices)  # Shuffle all available indices once at the start
-
-        self.test_indices = np.array([], dtype=int)
-
-        # --- NEW Stage 1: Define Buyer and Seller Pools based on overall percentage ---
-        # This new logic will take precedence if 'buyer_overall_fraction' is provided
-        buyer_overall_fraction = buyer_config.get("buyer_overall_fraction")  # e.g., 0.1 for 10% of overall data
-
-        if buyer_overall_fraction is not None and 0 < buyer_overall_fraction < 1:
-            logger.info(f"Partitioning buyer pool from {buyer_overall_fraction * 100:.2f}% of overall data.")
-
-            num_overall_buyer_samples = int(len(available_indices) * buyer_overall_fraction)
-
-            # Buyer pool consists of the first 'num_overall_buyer_samples' shuffled indices
-            buyer_pool_all_data = available_indices[:num_overall_buyer_samples]
-            seller_pool_indices = available_indices[num_overall_buyer_samples:]
-
-            # Now, split the buyer's *own* data into root and test
-            buyer_root_fraction_of_pool = buyer_config.get("root_set_fraction", 0.2)  # e.g., 20% of the buyer's pool
-            split_idx = int(len(buyer_pool_all_data) * buyer_root_fraction_of_pool)
-
-            self.buyer_indices = buyer_pool_all_data[:split_idx]
-            self.test_indices = buyer_pool_all_data[split_idx:]
-
-            logger.info(
-                f"Overall Buyer Pool: {len(buyer_pool_all_data)} samples. "
-                f"Root Set: {len(self.buyer_indices)} samples. "
-                f"Test Set: {len(self.test_indices)} samples."
-            )
-
-        # --- Original Stage 1: Metadata-Based Buyer/Seller Pool (Fallback if not using overall_fraction) ---
-        else:  # Fallback to original metadata-based partitioning if buyer_overall_fraction is not set
-            seller_pool_indices = np.copy(available_indices)  # Initialize for metadata split
-            if isinstance(actual_dataset, CelebACustom):
-                logger.info("Partitioning CelebA based on 'identity' metadata.")
-
-                identities = actual_dataset.identity[available_indices].squeeze().numpy()
-                buyer_ids = set(range(1, 101))  # Example: first 100 identities are buyers
-
-                is_buyer_mask = np.isin(identities, list(buyer_ids))
-                buyer_pool_all_data = available_indices[is_buyer_mask]
-                seller_pool_indices = available_indices[~is_buyer_mask]
-
-                np.random.shuffle(buyer_pool_all_data)  # Shuffle the buyer pool
-
-                # Split buyer_pool into root and test sets
-                buyer_root_fraction_of_pool = buyer_config.get("root_set_fraction",
-                                                               0.2)  # e.g., 80% for root, 20% for test
-                split_idx = int(len(buyer_pool_all_data) * buyer_root_fraction_of_pool)
-
-                self.buyer_indices = buyer_pool_all_data[:split_idx]
-                self.test_indices = buyer_pool_all_data[split_idx:]
-
-                logger.info(
-                    f"CelebA buyer pool split: {len(self.buyer_indices)} for root, {len(self.test_indices)} for test.")
-
-            elif isinstance(actual_dataset, Camelyon16Custom):
-                logger.info("Partitioning Camelyon16 based on 'center' metadata.")
-
-                meta_subset = actual_dataset.metadata.iloc[available_indices]
-                buyer_mask = (meta_subset['center'] == 'Utrecht')
-                buyer_pool_all_data = available_indices[buyer_mask]
-                seller_pool_indices = available_indices[~buyer_mask]
-
-                np.random.shuffle(buyer_pool_all_data)
-                split_idx = int(len(buyer_pool_all_data) * buyer_config.get("root_set_fraction", 0.2))
-                self.buyer_indices = buyer_pool_all_data[:split_idx]
-                self.test_indices = buyer_pool_all_data[split_idx:]
-
-                logger.info(
-                    f"Camelyon16 buyer pool split: {len(self.buyer_indices)} for root, {len(self.test_indices)} for test.")
-            else:
-                raise ValueError(
-                    "No metadata-based partitioning defined for this dataset type, and 'buyer_overall_fraction' not provided.")
-
+    def _split_buyer_pool(self, buyer_pool_all_data: np.ndarray, buyer_config: Dict):
+        """Helper to split a pool of indices into root and test sets."""
+        np.random.shuffle(buyer_pool_all_data)
+        fraction = buyer_config.get("root_set_fraction", 0.2)
+        split_idx = int(len(buyer_pool_all_data) * fraction)
+        self.buyer_indices = buyer_pool_all_data[:split_idx]
+        self.test_indices = buyer_pool_all_data[split_idx:]
         logger.info(
-            f"Partitioning {len(seller_pool_indices)} seller samples among {self.num_clients} clients using '{strategy}' strategy.")
+            f"Buyer pool split: {len(self.buyer_indices)} root, {len(self.test_indices)} test."
+        )
 
-        if strategy == 'property-skew':
+    def partition(self, buyer_split_strategy: BuyerSplitStrategy, client_partition_strategy: str, buyer_config: Dict,
+                  partition_params: Dict):
+        """Main partitioning dispatcher using strategy objects."""
+        actual_dataset = self.dataset.dataset if isinstance(self.dataset, Subset) else self.dataset
+        available_indices = np.array(
+            self.dataset.indices if isinstance(self.dataset, Subset) else np.arange(len(self.dataset)))
+        np.random.shuffle(available_indices)
+
+        # Stage 1: Use the strategy object to get buyer/seller pools
+        buyer_pool_indices, seller_pool_indices = buyer_split_strategy.split(
+            available_indices, actual_dataset, buyer_config
+        )
+
+        # Stage 2: Split the buyer's pool into root and test sets
+        self._split_buyer_pool(buyer_pool_indices, buyer_config)
+
+        # Stage 3: Partition seller data among clients
+        if client_partition_strategy == 'property-skew':
             self._partition_property_skew(seller_pool_indices, PropertySkewParams(**partition_params))
         else:
-            raise ValueError(f"Unknown partitioning strategy: {strategy}")
+            raise ValueError(f"Unknown client partitioning strategy: {client_partition_strategy}")
 
         return self
 

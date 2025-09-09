@@ -10,7 +10,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, re
 
 import numpy as np
 import pandas as pd
@@ -172,14 +172,71 @@ def save_data_statistics(buyer_indices, seller_splits, client_properties, target
     return stats
 
 
+class StandardVisionDataset(Dataset):
+    """
+    A wrapper for standard torchvision datasets to provide a unified
+    .has_property() interface for property-skew partitioning.
+    """
+
+    def __init__(self, vision_dataset: Dataset):
+        self.dataset = vision_dataset
+        if not hasattr(self.dataset, 'targets'):
+            raise TypeError("The provided dataset does not have a '.targets' attribute for labels.")
+        self.targets = self.dataset.targets
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        return self.dataset[idx]
+
+    def has_property(self, index: int, property_key: str) -> bool:
+        """
+        Checks if the sample at 'index' has a property defined by 'property_key'.
+        Example property_key: "class_in_[0,1,2,3,4]"
+        """
+        if not property_key or not property_key.startswith("class_in_"):
+            raise ValueError(f"Invalid property_key format for this dataset: '{property_key}'")
+
+        match = re.search(r'\[(.*?)\]', property_key)
+        if not match:
+            raise ValueError(f"Could not parse class list from property_key: '{property_key}'")
+
+        try:
+            property_classes = set(map(int, match.group(1).split(',')))
+        except (ValueError, IndexError):
+            raise ValueError(f"Could not parse class list from property_key: '{property_key}'")
+
+        sample_label = self.targets[index]
+        return sample_label in property_classes
+
+
 # You would also need a slight modification to load_dataset to handle the property_key for CelebA
 def load_dataset_with_property(name: str, root: str = "./data", download: bool = True,
                                property_key: str = 'Blond_Hair') -> Tuple[Dataset, Optional[Dataset]]:
     """Loads datasets, allowing dynamic property selection for CelebA."""
     logger.info(f"Loading '{name}' dataset...")
+    name_lower = name.lower()
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
-    if name.lower() == "camelyon16":
+    if name_lower == "camelyon16":
         return Camelyon16Custom(root, transform=transform, download=download), None
-    elif name.lower() == "celeba":
+    elif name_lower == "celeba":
         return CelebACustom(root, split='all', transform=transform, download=download, property_key=property_key), None
-    raise NotImplementedError(f"Dataset '{name}' is not supported in this configuration.")
+    elif name_lower == "fmnist":
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+        train_set = datasets.FashionMNIST(root=root, train=True, download=download, transform=transform)
+        return StandardVisionDataset(train_set), None
+
+    elif name_lower == "cifar10":
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ])
+        train_set = datasets.CIFAR10(root=root, train=True, download=download, transform=transform)
+        return StandardVisionDataset(train_set), None
+
+    else:
+        raise ValueError(f"Dataset '{name}' not recognized or supported.")
