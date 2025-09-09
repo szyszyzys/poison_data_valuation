@@ -138,7 +138,7 @@ ALL_SCENARIOS.extend([
     # ==========================================================================
 
     Scenario(
-        name="privacy_analysis_logging_celeba_lenet",
+        name="privacy_analysis_logging_fmnist_lenet",
         base_config_factory=get_base_image_config,
         modifiers=[use_celeba_config],  # Or any other dataset modifier
         parameter_grid={
@@ -166,7 +166,7 @@ ALL_SCENARIOS.extend([
     ),
 
     Scenario(
-        name="privacy_analysis_robust_aggregators",
+        name="privacy_analysis_robust_aggregators_fmnist_lenet",
         base_config_factory=get_base_image_config,
         modifiers=[use_celeba_config],
         parameter_grid={
