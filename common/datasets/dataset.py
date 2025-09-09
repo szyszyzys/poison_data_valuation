@@ -102,25 +102,29 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     batch_size = cfg.training.batch_size
     actual_dataset = train_set.dataset if isinstance(train_set, Subset) else train_set
 
-    buyer_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=True) if len(
+    buyer_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=True,
+                              num_workers=cfg.data.num_workers) if len(
         buyer_indices) > 0 else None
 
     seller_loaders = {
-        cid: DataLoader(Subset(actual_dataset, indices), batch_size=batch_size, shuffle=True)
+        cid: DataLoader(Subset(actual_dataset, indices), batch_size=batch_size, shuffle=True,
+                        num_workers=cfg.data.num_workers)
         for cid, indices in seller_splits.items() if indices
     }
 
     # --- UPDATED TEST LOADER LOGIC WITH FALLBACK ---
     if len(test_indices) > 0:
         logger.info(f"Creating test loader from dedicated test set of size {len(test_indices)}.")
-        test_loader = DataLoader(Subset(actual_dataset, test_indices), batch_size=batch_size, shuffle=False)
+        test_loader = DataLoader(Subset(actual_dataset, test_indices), batch_size=batch_size, shuffle=False,
+                                 num_workers=cfg.data.num_workers)
     elif len(buyer_indices) > 0:
         logger.warning(
             "❗️ No test indices found. As a fallback for this test run, "
             "the test loader will use the buyer's data. "
             "Do NOT use this for final results."
         )
-        test_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=False)
+        test_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=False,
+                                 num_workers=cfg.data.num_workers)
     else:
         logger.error("No test or buyer indices available to create a test loader.")
         test_loader = None
@@ -315,19 +319,20 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     buyer_loader = None
     if buyer_indices is not None and len(buyer_indices) > 0:
         buyer_loader = DataLoader(Subset(standardized_train_data, buyer_indices.tolist()), batch_size=batch_size,
-                                  shuffle=True, collate_fn=collate_fn)
+                                  shuffle=True, collate_fn=collate_fn, num_workers=cfg.data.num_workers)
 
     seller_loaders = {}
     for i in range(exp_cfg.n_sellers):
         indices = seller_splits.get(i)
         if indices:
-            seller_loaders[i] = DataLoader(Subset(standardized_train_data, indices), batch_size=batch_size, shuffle=True,
-                                           collate_fn=collate_fn)
+            seller_loaders[i] = DataLoader(Subset(standardized_train_data, indices), batch_size=batch_size,
+                                           shuffle=True,
+                                           collate_fn=collate_fn, num_workers=cfg.data.num_workers)
         else:
             seller_loaders[i] = None
 
     test_loader = DataLoader(standardized_test_data, batch_size=batch_size, shuffle=False,
-                             collate_fn=collate_fn) if processed_test_data else None
+                             collate_fn=collate_fn, num_workers=cfg.data.num_workers) if processed_test_data else None
 
     logging.info("DataLoader creation complete.")
 

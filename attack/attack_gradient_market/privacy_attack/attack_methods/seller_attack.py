@@ -10,9 +10,9 @@ import yaml
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
+from utils import get_buyer_dataset, model_factory
 
 from common.utils import ExperimentLoader  # Your existing loaders
-from utils import get_buyer_dataset, model_factory
 
 
 class MarketplaceSellerAttacker:
