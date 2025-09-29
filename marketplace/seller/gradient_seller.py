@@ -707,10 +707,12 @@ class TriggeredSubsetDataset(Dataset):
         return data, final_label
 
 
-class AdvancedBackdoorAdversarySeller(GradientSeller):
+class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
     """
-    A generic adversary that injects backdoors (image or text) and can
-    coordinate with a Sybil group, driven by a unified AdversaryConfig.
+    A backdoor adversary that creates a specific backdoor generator and then
+    delegates all attack logic to its parent, AdvancedPoisoningAdversarySeller.
+
+    Its sole responsibility is to configure the correct poisoning "tool" for the job.
     """
 
     def __init__(self,
@@ -718,106 +720,68 @@ class AdvancedBackdoorAdversarySeller(GradientSeller):
                  data_config: RuntimeDataConfig,
                  training_config: TrainingConfig,
                  model_factory: Callable[[], nn.Module],
-                 adversary_config: AdversarySellerConfig,  # Use the unified config
+                 adversary_config: AdversarySellerConfig,
                  model_type: str,  # 'image' or 'text'
                  sybil_coordinator: Optional[SybilCoordinator] = None,
                  save_path: str = "",
-                 poison_generator: PoisonGenerator = None,
                  device: str = "cpu",
                  **kwargs: Any):
 
-        super().__init__(seller_id, data_config, training_config, model_factory,
-                         save_path, device, **kwargs)
+        # 1. Create the specific poison generator for this backdoor attack.
+        #    This is the primary job of this specialized class.
+        backdoor_generator = self._create_poison_generator(
+            adversary_config, model_type, **kwargs
+        )
 
-        self.adversary_config = adversary_config
-        self.model_type = model_type
-        self.sybil_coordinator = sybil_coordinator
-        self.is_sybil = self.adversary_config.sybil.is_sybil and sybil_coordinator is not None
-        self.selected_last_round = False
-        if self.model_type == 'image':
-            # Use the image-specific params
-            params = self.adversary_config.poisoning.image_backdoor_params.simple_data_poison_params
-        elif self.model_type == 'text':
-            # Use the text-specific params
-            params = self.adversary_config.poisoning.text_backdoor_params
-        else:
-            raise ValueError(f"no data type set, got: {self.model_type}.")
+        # 2. Call the PARENT's constructor. It receives the fully configured
+        #    generator and will handle all the logic for when and how to use it.
+        super().__init__(
+            seller_id=seller_id,
+            data_config=data_config,
+            training_config=training_config,
+            model_factory=model_factory,
+            adversary_config=adversary_config,
+            poison_generator=backdoor_generator,  # Pass the created generator up!
+            sybil_coordinator=sybil_coordinator,
+            save_path=save_path,
+            device=device,
+            **kwargs
+        )
+        logging.info(
+            f"[{self.seller_id}] Initialized as AdvancedBackdoorAdversarySeller "
+            f"with a '{type(backdoor_generator).__name__}'."
+        )
 
-        self.backdoor_params = params
-        # --- Key Update: Create the correct poison generator from the config ---
-        self.poison_generator = poison_generator
-
-    def _create_poison_generator(self, **kwargs) -> PoisonGenerator:
-        """Factory method to create the correct backdoor generator."""
-        poison_cfg = self.adversary_config.poisoning
+    # This method is now static as it doesn't depend on instance state ('self').
+    # It's a pure factory function that translates config into an object.
+    @staticmethod
+    def _create_poison_generator(adv_cfg: AdversarySellerConfig, model_type: str, **kwargs: Any) -> PoisonGenerator:
+        """Factory method to create the correct backdoor generator from configuration."""
+        poison_cfg = adv_cfg.poisoning
         if poison_cfg.type != 'backdoor':
             raise ValueError("AdvancedBackdoorAdversarySeller only supports 'backdoor' poisoning type.")
 
-        if self.model_type == 'image':
-            # Create the specific config for the image generator
+        if model_type == 'image':
+            params = poison_cfg.image_backdoor_params.simple_data_poison_params
             backdoor_image_cfg = BackdoorImageConfig(
-                target_label=self.backdoor_params.target_label,
-                trigger_type=ImageTriggerType(self.backdoor_params.trigger_type),
-                location=ImageTriggerLocation(self.backdoor_params.location)
+                target_label=params.target_label,
+                trigger_type=ImageTriggerType(params.trigger_type),
+                location=ImageTriggerLocation(params.location)
             )
             return BackdoorImageGenerator(backdoor_image_cfg)
 
-        elif self.model_type == 'text':
-            # Create the specific config for the text generator
+        elif model_type == 'text':
+            params = poison_cfg.text_backdoor_params
+            vocab = kwargs.get('vocab')
+            if not vocab:
+                raise ValueError("Text backdoor generator requires 'vocab' to be provided in kwargs.")
+
             backdoor_text_cfg = BackdoorTextConfig(
-                vocab=kwargs.get('vocab'),  # Vocab is passed via kwargs from the factory
-                target_label=self.backdoor_params.target_label,
-                trigger_content=self.backdoor_params.trigger_content,
-                location=self.backdoor_params.location
+                vocab=vocab,
+                target_label=params.target_label,
+                trigger_content=params.trigger_content,
+                location=params.location
             )
             return BackdoorTextGenerator(backdoor_text_cfg)
         else:
-            raise ValueError(f"Unsupported model_type for backdoor: {self.model_type}")
-
-    def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
-        """Overrides the base method to implement the full adversary strategy."""
-        current_round = self.sybil_coordinator.cur_round if self.is_sybil else float('inf')
-        should_attack_this_round = current_round >= self.adversary_config.sybil.benign_rounds
-
-        base_model = self.model_factory().to(self.device)
-        base_model.load_state_dict(global_model.state_dict())
-
-        # --- THE FIX IS HERE ---
-        if should_attack_this_round and self.poison_generator:
-            logging.info(f"[{self.seller_id}] Round {current_round}. Behavior: Attacking.")
-            base_gradient, stats = self._compute_simple_poisoning_attack_gradient(base_model)
-        else:
-            logging.info(f"[{self.seller_id}] Round {current_round}. Behavior: Benign.")
-            base_gradient, stats = self._compute_clean_gradient(base_model)
-
-        # Sybil logic can be applied here if needed
-        return base_gradient, stats
-
-    def _create_poisoned_dataset_view(self) -> TriggeredSubsetDataset:
-        """Helper to create the on-the-fly poisoned dataset view."""
-        poison_cfg = self.adversary_config.poisoning
-        num_samples = len(self.data_config.dataset)
-        num_triggered = int(num_samples * poison_cfg.poison_rate)
-        trigger_indices = np.random.choice(np.arange(num_samples), size=num_triggered, replace=False)
-
-        # 1. Determine the data format from the seller's model_type
-        is_label_first = (self.model_type == 'text')
-
-        # 2. Pass the flag to the TriggeredSubsetDataset constructor
-        return TriggeredSubsetDataset(
-            original_dataset=self.data_config.dataset,
-            trigger_indices=trigger_indices,
-            backdoor_generator=self.poison_generator,
-            device=self.device,
-            target_label=self.backdoor_params.target_label,
-            label_first=is_label_first
-        )
-
-    def _compute_clean_gradient(self, model: nn.Module) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
-        """Computes a gradient on the original, clean dataset."""
-        return self._compute_local_grad(model, self.data_config.dataset)
-
-    def _compute_simple_poisoning_attack_gradient(self, model: nn.Module) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
-        """Computes one gradient on a dataset with both clean and poisoned samples."""
-        poisoned_dataset_view = self._create_poisoned_dataset_view()
-        return self._compute_local_grad(model, poisoned_dataset_view)
+            raise ValueError(f"Unsupported model_type for backdoor: {model_type}")

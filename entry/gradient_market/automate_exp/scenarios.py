@@ -1,7 +1,5 @@
-# scenarios.py
-
 from dataclasses import dataclass, field
-from typing import List, Callable, Dict, Any
+from typing import List, Callable, Dict, Any, Tuple
 
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig
@@ -18,238 +16,214 @@ class Scenario:
     parameter_grid: Dict[str, List[Any]] = field(default_factory=dict)
 
 
-# --- Define Reusable Modifier Functions ---
+# --- 1. Define Reusable Modifier Functions for New Datasets ---
 
-# Dataset Modifiers
-def use_celeba_config(config: AppConfig) -> AppConfig:
-    """Modifier to set up for the CelebA dataset."""
-    config.experiment.dataset_name = "CelebA"
-    config.data.image.property_skew.property_key = "Smiling"
+def use_cifar10_config(config: AppConfig) -> AppConfig:
+    """Modifier to set up for the CIFAR-10 dataset."""
+    config.experiment.dataset_name = "CIFAR10"
+    # Property for data skew: classes 0-4 (vehicles) vs 5-9 (animals)
+    config.data.image.property_skew.property_key = "class_in_[0,1,8,9]"  # airplane, automobile, ship, truck
     return config
 
 
-def use_fmnist_config(config: AppConfig) -> AppConfig:
-    """Modifier to set up for the Fashion-MNIST dataset."""
-    config.experiment.dataset_name = "FMNIST"
-
-    # Define the property based on class labels for the skew.
-    # Classes 0-4 are apparel (T-shirt, Trouser, Pullover, Dress, Coat).
-    config.data.image.property_skew.property_key = "class_in_[0,1,2,3,4]"
-
+def use_cifar100_config(config: AppConfig) -> AppConfig:
+    """Modifier to set up for the CIFAR-100 dataset."""
+    config.experiment.dataset_name = "CIFAR100"
+    # Property for data skew: first 50 classes vs. last 50
+    config.data.image.property_skew.property_key = f"class_in_{list(range(50))}"
     return config
 
 
-def use_camelyon_config(config: AppConfig) -> AppConfig:
-    """Modifier to set up for the Camelyon16 dataset."""
-    config.experiment.dataset_name = "Camelyon16"
-    config.data.image.property_skew.property_key = "tumor"
+def use_trec_config(config: AppConfig) -> AppConfig:
+    """Modifier for the TREC dataset (AG_NEWS is the default for text)."""
+    config.experiment.dataset_name = "TREC"
     return config
 
 
-# --- UPDATED: Replaced the single backdoor modifier with two specific ones ---
+# Attack Modifiers (can be reused from your original script)
 def use_image_backdoor_attack(config: AppConfig) -> AppConfig:
-    """Modifier to enable an image backdoor attack."""
     config.adversary_seller_config.poisoning.type = PoisonType.IMAGE_BACKDOOR
     return config
 
 
 def use_text_backdoor_attack(config: AppConfig) -> AppConfig:
-    """Modifier to enable a text backdoor attack."""
     config.adversary_seller_config.poisoning.type = PoisonType.TEXT_BACKDOOR
     return config
 
 
-def use_sybil_amplify(config: AppConfig) -> AppConfig:
-    """Modifier to enable the Sybil Amplify attack."""
-    # Note: Sybil can be paired with any attack, here we default to image backdoor
-    config = use_image_backdoor_attack(config)
-    config.adversary_seller_config.sybil.is_sybil = True
-    config.adversary_seller_config.sybil.role_config = {"amplify": 1.0}
-    return config
+def use_sybil_attack(strategy: str) -> Callable[[AppConfig], AppConfig]:
+    """
+    Returns a modifier function that enables a specific Sybil attack strategy.
+    """
+
+    def modifier(config: AppConfig) -> AppConfig:
+        # Enable the Sybil module
+        config.adversary_seller_config.sybil.is_sybil = True
+        # Set the specific strategy for non-selected Sybils
+        config.adversary_seller_config.sybil.gradient_default_mode = strategy
+        return config
+
+    return modifier
 
 
-ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+# --- 2. Main Function to Generate All Scenarios ---
 
-# ==============================================================================
-# ALL_SCENARIOS
-# ==============================================================================
-ALL_SCENARIOS = [
-    # ==========================================================================
-    # == Experiment Group 1: Varying Adversary Rate (Fixed Poison Rate) ==
-    # ==========================================================================
+def generate_attack_impact_scenarios() -> List[Scenario]:
+    """
+    Generates a list of scenarios to test the impact of attacks against
+    different defense mechanisms.
+    """
+    scenarios = []
 
-    # --- IMAGE (CelebA) ---
-    # Scenario(
-    #     name="poison_vary_adv_rate_celeba",
-    #     base_config_factory=get_base_image_config,
-    #     modifiers=[use_celeba_config, use_image_backdoor_attack],
-    #     parameter_grid={
-    #         # Iterate through all 4 aggregation methods
-    #         "experiment.aggregation_method": ALL_AGGREGATORS,
-    #         # Fix the poison rate for this experiment group
-    #         "adversary_seller_config.poisoning.poison_rate": [0.3],
-    #         # Sweep the adversary rate
-    #         "experiment.adv_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
-    #     }
-    # ),
+    # --- Define Experiment Parameters ---
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+    ADV_RATES_TO_SWEEP = [0.1, 0.2, 0.3, 0.4, 0.5]
+    POISON_RATES_TO_SWEEP = [0.1, 0.3, 0.5, 0.7, 1.0]
 
-    # # --- TEXT (AG_NEWS) ---
-    # Scenario(
-    #     name="poison_vary_adv_rate_agnews",
-    #     base_config_factory=get_base_text_config,
-    #     modifiers=[use_text_backdoor_attack],
-    #     parameter_grid={
-    #         # Iterate through all 4 aggregation methods
-    #         "experiment.aggregation_method": ALL_AGGREGATORS,
-    #         # Fix the poison rate for this experiment group
-    #         "adversary_seller_config.poisoning.poison_rate": [0.3],
-    #         # Sweep the adversary rate
-    #         "experiment.adv_rate": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
-    #     }
-    # ),
+    IMAGE_DATASETS: List[Tuple[str, Callable]] = [
+        ("cifar10", use_cifar10_config),
+        ("cifar100", use_cifar100_config),
+    ]
+    TEXT_DATASETS: List[Tuple[str, Callable]] = [
+        ("trec", use_trec_config),
+    ]
 
-    # ==========================================================================
-    # == Experiment Group 2: Varying Poison Rate (Fixed Adversary Rate) ==
-    # ==========================================================================
+    # --- Group 1: Varying Adversary Rate (Fixed Poison Rate) ---
+    for name, modifier in IMAGE_DATASETS:
+        scenarios.append(Scenario(
+            name=f"impact_vary_adv_rate_{name}",
+            base_config_factory=get_base_image_config,
+            modifiers=[modifier, use_image_backdoor_attack],
+            parameter_grid={
+                "experiment.aggregation_method": ALL_AGGREGATORS,
+                "adversary_seller_config.poisoning.poison_rate": [0.5],  # Fixed poison rate
+                "experiment.adv_rate": ADV_RATES_TO_SWEEP,
+            }
+        ))
 
-    # --- IMAGE (CelebA) ---
-    # Scenario(
-    #     name="poison_vary_poison_rate_celeba",
-    #     base_config_factory=get_base_image_config,
-    #     modifiers=[use_celeba_config, use_image_backdoor_attack],
-    #     parameter_grid={
-    #         # Iterate through all 4 aggregation methods
-    #         "experiment.aggregation_method": ALL_AGGREGATORS,
-    #         # Fix the adversary rate for this experiment group
-    #         "experiment.adv_rate": [0.3],
-    #         # Sweep the local data poison rate
-    #         "adversary_seller_config.poisoning.poison_rate": [0.1, 0.3, 0.5, 0.7, 1.0],
-    #     }
-    # ),
+    for name, modifier in TEXT_DATASETS:
+        scenarios.append(Scenario(
+            name=f"impact_vary_adv_rate_{name}",
+            base_config_factory=get_base_text_config,
+            modifiers=[modifier, use_text_backdoor_attack],
+            parameter_grid={
+                "experiment.aggregation_method": ALL_AGGREGATORS,
+                "adversary_seller_config.poisoning.poison_rate": [0.5],
+                "experiment.adv_rate": ADV_RATES_TO_SWEEP,
+            }
+        ))
 
-    # # --- TEXT (AG_NEWS) ---
-    # Scenario(
-    #     name="poison_vary_poison_rate_agnews",
-    #     base_config_factory=get_base_text_config,
-    #     modifiers=[use_text_backdoor_attack],
-    #     parameter_grid={
-    #         # Iterate through all 4 aggregation methods
-    #         "experiment.aggregation_method": ALL_AGGREGATORS,
-    #         # Fix the adversary rate for this experiment group
-    #         "experiment.adv_rate": [0.3],
-    #         # Sweep the local data poison rate
-    #         "adversary_seller_config.poisoning.poison_rate": [0.1, 0.3, 0.5, 0.7, 1.0],
-    #     }
-    # ),
-]
+    # --- Group 2: Varying Poison Rate (Fixed Adversary Rate) ---
+    for name, modifier in IMAGE_DATASETS:
+        scenarios.append(Scenario(
+            name=f"impact_vary_poison_rate_{name}",
+            base_config_factory=get_base_image_config,
+            modifiers=[modifier, use_image_backdoor_attack],
+            parameter_grid={
+                "experiment.aggregation_method": ALL_AGGREGATORS,
+                "experiment.adv_rate": [0.3],  # Fixed adversary rate
+                "adversary_seller_config.poisoning.poison_rate": POISON_RATES_TO_SWEEP,
+            }
+        ))
 
-ALL_SCENARIOS.extend([
-    # ==========================================================================
-    # == Scenario for Offline Privacy Analysis Logging ==
-    # ==========================================================================
+    for name, modifier in TEXT_DATASETS:
+        scenarios.append(Scenario(
+            name=f"impact_vary_poison_rate_{name}",
+            base_config_factory=get_base_text_config,
+            modifiers=[modifier, use_text_backdoor_attack],
+            parameter_grid={
+                "experiment.aggregation_method": ALL_AGGREGATORS,
+                "experiment.adv_rate": [0.3],
+                "adversary_seller_config.poisoning.poison_rate": POISON_RATES_TO_SWEEP,
+            }
+        ))
 
-    Scenario(
-        name="privacy_analysis_logging_fmnist_lenet",
+    return scenarios
+
+
+def generate_sybil_impact_scenarios() -> List[Scenario]:
+    """
+    Generates scenarios to isolate the impact of Sybil coordination strategies.
+    The underlying backdoor attack is fixed.
+    """
+    scenarios = []
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+    SYBIL_STRATEGIES = ['mimic', 'pivot', 'knock_out']
+
+    # --- Baseline Scenario (Poisoning Attack WITHOUT Sybil Coordination) ---
+    scenarios.append(Scenario(
+        name="sybil_baseline_cifar10",
         base_config_factory=get_base_image_config,
-        modifiers=[use_fmnist_config],  # Or any other dataset modifier
+        modifiers=[use_cifar10_config, use_image_backdoor_attack],
         parameter_grid={
-            "n_samples": [1],
-            "experiment.model_structure": ["lenet"],  # <-- Only one model
-            # Use a standard, non-robust aggregator to see the raw leakage
-            "aggregation.method": ["fedavg"],
-            "experiment.dataset_name": ["fmnist"],  # <-- Only one model
-
-            # --- Key Settings for Logging ---
-            # Turn ON gradient saving
-            "debug.save_individual_gradients": [True],
-            # Save the gradient from EVERY round
-            "debug.gradient_save_frequency": [1],
-
-            # --- Ensure NO Attacks are Active ---
-            # Turn OFF client-side poisoning
-            "adversary_seller_config.poisoning.type": [PoisonType.NONE],
-            # Turn OFF server-side attacks during the run
-            "server_attack_config.attack_name": ['none'],
-
-            # This is the parameter you will vary in your experiments
-            "training.batch_size": [64],
+            "experiment.aggregation_method": ALL_AGGREGATORS,
+            "experiment.adv_rate": [0.3],  # Fixed adversary rate
+            "adversary_seller_config.poisoning.poison_rate": [0.5],  # Fixed poison rate
+            "adversary_seller_config.sybil.is_sybil": [False],  # Explicitly OFF
         }
-    ),
+    ))
 
-    Scenario(
-        name="privacy_analysis_robust_aggregators_fmnist_lenet",
+    # --- Scenarios for each Sybil Strategy ---
+    for strategy in SYBIL_STRATEGIES:
+        scenarios.append(Scenario(
+            name=f"sybil_{strategy}_cifar10",
+            base_config_factory=get_base_image_config,
+            # Chain the modifiers: set dataset, set base attack, THEN set sybil strategy
+            modifiers=[
+                use_cifar10_config,
+                use_image_backdoor_attack,
+                use_sybil_attack(strategy)  # Use the new modifier
+            ],
+            parameter_grid={
+                "experiment.aggregation_method": ALL_AGGREGATORS,
+                "experiment.adv_rate": [0.3],  # Fixed adversary rate
+                "adversary_seller_config.poisoning.poison_rate": [0.5],  # Fixed poison rate
+            }
+        ))
+
+    return scenarios
+
+
+def generate_data_heterogeneity_scenarios() -> List[Scenario]:
+    """
+    Generates scenarios to test the impact of Non-IID data distributions
+    on attack and defense performance.
+    """
+    scenarios = []
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+
+    # Define the levels of data skew to test via Dirichlet alpha
+    # High alpha = similar data (IID), Low alpha = skewed data (Non-IID)
+    DIRICHLET_ALPHAS_TO_SWEEP = [100.0, 1.0, 0.1]
+
+    scenarios.append(Scenario(
+        name="heterogeneity_impact_cifar10",
         base_config_factory=get_base_image_config,
-        modifiers=[use_fmnist_config],
+        modifiers=[use_cifar10_config, use_image_backdoor_attack],
         parameter_grid={
-            # --- Use a robust aggregator ---
-            "n_samples": [1],
-            "aggregation.method": ["fltrust", "martfl"],  # This will create runs for all three
-            "experiment.model_structure": ["lenet"],  # <-- Only one model dataset_name
-            "experiment.dataset_name": ["fmnist"],  # <-- Only one model
-            "debug.save_individual_gradients": [True],
-            "debug.gradient_save_frequency": [1],
-            "adversary_seller_config.poisoning.type": [PoisonType.NONE],
-            "server_attack_config.attack_name": ['none'],
+            # The two key variables for this experiment
+            "experiment.aggregation_method": ALL_AGGREGATORS,
+            "data.image.property_skew.dirichlet_alpha": DIRICHLET_ALPHAS_TO_SWEEP,
 
-            # --- Make one client particularly vulnerable ---
-            "training.batch_size": [1],
+            # Tell the partitioner to use the Dirichlet strategy
+            "data.image.strategy": ["dirichlet"],
+
+            # Use fixed attack parameters to isolate the effect of data skew
+            "experiment.adv_rate": [0.3],
+            "adversary_seller_config.poisoning.poison_rate": [0.5],
         }
-    )
+    ))
 
-])
-
-
-def use_small_subset(config: AppConfig) -> AppConfig:
-    """A modifier to drastically reduce dataset size for quick tests."""
-    config.experiment.use_subset = True
-    return config
+    return scenarios
 
 
-smoke_test_scenario = Scenario(
-    name="smoke_test_image",
-    base_config_factory=get_base_image_config,
-    modifiers=[use_celeba_config, use_small_subset, use_image_backdoor_attack],
-    parameter_grid={
-        # Use a small number of rounds and sellers
-        "experiment.global_rounds": [2],
-        "experiment.n_sellers": [4],
-        "training.local_epochs": [1],
+# --- 3. Update the Final List to Include the New Scenarios ---
+ALL_SCENARIOS = generate_attack_impact_scenarios()
+ALL_SCENARIOS.extend(generate_sybil_impact_scenarios())
+ALL_SCENARIOS.extend(generate_data_heterogeneity_scenarios())
 
-        # Use a robust aggregator to test its logic
-        "aggregation.method": ["martfl"],
-
-        # Activate one malicious client
-        "experiment.adv_rate": [0.25],
-        "adversary_seller_config.poisoning.poison_rate": [0.5],
-
-        # Initialize the server-side attacker to make sure it doesn't crash
-        "server_attack_config.attack_name": ['gradient_inversion'],
-
-        # Test the gradient saving feature
-        "debug.save_individual_gradients": [True],
-        "debug.gradient_save_frequency": [1],
-    }
-)
-
-smoke_test_text_scenario = Scenario(
-    name="smoke_test_text",
-    base_config_factory=get_base_text_config,  # <-- Use the text base config
-    modifiers=[use_text_backdoor_attack],  # Use an attack to test that path
-    parameter_grid={
-        # Minimal settings for a fast run
-        "experiment.dataset_name": ["AG_NEWS"],
-        "experiment.global_rounds": [2],
-        "experiment.n_sellers": [4],
-        "experiment.adv_rate": [0.5],
-
-        # --- CRITICAL: Use a small subset of the data ---
-        "experiment.use_subset": [True],
-        "experiment.subset_size": [150],
-
-        "experiment.device": ["cpu"]
-    }
-)
-
-# ALL_SCENARIOS.append(smoke_test_scenario)
-#
-# ALL_SCENARIOS.append(smoke_test_text_scenario)
+# You can print the names of generated scenarios to verify
+if __name__ == '__main__':
+    print(f"Generated {len(ALL_SCENARIOS)} scenarios:")
+    for s in ALL_SCENARIOS:
+        print(f"  - {s.name}")

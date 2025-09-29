@@ -10,12 +10,7 @@ import torch  # Import torch to check for CUDA availability
 from common.utils import set_seed
 from entry.gradient_market.run_all_exp import run_attack
 
-# --- CRITICAL CHANGE: Set the multiprocessing start method ---
-# This must be done AT THE VERY BEGINNING of the script,
-# before any other multiprocessing code or CUDA operations.
 if __name__ == "__main__":  # Ensure this runs only in the main process
-    # Check if a start method has already been set (e.g., by a library)
-    # If not, set it to 'spawn' for CUDA compatibility
     if multiprocessing.get_start_method(allow_none=True) is None:
         try:
             multiprocessing.set_start_method("spawn")
@@ -25,9 +20,6 @@ if __name__ == "__main__":  # Ensure this runs only in the main process
             logging.warning("Could not set multiprocessing start method to 'spawn'. It might already be set.")
             pass  # It might already be set by another library
 
-# Adjust this import based on your actual test.py structure
-# For example, if run_attack is in entry/gradient_market/run_all_exp.py
-# from entry.gradient_market.run_all_exp import run_attack
 from entry.gradient_market.automate_exp.config_parser import load_config
 
 # Configure basic logging for the parallel runner
@@ -63,24 +55,14 @@ def run_single_experiment(config_path: str, run_id: int, gpu_id: int = None):
             current_seed = initial_seed + i
             original_base_save_path = Path(app_config.experiment.save_path)
             run_save_path = original_base_save_path / f"run_{i}_seed_{current_seed}"
-
-            # 1. DEFINE a "success marker" file that indicates a run is finished.
-            #    IMPORTANT: Change "final_metrics.json" to whatever file your `run_attack`
-            #    function creates at the very end of a successful run.
             success_marker_path = run_save_path / "final_metrics.json"
 
-            # 2. CHECK if this file already exists.
             if success_marker_path.exists():
                 logger.info(f"[Run {run_id} - Sub-run {i + 1}] Already completed. Skipping: {run_save_path}")
-                # 3. SKIP to the next iteration if the run is done.
                 continue
 
             run_cfg = copy.deepcopy(app_config)
-            current_seed = initial_seed + i
-            # If you have a set_seed function, uncomment and use it
             set_seed(current_seed)
-
-            original_base_save_path = Path(run_cfg.experiment.save_path)
             run_save_path.mkdir(parents=True, exist_ok=True)
             run_cfg.experiment.save_path = str(run_save_path)
 

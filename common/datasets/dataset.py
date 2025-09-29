@@ -3,19 +3,25 @@ import logging
 import os
 import pickle
 import random
+import urllib.request
 from dataclasses import asdict
-from typing import (Any, Callable, Dict, Generator, List, Optional, Tuple)
+from typing import Any, Dict, List, Optional, Tuple
+from typing import (Callable, Generator)
 
 import numpy as np
+import pandas as pd
 import torch
-from torch.utils.data import DataLoader, Subset
+import torchvision
+from torch.utils.data import DataLoader, Subset, Dataset
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import Vocab, build_vocab_from_iterator
+from torchvision.transforms import v2 as transforms
+from ucimlrepo import fetch_ucirepo
 
 from common.datasets.data_partitioner import FederatedDataPartitioner, _extract_targets
 from common.datasets.data_split import OverallFractionSplit, CelebAIdentitySplit
-from common.datasets.image_data_processor import load_dataset_with_property, save_data_statistics, CelebACustom
-from common.datasets.text_data_processor import ProcessedTextData, hf_datasets_available, get_cache_path, \
+from common.datasets.image_data_processor import save_data_statistics, CelebACustom
+from common.datasets.text_data_processor import ProcessedTextData, get_cache_path, \
     generate_buyer_bias_distribution, split_text_dataset_martfl_discovery, collate_batch, StandardFormatDataset
 from common.gradient_market_configs import AppConfig
 
@@ -35,36 +41,67 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _get_dataset_loaders(dataset_name: str, data_root: str) -> Tuple[Dataset, Dataset, int]:
+    """
+    A helper factory to load standard torchvision datasets and get their properties.
+    This makes adding new datasets much easier.
+    """
+    if dataset_name == "CIFAR100":
+        transform = transforms.Compose([
+            transforms.ToImage(),
+            transforms.ToDtype(torch.float32, scale=True),
+            transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+        ])
+        train_set = torchvision.datasets.CIFAR100(root=data_root, train=True, download=True, transform=transform)
+        test_set = torchvision.datasets.CIFAR100(root=data_root, train=False, download=True, transform=transform)
+        num_classes = 100
+    elif dataset_name == "CIFAR10":
+        transform = transforms.Compose([
+            transforms.ToImage(),
+            transforms.ToDtype(torch.float32, scale=True),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        ])
+        train_set = torchvision.datasets.CIFAR10(root=data_root, train=True, download=True, transform=transform)
+        test_set = torchvision.datasets.CIFAR10(root=data_root, train=False, download=True, transform=transform)
+        num_classes = 10
+    elif dataset_name == "CelebA":
+        # Note: CelebA does not have a standard test set split in torchvision
+        # We handle this by partitioning the 'train' set into train/test splits.
+        # The property_key for CelebA is handled in the main function.
+        train_set = CelebACustom(root=data_root, split='train', download=True)
+        test_set = CelebACustom(root=data_root, split='test', download=True)
+        num_classes = 2  # Assuming binary classification on a single attribute
+    else:
+        raise ValueError(f"Unsupported image dataset: {dataset_name}")
+
+    return train_set, test_set, num_classes
 
 
 def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader], DataLoader, Dict, int]:
     """
     A unified function to load, partition, and prepare federated image datasets.
+    This version is generic and driven by configuration.
     """
     logger.info(f"--- Starting Federated Dataset Setup for '{cfg.experiment.dataset_name}' ---")
-
-    # This is the new, correct way to get data-related settings.
     image_cfg = cfg.data.image
     if not image_cfg:
-        raise ValueError("Image data configuration ('data.image') is missing from the AppConfig.")
+        raise ValueError("Image data configuration ('data.image') is missing.")
 
-    # 1. Load the base dataset using the helper function
-    # The property_key is now accessed from its new location.
-    property_key = image_cfg.property_skew.property_key
+    # 1. Load the base dataset using the new helper
+    train_set, test_set, num_classes = _get_dataset_loaders(cfg.experiment.dataset_name, cfg.data_root)
 
-    # This logic is now simpler, as the key is always present in the config
-    train_set, _ = load_dataset_with_property(cfg.experiment.dataset_name, property_key=property_key)
+    # For CelebA, set the target attribute for binary classification
+    if cfg.experiment.dataset_name == "CelebA":
+        property_key = image_cfg.property_skew.property_key
+        train_set.set_target_attribute(property_key)
+        test_set.set_target_attribute(property_key)
 
     if cfg.experiment.use_subset:
-        logger.warning(
-            f"❗️ Using a small subset of the dataset ({cfg.experiment.subset_size} samples) for pipeline testing."
-        )
-        # Ensure subset_size is not larger than the dataset
+        logger.warning(f"❗️ Using a subset of {cfg.experiment.subset_size} samples for testing.")
         num_samples = min(cfg.experiment.subset_size, len(train_set))
-        indices = list(range(num_samples))
-        train_set = Subset(train_set, indices)
+        train_set = Subset(train_set, list(range(num_samples)))
 
-    # 2. Initialize the partitioner
+    # 2. Initialize the partitioner with the training data
     partitioner = FederatedDataPartitioner(
         dataset=train_set,
         num_clients=cfg.experiment.n_sellers,
@@ -72,27 +109,25 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     )
 
     # 3. Execute the partitioning strategy defined in the config
-    logger.info(f"Applying '{image_cfg.strategy}' partitioning strategy...")
-
-    partition_params_dict = asdict(image_cfg.property_skew)
-
-    if cfg.experiment.dataset_name == "CelebA":
+    logger.info(f"Applying partitioning strategy...")
+    # The buyer split strategy is now expected to be defined in the config.
+    # Defaulting to OverallFractionSplit if not specified.
+    buyer_strategy_name = image_cfg.buyer_config.strategy
+    if buyer_strategy_name == "CelebAIdentitySplit":
         buyer_strategy = CelebAIdentitySplit()
     else:
-        # Default to the flexible overall fraction method for other datasets
         buyer_strategy = OverallFractionSplit()
 
-    # 2. Call the updated partition method
     partitioner.partition(
-        buyer_split_strategy=buyer_strategy,  # Pass the strategy object
-        client_partition_strategy=image_cfg.strategy,  # More explicit name for the old 'strategy'
+        buyer_split_strategy=buyer_strategy,
+        client_partition_strategy=image_cfg.strategy,
         buyer_config=image_cfg.buyer_config,
-        partition_params=partition_params_dict
+        partition_params=asdict(image_cfg.property_skew)
     )
 
-    buyer_indices, seller_splits, test_indices = partitioner.get_splits()
+    buyer_indices, seller_splits, _ = partitioner.get_splits()
 
-    # 4. Generate and save statistics (no changes needed here)
+    # 4. Generate statistics
     stats = save_data_statistics(
         buyer_indices=buyer_indices,
         seller_splits=seller_splits,
@@ -100,23 +135,13 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         targets=_extract_targets(train_set),
         output_dir=cfg.experiment.save_path
     )
-    actual_dataset = train_set.dataset if isinstance(train_set, Subset) else train_set
-    if isinstance(actual_dataset, CelebACustom):
-        # For CelebA, the "class" is the binary property (e.g., Blond_Hair vs. not)
-        num_classes = 2
-    elif hasattr(actual_dataset, 'targets'):
-        # For other datasets, calculate from the unique targets
-        num_classes = len(np.unique(actual_dataset.targets))
-    else:
-        # Fallback if a dataset has neither .targets nor a special case
-        raise ValueError("Could not determine the number of classes for the dataset.")
 
+    # 5. Create DataLoaders
     batch_size = cfg.training.batch_size
     actual_dataset = train_set.dataset if isinstance(train_set, Subset) else train_set
 
     buyer_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=True,
-                              num_workers=cfg.data.num_workers) if len(
-        buyer_indices) > 0 else None
+                              num_workers=cfg.data.num_workers) if buyer_indices else None
 
     seller_loaders = {
         cid: DataLoader(Subset(actual_dataset, indices), batch_size=batch_size, shuffle=True,
@@ -124,32 +149,20 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         for cid, indices in seller_splits.items() if indices
     }
 
-    # --- UPDATED TEST LOADER LOGIC WITH FALLBACK ---
-    if len(test_indices) > 0:
-        logger.info(f"Creating test loader from dedicated test set of size {len(test_indices)}.")
-        test_loader = DataLoader(Subset(actual_dataset, test_indices), batch_size=batch_size, shuffle=False,
-                                 num_workers=cfg.data.num_workers)
-    elif len(buyer_indices) > 0:
-        logger.warning(
-            "❗️ No test indices found. As a fallback for this test run, "
-            "the test loader will use the buyer's data. "
-            "Do NOT use this for final results."
-        )
-        test_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=False,
-                                 num_workers=cfg.data.num_workers)
-    else:
-        logger.error("No test or buyer indices available to create a test loader.")
-        test_loader = None
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False,
+                             num_workers=cfg.data.num_workers) if test_set else None
 
-    logger.info(f"✅ Federated dataset setup complete. Found {num_classes} classes.")
+    logger.info(f"✅ Federated dataset setup complete. Using {num_classes} classes.")
 
     return buyer_loader, seller_loaders, test_loader, stats, num_classes
 
 
+# The get_text_dataset function remains unchanged as it was already robust.
 def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     """
     Loads, processes, caches, and splits a text dataset according to the provided AppConfig.
     """
+    # ... (code from your original script is unchanged)
     # 1. --- Input Validation and Setup ---
     exp_cfg = cfg.experiment
     train_cfg = cfg.training
@@ -358,3 +371,107 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         num_classes=num_classes,
         collate_fn=collate_fn
     )
+
+
+def get_tabular_dataset(cfg: AppConfig) -> Tuple[pd.DataFrame, List[str], Optional[str]]:
+    """
+    A unified function to load and prepare a tabular dataset from various sources
+    based on the AppConfig.
+
+    Returns:
+        A tuple containing:
+        - The processed pandas DataFrame.
+        - A list of identified categorical column names.
+        - The name of the sensitive column, if specified.
+    """
+    dataset_name = cfg.experiment.dataset_name
+    tabular_cfg = cfg.data.tabular
+    if not tabular_cfg:
+        raise ValueError("Tabular data configuration ('data.tabular') is missing.")
+
+    logger.info(f"📦 Loading and preparing the '{dataset_name}' tabular dataset...")
+
+    # --- 1. Fetch data based on its source type ---
+    if tabular_cfg.source_type == 'uci':
+        dataset_obj = fetch_ucirepo(id=tabular_cfg.uci_id)
+        df = pd.concat([dataset_obj.data.features, dataset_obj.data.targets], axis=1)
+        # Sanitize column names for UCI datasets
+        df.columns = ["".join(c if c.isalnum() else '_' for c in str(x)) for x in df.columns]
+
+    elif tabular_cfg.source_type == 'url':
+        try:
+            header_option = 0 if tabular_cfg.has_header else None
+            df = pd.read_csv(tabular_cfg.url, header=header_option)
+            if not tabular_cfg.has_header:
+                num_features = len(df.columns) - 1
+                df.columns = [f'feature_{i}' for i in range(num_features)] + [tabular_cfg.target_column]
+        except Exception as e:
+            raise IOError(f"Failed to load CSV from {tabular_cfg.url}: {e}")
+
+    elif tabular_cfg.source_type == 'numpy':
+        try:
+            local_filename = os.path.join(cfg.data_root, f"{dataset_name.lower()}.npz")
+            if not os.path.exists(local_filename):
+                logger.info(f"Downloading {dataset_name} dataset to {local_filename}...")
+                urllib.request.urlretrieve(tabular_cfg.url, local_filename)
+
+            data = np.load(local_filename)
+            features = data[tabular_cfg.data_key]
+            labels = data[tabular_cfg.labels_key]
+
+            if len(labels.shape) > 1 and labels.shape[1] > 1:  # Convert one-hot to class index
+                labels = np.argmax(labels, axis=1)
+
+            df = pd.DataFrame(features, columns=[f'feature_{i}' for i in range(features.shape[1])])
+            df[tabular_cfg.target_column] = labels
+            logger.info(f"Loaded numpy data with shape: features={features.shape}, labels={labels.shape}")
+        except Exception as e:
+            raise IOError(f"Failed to load numpy data from {tabular_cfg.url}: {e}")
+
+    elif tabular_cfg.source_type == 'local_csv':
+        try:
+            path = os.path.join(cfg.data_root, tabular_cfg.path)
+            header_option = 0 if tabular_cfg.has_header else None
+            df = pd.read_csv(path, header=header_option)
+            if not tabular_cfg.has_header:
+                num_features = len(df.columns) - 1
+                df.columns = [f'feature_{i}' for i in range(num_features)] + [tabular_cfg.target_column]
+        except Exception as e:
+            raise IOError(f"Failed to load local CSV from {path}: {e}")
+
+    else:
+        raise ValueError(f"Unsupported source_type: {tabular_cfg.source_type}")
+
+    # --- 2. Apply Preprocessing Steps from Config ---
+    if tabular_cfg.feature_columns:
+        all_cols = tabular_cfg.feature_columns + [tabular_cfg.target_column]
+        if tabular_cfg.sensitive_column:
+            all_cols.append(tabular_cfg.sensitive_column)
+        df = df[all_cols]
+
+    if tabular_cfg.query:
+        df = df.query(tabular_cfg.query).dropna()
+
+    if tabular_cfg.missing_value_placeholder:
+        df.replace(tabular_cfg.missing_value_placeholder, np.nan, inplace=True)
+        df.dropna(inplace=True)
+
+    df.reset_index(drop=True, inplace=True)
+
+    if tabular_cfg.binarize:
+        for column, details in tabular_cfg.binarize.items():
+            positive_value = str(details.positive_value)
+            df[column] = df[column].apply(lambda x: 1 if str(x).strip() == positive_value else 0)
+
+    # --- 3. Identify categorical and sensitive columns ---
+    target_col = tabular_cfg.target_column
+    sensitive_col = tabular_cfg.sensitive_column
+
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    # Ensure target and sensitive columns are not treated as categorical features
+    categorical_cols = [c for c in categorical_cols if c not in [target_col, sensitive_col]]
+
+    logger.info(f"✅ Dataset '{dataset_name}' loaded successfully. Shape: {df.shape}")
+    logger.info(f"Identified {len(categorical_cols)} categorical columns: {categorical_cols}")
+
+    return df, categorical_cols, sensitive_col

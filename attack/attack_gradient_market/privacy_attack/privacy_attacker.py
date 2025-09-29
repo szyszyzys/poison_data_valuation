@@ -1,3 +1,4 @@
+import argparse
 import logging
 from abc import ABC, abstractmethod
 from enum import Enum, auto
@@ -490,12 +491,12 @@ class PostHocAnalysisPipeline:
     def __init__(self, run_data: Dict[str, Any], loader: ExperimentLoader):
         self.run_data = run_data
         self.loader = loader
-        # The factory now passes all necessary data to the adversary constructors
+        # The factory now creates fully initialized adversaries in one step.
         self.adversaries = self._create_adversaries_from_run()
 
     def _create_adversaries_from_run(self, adv_prefix="adv") -> Dict[str, 'Adversary']:
         """
-        Factory to create adversary objects based on logged data, injecting dependencies.
+        Factory to create fully initialized adversary objects based on logged data.
         """
         adversaries = {}
         all_sellers = list(self.run_data.get("sellers", {}).keys())
@@ -503,23 +504,29 @@ class PostHocAnalysisPipeline:
 
         # Create Seller Adversary if Sybils are found
         if sybil_ids:
-            # You can define capabilities programmatically or from a config file
             adversaries["seller_adversary"] = SellerAdversary(
                 adversary_id="Sybil-Master",
                 controls_sybil_identities=sybil_ids,
                 run_data=self.run_data,
                 loader=self.loader,
-                can_perform_active_probing=True,  # Example capability
-                access_level=AccessLevel.GLOBAL  # Example capability
+                can_perform_active_probing=True,  # This could also come from a config
+                access_level=AccessLevel.GLOBAL  # This could also come from a config
             )
 
         # Always create a Buyer Adversary for analysis
         adversaries["buyer_adversary"] = BuyerAdversary(
             adversary_id="Malicious-Buyer",
-            run_data=self.run_data
-            # device can be passed from a config
+            run_data=self.run_data,
+            device="cuda" if torch.cuda.is_available() else "cpu"
         )
 
+        # Add MarketplaceAdversary here if needed
+        adversaries["marketplace_adversary"] = MarketplaceAdversary(
+            adversary_id="Platform-Auditor",
+            run_data=self.run_data
+        )
+
+        logging.info(f"Created adversaries: {list(adversaries.keys())}")
         return adversaries
 
     def run_analysis(self, attack_configs: Dict[str, Any]):
@@ -527,128 +534,96 @@ class PostHocAnalysisPipeline:
         Replays the experiment to perform adversarial analysis based on a config.
         """
         logging.info(f"\n--- 🚀 Starting Post-Hoc Analysis for Run: {self.run_data['run_path'].name} ---")
-        seller_adv = self.adversaries.get("seller_adversary")
-        buyer_adv = self.adversaries.get("buyer_adversary")
 
-        # --- Part 1: Simulate round-by-round observation ---
-        # This loop simulates the adversaries observing the marketplace as it happens.
-        # Simple, per-round attacks could be run here if desired.
-        any_seller_id = next(iter(self.run_data["sellers"]))
-        total_rounds = self.run_data["sellers"][any_seller_id]['round'].max()
-
-        for round_num in tqdm(range(total_rounds + 1), desc="Simulating Adversary Observation"):
-            # Per-round logic for seller observation (e.g., updating history)
-            if seller_adv:
-                full_round_history = pd.concat(
-                    [df[df['round'] == round_num] for df in self.run_data["sellers"].values()])
-                if seller_adv.access_level == AccessLevel.GLOBAL:
-                    history_for_adv = full_round_history
-                else:
-                    history_for_adv = full_round_history[
-                        full_round_history['seller_id'].isin(seller_adv.sybil_identities)]
-                # In this model, we don't call update_history here, as the holistic
-                # attacks will process the full history at once.
-                # This loop is purely for simulating observation or for simple per-round attacks.
-
-            # Per-round logic for buyer observation
-            if buyer_adv:
-                # The buyer observes all gradients in each round
-                pass
-
-        logging.info("\n--- ✅ Round-by-round simulation complete. ---")
-        logging.info("--- 💥 Triggering Full Offline Attacks... ---")
-
-        # --- Part 2: Trigger Seller's Full Offline Analysis ---
-        if seller_adv and "seller_attack" in attack_configs:
+        # --- Part 1: Seller Attack ---
+        if "seller_attack" in attack_configs and "seller_adversary" in self.adversaries:
             config = attack_configs["seller_attack"]
+            seller_adv = self.adversaries["seller_adversary"]
+
             logging.info(f"--- Running Seller Attack: {config['strategy']} ---")
 
-            # Perform necessary setup
-            lr = config.get("server_learning_rate", 0.01)
+            lr = self.run_data['config']['server_learning_rate']  # Get LR from config
             seller_adv.reconstruct_global_model_history(learning_rate=lr)
-
-            # Configure and execute the attack
             seller_adv.set_attack_strategy(config["strategy"], config.get("params", {}))
             results_df = seller_adv.execute_attack()
 
-            # Analyze and plot results
             if results_df is not None:
                 logging.info("\n--- 📊 SELLER ATTACK FINAL REPORT 📊 ---")
                 print(results_df.head().to_string())
-                # Your plotting and detailed metrics logic would go here
+                # Your plotting logic here...
 
-        # --- Part 3: Trigger Buyer's Full Offline Analysis ---
-        if buyer_adv and "buyer_attack" in attack_configs:
+        # --- Part 2: Buyer Attack ---
+        if "buyer_attack" in attack_configs and "buyer_adversary" in self.adversaries:
             config = attack_configs["buyer_attack"]
+            buyer_adv = self.adversaries["buyer_adversary"]
+
             logging.info(f"--- Running Buyer Attack on Target: {config['target_seller_id']} ---")
 
-            # The property_function needs to be defined or passed in based on the config
-            # This is an example placeholder
-            labels = [label for _, label in get_buyer_dataset(self.run_data)]
+            # The property function is now passed in via the config!
+            property_function = config.get("property_function")
+            if not callable(property_function):
+                raise TypeError("The 'property_function' in buyer_attack config must be a callable function.")
 
-            def has_high_class_2_ratio(indices: List[int]) -> bool:
-                if not indices: return False
-                class_2_count = sum(1 for i in indices if labels[i] == 2)
-                return (class_2_count / len(indices)) > 0.5
-
-            # 1. Train the attack models
-            buyer_adv.train_attack_models(property_function=has_high_class_2_ratio)
-
-            # 2. Execute the detailed analysis on the target
+            buyer_adv.train_attack_models(property_function=property_function)
             leakage_df = buyer_adv.analyze_seller_leakage_over_time(
                 loader=self.loader,
                 target_seller_id=config['target_seller_id'],
-                property_function=has_high_class_2_ratio
+                property_function=property_function
             )
 
-            # 3. Log results and plot
             if not leakage_df.empty:
                 logging.info("\n--- 📊 BUYER ATTACK FINAL REPORT 📊 ---")
                 print(leakage_df.to_string())
-                # Your plot_results function would be called here
+                # Your plotting logic here...
 
 
+# --- This becomes much cleaner and more powerful ---
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
-    # --- IMPORTANT: Set this to your experiment results directory ---
-    # This directory should contain subfolders like 'run_0_seed_123', 'run_1_seed_456', etc.
-    EXPERIMENT_ROOT = "./exp_results/text_agnews_cnn_10seller"
+    parser = argparse.ArgumentParser(description="Run post-hoc privacy analysis on a marketplace experiment.")
+    parser.add_argument("experiment_root", type=str, help="Path to the root directory of experiment results.")
+    args = parser.parse_args()
 
     try:
-        loader = ExperimentLoader(EXPERIMENT_ROOT)
+        loader = ExperimentLoader(args.experiment_root)
+        if not loader.runs:
+            logging.warning(f"No experiment runs found in '{args.experiment_root}'.")
+            exit()
 
-        # Analyze the first run found by the loader
-        if loader.runs:
-            first_run_path = loader.runs[0]
-            run_data = loader.load_run_data(first_run_path)
+        first_run_path = loader.runs[0]
+        logging.info(f"Analyzing run: {first_run_path.name}")
+        run_data = loader.load_run_data(first_run_path)
 
-            # Check if run data is usable for analysis
-            if not run_data["sellers"] or not run_data["gradient_paths"]:
-                raise RuntimeError(
-                    f"Run {first_run_path.name} is missing necessary seller history or gradient files for analysis.")
+        # --- Define your property function here or in a separate utils file ---
+        labels = [label for _, label in get_buyer_dataset(run_data)]
 
-            # Setup seller adversary and set a strategy to test
-            # This part is still manual: you decide which attack to run post-hoc
-            pipeline = PostHocAnalysisPipeline(run_data, loader)
-            if "seller_adversary" in pipeline.adversaries:
-                # Re-create the adversary with GLOBAL access to test the new attack
-                seller_adv_obj = pipeline.adversaries["seller_adversary"]
-                pipeline.adversaries["seller_adversary"] = SellerAdversary(
-                    adversary_id=seller_adv_obj.adversary_id,
-                    controls_sybil_identities=seller_adv_obj.sybil_identities,
-                    access_level=AccessLevel.GLOBAL
-                )
 
-                # Set the new attack strategy
-                pipeline.adversaries["seller_adversary"].set_attack_strategy("infer_competitor_property")
+        def has_high_class_2_ratio(indices: List[int]) -> bool:
+            if not indices: return False
+            class_2_count = sum(1 for i in indices if labels[i] == 2)
+            return (class_2_count / len(indices)) > 0.5
 
-            pipeline.run_analysis()
 
-        else:
-            logging.warning("No experiment runs found in the specified directory.")
+        # --- Define the full analysis plan in a single config dictionary ---
+        analysis_plan = {
+            "seller_attack": {
+                "strategy": "passive_inference",
+                "params": {
+                    "probe_objectives": {
+                        "group_A": [0, 1],
+                        "group_B": [2, 3]
+                    }
+                }
+            },
+            "buyer_attack": {
+                "target_seller_id": "seller_0",  # Example target
+                "property_function": has_high_class_2_ratio
+            }
+        }
 
-    except (FileNotFoundError, RuntimeError) as e:
-        logging.error(f"Analysis failed. {e}")
-        logging.error(
-            "Please ensure EXPERIMENT_ROOT is set correctly and that the target run folder contains the expected log files.")
+        pipeline = PostHocAnalysisPipeline(run_data, loader)
+        pipeline.run_analysis(analysis_plan)
+
+    except (FileNotFoundError, RuntimeError, TypeError) as e:
+        logging.error(f"Analysis failed: {e}", exc_info=True)

@@ -178,6 +178,7 @@ class PropertySkewParams:
     high_prevalence_ratio: float = 0.8
     low_prevalence_ratio: float = 0.1
     standard_prevalence_ratio: float = 0.4
+    dirichlet_alpha: float = 1.0  # <--- ADD THIS LINE
 
 
 @dataclass
@@ -223,6 +224,7 @@ class DataConfig:
     text: Optional[TextDataConfig] = None
     image: Optional[ImageDataConfig] = None
     num_workers = 4
+
 
 @dataclass
 class RuntimeDataConfig:
