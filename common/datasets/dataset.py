@@ -183,18 +183,14 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     # 5. Create DataLoaders
     batch_size = cfg.training.batch_size
     actual_dataset = train_set.dataset if isinstance(train_set, Subset) else train_set
-
-    # --- FIX 1: Check the size of the numpy array ---
-    # Change `if buyer_indices:` to `if buyer_indices.size > 0:`
     buyer_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=True,
                               num_workers=cfg.data.num_workers) if buyer_indices.size > 0 else None
 
     seller_loaders = {
-        # --- FIX 2: Check the size of the numpy array here as well ---
-        # Change `if indices:` to `if indices.size > 0:`
+        # --- FIX 2: `indices` in `seller_splits` is a list, so a simple truthiness check is correct. ---
         cid: DataLoader(Subset(actual_dataset, indices), batch_size=batch_size, shuffle=True,
                         num_workers=cfg.data.num_workers)
-        for cid, indices in seller_splits.items() if indices.size > 0
+        for cid, indices in seller_splits.items() if indices
     }
 
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False,
