@@ -57,18 +57,18 @@ def setup_data_and_model(cfg: AppConfig):
     cfg.experiment.num_classes = num_classes
     logging.info(f"Data loaded for '{dataset_name}'. Number of classes: {cfg.experiment.num_classes}")
 
-    return buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn
+    return buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes
 
 
 def initialize_sellers(cfg: AppConfig, marketplace, client_loaders, model_factory, seller_extra_args,
-                       sybil_coordinator, collate_fn):
+                       sybil_coordinator, collate_fn, num_classes: int):  # <-- Accept num_classes
     """Creates and registers all sellers in the marketplace using the factory."""
-    # The 'attack_generator' argument is gone. The factory handles it all.
     logging.info("--- Initializing Sellers ---")
     n_adversaries = int(cfg.experiment.n_sellers * cfg.experiment.adv_rate)
     adversary_ids = list(client_loaders.keys())[:n_adversaries]
 
-    seller_factory = SellerFactory(cfg, model_factory, **seller_extra_args)
+    # --- FIX: Pass num_classes to the factory's constructor ---
+    seller_factory = SellerFactory(cfg, model_factory, num_classes=num_classes, **seller_extra_args)
 
     for cid, loader in client_loaders.items():
         is_adv = cid in adversary_ids
@@ -189,7 +189,8 @@ def run_attack(cfg: AppConfig):
     logging.info(f"--- Starting Experiment: {cfg.experiment.dataset_name} | {cfg.experiment.model_structure} ---")
 
     # 1. Data and Model Setup
-    buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn = setup_data_and_model(cfg)
+    buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes = \
+        setup_data_and_model(cfg)
 
     global_model = model_factory().to(cfg.experiment.device)
     logging.info(f"Global model created and moved to {cfg.experiment.device}")
@@ -244,8 +245,8 @@ def run_attack(cfg: AppConfig):
     )
 
     # 4. Seller Initialization
-    initialize_sellers(cfg, marketplace, seller_loaders, model_factory, seller_extra_args, sybil_coordinator,
-                       collate_fn)
+    initialize_sellers(cfg, marketplace, seller_loaders, model_factory, seller_extra_args,
+                       sybil_coordinator, collate_fn, num_classes)  # <-- Add num_classes here
 
     # 5. Federated Training Loop
     final_model, results_buffer = run_training_loop(
