@@ -8,7 +8,6 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance
-from common.factories import create_poison_generator
 from common.gradient_market_configs import AppConfig
 
 
@@ -56,17 +55,36 @@ class CleanEvaluator(BaseEvaluator):
         return {"acc": acc, "loss": loss}
 
 
+# in marketplace/market/evaluation/base.py
+
+# ... (other imports)
+from marketplace.seller.gradient_seller import AdvancedBackdoorAdversarySeller  # 1. ADD THIS IMPORT
+
+
 class BackdoorEvaluator(BaseEvaluator):
     """A specialized evaluator for measuring the Attack Success Rate (ASR) of backdoor attacks."""
 
     def __init__(self, cfg, device, **kwargs):
         super().__init__(cfg, device, **kwargs)
-        self.backdoor_generator = create_poison_generator(self.cfg, **self.runtime_kwargs)
+
+        # --- THIS IS THE UPDATED LOGIC ---
+        # Only try to create a generator if a backdoor attack is actually active.
+        if 'backdoor' in cfg.adversary_seller_config.poisoning.type:
+            # 2. Call the static method directly from the seller class
+            self.backdoor_generator = AdvancedBackdoorAdversarySeller._create_poison_generator(
+                adv_cfg=self.cfg.adversary_seller_config,
+                model_type=self.cfg.experiment.dataset_type,  # 'image' or 'text'
+                **self.runtime_kwargs
+            )
+        else:
+            self.backdoor_generator = None
+            logging.warning("BackdoorEvaluator initialized, but no backdoor attack is configured.")
 
     def evaluate(self, model: nn.Module, test_loader: DataLoader) -> Dict[str, float]:
         if not self.backdoor_generator:
-            return {}
+            return {}  # If no generator, do nothing.
 
+        # The rest of your evaluate method is already correct
         poison_cfg = self.cfg.adversary_seller_config.poisoning
         active_params = poison_cfg.active_params
         if not active_params:
