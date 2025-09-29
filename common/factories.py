@@ -75,12 +75,17 @@ class SellerFactory:
             # For the backdoor seller, we do NOT pass a poison_generator.
             # Instead, we pass the `model_type` it needs to build its own.
             logging.info(f"Creating AdvancedBackdoorAdversarySeller for {seller_id}")
+            # 1. Make a copy of kwargs to avoid modifying the original.
+            kwargs_for_seller = self.runtime_kwargs.copy()
+            # 2. Safely remove the conflicting key.
+            kwargs_for_seller.pop('model_type', None)
+
             return AdvancedBackdoorAdversarySeller(
                 **base_kwargs,
                 adversary_config=self.cfg.adversary_seller_config,
                 sybil_coordinator=sybil_coordinator,
-                model_type=self.cfg.experiment.model_structure,  # 'image' or 'text'
-                **self.runtime_kwargs
+                model_type=self.cfg.experiment.model_structure,
+                **kwargs_for_seller  # 3. Unpack the cleaned dictionary
             )
 
         elif AdversaryClass is AdvancedPoisoningAdversarySeller:
