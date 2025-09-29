@@ -132,6 +132,8 @@ def _get_dataset_loaders(dataset_name: str, data_root: str) -> Tuple[Dataset, Da
     return train_set, test_set, num_classes
 
 
+# In common/datasets/dataset.py
+
 def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader], DataLoader, Dict, int]:
     """
     A unified function to load, partition, and prepare federated image datasets.
@@ -143,44 +145,33 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         raise ValueError("Image data configuration ('data.image') is missing.")
 
     # 1. Load the base dataset using the new helper
+    # This part of your code is correct
     train_set, test_set, num_classes = _get_dataset_loaders(cfg.experiment.dataset_name, cfg.data_root)
-
-    # For CelebA, set the target attribute for binary classification
     if cfg.experiment.dataset_name == "CelebA":
         property_key = image_cfg.property_skew.property_key
         train_set.set_target_attribute(property_key)
         test_set.set_target_attribute(property_key)
-
     if cfg.experiment.use_subset:
         logger.warning(f"❗️ Using a subset of {cfg.experiment.subset_size} samples for testing.")
         num_samples = min(cfg.experiment.subset_size, len(train_set))
         train_set = Subset(train_set, list(range(num_samples)))
 
-    # 2. Initialize the partitioner with the training data
+    # 2. Initialize and run the partitioner
+    # This part of your code is correct
     partitioner = FederatedDataPartitioner(
-        dataset=train_set,
-        num_clients=cfg.experiment.n_sellers,
-        seed=cfg.seed
+        dataset=train_set, num_clients=cfg.experiment.n_sellers, seed=cfg.seed
     )
-
-    # 3. Execute the partitioning strategy defined in the config
-    logger.info(f"Applying partitioning strategy...")
-    # The buyer split strategy is now expected to be defined in the config.
-    # Defaulting to OverallFractionSplit if not specified.
-    buyer_strategy_name = image_cfg.buyer_config
-
-    buyer_strategy = OverallFractionSplit()
-
+    buyer_strategy = OverallFractionSplit()  # Assuming this is the intended logic
     partitioner.partition(
         buyer_split_strategy=buyer_strategy,
         client_partition_strategy=image_cfg.strategy,
         buyer_config=image_cfg.buyer_config,
         partition_params=asdict(image_cfg.property_skew)
     )
-
     buyer_indices, seller_splits, _ = partitioner.get_splits()
 
     # 4. Generate statistics
+    # This part of your code is correct
     stats = save_data_statistics(
         buyer_indices=buyer_indices,
         seller_splits=seller_splits,
@@ -193,13 +184,17 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     batch_size = cfg.training.batch_size
     actual_dataset = train_set.dataset if isinstance(train_set, Subset) else train_set
 
+    # --- FIX 1: Check the size of the numpy array ---
+    # Change `if buyer_indices:` to `if buyer_indices.size > 0:`
     buyer_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=True,
-                              num_workers=cfg.data.num_workers) if buyer_indices else None
+                              num_workers=cfg.data.num_workers) if buyer_indices.size > 0 else None
 
     seller_loaders = {
+        # --- FIX 2: Check the size of the numpy array here as well ---
+        # Change `if indices:` to `if indices.size > 0:`
         cid: DataLoader(Subset(actual_dataset, indices), batch_size=batch_size, shuffle=True,
                         num_workers=cfg.data.num_workers)
-        for cid, indices in seller_splits.items() if indices
+        for cid, indices in seller_splits.items() if indices.size > 0
     }
 
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False,
