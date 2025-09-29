@@ -84,7 +84,7 @@ class SellerFactory:
                 **base_kwargs,
                 adversary_config=self.cfg.adversary_seller_config,
                 sybil_coordinator=sybil_coordinator,
-                model_type=self.cfg.experiment.model_structure,
+                model_type=self.cfg.experiment.dataset_type,
                 **kwargs_for_seller  # 3. Unpack the cleaned dictionary
             )
 
