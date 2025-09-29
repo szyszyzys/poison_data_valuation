@@ -157,7 +157,7 @@ class FederatedDataPartitioner:
 
     def _partition_property_skew(self, seller_pool_indices: np.ndarray, config: PropertySkewParams):
         """Partitions sellers based on the prevalence of a specific data property."""
-        actual_dataset = self.dataset.dataset if isinstance(self.dataset, Subset) else self.dataset
+        wrapped_dataset = self.dataset.dataset if isinstance(self.dataset, Subset) else self.dataset
         num_low_prevalence = self.num_clients - config.num_high_prevalence_clients - config.num_security_attackers
 
         # --- Define client groups ---
@@ -175,14 +175,10 @@ class FederatedDataPartitioner:
 
         # --- Separate seller data by property ---
         prop_true_indices, prop_false_indices = [], []
+        prop_true_indices, prop_false_indices = [], []
         for idx in seller_pool_indices:
-            # Note: The has_property method in the dataset now needs to know the property_key
-            if isinstance(actual_dataset, CelebACustom):
-                has_prop = actual_dataset.has_property(idx)
-            else:
-                has_prop = actual_dataset.has_property(idx, property_key=config.property_key)
-
-            if has_prop:
+            # No more if/elif! Just call the method directly.
+            if wrapped_dataset.has_property(idx, property_key=config.property_key):
                 prop_true_indices.append(idx)
             else:
                 prop_false_indices.append(idx)

@@ -12,14 +12,14 @@ import numpy as np
 import pandas as pd
 import torch
 import torchvision
-from torch.utils.data import DataLoader, Subset, Dataset
+from torch.utils.data import DataLoader, Subset
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import Vocab, build_vocab_from_iterator
 from torchvision.transforms import v2 as transforms
 from ucimlrepo import fetch_ucirepo
 
 from common.datasets.data_partitioner import FederatedDataPartitioner, _extract_targets
-from common.datasets.data_split import OverallFractionSplit, CelebAIdentitySplit
+from common.datasets.data_split import OverallFractionSplit
 from common.datasets.image_data_processor import save_data_statistics, CelebACustom
 from common.datasets.text_data_processor import ProcessedTextData, get_cache_path, \
     generate_buyer_bias_distribution, split_text_dataset_martfl_discovery, collate_batch, StandardFormatDataset
@@ -40,6 +40,58 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# In a new file, e.g., common/datasets/wrappers.py
+import re
+from torch.utils.data import Dataset
+
+
+class UnifiedDatasetWrapper(Dataset):
+    """Wraps various dataset objects to provide a uniform interface."""
+
+    def __init__(self, original_dataset):
+        self.original_dataset = original_dataset
+        self.dataset_type = type(original_dataset).__name__
+
+        # --- Create a uniform .targets attribute ---
+        if hasattr(original_dataset, 'targets'):
+            # For standard torchvision datasets like CIFAR
+            self.targets = np.array(original_dataset.targets)
+        elif hasattr(original_dataset, 'labels'):
+            # For some custom datasets
+            self.targets = np.array(original_dataset.labels)
+        elif hasattr(original_dataset, 'get_targets'):
+            # For our CelebACustom class
+            self.targets = original_dataset.get_targets()
+        else:
+            raise TypeError(f"Could not find a 'targets' or 'labels' attribute on {self.dataset_type}")
+
+    def __len__(self):
+        return len(self.original_dataset)
+
+    def __getitem__(self, idx):
+        return self.original_dataset[idx]
+
+    def has_property(self, idx: int, property_key: str) -> bool:
+        """
+        A uniform method to check if a sample has a given property.
+        The logic that was in the partitioner now lives here.
+        """
+        # A. Generic handler for class-based properties
+        if property_key.startswith("class_in_"):
+            target_classes = set(map(int, re.findall(r'\d+', property_key)))
+            sample_label = self.targets[idx]
+            return sample_label in target_classes
+
+        # B. Specific handler for datasets with their own logic (like CelebA)
+        elif hasattr(self.original_dataset, 'has_property'):
+            return self.original_dataset.has_property(idx, property_key=property_key)
+
+        # C. Fallback error
+        else:
+            raise NotImplementedError(
+                f"Property check for key '{property_key}' is not implemented for {self.dataset_type}"
+            )
+
 
 def _get_dataset_loaders(dataset_name: str, data_root: str) -> Tuple[Dataset, Dataset, int]:
     """
@@ -52,8 +104,8 @@ def _get_dataset_loaders(dataset_name: str, data_root: str) -> Tuple[Dataset, Da
             transforms.ToDtype(torch.float32, scale=True),
             transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
         ])
-        train_set = torchvision.datasets.CIFAR100(root=data_root, train=True, download=True, transform=transform)
-        test_set = torchvision.datasets.CIFAR100(root=data_root, train=False, download=True, transform=transform)
+        raw_train_set = torchvision.datasets.CIFAR100(root=data_root, train=True, download=True, transform=transform)
+        raw_test_set = torchvision.datasets.CIFAR100(root=data_root, train=False, download=True, transform=transform)
         num_classes = 100
     elif dataset_name == "CIFAR10":
         transform = transforms.Compose([
@@ -61,18 +113,21 @@ def _get_dataset_loaders(dataset_name: str, data_root: str) -> Tuple[Dataset, Da
             transforms.ToDtype(torch.float32, scale=True),
             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
         ])
-        train_set = torchvision.datasets.CIFAR10(root=data_root, train=True, download=True, transform=transform)
-        test_set = torchvision.datasets.CIFAR10(root=data_root, train=False, download=True, transform=transform)
+        raw_train_set = torchvision.datasets.CIFAR10(root=data_root, train=True, download=True, transform=transform)
+        raw_test_set = torchvision.datasets.CIFAR10(root=data_root, train=False, download=True, transform=transform)
         num_classes = 10
     elif dataset_name == "CelebA":
         # Note: CelebA does not have a standard test set split in torchvision
         # We handle this by partitioning the 'train' set into train/test splits.
         # The property_key for CelebA is handled in the main function.
-        train_set = CelebACustom(root=data_root, split='train', download=True)
-        test_set = CelebACustom(root=data_root, split='test', download=True)
+        raw_train_set = CelebACustom(root=data_root, split='train', download=True)
+        raw_test_set = CelebACustom(root=data_root, split='test', download=True)
         num_classes = 2  # Assuming binary classification on a single attribute
     else:
         raise ValueError(f"Unsupported image dataset: {dataset_name}")
+
+    train_set = UnifiedDatasetWrapper(raw_train_set)
+    test_set = UnifiedDatasetWrapper(raw_test_set)
 
     return train_set, test_set, num_classes
 
