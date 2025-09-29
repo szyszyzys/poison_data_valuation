@@ -67,14 +67,20 @@ class BackdoorEvaluator(BaseEvaluator):
     def __init__(self, cfg, device, **kwargs):
         super().__init__(cfg, device, **kwargs)
 
-        # --- THIS IS THE UPDATED LOGIC ---
-        # Only try to create a generator if a backdoor attack is actually active.
         if 'backdoor' in cfg.adversary_seller_config.poisoning.type:
-            # 2. Call the static method directly from the seller class
+            # --- THIS IS THE FIX ---
+            # 1. Make a copy of the runtime kwargs to avoid modifying the original dict.
+            kwargs_for_generator = self.runtime_kwargs.copy()
+
+            # 2. Remove the conflicting 'model_type' key from the copied dictionary.
+            #    .pop() safely removes it. The 'None' prevents an error if the key isn't there.
+            kwargs_for_generator.pop('model_type', None)
+
+            # 3. Call the function with the cleaned kwargs.
             self.backdoor_generator = AdvancedBackdoorAdversarySeller._create_poison_generator(
                 adv_cfg=self.cfg.adversary_seller_config,
-                model_type=self.cfg.experiment.dataset_type,  # 'image' or 'text'
-                **self.runtime_kwargs
+                model_type=self.cfg.experiment.dataset_type,
+                **kwargs_for_generator  # Unpack the cleaned dictionary
             )
         else:
             self.backdoor_generator = None
