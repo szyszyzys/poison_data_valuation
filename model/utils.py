@@ -15,13 +15,12 @@ Usage (within a seller’s get_gradient method):
 
 import copy
 import logging
-from typing import List, Tuple, Any, Optional, Union
-
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from typing import List, Tuple, Any, Optional, Union
 
 # from model.text_model import TEXTCNN
 from model.models import LeNet, TextCNN, SimpleCNN
@@ -32,7 +31,9 @@ def train_local_model(model: nn.Module,
                       criterion: nn.Module,
                       optimizer: optim.Optimizer,
                       device: torch.device,
-                      epochs: int = 1) -> Tuple[nn.Module, Union[float, None]]:
+                      epochs: int = 1,
+                      # Add a parameter for gradient clipping
+                      max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
     model.train()
     batch_losses_all = []
 
@@ -44,9 +45,7 @@ def train_local_model(model: nn.Module,
     for epoch in range(epochs):
         for batch_idx, batch_data in enumerate(train_loader):
             try:
-                # Simplified data unpacking assumes a standard (data, labels, ...) format
                 data, labels = batch_data[0], batch_data[1]
-
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
 
                 optimizer.zero_grad()
@@ -60,6 +59,13 @@ def train_local_model(model: nn.Module,
                     continue
 
                 loss.backward()
+
+                # --- NEW: GRADIENT CLIPPING ---
+                # This is the crucial step. It rescales gradients that are too large.
+                # It must be called after .backward() and before .step().
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+                # -----------------------------
+
                 optimizer.step()
                 batch_losses_all.append(loss.item())
 
