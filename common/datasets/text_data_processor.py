@@ -28,26 +28,25 @@ logger = logging.getLogger(__name__)
 
 
 class StandardFormatDataset(Dataset):
-    """
-    A simple wrapper to ensure a dataset returns items in (data, label) format.
-    If the original format is (label, data), it swaps them.
-    """
-
-    def __init__(self, original_dataset, label_first=False):
-        self.original_dataset = original_dataset
+    """A wrapper for text data that provides a uniform interface."""
+    def __init__(self, data: List[Tuple[Any, Any]], label_first: bool = True):
+        self.data = data
         self.label_first = label_first
 
-    def __len__(self):
-        return len(self.original_dataset)
-
-    def __getitem__(self, index):
-        item = self.original_dataset[index]
-        if self.label_first:
-            # Original is (label, data), so swap to (data, label)
-            return item[1], item[0]
+        # --- THIS IS THE KEY ADDITION ---
+        # Pre-extract all labels into a numpy array for efficient access.
+        # This solves the error and speeds up partitioning.
+        if label_first:
+            self.targets = np.array([item[0] for item in self.data])
         else:
-            # Original is already (data, label)
-            return item
+            self.targets = np.array([item[1] for item in self.data])
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        # This method can remain simple; its job is just to return one sample.
+        return self.data[idx]
 
 
 def collate_batch(batch, padding_value=0):
@@ -149,7 +148,7 @@ def _calculate_target_counts(total_samples: int, proportions: Dict[int, float]) 
 def construct_text_buyer_set(dataset: List[Tuple[int, Any]], buyer_count: int, buyer_data_mode: str,
                              buyer_bias_distribution: Optional[Dict], seed: int) -> np.ndarray:
     """Constructs the buyer index set based on the specified mode."""
-    random.seed(seed);
+    random.seed(seed)
     np.random.seed(seed)
     total_samples = len(dataset)
     all_indices = np.arange(total_samples)
@@ -164,7 +163,7 @@ def construct_text_buyer_set(dataset: List[Tuple[int, Any]], buyer_count: int, b
         if buyer_bias_distribution is None:
             raise ValueError("`buyer_bias_distribution` is required for 'biased' mode.")
 
-        targets = np.array([item[0] for item in dataset])
+        targets = dataset.targets  # This is fast, robust, and much cleaner
         target_counts = _calculate_target_counts(buyer_count, buyer_bias_distribution)
 
         buyer_indices_list = []
