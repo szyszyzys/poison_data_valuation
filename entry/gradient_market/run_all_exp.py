@@ -44,15 +44,24 @@ def setup_data_and_model(cfg: AppConfig):
         model_init_cfg = {"num_classes": num_classes, "vocab_size": len(vocab), "padding_idx": pad_idx,
                           "dataset_name": dataset_name}
         model_factory = lambda: get_text_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
-        seller_extra_args = {"vocab": vocab, "pad_idx": pad_idx, "model_type": "text"}
+
+        # --- FIX 2a: Remove 'model_type' from extra args ---
+        # This dictionary is for runtime OBJECTS, not config values.
+        seller_extra_args = {"vocab": vocab, "pad_idx": pad_idx}
+
     else:  # Image
         buyer_loader, seller_loaders, test_loader, stats, num_classes = get_image_dataset(cfg)
 
         dataset_name_lower = cfg.experiment.dataset_name.lower()
-        in_channels = 3 if dataset_name_lower in ["celeba", "camelyon16"] else 1
+
+        # --- FIX 1: Add CIFAR datasets to the 3-channel list ---
+        in_channels = 3 if dataset_name_lower in ["cifar10", "cifar100", "celeba", "camelyon16"] else 1
+
         model_init_cfg = {"num_classes": num_classes, "in_channels": in_channels}
         model_factory = lambda: get_image_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
-        seller_extra_args = {"model_type": "image"}
+
+        # --- FIX 2b: Remove 'model_type' from extra args ---
+        seller_extra_args = {}
 
     cfg.experiment.num_classes = num_classes
     logging.info(f"Data loaded for '{dataset_name}'. Number of classes: {cfg.experiment.num_classes}")

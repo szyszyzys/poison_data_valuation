@@ -225,47 +225,6 @@ MODEL_REGISTRY = {
     }
 }
 
-
-# --- 2. Create a single, unified get_model factory ---
-def get_model(
-        model_name: str,
-        dataset_name: str,  # Pass name instead of full dataset object
-        device: Optional[Union[str, torch.device]] = None,
-        **kwargs: Any  # Pass all other params like num_classes, vocab_size here
-) -> nn.Module:
-    """
-    Gets an initialized model instance from the central registry.
-    """
-    model_name = model_name.lower()
-    if model_name not in MODEL_REGISTRY:
-        raise NotImplementedError(f"Model '{model_name}' not in registry.")
-
-    model_info = MODEL_REGISTRY[model_name]
-    model_class = model_info["class"]
-
-    if dataset_name.lower() not in model_info["supported_datasets"]:
-        raise ValueError(f"Model '{model_name}' does not support '{dataset_name}'.")
-
-    # Filter kwargs to only pass what the model constructor needs
-    # This avoids "unexpected keyword argument" errors
-    import inspect
-    sig = inspect.signature(model_class.__init__)
-    model_params = {p.name for p in sig.parameters.values()}
-    filtered_kwargs = {k: v for k, v in kwargs.items() if k in model_params}
-
-    # Instantiate the model
-    model = model_class(**filtered_kwargs)
-
-    if device:
-        model.to(torch.device(device) if isinstance(device, str) else device)
-
-    return model
-
-
-# --- 0c. Flexible Model Dispatcher Function ---
-
-# In the file where get_image_model is defined
-
 def get_image_model(
         model_name: str,
         num_classes: int,

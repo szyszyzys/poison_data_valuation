@@ -24,29 +24,28 @@ from torch.utils.data import DataLoader
 # ======================================================================================
 
 class LeNet(nn.Module):
-    """A classic LeNet architecture, adapted for different input sizes and channels."""
-
+    # --- FIX: Accept in_channels and num_classes as arguments ---
     def __init__(self, in_channels: int = 1, num_classes: int = 10):
-        super(LeNet, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, 6, kernel_size=5)
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(6, 16, kernel_size=5)
-        # Adaptive pooling makes the model robust to input size variations
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((5, 5))
+        super().__init__()
+        # Use the in_channels argument here
+        self.conv1 = nn.Conv2d(in_channels, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        # This part of the architecture depends on image size, and is likely correct
         self.fc1 = nn.Linear(16 * 5 * 5, 120)
         self.fc2 = nn.Linear(120, 84)
+        # Use the num_classes argument for the final layer
         self.fc3 = nn.Linear(84, num_classes)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
+        # ... your forward pass logic ...
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
-        x = self.adaptive_pool(x)
         x = torch.flatten(x, 1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return x
-
 
 class SimpleCNN(nn.Module):
     def __init__(self, in_channels: int = 3, num_classes: int = 10):
@@ -101,27 +100,6 @@ class TextCNN(nn.Module):
         cat = self.dropout(torch.cat(pooled, dim=1))
         # cat: (batch_size, num_filters * len(filter_sizes))
         return self.fc(cat)
-
-
-def get_model(name: str, **kwargs) -> nn.Module:
-    """
-    Model factory to return an instance of a specified model.
-
-    Args:
-        name (str): The name of the model ('lenet', 'simple_cnn', 'text_cnn').
-        **kwargs: Arguments to pass to the model's constructor.
-
-    Returns:
-        An initialized nn.Module.
-    """
-    if name.lower() == 'lenet':
-        return LeNet(**kwargs)
-    elif name.lower() == 'simple_cnn':
-        return SimpleCNN(**kwargs)
-    elif name.lower() == 'text_cnn':
-        return TextCNN(**kwargs)
-    else:
-        raise ValueError(f"Model '{name}' not recognized.")
 
 
 # ======================================================================================
