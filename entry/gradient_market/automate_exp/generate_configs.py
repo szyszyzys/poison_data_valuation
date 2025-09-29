@@ -6,7 +6,7 @@ from entry.gradient_market.automate_exp.scenarios import ALL_SCENARIOS
 
 def main():
     """Generates all configurations defined in scenarios.py."""
-    output_dir = "./configs_generated/privacy/new"
+    output_dir = "./configs_generated/poisoning"
     generator = ExperimentGenerator(output_dir)
 
     # The loop is now simpler and more powerful
