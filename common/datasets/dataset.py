@@ -112,7 +112,7 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     logger.info(f"Applying partitioning strategy...")
     # The buyer split strategy is now expected to be defined in the config.
     # Defaulting to OverallFractionSplit if not specified.
-    buyer_strategy_name = image_cfg.buyer_config.strategy
+    buyer_strategy_name = image_cfg.buyer_config['strategy']
     if buyer_strategy_name == "CelebAIdentitySplit":
         buyer_strategy = CelebAIdentitySplit()
     else:
