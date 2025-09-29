@@ -758,8 +758,8 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
     def _create_poison_generator(adv_cfg: AdversarySellerConfig, model_type: str, **kwargs: Any) -> PoisonGenerator:
         """Factory method to create the correct backdoor generator from configuration."""
         poison_cfg = adv_cfg.poisoning
-        if poison_cfg.type != 'backdoor':
-            raise ValueError("AdvancedBackdoorAdversarySeller only supports 'backdoor' poisoning type.")
+        if 'backdoor' not in poison_cfg.type.value:
+            raise ValueError(f"This factory only supports backdoor types, but got '{poison_cfg.type.value}'.")
 
         if model_type == 'image':
             params = poison_cfg.image_backdoor_params.simple_data_poison_params
