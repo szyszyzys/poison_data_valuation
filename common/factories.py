@@ -4,18 +4,18 @@ from typing import Callable, Optional, Dict, Any
 from torch import nn
 from torch.utils.data import Dataset
 
+# Import the specific generator classes needed for the generic poisoner
+from attack.attack_gradient_market.poison_attack.attack_utils import (
+    LabelFlipGenerator, PoisonGenerator
+)
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig, RuntimeDataConfig
+from common.gradient_market_configs import LabelFlipConfig
 # Import the specific seller classes
 from marketplace.seller.gradient_seller import (
     GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator,
     AdvancedPoisoningAdversarySeller
 )
-# Import the specific generator classes needed for the generic poisoner
-from attack.attack_gradient_market.poison_attack.attack_utils import (
-    LabelFlipGenerator, PoisonGenerator
-)
-from common.gradient_market_configs import LabelFlipConfig
 
 
 class SellerFactory:
@@ -28,9 +28,11 @@ class SellerFactory:
         PoisonType.LABEL_FLIP: AdvancedPoisoningAdversarySeller,
     }
 
-    def __init__(self, cfg: AppConfig, model_factory: Callable[[], nn.Module], **kwargs):
+    def __init__(self, cfg: AppConfig, model_factory: Callable[[], nn.Module], num_classes: int, **kwargs):
+        """Initializes the factory with the main application config and runtime args."""
         self.cfg = cfg
         self.model_factory = model_factory
+        self.num_classes = num_classes  # Store it
         self.runtime_kwargs = kwargs
 
     def create_seller(self,
@@ -40,7 +42,11 @@ class SellerFactory:
                       sybil_coordinator: SybilCoordinator,
                       collate_fn: Callable = None):
         """Creates a seller instance, assembling configs and dependencies on the fly."""
-        data_cfg = RuntimeDataConfig(dataset=dataset, collate_fn=collate_fn)
+        data_cfg = RuntimeDataConfig(
+            dataset=dataset,
+            num_classes=self.num_classes,  # Use it here
+            collate_fn=collate_fn
+        )
         training_cfg = self.cfg.training
         base_kwargs = {
             "seller_id": seller_id,
