@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Callable, Dict, Any
+from typing import List, Callable, Dict, Any, Tuple
 
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig
@@ -50,12 +50,10 @@ def use_text_backdoor_attack(config: AppConfig) -> AppConfig:
 
 def use_sybil_attack(strategy: str) -> Callable[[AppConfig], AppConfig]:
     """Returns a modifier function that enables a specific Sybil attack strategy."""
-
     def modifier(config: AppConfig) -> AppConfig:
         config.adversary_seller_config.sybil.is_sybil = True
         config.adversary_seller_config.sybil.gradient_default_mode = strategy
         return config
-
     return modifier
 
 
@@ -69,13 +67,12 @@ def generate_attack_impact_scenarios() -> List[Scenario]:
     POISON_RATES_TO_SWEEP = [0.1, 0.3, 0.5, 0.7, 1.0]
     IMAGE_MODELS_TO_TEST = ["cnn", "resnet18"]
     IMAGE_DATASETS = [("cifar10", use_cifar10_config), ("cifar100", use_cifar100_config)]
+    # --- FIX: Use the correct modifier for the TREC dataset ---
     TEXT_DATASETS = [("trec", use_trec_config)]
 
     for group_name, sweep_params in [
-        ("vary_adv_rate",
-         {"experiment.adv_rate": ADV_RATES_TO_SWEEP, "adversary_seller_config.poisoning.poison_rate": [0.5]}),
-        ("vary_poison_rate",
-         {"experiment.adv_rate": [0.3], "adversary_seller_config.poisoning.poison_rate": POISON_RATES_TO_SWEEP})
+        ("vary_adv_rate", {"experiment.adv_rate": ADV_RATES_TO_SWEEP, "adversary_seller_config.poisoning.poison_rate": [0.5]}),
+        ("vary_poison_rate", {"experiment.adv_rate": [0.3], "adversary_seller_config.poisoning.poison_rate": POISON_RATES_TO_SWEEP})
     ]:
         for dataset_name, modifier in IMAGE_DATASETS:
             for model_name in IMAGE_MODELS_TO_TEST:
@@ -180,3 +177,4 @@ if __name__ == '__main__':
     print(f"Generated {len(ALL_SCENARIOS)} scenarios:")
     for s in ALL_SCENARIOS:
         print(f"  - {s.name}")
+
