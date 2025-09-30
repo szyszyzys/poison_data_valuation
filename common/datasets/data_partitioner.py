@@ -97,63 +97,60 @@ class FederatedDataPartitioner:
         if client_partition_strategy == 'property-skew':
             self._partition_property_skew(seller_pool_indices, PropertySkewParams(**partition_params))
         elif client_partition_strategy == 'dirichlet':
-            # --- ADD THIS NEW CASE ---
             alpha = partition_params.get('dirichlet_alpha')
             if alpha is None:
                 raise ValueError("Dirichlet strategy requires 'dirichlet_alpha' in partition_params.")
-            self.seller_splits = self._partition_by_dirichlet(seller_pool_indices, alpha)
-
+            # REMOVE the assignment - method now populates self.client_indices directly
+            self._partition_by_dirichlet(seller_pool_indices, alpha)
         else:
             raise ValueError(f"Unknown client partitioning strategy: {client_partition_strategy}")
 
         return self
 
-    def _partition_by_dirichlet(self, seller_pool_indices: np.ndarray, alpha: float) -> Dict[int, List[int]]:
+    def _partition_by_dirichlet(self, seller_pool_indices: np.ndarray, alpha: float):
         """
         Partitions data among clients using a Dirichlet distribution to simulate
         Non-IID data heterogeneity.
         """
         logger.info(
-            f"Partitioning {len(seller_pool_indices)} samples for {self.num_clients} clients using Dirichlet (alpha={alpha})...")
+            f"Partitioning {len(seller_pool_indices)} samples for {self.num_clients} clients using Dirichlet (alpha={alpha})..."
+        )
 
         # Filter targets to only include those in the seller pool
         pool_targets = self.targets[seller_pool_indices]
         n_classes = len(np.unique(self.targets))
 
         # Generate the distribution of classes for each client
-        # label_distribution shape: (num_classes, num_clients)
         label_distribution = np.random.dirichlet([alpha] * self.num_clients, n_classes)
 
-        # Map class labels to the indices of samples having that label (within the seller pool)
+        # Map class labels to indices
         class_to_indices = {
             label: seller_pool_indices[np.where(pool_targets == label)[0]]
             for label in range(n_classes)
         }
 
-        # This will hold the final index assignments for each client
-        client_id_to_indices = {i: [] for i in range(self.num_clients)}
-
-        # Distribute the indices for each class across all clients
+        # Distribute indices for each class across all clients
         for class_id, indices in class_to_indices.items():
             np.random.shuffle(indices)
 
-            # Get the proportions for this specific class across all clients
+            # Get proportions for this class
             proportions = label_distribution[class_id]
 
-            # Calculate the number of samples for each client, ensuring it sums correctly
+            # Calculate samples per client
             samples_per_client = (proportions * len(indices)).astype(int)
-            samples_per_client[-1] = len(indices) - np.sum(samples_per_client[:-1])  # Adjust last client to match total
+            samples_per_client[-1] = len(indices) - np.sum(samples_per_client[:-1])
 
             start_idx = 0
             for client_id in range(self.num_clients):
                 num_samples = samples_per_client[client_id]
                 end_idx = start_idx + num_samples
-                client_id_to_indices[client_id].extend(indices[start_idx:end_idx])
+                # CRITICAL FIX: Populate self.client_indices, not a local dict
+                self.client_indices[client_id].extend(indices[start_idx:end_idx].tolist())
                 start_idx = end_idx
 
-        # Final conversion to a dictionary of lists
-        final_splits = {cid: list(indices) for cid, indices in client_id_to_indices.items()}
-        return final_splits
+        # Log results
+        for client_id in range(self.num_clients):
+            logger.info(f"Client {client_id}: {len(self.client_indices[client_id])} samples")
 
     def _partition_property_skew(self, seller_pool_indices: np.ndarray, config: PropertySkewParams):
         """Partitions sellers based on the prevalence of a specific data property."""
