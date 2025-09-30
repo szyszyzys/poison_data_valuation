@@ -57,12 +57,13 @@ def setup_data_and_model(cfg: AppConfig):
         image_model_config = get_image_model_config(cfg.experiment.image_model_config_name)
 
         # 2. Determine other parameters needed for model creation
-        in_channels = 3  # All CIFAR datasets have 3 channels
+        in_channels = 3 # CIFAR datasets have 3 channels
         sample_data, _ = next(iter(test_loader))
         image_size = tuple(sample_data.shape[2:])
 
-        # 3. Your model_factory now uses the loaded config object
+        # 3. The model_factory uses the config object loaded by name
         model_factory = lambda: ImageModelFactory.create_model(
+            # The model_name now comes from the loaded recipe, ensuring consistency
             model_name=image_model_config.model_name,
             num_classes=num_classes,
             in_channels=in_channels,
@@ -71,6 +72,7 @@ def setup_data_and_model(cfg: AppConfig):
         )
 
         seller_extra_args = {}
+
 
     cfg.experiment.num_classes = num_classes
     logging.info(f"Data loaded for '{dataset_name}'. Number of classes: {cfg.experiment.num_classes}")
