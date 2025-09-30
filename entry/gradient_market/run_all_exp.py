@@ -85,11 +85,48 @@ def setup_data_and_model(cfg: AppConfig):
 
         seller_extra_args = {"vocab": vocab, "pad_idx": pad_idx}
 
-    else:  # Image dataset
+    else:
         logging.info("Loading image dataset...")
+
         buyer_loader, seller_loaders, test_loader, stats, num_classes = get_image_dataset(cfg)
 
-        # Load image model configuration
+        if not seller_loaders or len(seller_loaders) == 0:
+            logging.error("get_image_dataset returned empty seller_loaders!")
+
+            logging.error(f"Config values:")
+
+            logging.error(f"  - n_sellers: {cfg.experiment.n_sellers}")
+
+            logging.error(f"  - dataset_name: {cfg.experiment.dataset_name}")
+
+            logging.error(f"  - data_distribution: {getattr(cfg.experiment, 'data_distribution', 'N/A')}")
+
+            raise ValueError(
+
+                "get_image_dataset returned empty seller_loaders. "
+
+                "Check your data partitioning configuration."
+
+            )
+
+        logging.info(f"Seller loaders created: {len(seller_loaders)}")
+
+        logging.info(f"Seller IDs: {list(seller_loaders.keys())}")
+
+        # Validate each loader has data
+
+        empty_loaders = []
+
+        for sid, loader in seller_loaders.items():
+
+            if loader is None or len(loader.dataset) == 0:
+                empty_loaders.append(sid)
+
+        if empty_loaders:
+            logging.error(f"Found {len(empty_loaders)} empty loaders: {empty_loaders}")
+
+            raise ValueError(f"Sellers have no data: {empty_loaders}")
+            # Load image model configuration
         config_name = cfg.experiment.image_model_config_name
         logging.info(f"Loading image model config: '{config_name}'")
 
@@ -134,6 +171,8 @@ def setup_data_and_model(cfg: AppConfig):
     logging.info("=" * 60)
 
     return buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes
+
+
 def initialize_sellers(
         cfg: AppConfig,
         marketplace,
