@@ -27,6 +27,7 @@ class ExperimentConfig:
     n_sellers: int
     adv_rate: float
     device: str
+    compute_gradient_similarity: bool = False  # Add this line
     save_path: str = "./results"
     num_classes: int = 0  # Default to 0, will be set dynamically at runtime
     use_subset: bool = False
