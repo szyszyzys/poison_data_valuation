@@ -57,10 +57,11 @@ def setup_data_and_model(cfg: AppConfig):
         image_model_config = get_image_model_config(cfg.experiment.image_model_config_name)
         logging.info(f"DEBUG: Intended model config name from cfg: '{cfg.experiment.image_model_config_name}'")
         image_model_config = get_image_model_config(cfg.experiment.image_model_config_name)
-        logging.info(f"DEBUG: Loaded model config for '{image_model_config.model_name}' with recipe '{image_model_config.config_name}'")
+        logging.info(
+            f"DEBUG: Loaded model config for '{image_model_config.model_name}' with recipe '{image_model_config.config_name}'")
 
         # 2. Determine other parameters needed for model creation
-        in_channels = 3 # CIFAR datasets have 3 channels
+        in_channels = 3  # CIFAR datasets have 3 channels
         sample_data, _ = next(iter(test_loader))
         image_size = tuple(sample_data.shape[2:])
 
@@ -75,7 +76,6 @@ def setup_data_and_model(cfg: AppConfig):
         )
 
         seller_extra_args = {}
-
 
     cfg.experiment.num_classes = num_classes
     logging.info(f"Data loaded for '{dataset_name}'. Number of classes: {cfg.experiment.num_classes}")
@@ -208,87 +208,189 @@ def run_training_loop(
 
 
 def run_attack(cfg: AppConfig):
-    """Orchestrates the entire experiment from a single config object."""
+    """
+    Orchestrates the entire experiment from a single config object.
 
-    # --- 1. NEW: Add Caching Logic at the Beginning ---
+    Note: Caching is handled by the experiment orchestrator, not here.
+    This function always runs the full experiment when called.
+
+    Args:
+        cfg: Application configuration containing all experiment parameters
+    """
     save_path = Path(cfg.experiment.save_path)
-    # This success marker should be the very last file created by a successful run.
-    success_marker = save_path / "final_metrics.json"
+    save_path.mkdir(parents=True, exist_ok=True)
 
-    if success_marker.exists():
-        logging.info(f"✅ Results for this configuration already exist. Skipping re-run.")
-        logging.info(f"   - Cached results can be found at: {save_path}")
-        return  # <-- Exit the function early, skipping all computation
+    logging.info("=" * 80)
+    logging.info(f"🚀 Starting Experiment")
+    logging.info(f"   Dataset: {cfg.experiment.dataset_name}")
+    logging.info(f"   Model: {cfg.experiment.model_structure}")
+    logging.info(f"   Device: {cfg.experiment.device}")
+    logging.info(f"   Save Path: {save_path}")
+    logging.info("=" * 80)
 
-    # --- If no cache is found, the original function proceeds as normal ---
+    try:
+        # 1. Save configuration snapshot for reproducibility
+        _save_config_for_reproducibility(cfg, save_path)
 
-    logging.info(f"--- Starting Experiment: {cfg.experiment.dataset_name} | {cfg.experiment.model_structure} ---")
-    logging.info(f"   - Results will be saved to: {save_path}")
+        # 2. Data and Model Setup
+        buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes = \
+            setup_data_and_model(cfg)
 
-    # 2. Data and Model Setup
-    buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes = \
-        setup_data_and_model(cfg)
+        global_model = model_factory().to(cfg.experiment.device)
+        logging.info(f"✅ Global model created and moved to {cfg.experiment.device}")
+        logging.info(f"--- Global Model Architecture ---\n{global_model}")
 
-    global_model = model_factory().to(cfg.experiment.device)
-    logging.info(f"Global model created and moved to {cfg.experiment.device}")
-    logging.info(f"--- Global Model Architecture ---\n{global_model}")
+        # 3. FL Component Initialization
+        loss_fn = nn.CrossEntropyLoss()
+        aggregator = Aggregator(
+            global_model=global_model,
+            device=torch.device(cfg.experiment.device),
+            loss_fn=loss_fn,
+            buyer_data_loader=buyer_loader,
+            agg_config=cfg.aggregation
+        )
+        sybil_coordinator = SybilCoordinator(cfg.adversary_seller_config.sybil, aggregator)
+        evaluators = create_evaluators(cfg, cfg.experiment.device, **seller_extra_args)
 
-    # 3. FL Component Initialization (renumbered for clarity)
-    loss_fn = nn.CrossEntropyLoss()
-    aggregator = Aggregator(
-        global_model=global_model,
-        device=torch.device(cfg.experiment.device),
-        loss_fn=loss_fn,
-        buyer_data_loader=buyer_loader,
-        agg_config=cfg.aggregation
-    )
-    sybil_coordinator = SybilCoordinator(cfg.adversary_seller_config.sybil, aggregator)
-    evaluators = create_evaluators(cfg, cfg.experiment.device, **seller_extra_args)
+        # 4. Marketplace Initialization
+        sample_data = _get_sample_data(test_loader, seller_loaders)
+        input_shape = tuple(sample_data.shape[1:])
 
-    # 4. Marketplace Initialization
-    # ... (the rest of your function remains exactly the same) ...
+        marketplace = DataMarketplaceFederated(
+            cfg=cfg,
+            aggregator=aggregator,
+            sellers={},
+            input_shape=input_shape
+        )
+
+        # 5. Seller Initialization
+        initialize_sellers(
+            cfg, marketplace, seller_loaders, model_factory,
+            seller_extra_args, sybil_coordinator, collate_fn, num_classes
+        )
+
+        # 6. Federated Training Loop
+        logging.info("🏋️ Starting federated training...")
+        final_model, results_buffer = run_training_loop(
+            cfg, marketplace, test_loader, evaluators, sybil_coordinator
+        )
+
+        # 7. Final Evaluation and Artifact Saving
+        logging.info("📊 Running final evaluation and saving results...")
+        run_final_evaluation_and_logging(
+            cfg, final_model, results_buffer, test_loader, evaluators
+        )
+
+        # 8. Save seller-specific results
+        for sid, seller in marketplace.sellers.items():
+            seller.save_round_history_csv()
+
+        # 9. Mark experiment as successfully completed
+        _mark_experiment_success(save_path)
+
+        logging.info("=" * 80)
+        logging.info("✅ Experiment Finished Successfully")
+        logging.info(f"   Results saved to: {save_path}")
+        logging.info("=" * 80)
+
+        return results_buffer
+
+    except Exception as e:
+        logging.error("=" * 80)
+        logging.error(f"❌ Experiment Failed: {e}")
+        logging.error("=" * 80)
+        # Mark as failed (optional)
+        _mark_experiment_failed(save_path, str(e))
+        raise  # Re-raise to propagate error to orchestrator
+
+
+# ==============================================================================
+# Helper Functions
+# ==============================================================================
+
+def _save_config_for_reproducibility(cfg: AppConfig, save_path: Path):
+    """
+    Save the configuration to disk for reproducibility and debugging.
+    """
+    import json
+    try:
+        config_path = save_path / "config_snapshot.json"
+        with open(config_path, 'w') as f:
+            # Assuming your AppConfig has a to_dict() method
+            # If not, you might need to use dataclasses.asdict() or similar
+            if hasattr(cfg, 'to_dict'):
+                json.dump(cfg.to_dict(), f, indent=2)
+            elif hasattr(cfg, '__dict__'):
+                # Fallback: try to serialize the object's dictionary
+                json.dump(cfg.__dict__, f, indent=2, default=str)
+            else:
+                logging.warning("Could not serialize config - no to_dict() method available")
+
+        logging.info(f"📝 Configuration snapshot saved to: {config_path}")
+    except Exception as e:
+        logging.warning(f"⚠️  Could not save config snapshot: {e}")
+
+
+def _get_sample_data(test_loader, seller_loaders):
+    """
+    Get a sample batch of data for shape inference.
+    Tries test_loader first, then falls back to seller loaders.
+    """
     sample_data = None
+
+    # Try test loader first
     if test_loader:
         try:
             sample_data, _ = next(iter(test_loader))
+            logging.info("✅ Sample data obtained from test loader")
         except StopIteration:
-            logging.warning("Test loader is available but empty.")
+            logging.warning("⚠️  Test loader is available but empty")
+
+    # Fall back to seller loaders
     if sample_data is None:
-        logging.warning("No test data found. Using a sample from a seller loader for initialization.")
-        for loader in seller_loaders.values():
+        logging.info("🔍 No test data found. Trying seller loaders...")
+        for sid, loader in seller_loaders.items():
             if loader:
                 try:
                     sample_data, _ = next(iter(loader))
+                    logging.info(f"✅ Sample data obtained from seller {sid} loader")
                     break
                 except StopIteration:
                     continue
+
     if sample_data is None:
-        raise RuntimeError("Could not retrieve a sample data batch from any available loader.")
-    input_shape = tuple(sample_data.shape[1:])
-    marketplace = DataMarketplaceFederated(
-        cfg=cfg,
-        aggregator=aggregator,
-        sellers={},
-        input_shape=input_shape
-    )
+        raise RuntimeError(
+            "❌ Could not retrieve a sample data batch from any available loader. "
+            "Please check your data loaders."
+        )
 
-    # 5. Seller Initialization
-    initialize_sellers(cfg, marketplace, seller_loaders, model_factory, seller_extra_args,
-                       sybil_coordinator, collate_fn, num_classes)
+    return sample_data
 
-    # 6. Federated Training Loop
-    final_model, results_buffer = run_training_loop(
-        cfg, marketplace, test_loader, evaluators, sybil_coordinator
-    )
 
-    # 7. Final Evaluation and Artifact Saving
-    run_final_evaluation_and_logging(
-        cfg, final_model, results_buffer, test_loader, evaluators
-    )
-    for sid, seller in marketplace.sellers.items():
-        seller.save_round_history_csv()
+def _mark_experiment_success(save_path: Path):
+    """
+    Create a success marker file to indicate the experiment completed successfully.
+    This is used by the orchestrator for caching.
+    """
+    success_marker = save_path / ".success"
+    try:
+        success_marker.touch()
+        logging.info(f"✅ Success marker created: {success_marker}")
+    except Exception as e:
+        logging.warning(f"⚠️  Could not create success marker: {e}")
 
-    logging.info("--- Experiment Finished ---")
+
+def _mark_experiment_failed(save_path: Path, error_message: str):
+    """
+    Create a failure marker with error information for debugging.
+    """
+    try:
+        failed_marker = save_path / ".failed"
+        with open(failed_marker, 'w') as f:
+            f.write(f"Experiment failed with error:\n{error_message}\n")
+        logging.info(f"❌ Failure marker created: {failed_marker}")
+    except Exception as e:
+        logging.warning(f"⚠️  Could not create failure marker: {e}")
 
 
 def main():
