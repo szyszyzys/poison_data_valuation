@@ -177,6 +177,110 @@ def setup_data_and_model(cfg: AppConfig):
     return buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes
 
 
+def generate_marketplace_report(save_path: Path, marketplace):
+    """Generate comprehensive marketplace analysis report."""
+
+    report = {
+        'experiment_summary': {
+            'total_sellers': len(marketplace.sellers),
+            'total_rounds': marketplace.current_round,
+            'adversary_rate': sum(1 for s in marketplace.sellers.values() if 'adv' in s.seller_id) / len(
+                marketplace.sellers)
+        },
+        'seller_summaries': {}
+    }
+
+    # Per-seller summary
+    for sid, seller in marketplace.sellers.items():
+        selection_history = getattr(seller, 'selection_history', [])
+        reward_history = getattr(seller, 'reward_history', [])
+
+        report['seller_summaries'][sid] = {
+            'type': 'adversary' if 'adv' in sid else 'benign',
+            'selection_rate': sum(1 for h in selection_history if h['selected']) / len(
+                selection_history) if selection_history else 0,
+            'outlier_rate': sum(1 for h in selection_history if h.get('outlier', False)) / len(
+                selection_history) if selection_history else 0,
+            'total_reward': sum(r['reward'] for r in reward_history) if reward_history else 0
+        }
+
+    # Save report
+    with open(save_path / "marketplace_report.json", 'w') as f:
+        json.dump(report, f, indent=2)
+
+    logging.info(f"Marketplace report saved to {save_path / 'marketplace_report.json'}")
+
+
+def save_marketplace_analysis_data(save_path: Path, round_records: List[Dict]):
+    """
+    Save marketplace data in analysis-ready format.
+    Creates multiple CSVs for different aspects of analysis.
+    """
+
+    # 1. Round-level aggregate metrics
+    round_df = pd.DataFrame([{
+        'round': r['round'],
+        'timestamp': r['timestamp'],
+        'duration_sec': r['duration_sec'],
+        'selection_rate': r.get('selection_rate', 0),
+        'outlier_rate': r.get('outlier_rate', 0),
+        'avg_gradient_norm': r.get('avg_gradient_norm', 0),
+        'adversary_detection_rate': r.get('adversary_detection_rate', 0),
+        'false_positive_rate': r.get('false_positive_rate', 0)
+    } for r in round_records])
+    round_df.to_csv(save_path / "round_aggregates.csv", index=False)
+
+    # 2. Per-seller per-round metrics
+    seller_round_records = []
+    for r in round_records:
+        round_num = r['round']
+        for key, value in r.items():
+            if key.startswith('seller_') and '_' in key[7:]:
+                parts = key.split('_', 2)
+                if len(parts) == 3:
+                    _, sid, metric = parts
+                    seller_round_records.append({
+                        'round': round_num,
+                        'seller_id': sid,
+                        'metric': metric,
+                        'value': value
+                    })
+
+    if seller_round_records:
+        seller_df = pd.DataFrame(seller_round_records)
+        # Pivot for easier analysis
+        seller_pivot = seller_df.pivot_table(
+            index=['round', 'seller_id'],
+            columns='metric',
+            values='value',
+            aggfunc='first'
+        ).reset_index()
+        seller_pivot.to_csv(save_path / "seller_round_metrics.csv", index=False)
+
+    # 3. Selection history
+    selection_records = []
+    for r in round_records:
+        for sid in r.get('selected_seller_ids', []):
+            selection_records.append({
+                'round': r['round'],
+                'seller_id': sid,
+                'selected': True,
+                'outlier': False
+            })
+        for sid in r.get('outlier_seller_ids', []):
+            selection_records.append({
+                'round': r['round'],
+                'seller_id': sid,
+                'selected': False,
+                'outlier': True
+            })
+
+    if selection_records:
+        pd.DataFrame(selection_records).to_csv(
+            save_path / "selection_history.csv", index=False
+        )
+
+
 def initialize_sellers(
         cfg: AppConfig,
         marketplace,
@@ -481,12 +585,14 @@ def run_training_loop(cfg, marketplace, test_loader, evaluators, sybil_coordinat
         pd.DataFrame(columns=['round', 'duration_sec', 'num_selected', 'num_outliers']).to_csv(
             log_path, index=False
         )
-
+    round_records = []
     for round_num in range(1, cfg.experiment.rounds + 1):
         round_record, agg_grad = marketplace.train_federated_round(
             round_number=round_num,
             ground_truth_dict={}
         )
+        round_records.append(round_record)
+        save_round_incremental(round_record, save_path)
 
         # Incremental save - append to CSV
         df_round = pd.DataFrame([round_record])
@@ -504,10 +610,25 @@ def run_training_loop(cfg, marketplace, test_loader, evaluators, sybil_coordinat
             save_json_atomic(eval_metrics, eval_path)
 
         # Save seller histories incrementally
+        save_marketplace_analysis_data(save_path, round_records)
+        generate_marketplace_report(save_path, marketplace)
+
+        # Seller summaries
         for sid, seller in marketplace.sellers.items():
-            seller.save_latest_round()  # New method - saves just the latest round
+            seller.save_marketplace_summary()
 
     return marketplace.aggregator.strategy.global_model, []  # Empty buffer since we saved incrementally
+
+
+def save_round_incremental(round_record, save_path):
+    log_path = Path(save_path) / "training_log.csv"
+    df = pd.DataFrame([round_record])
+
+    # Append to existing file or create new
+    if log_path.exists():
+        df.to_csv(log_path, mode='a', header=False, index=False)
+    else:
+        df.to_csv(log_path, mode='w', header=True, index=False)
 
 
 def run_attack(cfg: AppConfig):

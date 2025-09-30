@@ -1,5 +1,6 @@
 import collections
 import csv
+import json
 import logging
 import os
 import random
@@ -178,6 +179,9 @@ class GradientSeller(BaseSeller):
         self.save_path = Path(save_path)
         self.seller_specific_path = self.save_path / self.seller_id
         self.seller_specific_path.mkdir(parents=True, exist_ok=True)  # Ensure seller's work dir exists
+        self.selection_history = []  # Track selection per round
+        self.performance_history = []  # Track contribution to global model
+        self.reward_history = []  # Track hypothetical rewards
 
     def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
@@ -474,6 +478,73 @@ class GradientSeller(BaseSeller):
             logging.error(f"[{self.seller_id}] Error saving round history to {file_name}: {e}")
         except Exception as e:
             logging.error(f"[{self.seller_id}] An unexpected error occurred while saving round history: {e}")
+
+    def round_end_process(
+            self,
+            round_number: int,
+            was_selected: bool,
+            was_outlier: bool = False,
+            marketplace_metrics: Dict = None
+    ):
+        """Enhanced round end processing with marketplace tracking."""
+
+        # Record selection
+        self.selection_history.append({
+            'round': round_number,
+            'selected': was_selected,
+            'outlier': was_outlier,
+            'timestamp': time.time()
+        })
+
+        # Calculate hypothetical reward based on contribution
+        if marketplace_metrics:
+            reward = self._calculate_reward(marketplace_metrics, was_selected)
+            self.reward_history.append({
+                'round': round_number,
+                'reward': reward,
+                'cumulative_reward': sum(r['reward'] for r in self.reward_history) + reward
+            })
+
+        # Save incrementally
+        self.save_latest_round()
+
+    def _calculate_reward(self, metrics: Dict, was_selected: bool) -> float:
+        """
+        Calculate seller reward based on contribution.
+        This is a placeholder - implement your actual reward mechanism.
+        """
+        if not was_selected:
+            return 0.0
+
+        # Example: Reward based on gradient quality and model improvement
+        base_reward = 1.0
+
+        # Bonus for good gradient quality
+        norm = metrics.get('gradient_norm', 0)
+        if norm > 0:
+            # Normalize by average (if available)
+            quality_bonus = 0.5  # Placeholder
+        else:
+            quality_bonus = 0
+
+        return base_reward + quality_bonus
+
+    def save_marketplace_summary(self):
+        """Save seller's marketplace participation summary."""
+        summary = {
+            'seller_id': self.seller_id,
+            'total_rounds': len(self.selection_history),
+            'times_selected': sum(1 for h in self.selection_history if h['selected']),
+            'times_outlier': sum(1 for h in self.selection_history if h['outlier']),
+            'selection_rate': sum(1 for h in self.selection_history if h['selected']) / len(
+                self.selection_history) if self.selection_history else 0,
+            'total_reward': sum(r['reward'] for r in self.reward_history) if self.reward_history else 0,
+            'avg_reward_per_round': np.mean([r['reward'] for r in self.reward_history]) if self.reward_history else 0
+        }
+
+        summary_path = self.seller_specific_path / "marketplace_summary.json"
+        with open(summary_path, 'w') as f:
+            json.dump(summary, f, indent=2)
 
 
 @dataclass

@@ -2,7 +2,6 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
@@ -64,177 +63,226 @@ class DataMarketplaceFederated(DataMarketplace):
             round_number: int,
             ground_truth_dict: Dict[str, Dict[str, torch.Tensor]]
     ) -> Tuple[Dict, Any]:
-        """Orchestrates a single, config-driven round of federated learning."""
+        """Orchestrates a single federated round with comprehensive marketplace logging."""
         round_start_time = time.time()
-        logging.info("=" * 80)
-        logging.info(f"🚀 Round {round_number} Started")
-        logging.info("=" * 80)
+        logging.info(f"--- Round {round_number} Started ---")
 
-        # 1. Collect gradients from all active sellers
-        logging.info("📦 Step 1: Collecting gradients from sellers...")
-        gradients_dict, seller_ids, _ = self._get_current_market_gradients()
+        # Collect gradients from all sellers
+        gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
 
-        # === CRITICAL DEBUG POINT 1: Inspect what sellers returned ===
-        logging.info(f"📊 Gradient Collection Summary:")
-        logging.info(f"   - Total sellers: {len(seller_ids)}")
-        logging.info(f"   - Seller IDs: {seller_ids}")
-        logging.info(f"   - Gradients dict keys: {list(gradients_dict.keys())}")
-        logging.info(f"   - Gradients dict size: {len(gradients_dict)}")
-
-        # Debug each seller's gradient
-        for sid in seller_ids:
-            grad = gradients_dict.get(sid)
-            logging.info(f"\n🔍 Seller {sid} gradient inspection:")
-            logging.info(f"   - Present in dict: {sid in gradients_dict}")
-            logging.info(f"   - Value is None: {grad is None}")
-            logging.info(f"   - Value type: {type(grad)}")
-
-            if grad is not None:
-                if isinstance(grad, (list, tuple)):
-                    logging.info(f"   - Length: {len(grad)}")
-                    if len(grad) > 0:
-                        logging.info(f"   - First element type: {type(grad[0])}")
-                        if hasattr(grad[0], 'shape'):
-                            logging.info(f"   - First element shape: {grad[0].shape}")
-                        if hasattr(grad[0], 'dtype'):
-                            logging.info(f"   - First element dtype: {grad[0].dtype}")
-                        # Check for NaN/Inf
-                        if isinstance(grad[0], torch.Tensor):
-                            logging.info(f"   - First element has NaN: {torch.isnan(grad[0]).any()}")
-                            logging.info(f"   - First element has Inf: {torch.isinf(grad[0]).any()}")
-                    else:
-                        logging.warning(f"   ⚠️  Empty gradient list!")
-                elif isinstance(grad, dict):
-                    logging.info(f"   - Dict keys: {list(grad.keys())}")
-                else:
-                    logging.warning(f"   ⚠️  Unexpected gradient type: {type(grad)}")
-            else:
-                logging.error(f"   ❌ Gradient is None!")
-
-        # Check if any gradients are actually present
-        valid_gradients = {k: v for k, v in gradients_dict.items() if v is not None and len(v) > 0}
-        logging.info(f"\n✅ Valid gradients: {len(valid_gradients)}/{len(gradients_dict)}")
-
-        if len(valid_gradients) == 0:
-            logging.error("❌ NO VALID GRADIENTS COLLECTED! Investigating sellers...")
-            # Debug sellers directly
-            for sid, seller in self.sellers.items():
-                logging.error(f"   Seller {sid}:")
-                logging.error(f"     - Active: {getattr(seller, 'is_active', 'N/A')}")
-                logging.error(f"     - Has model: {hasattr(seller, 'model')}")
-                if hasattr(seller, 'model') and seller.model is not None:
-                    logging.error(f"     - Model params count: {sum(1 for _ in seller.model.parameters())}")
-
-        # 2. Perform privacy attack (optional)
+        # Perform privacy attack (optional)
         attack_log = None
         if self.attacker and self.attacker.should_run(round_number):
-            logging.info("🎭 Step 2: Executing privacy attack...")
             attack_log = self.attacker.execute(round_number, gradients_dict, seller_ids, ground_truth_dict)
-            if attack_log:
-                logging.info(f"   Attack completed: victim={attack_log.get('victim_id')}")
 
-        # === CRITICAL DEBUG POINT 2: Before aggregation ===
-        logging.info("\n🔄 Step 3: Starting aggregation...")
-        logging.info(f"   Input to aggregator:")
-        logging.info(f"     - Round: {round_number}")
-        logging.info(f"     - Gradients dict keys: {list(gradients_dict.keys())}")
-        logging.info(f"     - Number of items: {len(gradients_dict)}")
+        # Aggregation with detailed metrics
+        agg_grad, selected_ids, outlier_ids, aggregation_stats = self.aggregator.aggregate(
+            global_epoch=round_number,
+            seller_updates=gradients_dict
+        )
 
-        # Detailed inspection before aggregation
-        for sid, grad in list(gradients_dict.items())[:3]:  # Show first 3 for brevity
-            logging.info(f"     - {sid}: type={type(grad)}, "
-                         f"len={len(grad) if hasattr(grad, '__len__') else 'N/A'}, "
-                         f"is_none={grad is None}")
+        # === NEW: Calculate marketplace metrics ===
+        marketplace_metrics = self._compute_marketplace_metrics(
+            round_number=round_number,
+            gradients_dict=gradients_dict,
+            seller_ids=seller_ids,
+            selected_ids=selected_ids,
+            outlier_ids=outlier_ids,
+            aggregation_stats=aggregation_stats,
+            seller_stats_list=seller_stats_list
+        )
 
-        try:
-            agg_grad, selected_ids, outlier_ids, aggregation_stats = self.aggregator.aggregate(
-                global_epoch=round_number,
-                seller_updates=gradients_dict
-            )
-
-            # === CRITICAL DEBUG POINT 3: After aggregation ===
-            logging.info(f"\n✅ Aggregation completed:")
-            logging.info(f"   - Selected sellers: {selected_ids}")
-            logging.info(f"   - Outlier sellers: {outlier_ids}")
-            logging.info(f"   - Aggregated gradient is None: {agg_grad is None}")
-            if agg_grad is not None:
-                logging.info(f"   - Aggregated gradient length: {len(agg_grad)}")
-                if len(agg_grad) > 0:
-                    logging.info(f"   - First tensor shape: {agg_grad[0].shape}")
-                    logging.info(f"   - First tensor mean: {agg_grad[0].mean().item():.6f}")
-                    logging.info(f"   - First tensor std: {agg_grad[0].std().item():.6f}")
-            logging.info(f"   - Aggregation stats: {aggregation_stats}")
-
-        except Exception as e:
-            logging.error(f"❌ AGGREGATION FAILED: {e}", exc_info=True)
-            raise
-
-        # 4. Update global model
+        # Update global model
         if agg_grad:
-            logging.info("📥 Step 4: Applying gradient to global model...")
-            try:
-                self.aggregator.apply_gradient(agg_grad)
-                logging.info("   ✅ Gradient applied successfully")
-            except Exception as e:
-                logging.error(f"   ❌ Failed to apply gradient: {e}", exc_info=True)
-                raise
-        else:
-            logging.warning("⚠️  Step 4: No gradient to apply (agg_grad is None/empty)")
+            self.aggregator.apply_gradient(agg_grad)
 
-        # 5. Save individual gradients (This logic is already correct)
+        # Save individual gradients if needed
         if self.cfg.debug.save_individual_gradients:
             if round_number % self.cfg.debug.gradient_save_frequency == 0:
-                logging.info(f"💾 Step 5: Saving gradients to disk...")
-                grad_save_dir = Path(self.cfg.experiment.save_path) / "individual_gradients" / f"round_{round_number}"
-                grad_save_dir.mkdir(parents=True, exist_ok=True)
+                self._save_round_gradients(round_number, gradients_dict, agg_grad)
 
-                saved_count = 0
-                for sid, grad in gradients_dict.items():
-                    if grad is not None:
-                        try:
-                            torch.save(grad, grad_save_dir / f"{sid}_grad.pt")
-                            saved_count += 1
-                        except Exception as e:
-                            logging.error(f"   Failed to save gradient for {sid}: {e}")
-
-                logging.info(f"   Saved {saved_count}/{len(gradients_dict)} individual gradients to {grad_save_dir}")
-
-                if agg_grad is not None:
-                    try:
-                        torch.save(agg_grad, grad_save_dir / f"aggregated_grad.pt")
-                        logging.info(f"   Saved aggregated gradient")
-                    except Exception as e:
-                        logging.error(f"   Failed to save aggregated gradient: {e}")
-
-        # 6. Create a simple record of the round's events.
+        # Create comprehensive round record
         duration = time.time() - round_start_time
         round_record = {
             "round": round_number,
+            "timestamp": time.time(),
             "duration_sec": duration,
+
+            # Basic stats
+            "num_total_sellers": len(seller_ids),
             "num_selected": len(selected_ids),
             "num_outliers": len(outlier_ids),
+
+            # Selection details
+            "selected_seller_ids": selected_ids,
+            "outlier_seller_ids": outlier_ids,
+
+            # Attack info
             "attack_performed": bool(attack_log),
-            "attack_victim": attack_log.get('victim_id') if attack_log else None
+            "attack_victim": attack_log.get('victim_id') if attack_log else None,
+            "attack_success": attack_log.get('success') if attack_log else None,
+
+            # Marketplace metrics
+            **marketplace_metrics
         }
 
-        # 3b. Merge the detailed aggregator stats into the round record
+        # Merge aggregator stats
         if aggregation_stats:
             round_record.update(aggregation_stats)
 
-        # 7. Notify sellers of round end
-        logging.info("📢 Step 6: Notifying sellers of round end...")
+        # Notify sellers of round end
         for sid, seller in self.sellers.items():
-            try:
-                seller.round_end_process(round_number, (sid in selected_ids))
-            except Exception as e:
-                logging.error(f"   Failed to notify seller {sid}: {e}")
+            seller.round_end_process(
+                round_number,
+                was_selected=(sid in selected_ids),
+                was_outlier=(sid in outlier_ids),
+                marketplace_metrics=marketplace_metrics.get(f'seller_{sid}', {})
+            )
 
-        logging.info("=" * 80)
-        logging.info(f"✅ Round {round_number} Completed (Duration: {round_record['duration_sec']:.2f}s)")
-        logging.info(f"   Selected: {len(selected_ids)}, Outliers: {len(outlier_ids)}")
-        logging.info("=" * 80)
+        logging.info(f"--- Round {round_number} Ended (Duration: {duration:.2f}s) ---")
 
         return round_record, agg_grad
+
+    def _save_round_gradients(self, round_number: int, gradients_dict: Dict, agg_grad: List[torch.Tensor]):
+        """
+        Save individual seller gradients and aggregated gradient for debugging/analysis.
+        This is the implementation of the method called in train_federated_round.
+        """
+        grad_save_dir = Path(self.cfg.experiment.save_path) / "individual_gradients" / f"round_{round_number}"
+        grad_save_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save individual seller gradients
+        saved_count = 0
+        for sid, grad in gradients_dict.items():
+            if grad is not None and len(grad) > 0:
+                try:
+                    torch.save(grad, grad_save_dir / f"{sid}_grad.pt")
+                    saved_count += 1
+                except Exception as e:
+                    logging.error(f"Failed to save gradient for {sid}: {e}")
+
+        logging.info(f"Saved {saved_count}/{len(gradients_dict)} individual gradients to {grad_save_dir}")
+
+        # Save aggregated gradient
+        if agg_grad is not None and len(agg_grad) > 0:
+            try:
+                torch.save(agg_grad, grad_save_dir / "aggregated_grad.pt")
+                logging.info(f"Saved aggregated gradient")
+            except Exception as e:
+                logging.error(f"Failed to save aggregated gradient: {e}")
+
+    def _compute_marketplace_metrics(
+            self,
+            round_number: int,
+            gradients_dict: Dict,
+            seller_ids: List[str],
+            selected_ids: List[str],
+            outlier_ids: List[str],
+            aggregation_stats: Dict,
+            seller_stats_list: List[Dict]
+    ) -> Dict:
+        """
+        Compute comprehensive marketplace metrics for analysis.
+
+        Returns dict with both aggregate metrics and per-seller metrics.
+        """
+        metrics = {}
+
+        # === 1. Selection Analysis ===
+        metrics['selection_rate'] = len(selected_ids) / len(seller_ids) if seller_ids else 0
+        metrics['outlier_rate'] = len(outlier_ids) / len(seller_ids) if seller_ids else 0
+
+        # Per-seller selection info
+        for sid in seller_ids:
+            prefix = f'seller_{sid}_'
+            metrics[f'{prefix}selected'] = sid in selected_ids
+            metrics[f'{prefix}outlier'] = sid in outlier_ids
+
+        # === 2. Gradient Quality Metrics ===
+        if gradients_dict:
+            gradient_norms = {}
+            gradient_similarities = {}
+
+            for sid, grad in gradients_dict.items():
+                if grad is None:
+                    continue
+
+                # Compute L2 norm
+                norm = sum(torch.norm(g).item() ** 2 for g in grad) ** 0.5
+                gradient_norms[sid] = norm
+                metrics[f'seller_{sid}_gradient_norm'] = norm
+
+            # Aggregate gradient statistics
+            norms_list = list(gradient_norms.values())
+            if norms_list:
+                metrics['avg_gradient_norm'] = np.mean(norms_list)
+                metrics['std_gradient_norm'] = np.std(norms_list)
+                metrics['min_gradient_norm'] = np.min(norms_list)
+                metrics['max_gradient_norm'] = np.max(norms_list)
+
+            # Compute pairwise cosine similarities (expensive, do sparingly)
+            if self.cfg.experiment.compute_gradient_similarity and round_number % 5 == 0:
+                similarities = self._compute_gradient_similarities(gradients_dict)
+                metrics['avg_gradient_similarity'] = np.mean(similarities) if similarities else 0
+                metrics['gradient_similarity_matrix'] = similarities  # Full matrix for detailed analysis
+
+        # === 3. Seller Contribution Metrics ===
+        # These come from aggregation_stats if your aggregator provides them
+        if aggregation_stats and 'seller_weights' in aggregation_stats:
+            for sid, weight in aggregation_stats['seller_weights'].items():
+                metrics[f'seller_{sid}_weight'] = weight
+
+        # === 4. Data Quality Indicators ===
+        for sid, stats in zip(seller_ids, seller_stats_list):
+            if stats:
+                metrics[f'seller_{sid}_train_loss'] = stats.get('train_loss')
+                metrics[f'seller_{sid}_num_samples'] = stats.get('num_samples', 0)
+                metrics[f'seller_{sid}_upload_bytes'] = stats.get('upload_bytes', 0)
+
+        # === 5. Adversary Detection Metrics ===
+        # Track known adversaries vs detected outliers
+        known_adversaries = [sid for sid in seller_ids if 'adv' in sid]
+        detected_adversaries = [sid for sid in outlier_ids if 'adv' in sid]
+        benign_outliers = [sid for sid in outlier_ids if 'bn' in sid]
+
+        metrics['num_known_adversaries'] = len(known_adversaries)
+        metrics['num_detected_adversaries'] = len(detected_adversaries)
+        metrics['num_benign_outliers'] = len(benign_outliers)
+        metrics['adversary_detection_rate'] = (
+            len(detected_adversaries) / len(known_adversaries)
+            if known_adversaries else 0
+        )
+        metrics['false_positive_rate'] = (
+            len(benign_outliers) / (len(seller_ids) - len(known_adversaries))
+            if (len(seller_ids) - len(known_adversaries)) > 0 else 0
+        )
+
+        return metrics
+
+    def _compute_gradient_similarities(self, gradients_dict: Dict) -> List[float]:
+        """Compute pairwise cosine similarities between gradients."""
+        seller_ids = list(gradients_dict.keys())
+        similarities = []
+
+        for i, sid1 in enumerate(seller_ids):
+            for sid2 in seller_ids[i + 1:]:
+                grad1 = gradients_dict[sid1]
+                grad2 = gradients_dict[sid2]
+
+                if grad1 is None or grad2 is None:
+                    continue
+
+                # Flatten and compute cosine similarity
+                flat1 = torch.cat([g.flatten() for g in grad1])
+                flat2 = torch.cat([g.flatten() for g in grad2])
+
+                similarity = torch.nn.functional.cosine_similarity(
+                    flat1.unsqueeze(0),
+                    flat2.unsqueeze(0)
+                ).item()
+                similarities.append(similarity)
+
+        return similarities
 
     def _get_current_market_gradients(self) -> Tuple[Dict, List, List]:
         """Collects gradients and stats from all sellers with detailed debugging."""
