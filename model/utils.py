@@ -15,12 +15,13 @@ Usage (within a seller’s get_gradient method):
 
 import copy
 import logging
+from typing import List, Tuple, Any, Optional, Union
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from typing import List, Tuple, Any, Optional, Union
 
 # from model.text_model import TEXTCNN
 from model.models import LeNet, TextCNN, SimpleCNN
@@ -169,36 +170,88 @@ def local_training_and_get_gradient(
     """
     Performs local training on a copy of the input model and returns the WEIGHT DELTA.
     The input model (passed as `model`) is not modified.
-    """
-    # Store the initial state of the original model
-    initial_state_dict = model.state_dict()
 
-    # --- FIX: Create a deepcopy of the model to be trained ---
-    # This ensures the original model passed into this function is not modified.
+    Returns:
+        Tuple of (weight_delta_list, avg_loss)
+        - weight_delta_list: List of tensors matching model.parameters() (ONLY parameters, not buffers)
+        - avg_loss: Average training loss
+    """
+    logging.debug(f"Starting local training: {local_epochs} epochs, lr={lr}, optimizer={opt_str}")
+
+    # Store the initial parameters (NOT state_dict!)
+    initial_params = [p.data.clone().cpu() for p in model.parameters()]
+
+    # Create a deep copy to avoid modifying the original model
     model_for_training = copy.deepcopy(model)
     model_for_training.to(device)
+    model_for_training.train()
 
+    # Setup optimizer
     criterion = nn.CrossEntropyLoss()
     if opt_str.upper() == "ADAM":
-        optimizer = optim.Adam(model_for_training.parameters(), lr=lr, weight_decay=weight_decay)
+        optimizer = optim.Adam(
+            model_for_training.parameters(),
+            lr=lr,
+            weight_decay=weight_decay
+        )
     else:  # Default to SGD
-        optimizer = optim.SGD(model_for_training.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
+        optimizer = optim.SGD(
+            model_for_training.parameters(),
+            lr=lr,
+            momentum=momentum,
+            weight_decay=weight_decay
+        )
 
     # Train the copied model
-    trained_model, avg_train_loss = train_local_model(
-        model_for_training, train_loader, criterion, optimizer, device, epochs=local_epochs
-    )
-    trained_state_dict = trained_model.state_dict()
+    try:
+        trained_model, avg_train_loss = train_local_model(
+            model_for_training,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            epochs=local_epochs
+        )
 
-    # Compute the weight delta using state dictionaries
+        if trained_model is None or avg_train_loss is None:
+            logging.error("train_local_model returned None!")
+            return None, None
+
+    except Exception as e:
+        logging.error(f"Error during local training: {e}", exc_info=True)
+        return None, None
+
+    # === CRITICAL FIX: Use parameters(), not state_dict() ===
+    # Compute weight delta ONLY for parameters (matches what aggregator expects)
     weight_delta_tensors: List[torch.Tensor] = []
+
     with torch.no_grad():
-        for key in initial_state_dict:
-            # Use the original model's state dict for the subtraction
-            delta = trained_state_dict[key].cpu() - initial_state_dict[key].cpu()
+        trained_params = [p.data.cpu() for p in trained_model.parameters()]
+
+        # Validate lengths match
+        if len(trained_params) != len(initial_params):
+            logging.error(
+                f"Parameter count mismatch! "
+                f"Initial: {len(initial_params)}, Trained: {len(trained_params)}"
+            )
+            return None, None
+
+        # Compute deltas
+        for init_p, trained_p in zip(initial_params, trained_params):
+            if init_p.shape != trained_p.shape:
+                logging.error(f"Shape mismatch: {init_p.shape} vs {trained_p.shape}")
+                return None, None
+
+            delta = trained_p - init_p
             weight_delta_tensors.append(delta)
 
-    # Return only the necessary values
+    # Validation
+    if not weight_delta_tensors:
+        logging.error("Generated empty weight delta list!")
+        return None, None
+
+    logging.debug(f"Training complete. Loss: {avg_train_loss:.4f}, Deltas: {len(weight_delta_tensors)}")
+
     return weight_delta_tensors, avg_train_loss
 
 
@@ -224,6 +277,7 @@ MODEL_REGISTRY = {
         "required_params": ["vocab_size", "num_classes", "padding_idx"]
     }
 }
+
 
 def get_image_model(
         model_name: str,
