@@ -1,6 +1,5 @@
+from image.model.model_config import ImageModelConfig
 from typing import Dict
-
-from model.image_model import ImageModelConfig
 
 # --- Pre-designed Model "Recipes" ---
 
@@ -39,7 +38,8 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         use_batch_norm=True,
         activation="relu",
         epochs=150,
-        batch_size=128,
+        # --- FIX: Reduced batch size to lower GPU memory usage ---
+        batch_size=64,
         learning_rate=0.01,
         optimizer_type='sgd',
     ),
@@ -65,7 +65,8 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         use_batch_norm=True,
         activation="relu",
         epochs=200,
-        batch_size=128,
+        # --- FIX: Reduced batch size to lower GPU memory usage ---
+        batch_size=64,
         learning_rate=0.01,
         optimizer_type='sgd',
     ),
