@@ -177,13 +177,13 @@ def setup_data_and_model(cfg: AppConfig):
     return buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes
 
 
-def generate_marketplace_report(save_path: Path, marketplace):
+def generate_marketplace_report(save_path: Path, marketplace, total_rounds):
     """Generate comprehensive marketplace analysis report."""
 
     report = {
         'experiment_summary': {
             'total_sellers': len(marketplace.sellers),
-            'total_rounds': marketplace.current_round,
+            'total_rounds': total_rounds,
             'adversary_rate': sum(1 for s in marketplace.sellers.values() if 'adv' in s.seller_id) / len(
                 marketplace.sellers)
         },
@@ -611,7 +611,7 @@ def run_training_loop(cfg, marketplace, test_loader, evaluators, sybil_coordinat
 
         # Save seller histories incrementally
         save_marketplace_analysis_data(save_path, round_records)
-        generate_marketplace_report(save_path, marketplace)
+        generate_marketplace_report(save_path, marketplace, cfg.experiment.global_rounds)
 
         # Seller summaries
         for sid, seller in marketplace.sellers.items():
