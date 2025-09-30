@@ -21,19 +21,28 @@ from entry.gradient_market.automate_exp.config_parser import load_config
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.seller.gradient_seller import SybilCoordinator
-from model.image_model import ImageModelFactory
+from model.image_model import ImageModelFactory, validate_model_factory
 from model.model_configs import get_image_model_config
 from model.utils import get_text_model
 
 
 def setup_data_and_model(cfg: AppConfig):
-    """Loads dataset and creates a model factory from the AppConfig."""
-    dataset_name = cfg.experiment.dataset_name
+    """
+    Loads dataset and creates a model factory from the AppConfig.
 
+    Returns factories with frozen parameters to prevent config mutation issues.
+    """
+    logging.info("=" * 60)
+    logging.info("Setting up data and model...")
+    logging.info("=" * 60)
+
+    dataset_name = cfg.experiment.dataset_name
     is_text = cfg.experiment.dataset_type == "text"
     collate_fn = None
 
     if is_text:
+        # Text dataset setup
+        logging.info("Loading text dataset...")
         processed_data = get_text_dataset(cfg)
         buyer_loader = processed_data.buyer_loader
         seller_loaders = processed_data.seller_loaders
@@ -41,73 +50,283 @@ def setup_data_and_model(cfg: AppConfig):
         num_classes = processed_data.num_classes
         vocab = processed_data.vocab
         pad_idx = processed_data.pad_idx
+
         collate_fn = lambda batch: collate_batch(batch, padding_value=pad_idx)
 
-        model_init_cfg = {"num_classes": num_classes, "vocab_size": len(vocab), "padding_idx": pad_idx,
-                          "dataset_name": dataset_name}
-        model_factory = lambda: get_text_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
+        # Freeze parameters for text model factory
+        frozen_num_classes = int(num_classes)
+        frozen_vocab_size = len(vocab)
+        frozen_pad_idx = int(pad_idx)
+        frozen_model_name = str(cfg.experiment.model_structure)
+        frozen_dataset_name = str(dataset_name)
 
-        # --- FIX 2a: Remove 'model_type' from extra args ---
-        # This dictionary is for runtime OBJECTS, not config values.
+        model_init_cfg = {
+            "num_classes": frozen_num_classes,
+            "vocab_size": frozen_vocab_size,
+            "padding_idx": frozen_pad_idx,
+            "dataset_name": frozen_dataset_name
+        }
+
+        # Create frozen factory
+        def model_factory():
+            return get_text_model(model_name=frozen_model_name, **model_init_cfg)
+
+        # Validate text model factory
+        try:
+            test_model = model_factory()
+            logging.info(f"Text model factory validated:")
+            logging.info(f"  - Model: {frozen_model_name}")
+            logging.info(f"  - Vocab size: {frozen_vocab_size}")
+            logging.info(f"  - Classes: {frozen_num_classes}")
+            logging.info(f"  - Parameters: {sum(p.numel() for p in test_model.parameters()):,}")
+            del test_model
+        except Exception as e:
+            raise RuntimeError(f"Text model factory validation failed: {e}")
+
         seller_extra_args = {"vocab": vocab, "pad_idx": pad_idx}
 
-    else:  # Image
+    else:  # Image dataset
+        logging.info("Loading image dataset...")
         buyer_loader, seller_loaders, test_loader, stats, num_classes = get_image_dataset(cfg)
 
-        image_model_config = get_image_model_config(cfg.experiment.image_model_config_name)
-        logging.info(f"DEBUG: Intended model config name from cfg: '{cfg.experiment.image_model_config_name}'")
-        image_model_config = get_image_model_config(cfg.experiment.image_model_config_name)
-        logging.info(
-            f"DEBUG: Loaded model config for '{image_model_config.model_name}' with recipe '{image_model_config.config_name}'")
+        # Load image model configuration
+        config_name = cfg.experiment.image_model_config_name
+        logging.info(f"Loading image model config: '{config_name}'")
 
-        # 2. Determine other parameters needed for model creation
+        image_model_config = get_image_model_config(config_name)
+        logging.info(
+            f"Loaded config for '{image_model_config.model_name}' with recipe '{image_model_config.config_name}'")
+
+        # Determine model parameters
         in_channels = 3  # CIFAR datasets have 3 channels
         sample_data, _ = next(iter(test_loader))
         image_size = tuple(sample_data.shape[2:])
 
-        # 3. The model_factory uses the config object loaded by name
-        model_factory = lambda: ImageModelFactory.create_model(
-            # The model_name now comes from the loaded recipe, ensuring consistency
+        logging.info(f"Image model parameters:")
+        logging.info(f"  - Input channels: {in_channels}")
+        logging.info(f"  - Image size: {image_size}")
+        logging.info(f"  - Classes: {num_classes}")
+
+        # Create frozen factory using the new method
+        model_factory = ImageModelFactory.create_factory(
             model_name=image_model_config.model_name,
             num_classes=num_classes,
             in_channels=in_channels,
             image_size=image_size,
-            config=image_model_config
+            config=image_model_config  # Will be deep copied inside create_factory
         )
+
+        # Validate factory creates consistent models
+        validate_model_factory(model_factory, num_tests=3)
 
         seller_extra_args = {}
 
+    # Update config with final num_classes
     cfg.experiment.num_classes = num_classes
-    logging.info(f"Data loaded for '{dataset_name}'. Number of classes: {cfg.experiment.num_classes}")
+
+    logging.info("=" * 60)
+    logging.info(f"Data and model setup complete:")
+    logging.info(f"  - Dataset: {dataset_name}")
+    logging.info(f"  - Type: {'text' if is_text else 'image'}")
+    logging.info(f"  - Classes: {num_classes}")
+    logging.info(f"  - Sellers: {len(seller_loaders)}")
+    logging.info(f"  - Test samples: {len(test_loader.dataset) if test_loader else 0}")
+    logging.info("=" * 60)
 
     return buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes
+def initialize_sellers(
+        cfg: AppConfig,
+        marketplace,
+        client_loaders,
+        model_factory,
+        seller_extra_args,
+        sybil_coordinator,
+        collate_fn,
+        num_classes: int
+):
+    """
+    Creates and registers all sellers in the marketplace using the factory.
 
+    Args:
+        cfg: Application configuration
+        marketplace: DataMarketplaceFederated instance
+        client_loaders: Dict mapping client_id -> DataLoader
+        model_factory: Factory function that creates model instances
+        seller_extra_args: Extra arguments for seller creation
+        sybil_coordinator: Coordinator for Sybil attacks
+        collate_fn: Collate function for data loading
+        num_classes: Number of output classes
+    """
+    logging.info("=" * 60)
+    logging.info("🏪 Initializing Sellers")
+    logging.info("=" * 60)
 
-def initialize_sellers(cfg: AppConfig, marketplace, client_loaders, model_factory, seller_extra_args,
-                       sybil_coordinator, collate_fn, num_classes: int):  # <-- Accept num_classes
-    """Creates and registers all sellers in the marketplace using the factory."""
-    logging.info("--- Initializing Sellers ---")
-    n_adversaries = int(cfg.experiment.n_sellers * cfg.experiment.adv_rate)
-    adversary_ids = list(client_loaders.keys())[:n_adversaries]
+    # Validate inputs
+    if not client_loaders:
+        raise ValueError("client_loaders is empty! Cannot create sellers.")
 
-    # --- FIX: Pass num_classes to the factory's constructor ---
-    seller_factory = SellerFactory(cfg, model_factory, num_classes=num_classes, **seller_extra_args)
+    n_sellers = len(client_loaders)
+    n_adversaries = int(n_sellers * cfg.experiment.adv_rate)
+
+    # Validate adversary count
+    if n_adversaries > n_sellers:
+        logging.warning(
+            f"⚠️  Requested {n_adversaries} adversaries but only {n_sellers} sellers available. "
+            f"Capping at {n_sellers}."
+        )
+        n_adversaries = n_sellers
+
+    logging.info(f"Configuration:")
+    logging.info(f"  - Total sellers: {n_sellers}")
+    logging.info(f"  - Adversary rate: {cfg.experiment.adv_rate:.1%}")
+    logging.info(f"  - Adversaries: {n_adversaries}")
+    logging.info(f"  - Benign: {n_sellers - n_adversaries}")
+    logging.info(f"  - Sybil enabled: {cfg.adversary_seller_config.sybil.is_sybil}")
+
+    # Select adversary IDs (first n_adversaries)
+    all_client_ids = list(client_loaders.keys())
+    adversary_ids = all_client_ids[:n_adversaries]
+
+    logging.info(f"\n📋 Adversary IDs: {adversary_ids}")
+
+    # Validate model_factory creates valid models
+    try:
+        test_model = model_factory()
+        test_params = list(test_model.parameters())
+        logging.info(f"\n🔍 Model factory validation:")
+        logging.info(f"  - Parameters: {len(test_params)}")
+        logging.info(f"  - Total params: {sum(p.numel() for p in test_params):,}")
+        logging.info(f"  - First param shape: {test_params[0].shape}")
+        del test_model  # Clean up
+    except Exception as e:
+        logging.error(f"❌ Model factory validation failed: {e}")
+        raise ValueError(f"Invalid model_factory: {e}")
+
+    # Create seller factory
+    seller_factory = SellerFactory(
+        cfg=cfg,
+        model_factory=model_factory,
+        num_classes=num_classes,
+        **seller_extra_args
+    )
+
+    # Track creation statistics
+    created_adversaries = 0
+    created_benign = 0
+    registered_sybils = 0
+    failed_creations = 0
+
+    # Create and register sellers
+    logging.info(f"\n🏗️  Creating sellers...")
 
     for cid, loader in client_loaders.items():
         is_adv = cid in adversary_ids
-        seller = seller_factory.create_seller(
-            seller_id=f"{'adv' if is_adv else 'bn'}_{cid}",
-            dataset=loader.dataset,
-            is_adversary=is_adv,
-            sybil_coordinator=sybil_coordinator,
-            collate_fn=collate_fn
+        seller_type = "adversary" if is_adv else "benign"
+        seller_id = f"{'adv' if is_adv else 'bn'}_{cid}"
+
+        try:
+            # Validate loader has data
+            if loader.dataset is None or len(loader.dataset) == 0:
+                logging.error(f"  ❌ {seller_id}: Empty dataset! Skipping.")
+                failed_creations += 1
+                continue
+
+            # Create seller
+            seller = seller_factory.create_seller(
+                seller_id=seller_id,
+                dataset=loader.dataset,
+                is_adversary=is_adv,
+                sybil_coordinator=sybil_coordinator,
+                collate_fn=collate_fn
+            )
+
+            # Validate seller was created properly
+            if seller is None:
+                logging.error(f"  ❌ {seller_id}: Factory returned None! Skipping.")
+                failed_creations += 1
+                continue
+
+            # Validate seller has model_factory
+            if not hasattr(seller, 'model_factory') or seller.model_factory is None:
+                logging.error(f"  ❌ {seller_id}: No model_factory attribute! Skipping.")
+                failed_creations += 1
+                continue
+
+            # Validate seller's model matches expected architecture
+            try:
+                seller_model = seller.model_factory()
+                seller_params = list(seller_model.parameters())
+                if len(seller_params) != len(test_params):
+                    logging.error(
+                        f"  ❌ {seller_id}: Model architecture mismatch! "
+                        f"Expected {len(test_params)} params, got {len(seller_params)}"
+                    )
+                    failed_creations += 1
+                    continue
+                del seller_model
+            except Exception as e:
+                logging.error(f"  ❌ {seller_id}: Model validation failed: {e}")
+                failed_creations += 1
+                continue
+
+            # Register seller in marketplace
+            marketplace.register_seller(seller.seller_id, seller)
+
+            if is_adv:
+                created_adversaries += 1
+            else:
+                created_benign += 1
+
+            # Register as Sybil if applicable
+            # Only register if: 1) is adversary, 2) Sybil globally enabled, 3) seller is Sybil
+            if is_adv and cfg.adversary_seller_config.sybil.is_sybil:
+                # Check if this specific seller should be a Sybil
+                # (In case you want fine-grained control later)
+                is_sybil = getattr(seller, 'is_sybil', True)  # Default to True for all advs
+
+                if is_sybil:
+                    sybil_coordinator.register_seller(seller)
+                    registered_sybils += 1
+
+            logging.info(
+                f"  ✅ {seller_id} ({seller_type}): "
+                f"{len(loader.dataset)} samples"
+                f"{' [SYBIL]' if (is_adv and registered_sybils) else ''}"
+            )
+
+        except Exception as e:
+            logging.error(f"  ❌ {seller_id}: Creation failed: {e}", exc_info=True)
+            failed_creations += 1
+
+    # Summary
+    logging.info("=" * 60)
+    logging.info("📊 Seller Initialization Summary:")
+    logging.info(f"  - Total created: {created_adversaries + created_benign}/{n_sellers}")
+    logging.info(f"  - Adversaries: {created_adversaries}/{n_adversaries}")
+    logging.info(f"  - Benign: {created_benign}/{n_sellers - n_adversaries}")
+    logging.info(f"  - Registered Sybils: {registered_sybils}")
+    logging.info(f"  - Failed: {failed_creations}")
+    logging.info("=" * 60)
+
+    # Validate we created enough sellers
+    total_created = created_adversaries + created_benign
+    if total_created == 0:
+        raise RuntimeError("❌ Failed to create any sellers!")
+
+    if total_created < n_sellers * 0.5:  # Less than 50% succeeded
+        logging.warning(
+            f"⚠️  Only created {total_created}/{n_sellers} sellers ({total_created / n_sellers:.1%}). "
+            f"Experiment may not run as expected."
         )
-        marketplace.register_seller(seller.seller_id, seller)
 
-        if is_adv and cfg.adversary_seller_config.sybil.is_sybil:
-            sybil_coordinator.register_seller(seller)
+    # Verify marketplace state
+    registered_count = len(marketplace.sellers)
+    if registered_count != total_created:
+        logging.error(
+            f"❌ Mismatch: Created {total_created} sellers but marketplace has {registered_count}!"
+        )
 
-    logging.info(f"Initialized {cfg.experiment.n_sellers} sellers ({n_adversaries} adversaries).")
+    logging.info(f"✅ Seller initialization complete!\n")
 
 
 def run_final_evaluation_and_logging(

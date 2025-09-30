@@ -1,12 +1,21 @@
+from dataclasses import field, dataclass
+import copy
 import json
-from dataclasses import asdict, field, dataclass
+import logging
+from dataclasses import asdict
+from dataclasses import field, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Tuple, Any, Dict
+from typing import Any, Dict
+from typing import Callable, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from common.gradient_market_configs import AppConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -295,7 +304,7 @@ class ImageModelFactory:
     def create_model(model_name: str, num_classes: int, in_channels: int,
                      image_size: Tuple[int, int], config: ImageModelConfig) -> nn.Module:
         """Create a model based on configuration."""
-        print(f"🧠 Creating configurable model '{model_name}' with config '{config.config_name}'...")
+        logger.info(f"Creating model '{model_name}' with config '{config.config_name}'")
 
         if model_name.lower() == 'lenet':
             return ConfigurableLeNet(in_channels, image_size, num_classes, config)
@@ -305,6 +314,65 @@ class ImageModelFactory:
             return ConfigurableResNet(in_channels, num_classes, config)
         else:
             raise ValueError(f"Unknown model name: {model_name}")
+
+    @staticmethod
+    def create_factory(model_name: str, num_classes: int, in_channels: int,
+                       image_size: Tuple[int, int], config: ImageModelConfig) -> Callable[[], nn.Module]:
+        """
+        Create a zero-argument factory function with frozen parameters.
+
+        This ensures all models created from this factory are identical,
+        even if the original config is mutated after factory creation.
+
+        Args:
+            model_name: Name of the model architecture
+            num_classes: Number of output classes
+            in_channels: Number of input channels
+            image_size: Image dimensions (height, width)
+            config: Model configuration
+
+        Returns:
+            A callable that takes no arguments and returns a model instance
+        """
+        # Validate inputs
+        if not isinstance(config, ImageModelConfig):
+            raise TypeError(f"config must be ImageModelConfig, got {type(config)}")
+
+        if not isinstance(image_size, (tuple, list)) or len(image_size) != 2:
+            raise ValueError(f"image_size must be a tuple/list of 2 integers, got {image_size}")
+
+        # Deep copy all parameters to freeze them at factory creation time
+        frozen_model_name = str(model_name)
+        frozen_num_classes = int(num_classes)
+        frozen_in_channels = int(in_channels)
+        frozen_image_size = tuple(int(x) for x in image_size)
+        frozen_config = copy.deepcopy(config)
+
+        def model_factory() -> nn.Module:
+            """Zero-argument factory that creates a model with frozen config."""
+            return ImageModelFactory.create_model(
+                model_name=frozen_model_name,
+                num_classes=frozen_num_classes,
+                in_channels=frozen_in_channels,
+                image_size=frozen_image_size,
+                config=frozen_config
+            )
+
+        # Validate factory creates valid models
+        try:
+            test_model = model_factory()
+            num_params = sum(p.numel() for p in test_model.parameters())
+            logger.info(f"Model factory created and validated:")
+            logger.info(f"  - Architecture: {frozen_model_name}")
+            logger.info(f"  - Parameters: {num_params:,}")
+            logger.info(f"  - Input: {frozen_in_channels}x{frozen_image_size[0]}x{frozen_image_size[1]}")
+            logger.info(f"  - Output: {frozen_num_classes} classes")
+            del test_model  # Clean up
+        except Exception as e:
+            logger.error(f"Failed to create test model from factory: {e}")
+            raise
+
+        return model_factory
 
     @staticmethod
     def save_model_and_config(model: nn.Module, config: ImageModelConfig, save_dir: str,
@@ -322,7 +390,7 @@ class ImageModelFactory:
         with open(config_path, 'w') as f:
             json.dump(asdict(config), f, indent=2)
 
-        print(f"💾 Saved model and config to {save_path}")
+        logger.info(f"Saved model and config to {save_path}")
         return model_path, config_path
 
     @staticmethod
@@ -344,5 +412,97 @@ class ImageModelFactory:
         model_path = save_path / f"{model_name}.pth"
         model.load_state_dict(torch.load(model_path, map_location='cpu'))
 
-        print(f"📂 Loaded model and config from {save_path}")
+        logger.info(f"Loaded model and config from {save_path}")
         return model, config
+
+
+def validate_model_factory(factory: Callable[[], nn.Module], num_tests: int = 3) -> bool:
+    """
+    Validate that a model factory creates consistent models.
+
+    Args:
+        factory: The model factory to test
+        num_tests: Number of models to create for testing
+
+    Returns:
+        True if factory is consistent, raises exception otherwise
+    """
+    logger.info("Validating model factory consistency...")
+
+    models = []
+    param_shapes_list = []
+
+    for i in range(num_tests):
+        try:
+            model = factory()
+            models.append(model)
+            param_shapes = [p.shape for p in model.parameters()]
+            param_shapes_list.append(param_shapes)
+        except Exception as e:
+            raise RuntimeError(f"Factory failed to create model {i + 1}: {e}")
+
+    # Compare all models
+    reference_shapes = param_shapes_list[0]
+    for i, shapes in enumerate(param_shapes_list[1:], start=2):
+        if shapes != reference_shapes:
+            logger.error(f"Model {i} has different architecture than model 1!")
+            logger.error(f"  Model 1: {reference_shapes[:3]}...")
+            logger.error(f"  Model {i}: {shapes[:3]}...")
+            raise RuntimeError("Model factory creates inconsistent architectures!")
+
+    logger.info(f"Factory validation passed: {num_tests} models with identical architectures")
+    logger.info(f"  - Parameters: {len(reference_shapes)}")
+    logger.info(f"  - First param shape: {reference_shapes[0]}")
+
+    # Clean up
+    del models
+
+    return True
+
+
+def create_model_factory_from_config(cfg: AppConfig) -> Callable[[], nn.Module]:
+    """
+    Create a model factory from AppConfig with frozen parameters.
+
+    This function extracts all necessary parameters from the config
+    and creates a factory that won't be affected by subsequent config changes.
+
+    Args:
+        cfg: Application configuration
+
+    Returns:
+        A zero-argument callable that creates models
+    """
+    logger.info("Creating model factory from config...")
+
+    # Extract and validate required parameters
+    try:
+        model_name = cfg.experiment.model_structure
+        num_classes = cfg.experiment.num_classes
+        in_channels = cfg.experiment.in_channels
+        image_size = cfg.experiment.image_size
+        model_config = cfg.model
+
+        logger.info(f"Model factory configuration:")
+        logger.info(f"  - Model: {model_name}")
+        logger.info(f"  - Classes: {num_classes}")
+        logger.info(f"  - Input channels: {in_channels}")
+        logger.info(f"  - Image size: {image_size}")
+
+    except AttributeError as e:
+        raise ValueError(f"Config missing required fields: {e}")
+
+    # Create factory with frozen parameters
+    factory = ImageModelFactory.create_factory(
+        model_name=model_name,
+        num_classes=num_classes,
+        in_channels=in_channels,
+        image_size=image_size,
+        config=model_config
+    )
+
+    # Validate the factory
+    validate_model_factory(factory, num_tests=3)
+
+    logger.info("Model factory created and validated successfully")
+    return factory
