@@ -1,5 +1,6 @@
-from image.model.model_config import ImageModelConfig
 from typing import Dict
+
+from model.image_model import ImageModelConfig
 
 # --- Pre-designed Model "Recipes" ---
 
