@@ -621,6 +621,10 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
         """
         current_round = self.sybil_coordinator.cur_round if self.is_sybil else float('inf')
         should_attack = current_round >= self.adversary_config.sybil.benign_rounds
+        local_model = self.model_factory().to(self.device)
+        local_model.load_state_dict(global_model.state_dict())
+        if "adv_0" in self.seller_id or "bn_4" in self.seller_id: # Log for one adv and one benign
+            logging.info(f"--- Local Model Architecture for {self.seller_id} ---\n{local_model}")
 
         # --- UPDATED: Use the PoisonedDataset wrapper for clean data handling ---
         if should_attack and self.poison_generator:

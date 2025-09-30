@@ -231,6 +231,7 @@ def run_attack(cfg: AppConfig):
 
     global_model = model_factory().to(cfg.experiment.device)
     logging.info(f"Global model created and moved to {cfg.experiment.device}")
+    logging.info(f"--- Global Model Architecture ---\n{global_model}")
 
     # 3. FL Component Initialization (renumbered for clarity)
     loss_fn = nn.CrossEntropyLoss()
