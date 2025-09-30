@@ -55,6 +55,9 @@ def setup_data_and_model(cfg: AppConfig):
         buyer_loader, seller_loaders, test_loader, stats, num_classes = get_image_dataset(cfg)
 
         image_model_config = get_image_model_config(cfg.experiment.image_model_config_name)
+        logging.info(f"DEBUG: Intended model config name from cfg: '{cfg.experiment.image_model_config_name}'")
+        image_model_config = get_image_model_config(cfg.experiment.image_model_config_name)
+        logging.info(f"DEBUG: Loaded model config for '{image_model_config.model_name}' with recipe '{image_model_config.config_name}'")
 
         # 2. Determine other parameters needed for model creation
         in_channels = 3 # CIFAR datasets have 3 channels
