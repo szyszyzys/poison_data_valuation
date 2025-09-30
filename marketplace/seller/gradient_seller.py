@@ -17,6 +17,7 @@ from typing import Tuple
 from typing import Union
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -199,6 +200,36 @@ class GradientSeller(BaseSeller):
         self.last_training_stats = stats
 
         return gradient, stats
+
+    def save_latest_round(self):
+        """Save only the most recent round (incremental save)."""
+        if not self.federated_round_history:
+            return
+
+        history_csv = self.seller_specific_path / "history" / "round_history.csv"
+        history_csv.parent.mkdir(parents=True, exist_ok=True)
+
+        latest_record = self.federated_round_history[-1]
+
+        # Flatten record for CSV
+        csv_row = {
+            'event_type': latest_record.get('event_type'),
+            'round': latest_record.get('round'),
+            'timestamp': latest_record.get('timestamp'),
+            'was_selected': latest_record.get('was_selected')
+        }
+
+        if latest_record.get('training_stats'):
+            for key, value in latest_record['training_stats'].items():
+                csv_row[f'training_stats_{key}'] = value
+
+        df = pd.DataFrame([csv_row])
+
+        # Append or create
+        if history_csv.exists():
+            df.to_csv(history_csv, mode='a', header=False, index=False)
+        else:
+            df.to_csv(history_csv, mode='w', header=True, index=False)
 
     def _compute_local_grad(
             self,

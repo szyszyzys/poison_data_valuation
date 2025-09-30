@@ -4,8 +4,12 @@ import argparse
 import copy
 import json
 import logging
+import os
+import shutil
+import tempfile
+import time
 from pathlib import Path
-from typing import Tuple, List, Dict
+from typing import List, Dict
 
 import pandas as pd
 import torch
@@ -16,7 +20,7 @@ from common.datasets.text_data_processor import collate_batch
 from common.evaluators import create_evaluators
 from common.factories import SellerFactory
 from common.gradient_market_configs import AppConfig
-from common.utils import FederatedEarlyStopper, set_seed
+from common.utils import set_seed
 from entry.gradient_market.automate_exp.config_parser import load_config
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.aggregator import Aggregator
@@ -371,98 +375,139 @@ def initialize_sellers(
 def run_final_evaluation_and_logging(
         cfg: AppConfig,
         final_model: nn.Module,
-        results_buffer: List[Dict],
+        results_buffer: List[Dict],  # Should be removed - use incremental saving
         test_loader,
         evaluators
 ):
-    """Performs a final evaluation and saves all experiment artifacts."""
-    logging.info("\n--- Final Evaluation and Logging ---")
+    """Performs final evaluation and saves experiment artifacts."""
+    logging.info("=" * 60)
+    logging.info("Final Evaluation and Logging")
+    logging.info("=" * 60)
 
-    # 1. Save the round-by-round training log
-    if results_buffer:
-        results_df = pd.DataFrame(results_buffer)
-        log_path = Path(cfg.experiment.save_path) / "training_log.csv"
-        results_df.to_csv(log_path, index=False)
-        logging.info(f"Full training log saved to {log_path}")
+    save_path = Path(cfg.experiment.save_path)
 
-    # 2. Perform a final, high-quality evaluation on the trained model
-    logging.info("Performing final evaluation on the trained model...")
+    # NOTE: training_log.csv should already exist from incremental saves
+    # This is just a validation check
+    log_path = save_path / "training_log.csv"
+    if not log_path.exists():
+        logging.warning("training_log.csv not found! Reconstructing from buffer...")
+        if results_buffer:
+            save_dataframe_atomic(pd.DataFrame(results_buffer), log_path)
+
+    # Final evaluation
+    logging.info("Performing final evaluation...")
     final_metrics = {}
+
     for evaluator in evaluators:
-        metrics = evaluator.evaluate(final_model, test_loader)
-        final_metrics.update(metrics)
-    logging.info(f"Final Model Performance: {final_metrics}")
+        try:
+            metrics = evaluator.evaluate(final_model, test_loader)
+            final_metrics.update(metrics)
+        except Exception as e:
+            logging.error(f"Evaluator {evaluator.__class__.__name__} failed: {e}")
 
-    # Optionally, save the final metrics to a file as well
-    final_metrics_path = Path(cfg.experiment.save_path) / "final_metrics.json"
-    with open(final_metrics_path, 'w') as f:
-        json.dump(final_metrics, f, indent=4)
-    logging.info(f"Final metrics saved to {final_metrics_path}")
+    logging.info(f"Final metrics: {final_metrics}")
 
-    # 3. Save the final model state
-    model_path = Path(cfg.experiment.save_path) / "final_model.pth"
-    torch.save(final_model.state_dict(), model_path)
-    logging.info(f"Final model state dictionary saved to {model_path}")
+    # Add metadata
+    final_metrics['timestamp'] = time.time()
+    final_metrics['completed_rounds'] = len(results_buffer) if results_buffer else 'unknown'
+
+    # Save final metrics atomically
+    save_json_atomic(final_metrics, save_path / "final_metrics.json")
+
+    # Save final model atomically
+    save_model_atomic(final_model.state_dict(), save_path / "final_model.pth")
+
+    logging.info("Final evaluation complete")
 
 
-def run_training_loop(
-        cfg: AppConfig,
-        marketplace,
-        test_loader,
-        evaluators,
-        sybil_coordinator
-) -> Tuple[nn.Module, List[Dict]]:
-    """
-    Runs the main federated training rounds and returns the final model and results.
-    """
-    logging.info("\n--- Starting Federated Training Rounds ---")
-    early_stopper = FederatedEarlyStopper(patience=20, monitor='acc')
-    results_buffer = []
+def save_json_atomic(data, filepath):
+    """Save JSON with atomic write to prevent corruption."""
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
 
-    eval_freq = cfg.experiment.evaluation_frequency
+    temp_fd, temp_path = tempfile.mkstemp(
+        dir=filepath.parent,
+        suffix='.tmp',
+        prefix=filepath.stem
+    )
+    try:
+        with os.fdopen(temp_fd, 'w') as f:
+            json.dump(data, f, indent=2)
+        shutil.move(temp_path, filepath)
+        logging.debug(f"Saved (atomic): {filepath}")
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise RuntimeError(f"Failed to save {filepath}: {e}")
 
-    for gr in range(cfg.experiment.global_rounds):
-        logging.info(f"============= Round {gr + 1}/{cfg.experiment.global_rounds} Start ===============")
-        sybil_coordinator.prepare_for_new_round()
 
-        round_record, _ = marketplace.train_federated_round(
-            round_number=gr,
+def save_dataframe_atomic(df, filepath):
+    """Save DataFrame with atomic write."""
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+
+    temp_path = filepath.with_suffix('.tmp')
+    try:
+        df.to_csv(temp_path, index=False)
+        shutil.move(temp_path, filepath)
+    except:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
+
+
+def save_model_atomic(state_dict, filepath):
+    """Save model with atomic write."""
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+
+    temp_path = filepath.with_suffix('.tmp')
+    try:
+        torch.save(state_dict, temp_path)
+        shutil.move(temp_path, filepath)
+    except:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
+
+
+def run_training_loop(cfg, marketplace, test_loader, evaluators, sybil_coordinator):
+    """Training loop with incremental saving."""
+    save_path = Path(cfg.experiment.save_path)
+    log_path = save_path / "training_log.csv"
+
+    # Initialize CSV with headers
+    if not log_path.exists():
+        pd.DataFrame(columns=['round', 'duration_sec', 'num_selected', 'num_outliers']).to_csv(
+            log_path, index=False
+        )
+
+    for round_num in range(1, cfg.experiment.rounds + 1):
+        round_record, agg_grad = marketplace.train_federated_round(
+            round_number=round_num,
             ground_truth_dict={}
         )
 
-        # Perform periodic evaluation
-        is_last_round = (gr + 1) == cfg.experiment.global_rounds
-        if (gr + 1) % eval_freq == 0 or is_last_round:
-            logging.info(f"--- Performing Evaluation for Round {gr + 1} ---")
-            global_model = marketplace.aggregator.strategy.global_model
+        # Incremental save - append to CSV
+        df_round = pd.DataFrame([round_record])
+        df_round.to_csv(log_path, mode='a', header=False, index=False)
 
-            all_metrics = {}
+        # Evaluate periodically
+        if round_num % cfg.experiment.eval_frequency == 0:
+            eval_metrics = {}
             for evaluator in evaluators:
-                metrics = evaluator.evaluate(global_model, test_loader)
-                all_metrics.update(metrics)
+                metrics = evaluator.evaluate(marketplace.aggregator.strategy.global_model, test_loader)
+                eval_metrics.update(metrics)
 
-            # UPDATED: Merge the marketplace's round_record with the evaluation metrics
-            # This creates a complete log for the round.
-            log_entry = {
-                "acc": all_metrics.get("acc"),
-                "loss": all_metrics.get("loss"),
-                "asr": all_metrics.get("asr"),
-            }
-            log_entry.update(round_record)  # Merge in keys like 'round', 'duration_sec', etc.
+            # Save evaluation checkpoint
+            eval_path = save_path / "evaluations" / f"round_{round_num}.json"
+            save_json_atomic(eval_metrics, eval_path)
 
-            results_buffer.append(log_entry)
-            logging.info(f"Evaluation Metrics: {log_entry}")
+        # Save seller histories incrementally
+        for sid, seller in marketplace.sellers.items():
+            seller.save_latest_round()  # New method - saves just the latest round
 
-            if early_stopper.update(all_metrics.get('acc', 0)):
-                logging.info(f"Early stopping at round {gr + 1}.")
-                break
-
-        sybil_coordinator.on_round_end()
-        logging.info(f"============= Round {gr + 1}/{cfg.experiment.global_rounds} End ===============")
-
-    # Return the final trained model and the log of results
-    final_model = marketplace.aggregator.strategy.global_model
-    return final_model, results_buffer
+    return marketplace.aggregator.strategy.global_model, []  # Empty buffer since we saved incrementally
 
 
 def run_attack(cfg: AppConfig):
