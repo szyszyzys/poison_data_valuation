@@ -75,18 +75,23 @@ class Aggregator:
                 logger.error(f"Could not convert update for seller {seller_id} to tensor: {e}")
         return standardized
 
-    def aggregate(self, global_epoch: int, seller_updates: Dict, **kwargs):
+    def aggregate(self, global_epoch: int, seller_updates: Dict, **kwargs) -> Tuple[
+        List[torch.Tensor], List[str], List[str], Dict[str, Any]]:
         """
         Standardizes updates and delegates the aggregation to the selected strategy.
+        Now consistently returns 4 values.
         """
         s_updates_tensor = self._standardize_updates(seller_updates)
 
         if not s_updates_tensor:
             logger.error("No valid seller updates after standardization. Aborting aggregation.")
             zero_grad = [torch.zeros_like(p) for p in self.strategy.global_model.parameters()]
-            return zero_grad, [], list(seller_updates.keys())
 
-        # Delegate the call to the strategy instance
+            # --- FIX: Return 4 values to match the expected signature ---
+            # The fourth value is an empty stats dictionary.
+            return zero_grad, [], list(seller_updates.keys()), {}
+
+        # Delegate the call to the strategy instance, which is guaranteed to return 4 values
         return self.strategy.aggregate(
             global_epoch=global_epoch,
             seller_updates=s_updates_tensor,

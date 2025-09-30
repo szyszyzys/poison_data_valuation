@@ -224,7 +224,7 @@ class DataConfig:
     """Holds configuration for one type of data source."""
     text: Optional[TextDataConfig] = None
     image: Optional[ImageDataConfig] = None
-    num_workers = 4
+    num_workers = 2
 
 
 @dataclass
