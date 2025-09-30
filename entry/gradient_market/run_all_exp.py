@@ -586,7 +586,7 @@ def run_training_loop(cfg, marketplace, test_loader, evaluators, sybil_coordinat
             log_path, index=False
         )
     round_records = []
-    for round_num in range(1, cfg.experiment.rounds + 1):
+    for round_num in range(1, cfg.experiment.global_rounds + 1):
         round_record, agg_grad = marketplace.train_federated_round(
             round_number=round_num,
             ground_truth_dict={}
