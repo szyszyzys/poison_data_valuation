@@ -71,7 +71,7 @@ def use_sybil_attack(strategy: str) -> Callable[[AppConfig], AppConfig]:
 def generate_attack_impact_scenarios() -> List[Scenario]:
     """
     Generates a list of scenarios to test the impact of attacks against
-    different defense mechanisms.
+    different defense mechanisms, now iterating through specified models.
     """
     scenarios = []
 
@@ -79,6 +79,9 @@ def generate_attack_impact_scenarios() -> List[Scenario]:
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
     ADV_RATES_TO_SWEEP = [0.1, 0.2, 0.3, 0.4, 0.5]
     POISON_RATES_TO_SWEEP = [0.1, 0.3, 0.5, 0.7, 1.0]
+
+    # --- NEW: Define the models to test for image datasets ---
+    IMAGE_MODELS_TO_TEST = ["cnn", "resnet18"]
 
     IMAGE_DATASETS: List[Tuple[str, Callable]] = [
         ("cifar10", use_cifar10_config),
@@ -89,18 +92,27 @@ def generate_attack_impact_scenarios() -> List[Scenario]:
     ]
 
     # --- Group 1: Varying Adversary Rate (Fixed Poison Rate) ---
-    for name, modifier in IMAGE_DATASETS:
-        scenarios.append(Scenario(
-            name=f"impact_vary_adv_rate_{name}",
-            base_config_factory=get_base_image_config,
-            modifiers=[modifier, use_image_backdoor_attack],
-            parameter_grid={
-                "experiment.aggregation_method": ALL_AGGREGATORS,
-                "adversary_seller_config.poisoning.poison_rate": [0.5],  # Fixed poison rate
-                "experiment.adv_rate": ADV_RATES_TO_SWEEP,
-            }
-        ))
+    for dataset_name, modifier in IMAGE_DATASETS:
+        # --- NEW: Loop through the desired models ---
+        for model_name in IMAGE_MODELS_TO_TEST:
+            # Construct the "recipe" name (e.g., "cifar10_resnet18")
+            model_config_name = f"{dataset_name}_{model_name}"
 
+            scenarios.append(Scenario(
+                # Update the scenario name to be more descriptive
+                name=f"impact_vary_adv_rate_{dataset_name}_{model_name}",
+                base_config_factory=get_base_image_config,
+                modifiers=[modifier, use_image_backdoor_attack],
+                parameter_grid={
+                    # --- FIX: Use the new config name key ---
+                    "experiment.image_model_config_name": [model_config_name],
+                    "experiment.aggregation_method": ALL_AGGREGATORS,
+                    "adversary_seller_config.poisoning.poison_rate": [0.5],
+                    "experiment.adv_rate": ADV_RATES_TO_SWEEP,
+                }
+            ))
+
+    # Text scenarios remain the same as they don't use the new model config system
     for name, modifier in TEXT_DATASETS:
         scenarios.append(Scenario(
             name=f"impact_vary_adv_rate_{name}",
@@ -114,18 +126,23 @@ def generate_attack_impact_scenarios() -> List[Scenario]:
         ))
 
     # --- Group 2: Varying Poison Rate (Fixed Adversary Rate) ---
-    for name, modifier in IMAGE_DATASETS:
-        scenarios.append(Scenario(
-            name=f"impact_vary_poison_rate_{name}",
-            base_config_factory=get_base_image_config,
-            modifiers=[modifier, use_image_backdoor_attack],
-            parameter_grid={
-                "experiment.aggregation_method": ALL_AGGREGATORS,
-                "experiment.adv_rate": [0.3],  # Fixed adversary rate
-                "adversary_seller_config.poisoning.poison_rate": POISON_RATES_TO_SWEEP,
-            }
-        ))
+    for dataset_name, modifier in IMAGE_DATASETS:
+        for model_name in IMAGE_MODELS_TO_TEST:
+            model_config_name = f"{dataset_name}_{model_name}"
 
+            scenarios.append(Scenario(
+                name=f"impact_vary_poison_rate_{dataset_name}_{model_name}",
+                base_config_factory=get_base_image_config,
+                modifiers=[modifier, use_image_backdoor_attack],
+                parameter_grid={
+                    "experiment.image_model_config_name": [model_config_name],
+                    "experiment.aggregation_method": ALL_AGGREGATORS,
+                    "experiment.adv_rate": [0.3],
+                    "adversary_seller_config.poisoning.poison_rate": POISON_RATES_TO_SWEEP,
+                }
+            ))
+
+    # Text scenarios remain the same
     for name, modifier in TEXT_DATASETS:
         scenarios.append(Scenario(
             name=f"impact_vary_poison_rate_{name}",

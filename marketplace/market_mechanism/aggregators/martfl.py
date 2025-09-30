@@ -1,6 +1,6 @@
 import copy
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 
 import numpy as np
 import torch
@@ -28,23 +28,21 @@ def _cluster_and_score_martfl(similarities: np.ndarray) -> np.ndarray:
 class MartflAggregator(BaseAggregator):
 
     def __init__(self, clip: bool, change_base: bool, *args, **kwargs):
-
-        # Pass all the common arguments up to the BaseAggregator
+        # ... (init is unchanged)
         super().__init__(*args, **kwargs)
-
-        # Handle the specific parameter for this class
         self.clip = clip
         self.change_base = change_base
         logger.info(f"MartflAggregator initialized with change_base={self.change_base}")
         self.baseline_id = "buyer"
 
+    # --- FIX 1: Update the return signature ---
     def aggregate(self, global_epoch: int, seller_updates: Dict[str, List[torch.Tensor]], **kwargs) -> Tuple[
-        List[torch.Tensor], List[str], List[str]]:
+        List[torch.Tensor], List[str], List[str], Dict[str, Any]]:
+
         logger.info(f"--- martFL Aggregation (Epoch {global_epoch}) ---")
         seller_ids = list(seller_updates.keys())
         flat_updates = {sid: flatten_tensor(clip_gradient_update(upd, self.clip_norm) if self.clip else upd) for
-                        sid, upd in
-                        seller_updates.items()}
+                        sid, upd in seller_updates.items()}
 
         if self.baseline_id and self.baseline_id in seller_updates:
             baseline_update_flat = flat_updates[self.baseline_id]
@@ -56,7 +54,16 @@ class MartflAggregator(BaseAggregator):
 
         similarities = F.cosine_similarity(baseline_update_flat.unsqueeze(0), torch.stack(list(flat_updates.values())),
                                            dim=1)
+
+        # --- FIX 2: Create the stats dictionary and gather log data ---
+        aggregation_stats = {
+            "martfl_baseline_id": self.baseline_id,
+            **{f"martfl_raw_sim_{sid}": sim.item() for sid, sim in zip(seller_ids, similarities)}
+        }
+
+        # The helper function performs the clustering
         inlier_scores = _cluster_and_score_martfl(similarities.cpu().numpy())
+
         weights = torch.tensor(inlier_scores, dtype=torch.float, device=self.device)
         total_weight = weights.sum()
 
@@ -65,18 +72,27 @@ class MartflAggregator(BaseAggregator):
         else:
             weights.zero_()
 
+        aggregation_stats.update({f"martfl_final_weight_{sid}": w.item() for sid, w in zip(seller_ids, weights)})
+
         aggregated_gradient = [torch.zeros_like(p) for p in self.global_model.parameters()]
         for i, sid in enumerate(seller_ids):
             for agg_grad, upd_grad in zip(aggregated_gradient, seller_updates[sid]):
-                agg_grad.add_(upd_grad, alpha=weights[i])
+                agg_grad.add_(upd_grad, alpha=weights[i].item())
 
         if self.change_base:
-            self.baseline_id = self._select_new_baseline_martfl(seller_updates, seller_ids,
-                                                                inlier_scores)
+            # The selection method returns the ID for the *next* round
+            next_baseline_id = self._select_new_baseline_martfl(seller_updates, seller_ids, inlier_scores)
+            aggregation_stats["martfl_next_baseline_id"] = next_baseline_id
+            self.baseline_id = next_baseline_id
 
         selected_sids = [sid for i, sid in enumerate(seller_ids) if inlier_scores[i] > 0]
         outlier_sids = [sid for i, sid in enumerate(seller_ids) if inlier_scores[i] == 0]
-        return aggregated_gradient, selected_sids, outlier_sids
+
+        aggregation_stats["martfl_num_selected"] = len(selected_sids)
+        aggregation_stats["martfl_num_rejected"] = len(outlier_sids)
+
+        # --- FIX 3: Return the new stats dictionary ---
+        return aggregated_gradient, selected_sids, outlier_sids, aggregation_stats
 
     def _select_new_baseline_martfl(self, seller_updates: Dict, seller_ids: List[str], inlier_scores: np.ndarray):
         candidate_ids = [sid for i, sid in enumerate(seller_ids) if inlier_scores[i] > 0]

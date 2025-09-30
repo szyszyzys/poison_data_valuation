@@ -75,13 +75,18 @@ class DataMarketplaceFederated(DataMarketplace):
         if self.attacker and self.attacker.should_run(round_number):
             attack_log = self.attacker.execute(round_number, gradients_dict, seller_ids, ground_truth_dict)
 
-        # 3. Aggregate gradients
-        agg_grad, selected_ids, outlier_ids = self.aggregator.aggregate(round_number, gradients_dict)
+        # --- THIS IS THE FIX ---
+        # 3a. Aggregate gradients and capture the new stats dictionary
+        agg_grad, selected_ids, outlier_ids, aggregation_stats = self.aggregator.aggregate(
+            global_epoch=round_number,
+            seller_updates=gradients_dict
+        )
 
         # 4. Update global model
         if agg_grad:
             self.aggregator.apply_gradient(agg_grad)
 
+        # 5. Save individual gradients (This logic is already correct)
         if self.cfg.debug.save_individual_gradients:
             if round_number % self.cfg.debug.gradient_save_frequency == 0:
                 grad_save_dir = Path(self.cfg.experiment.save_path) / "individual_gradients" / f"round_{round_number}"
@@ -92,7 +97,6 @@ class DataMarketplaceFederated(DataMarketplace):
                 torch.save(agg_grad, grad_save_dir / f"aggregated_grad.pt")
 
         # 6. Create a simple record of the round's events.
-        #    The _log_round_results helper can be removed or simplified as it no longer handles performance metrics.
         duration = time.time() - round_start_time
         round_record = {
             "round": round_number,
@@ -103,13 +107,16 @@ class DataMarketplaceFederated(DataMarketplace):
             "attack_victim": attack_log.get('victim_id') if attack_log else None
         }
 
+        # 3b. Merge the detailed aggregator stats into the round record
+        if aggregation_stats:
+            round_record.update(aggregation_stats)
+
         # 7. Notify sellers of round end
         for sid, seller in self.sellers.items():
             seller.round_end_process(round_number, (sid in selected_ids))
 
         logging.info(f"--- Round {round_number} Ended (Duration: {round_record['duration_sec']:.2f}s) ---")
 
-        # Return the record and the raw gradient for potential future use
         return round_record, agg_grad
 
     def _get_current_market_gradients(self) -> Tuple[Dict, List, List]:

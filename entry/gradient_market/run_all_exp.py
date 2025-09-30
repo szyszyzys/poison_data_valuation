@@ -21,7 +21,9 @@ from entry.gradient_market.automate_exp.config_parser import load_config
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.seller.gradient_seller import SybilCoordinator
-from model.utils import get_text_model, get_image_model
+from model.image_model import ImageModelFactory
+from model.model_configs import get_image_model_config
+from model.utils import get_text_model
 
 
 def setup_data_and_model(cfg: AppConfig):
@@ -52,15 +54,22 @@ def setup_data_and_model(cfg: AppConfig):
     else:  # Image
         buyer_loader, seller_loaders, test_loader, stats, num_classes = get_image_dataset(cfg)
 
-        dataset_name_lower = cfg.experiment.dataset_name.lower()
+        image_model_config = get_image_model_config(cfg.experiment.image_model_config_name)
 
-        # --- FIX 1: Add CIFAR datasets to the 3-channel list ---
-        in_channels = 3 if dataset_name_lower in ["cifar10", "cifar100", "celeba", "camelyon16"] else 1
+        # 2. Determine other parameters needed for model creation
+        in_channels = 3  # All CIFAR datasets have 3 channels
+        sample_data, _ = next(iter(test_loader))
+        image_size = tuple(sample_data.shape[2:])
 
-        model_init_cfg = {"num_classes": num_classes, "in_channels": in_channels}
-        model_factory = lambda: get_image_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
+        # 3. Your model_factory now uses the loaded config object
+        model_factory = lambda: ImageModelFactory.create_model(
+            model_name=image_model_config.model_name,
+            num_classes=num_classes,
+            in_channels=in_channels,
+            image_size=image_size,
+            config=image_model_config
+        )
 
-        # --- FIX 2b: Remove 'model_type' from extra args ---
         seller_extra_args = {}
 
     cfg.experiment.num_classes = num_classes
@@ -195,19 +204,31 @@ def run_training_loop(
 
 def run_attack(cfg: AppConfig):
     """Orchestrates the entire experiment from a single config object."""
-    logging.info(f"--- Starting Experiment: {cfg.experiment.dataset_name} | {cfg.experiment.model_structure} ---")
 
-    # 1. Data and Model Setup
+    # --- 1. NEW: Add Caching Logic at the Beginning ---
+    save_path = Path(cfg.experiment.save_path)
+    # This success marker should be the very last file created by a successful run.
+    success_marker = save_path / "final_metrics.json"
+
+    if success_marker.exists():
+        logging.info(f"✅ Results for this configuration already exist. Skipping re-run.")
+        logging.info(f"   - Cached results can be found at: {save_path}")
+        return  # <-- Exit the function early, skipping all computation
+
+    # --- If no cache is found, the original function proceeds as normal ---
+
+    logging.info(f"--- Starting Experiment: {cfg.experiment.dataset_name} | {cfg.experiment.model_structure} ---")
+    logging.info(f"   - Results will be saved to: {save_path}")
+
+    # 2. Data and Model Setup
     buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes = \
         setup_data_and_model(cfg)
 
     global_model = model_factory().to(cfg.experiment.device)
     logging.info(f"Global model created and moved to {cfg.experiment.device}")
 
-    # 3. Define the loss function
+    # 3. FL Component Initialization (renumbered for clarity)
     loss_fn = nn.CrossEntropyLoss()
-
-    # 2. FL Component Initialization
     aggregator = Aggregator(
         global_model=global_model,
         device=torch.device(cfg.experiment.device),
@@ -215,37 +236,29 @@ def run_attack(cfg: AppConfig):
         buyer_data_loader=buyer_loader,
         agg_config=cfg.aggregation
     )
-
     sybil_coordinator = SybilCoordinator(cfg.adversary_seller_config.sybil, aggregator)
     evaluators = create_evaluators(cfg, cfg.experiment.device, **seller_extra_args)
 
-    # Get a sample batch to determine input shape (your method is perfect)
+    # 4. Marketplace Initialization
+    # ... (the rest of your function remains exactly the same) ...
     sample_data = None
     if test_loader:
         try:
-            # Try to get a sample from the test loader first
             sample_data, _ = next(iter(test_loader))
         except StopIteration:
             logging.warning("Test loader is available but empty.")
-
-    # If no sample was retrieved, try getting one from a seller loader as a fallback
     if sample_data is None:
         logging.warning("No test data found. Using a sample from a seller loader for initialization.")
         for loader in seller_loaders.values():
             if loader:
                 try:
                     sample_data, _ = next(iter(loader))
-                    break  # Success!
+                    break
                 except StopIteration:
-                    continue  # This seller's loader is empty, try the next
-
+                    continue
     if sample_data is None:
         raise RuntimeError("Could not retrieve a sample data batch from any available loader.")
-
     input_shape = tuple(sample_data.shape[1:])
-
-    # 3. Marketplace Initialization
-    # The marketplace now receives the full config and all its dependencies
     marketplace = DataMarketplaceFederated(
         cfg=cfg,
         aggregator=aggregator,
@@ -253,17 +266,16 @@ def run_attack(cfg: AppConfig):
         input_shape=input_shape
     )
 
-    # 4. Seller Initialization
+    # 5. Seller Initialization
     initialize_sellers(cfg, marketplace, seller_loaders, model_factory, seller_extra_args,
-                       sybil_coordinator, collate_fn, num_classes)  # <-- Add num_classes here
+                       sybil_coordinator, collate_fn, num_classes)
 
-    # 5. Federated Training Loop
+    # 6. Federated Training Loop
     final_model, results_buffer = run_training_loop(
         cfg, marketplace, test_loader, evaluators, sybil_coordinator
     )
 
-    # 6. Final Evaluation and Artifact Saving
-    # UPDATED: Call the new function to handle all post-training tasks.
+    # 7. Final Evaluation and Artifact Saving
     run_final_evaluation_and_logging(
         cfg, final_model, results_buffer, test_loader, evaluators
     )

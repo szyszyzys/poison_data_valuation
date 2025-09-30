@@ -34,6 +34,7 @@ class ExperimentConfig:
     dataset_type: str = "text"
     evaluation_frequency: int = 1
     evaluations: List[str] = field(default_factory=lambda: ["clean"])
+    image_model_config_name: str = "cifar10_cnn"
 
 
 @dataclass
