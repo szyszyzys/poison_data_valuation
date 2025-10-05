@@ -3,6 +3,7 @@ import random
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
+import pandas as pd
 from torch.utils.data import Dataset, Subset
 
 from common.datasets.data_split import BuyerSplitStrategy
