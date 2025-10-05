@@ -36,7 +36,7 @@ COMPAS:
     - 'two_year_recid'
     - 'days_b_screening_arrest'
 
-Purchase100:
+purchase100:
   name: Purchase100
   source_type: numpy
   url: 'https://github.com/xehartnort/Purchase100-Texas100-datasets/raw/master/purchase100.npz'
@@ -45,7 +45,7 @@ Purchase100:
   data_key: 'features'
   labels_key: 'labels'
 
-Texas100:
+texas100:
   name: Texas100
   source_type: numpy
   url: 'https://github.com/xehartnort/Purchase100-Texas100-datasets/raw/master/texas100.npz'
