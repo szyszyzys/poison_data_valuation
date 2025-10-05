@@ -1,5 +1,6 @@
 import collections
 import csv
+import json
 import logging
 import os
 import random
@@ -17,6 +18,7 @@ from typing import Tuple
 from typing import Union
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -177,6 +179,9 @@ class GradientSeller(BaseSeller):
         self.save_path = Path(save_path)
         self.seller_specific_path = self.save_path / self.seller_id
         self.seller_specific_path.mkdir(parents=True, exist_ok=True)  # Ensure seller's work dir exists
+        self.selection_history = []  # Track selection per round
+        self.performance_history = []  # Track contribution to global model
+        self.reward_history = []  # Track hypothetical rewards
 
     def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
@@ -200,28 +205,107 @@ class GradientSeller(BaseSeller):
 
         return gradient, stats
 
-    def _compute_local_grad(self, model_to_train: nn.Module, dataset_to_use: Optional[Dataset] = None) -> Tuple[
-        Optional[List[torch.Tensor]], Dict[str, Any]]:
-        """Handles the local training loop and gradient computation."""
-        if dataset_to_use is None:
-            dataset_to_use = self.data_config.dataset
+    def save_latest_round(self):
+        """Save only the most recent round (incremental save)."""
+        if not self.federated_round_history:
+            return
+
+        history_csv = self.seller_specific_path / "history" / "round_history.csv"
+        history_csv.parent.mkdir(parents=True, exist_ok=True)
+
+        latest_record = self.federated_round_history[-1]
+
+        # Flatten record for CSV
+        csv_row = {
+            'event_type': latest_record.get('event_type'),
+            'round': latest_record.get('round'),
+            'timestamp': latest_record.get('timestamp'),
+            'was_selected': latest_record.get('was_selected')
+        }
+
+        if latest_record.get('training_stats'):
+            for key, value in latest_record['training_stats'].items():
+                csv_row[f'training_stats_{key}'] = value
+
+        df = pd.DataFrame([csv_row])
+
+        # Append or create
+        if history_csv.exists():
+            df.to_csv(history_csv, mode='a', header=False, index=False)
+        else:
+            df.to_csv(history_csv, mode='w', header=True, index=False)
+
+    def _compute_local_grad(
+            self,
+            model_to_train: nn.Module,
+            dataset_to_use: Optional[Dataset] = None
+    ) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
+        """
+        Handles the local training loop and gradient computation.
+
+        Returns:
+            Tuple of (gradient_list, stats_dict)
+            - gradient_list: List of tensors matching model parameters, or None on failure
+            - stats_dict: Dictionary containing training statistics
+        """
         start_time = time.time()
 
-        if not dataset_to_use or len(dataset_to_use) == 0:
-            logging.warning(f"[{self.seller_id}] Dataset is empty. Returning zero gradient.")
-            zero_grad = [torch.zeros_like(p) for p in model_to_train.parameters()]
-            return zero_grad, {'train_loss': None, 'compute_time_ms': 0}
+        # Use provided dataset or fall back to self.dataset
+        if dataset_to_use is None:
+            if not hasattr(self, 'dataset') or self.dataset is None:
+                logging.error(f"[{self.seller_id}] ❌ No dataset available!")
+                return None, {'error': 'No dataset available'}
+            dataset_to_use = self.dataset
 
-        # Create DataLoader using the provided data configuration
-        data_loader = DataLoader(
-            dataset_to_use,
-            batch_size=self.training_config.batch_size,
-            shuffle=True,
-            collate_fn=self.data_config.collate_fn
-        )
+        # Validate dataset
+        if not dataset_to_use or len(dataset_to_use) == 0:
+            logging.warning(f"[{self.seller_id}] ⚠️  Dataset is empty. Returning zero gradient.")
+            zero_grad = [torch.zeros_like(p) for p in model_to_train.parameters()]
+            return zero_grad, {
+                'train_loss': 0.0,
+                'compute_time_ms': 0,
+                'upload_bytes': estimate_byte_size(zero_grad),
+                'num_samples': 0
+            }
+
+        logging.info(f"[{self.seller_id}] Training on {len(dataset_to_use)} samples...")
+
+        # Create DataLoader with proper collate function handling
+        collate_fn = getattr(self.data_config, 'collate_fn', None) if hasattr(self, 'data_config') else None
 
         try:
-            # The core training logic is in an external, reusable function
+            data_loader = DataLoader(
+                dataset_to_use,
+                batch_size=self.training_config.batch_size,
+                shuffle=True,
+                collate_fn=collate_fn,
+                num_workers=0,  # Important for multiprocessing compatibility
+                pin_memory=False  # Avoid issues with CUDA in multiprocessing
+            )
+
+            # Validate DataLoader
+            if len(data_loader) == 0:
+                logging.warning(f"[{self.seller_id}] ⚠️  DataLoader is empty after creation!")
+                zero_grad = [torch.zeros_like(p) for p in model_to_train.parameters()]
+                return zero_grad, {
+                    'train_loss': 0.0,
+                    'compute_time_ms': 0,
+                    'upload_bytes': estimate_byte_size(zero_grad),
+                    'num_samples': 0
+                }
+
+        except Exception as e:
+            logging.error(f"[{self.seller_id}] ❌ Failed to create DataLoader: {e}", exc_info=True)
+            return None, {'error': f'DataLoader creation failed: {str(e)}'}
+
+        # Perform local training
+        try:
+            logging.info(f"[{self.seller_id}] Starting local training...")
+            logging.info(f"  - Epochs: {self.training_config.local_epochs}")
+            logging.info(f"  - Batch size: {self.training_config.batch_size}")
+            logging.info(f"  - Learning rate: {self.training_config.learning_rate}")
+            logging.info(f"  - Device: {self.device}")
+
             grad_tensors, avg_loss = local_training_and_get_gradient(
                 model=model_to_train,
                 train_loader=data_loader,
@@ -230,16 +314,84 @@ class GradientSeller(BaseSeller):
                 lr=self.training_config.learning_rate,
             )
 
+            compute_time = (time.time() - start_time) * 1000
+
+            # === CRITICAL: Validate returned gradient ===
+            if grad_tensors is None:
+                logging.error(f"[{self.seller_id}] ❌ Training function returned None gradient!")
+                return None, {'error': 'Training returned None gradient'}
+
+            if not isinstance(grad_tensors, (list, tuple)):
+                logging.error(f"[{self.seller_id}] ❌ Gradient is not a list/tuple: {type(grad_tensors)}")
+                return None, {'error': f'Invalid gradient type: {type(grad_tensors)}'}
+
+            if len(grad_tensors) == 0:
+                logging.error(f"[{self.seller_id}] ❌ Gradient list is empty!")
+                return None, {'error': 'Empty gradient list'}
+
+            # Validate gradient matches model
+            model_params = list(model_to_train.parameters())
+            if len(grad_tensors) != len(model_params):
+                logging.error(
+                    f"[{self.seller_id}] ❌ Gradient length mismatch: "
+                    f"got {len(grad_tensors)}, expected {len(model_params)}"
+                )
+                return None, {'error': f'Gradient length mismatch: {len(grad_tensors)} vs {len(model_params)}'}
+
+            # Validate each tensor
+            for i, (grad_tensor, model_param) in enumerate(zip(grad_tensors, model_params)):
+                if not isinstance(grad_tensor, torch.Tensor):
+                    logging.error(f"[{self.seller_id}] ❌ Gradient[{i}] is not a tensor: {type(grad_tensor)}")
+                    return None, {'error': f'Gradient[{i}] is not a tensor'}
+
+                if grad_tensor.shape != model_param.shape:
+                    logging.error(
+                        f"[{self.seller_id}] ❌ Shape mismatch at param {i}: "
+                        f"gradient {grad_tensor.shape} vs model {model_param.shape}"
+                    )
+                    return None, {'error': f'Shape mismatch at param {i}'}
+
+                # Check for NaN/Inf
+                if torch.isnan(grad_tensor).any():
+                    logging.error(f"[{self.seller_id}] ❌ NaN detected in gradient[{i}]!")
+                    return None, {'error': f'NaN in gradient[{i}]'}
+
+                if torch.isinf(grad_tensor).any():
+                    logging.error(f"[{self.seller_id}] ❌ Inf detected in gradient[{i}]!")
+                    return None, {'error': f'Inf in gradient[{i}]'}
+
+            # All validation passed!
+            logging.info(f"[{self.seller_id}] ✅ Training completed successfully")
+            logging.info(f"  - Average loss: {avg_loss:.4f}")
+            logging.info(f"  - Compute time: {compute_time:.2f}ms")
+            logging.info(f"  - Gradient params: {len(grad_tensors)}")
+
+            # Compute gradient statistics
+            grad_norm = sum(torch.norm(g).item() ** 2 for g in grad_tensors) ** 0.5
+
             stats = {
                 'train_loss': avg_loss,
-                'compute_time_ms': (time.time() - start_time) * 1000,
-                'upload_bytes': estimate_byte_size(grad_tensors)
+                'compute_time_ms': compute_time,
+                'upload_bytes': estimate_byte_size(grad_tensors),
+                'num_samples': len(dataset_to_use),
+                'gradient_norm': grad_norm
             }
+
             return grad_tensors, stats
 
         except Exception as e:
-            logging.error(f"[{self.seller_id}] Error in training loop: {e}", exc_info=True)
-            return None, {'error': 'Training failed.'}
+            logging.error(f"[{self.seller_id}] ❌ Error in training loop: {e}", exc_info=True)
+
+            # Return zero gradients instead of None to prevent cascading failures
+            logging.warning(f"[{self.seller_id}] Returning zero gradients due to training failure")
+            zero_grad = [torch.zeros_like(p) for p in model_to_train.parameters()]
+
+            return zero_grad, {
+                'error': str(e),
+                'train_loss': None,
+                'compute_time_ms': (time.time() - start_time) * 1000,
+                'upload_bytes': estimate_byte_size(zero_grad)
+            }
 
     def save_local_model(self, model_instance: nn.Module) -> None:
         """Saves the state dictionary of a given model instance."""
@@ -326,6 +478,73 @@ class GradientSeller(BaseSeller):
             logging.error(f"[{self.seller_id}] Error saving round history to {file_name}: {e}")
         except Exception as e:
             logging.error(f"[{self.seller_id}] An unexpected error occurred while saving round history: {e}")
+
+    def round_end_process(
+            self,
+            round_number: int,
+            was_selected: bool,
+            was_outlier: bool = False,
+            marketplace_metrics: Dict = None
+    ):
+        """Enhanced round end processing with marketplace tracking."""
+
+        # Record selection
+        self.selection_history.append({
+            'round': round_number,
+            'selected': was_selected,
+            'outlier': was_outlier,
+            'timestamp': time.time()
+        })
+
+        # Calculate hypothetical reward based on contribution
+        if marketplace_metrics:
+            reward = self._calculate_reward(marketplace_metrics, was_selected)
+            self.reward_history.append({
+                'round': round_number,
+                'reward': reward,
+                'cumulative_reward': sum(r['reward'] for r in self.reward_history) + reward
+            })
+
+        # Save incrementally
+        self.save_latest_round()
+
+    def _calculate_reward(self, metrics: Dict, was_selected: bool) -> float:
+        """
+        Calculate seller reward based on contribution.
+        This is a placeholder - implement your actual reward mechanism.
+        """
+        if not was_selected:
+            return 0.0
+
+        # Example: Reward based on gradient quality and model improvement
+        base_reward = 1.0
+
+        # Bonus for good gradient quality
+        norm = metrics.get('gradient_norm', 0)
+        if norm > 0:
+            # Normalize by average (if available)
+            quality_bonus = 0.5  # Placeholder
+        else:
+            quality_bonus = 0
+
+        return base_reward + quality_bonus
+
+    def save_marketplace_summary(self):
+        """Save seller's marketplace participation summary."""
+        summary = {
+            'seller_id': self.seller_id,
+            'total_rounds': len(self.selection_history),
+            'times_selected': sum(1 for h in self.selection_history if h['selected']),
+            'times_outlier': sum(1 for h in self.selection_history if h['outlier']),
+            'selection_rate': sum(1 for h in self.selection_history if h['selected']) / len(
+                self.selection_history) if self.selection_history else 0,
+            'total_reward': sum(r['reward'] for r in self.reward_history) if self.reward_history else 0,
+            'avg_reward_per_round': np.mean([r['reward'] for r in self.reward_history]) if self.reward_history else 0
+        }
+
+        summary_path = self.seller_specific_path / "marketplace_summary.json"
+        with open(summary_path, 'w') as f:
+            json.dump(summary, f, indent=2)
 
 
 @dataclass
@@ -618,42 +837,118 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
     def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
         Overrides the base method to implement poisoning and Sybil logic.
+        Returns gradient as a list of tensors matching global_model parameters.
         """
-        current_round = self.sybil_coordinator.cur_round if self.is_sybil else float('inf')
-        should_attack = current_round >= self.adversary_config.sybil.benign_rounds
-        local_model = self.model_factory().to(self.device)
-        local_model.load_state_dict(global_model.state_dict())
-        if "adv_0" in self.seller_id or "bn_4" in self.seller_id: # Log for one adv and one benign
-            logging.info(f"--- Local Model Architecture for {self.seller_id} ---\n{local_model}")
+        logging.info(f"[{self.seller_id}] Getting gradient for upload...")
 
-        # --- UPDATED: Use the PoisonedDataset wrapper for clean data handling ---
-        if should_attack and self.poison_generator:
-            logging.info(f"[{self.seller_id}] Attack phase: using poisoned dataset wrapper.")
-            dataset_for_training = PoisonedDataset(
-                original_dataset=self.dataset,  # self.dataset from GradientSeller
-                poison_generator=self.poison_generator,
-                poison_rate=self.adversary_config.poisoning.poison_rate
+        try:
+            # Determine if we should attack
+            current_round = self.sybil_coordinator.cur_round if self.is_sybil else float('inf')
+            should_attack = current_round >= self.adversary_config.sybil.benign_rounds
+
+            logging.info(f"[{self.seller_id}] Round: {current_round}, Should attack: {should_attack}")
+
+            # Create a local copy of the global model for training
+            # IMPORTANT: Don't modify global_model directly!
+            local_model = self.model_factory().to(self.device)
+            local_model.load_state_dict(global_model.state_dict())
+
+            # Debug logging (only for specific sellers to reduce noise)
+            if self.seller_id in ["adv_0", "bn_4"]:
+                logging.info(f"--- Local Model Architecture for {self.seller_id} ---")
+                logging.info(f"Number of parameters: {sum(p.numel() for p in local_model.parameters())}")
+                logging.info(f"Parameter shapes: {[p.shape for p in local_model.parameters()]}")
+
+            # Select dataset based on attack phase
+            if should_attack and self.poison_generator:
+                logging.info(f"[{self.seller_id}] 🎭 Attack phase: using poisoned dataset")
+                dataset_for_training = PoisonedDataset(
+                    original_dataset=self.dataset,
+                    poison_generator=self.poison_generator,
+                    poison_rate=self.adversary_config.poisoning.poison_rate
+                )
+            else:
+                logging.info(f"[{self.seller_id}] 😇 Benign phase: using clean data")
+                dataset_for_training = self.dataset
+
+            # Compute local gradient
+            # CRITICAL: Train the LOCAL model, not the global one!
+            base_gradient, stats = self._compute_local_grad(
+                model_to_train=local_model,  # ✅ Use local_model!
+                dataset_to_use=dataset_for_training
             )
-        else:
-            logging.info(f"[{self.seller_id}] Benign phase: using clean data.")
-            dataset_for_training = self.dataset
 
-        # The base GradientSeller's training method can now be called directly.
-        # This assumes train_local_model is the method that computes the gradient.
-        base_gradient, stats = self._compute_local_grad(
-            model_to_train=global_model,
-            dataset_to_use=dataset_for_training
-        )
-        # Apply Sybil logic (this part remains the same)
-        sybil_strategy = self.adversary_config.sybil.gradient_default_mode
-        if self.is_sybil and not self.selected_last_round and should_attack:
-            logging.info(f"[{self.seller_id}] Sybil client not selected. Using strategy: '{sybil_strategy}'")
-            coordinated_gradient = self.sybil_coordinator.update_nonselected_gradient(
-                base_gradient, strategy=sybil_strategy
-            )
-            return coordinated_gradient, stats
+            # Validate gradient before any modifications
+            if base_gradient is None:
+                logging.error(f"[{self.seller_id}] ❌ _compute_local_grad returned None!")
+                return None, {}
 
-        return base_gradient, stats
+            if not isinstance(base_gradient, (list, tuple)):
+                logging.error(f"[{self.seller_id}] ❌ Gradient is not a list/tuple: {type(base_gradient)}")
+                return None, {}
+
+            if len(base_gradient) == 0:
+                logging.error(f"[{self.seller_id}] ❌ Gradient is empty!")
+                return None, {}
+
+            # Validate against global model
+            global_params = list(global_model.parameters())
+            if len(base_gradient) != len(global_params):
+                logging.error(
+                    f"[{self.seller_id}] ❌ Gradient length mismatch: "
+                    f"got {len(base_gradient)}, expected {len(global_params)}"
+                )
+                return None, {}
+
+            # Validate shapes
+            for i, (grad_tensor, global_param) in enumerate(zip(base_gradient, global_params)):
+                if not isinstance(grad_tensor, torch.Tensor):
+                    logging.error(f"[{self.seller_id}] ❌ Gradient[{i}] is not a tensor: {type(grad_tensor)}")
+                    return None, {}
+
+                if grad_tensor.shape != global_param.shape:
+                    logging.error(
+                        f"[{self.seller_id}] ❌ Shape mismatch at param {i}: "
+                        f"gradient shape {grad_tensor.shape} vs expected {global_param.shape}"
+                    )
+                    return None, {}
+
+            logging.info(f"[{self.seller_id}] ✅ Base gradient validated: {len(base_gradient)} parameters")
+
+            # Apply Sybil logic if applicable
+            if self.is_sybil and not self.selected_last_round and should_attack:
+                sybil_strategy = self.adversary_config.sybil.gradient_default_mode
+                logging.info(
+                    f"[{self.seller_id}] 🎭 Sybil client not selected. "
+                    f"Applying strategy: '{sybil_strategy}'"
+                )
+
+                coordinated_gradient = self.sybil_coordinator.update_nonselected_gradient(
+                    base_gradient, strategy=sybil_strategy
+                )
+
+                # Validate coordinated gradient
+                if coordinated_gradient is None:
+                    logging.error(f"[{self.seller_id}] ❌ Sybil coordinator returned None!")
+                    return None, {}
+
+                if len(coordinated_gradient) != len(global_params):
+                    logging.error(
+                        f"[{self.seller_id}] ❌ Coordinated gradient length mismatch: "
+                        f"{len(coordinated_gradient)} vs {len(global_params)}"
+                    )
+                    return None, {}
+
+                logging.info(f"[{self.seller_id}] ✅ Coordinated gradient validated")
+                return coordinated_gradient, stats
+
+            # Return base gradient for normal sellers or selected Sybils
+            logging.info(f"[{self.seller_id}] ✅ Returning base gradient")
+            return base_gradient, stats
+
+        except Exception as e:
+            logging.error(f"[{self.seller_id}] ❌ Exception in get_gradient_for_upload: {e}", exc_info=True)
+            return None, {}
 
 
 class TriggeredSubsetDataset(Dataset):

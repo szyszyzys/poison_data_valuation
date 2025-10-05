@@ -187,80 +187,188 @@ def construct_text_buyer_set(dataset: List[Tuple[int, Any]], buyer_count: int, b
         raise ValueError(f"Unknown buyer_data_mode: {buyer_data_mode}")
 
 
-def split_text_dataset_martfl_discovery(dataset: List[Tuple[int, Any]], buyer_count: int, num_clients: int,
-                                        noise_factor: float, buyer_data_mode: str,
-                                        buyer_bias_distribution: Optional[Dict], seed: int) -> Tuple[
-    np.ndarray, Dict[int, List[int]]]:
+def split_text_dataset_martfl_discovery(
+        dataset: List[Tuple[int, Any]],
+        buyer_count: int,
+        num_clients: int,
+        noise_factor: float,
+        buyer_data_mode: str,
+        buyer_bias_distribution: Optional[Dict],
+        seed: int
+) -> Tuple[np.ndarray, Dict[int, List[int]]]:
     """
     Simulates a data split where seller distributions are noisy mimics of the buyer's.
+
+    Args:
+        noise_factor: Quality of discovery, range [0, 1].
+                     1.0 = perfect match, 0.0 = maximum noise
     """
     random.seed(seed)
     np.random.seed(seed)
 
-    # 1. --- Initial Setup (same as before) ---
+    logging.info(f"Starting martFL discovery split: {len(dataset)} samples, "
+                 f"{num_clients} clients, noise_factor={noise_factor:.2f}")
+
+    # 1. Extract and validate labels
     all_indices = np.arange(len(dataset))
-    targets = np.array([item[1] for item in dataset])
+    targets = []
+
+    for i, item in enumerate(dataset):
+        label = item[1]
+
+        # Handle different label formats
+        if isinstance(label, (list, tuple)):
+            if len(label) == 0:
+                raise ValueError(f"Empty label at index {i}")
+            label = label[0]
+
+        if isinstance(label, torch.Tensor):
+            label = label.item()
+        elif isinstance(label, np.ndarray):
+            label = label.item()
+
+        # Validate it's now a scalar
+        if not isinstance(label, (int, float, np.integer)):
+            raise ValueError(f"Cannot convert label at index {i} to scalar: {type(label)}")
+
+        targets.append(int(label))
+
+    targets = np.array(targets, dtype=np.int64)
     unique_classes = sorted(list(np.unique(targets)))
     num_classes = len(unique_classes)
 
-    # 2. --- Construct Buyer Set (same as before) ---
-    buyer_indices = construct_text_buyer_set(dataset, buyer_count, buyer_data_mode, buyer_bias_distribution, seed)
+    logging.info(f"Found {num_classes} unique classes: {unique_classes}")
 
-    # 3. --- Define Seller Pool and Calculate Buyer's True Distribution ---
+    # 2. Construct buyer set
+    buyer_indices = construct_text_buyer_set(
+        dataset, buyer_count, buyer_data_mode, buyer_bias_distribution, seed
+    )
+    logging.info(f"Buyer set: {len(buyer_indices)} samples")
+
+    # 3. Define seller pool and calculate buyer's distribution
     seller_pool_indices = np.setdiff1d(all_indices, buyer_indices, assume_unique=True)
-    np.random.shuffle(seller_pool_indices)  # Shuffle for random sampling
+    np.random.shuffle(seller_pool_indices)
 
+    logging.info(f"Seller pool: {len(seller_pool_indices)} samples")
+
+    if len(seller_pool_indices) < num_clients:
+        raise ValueError(f"Not enough samples for {num_clients} clients. "
+                         f"Only {len(seller_pool_indices)} available.")
+
+    # Calculate buyer's class distribution
     if len(buyer_indices) > 0:
         buyer_targets = targets[buyer_indices]
         buyer_class_counts = {cls: np.sum(buyer_targets == cls) for cls in unique_classes}
-        base_proportions = np.array([buyer_class_counts.get(c, 0) / len(buyer_indices) for c in unique_classes])
-    else:  # Fallback to uniform if buyer is empty
+        base_proportions = np.array([buyer_class_counts.get(c, 0) / len(buyer_indices)
+                                     for c in unique_classes])
+        logging.info(f"Buyer distribution: {dict(zip(unique_classes, base_proportions))}")
+    else:
+        logging.warning("Buyer set is empty! Using uniform distribution.")
         base_proportions = np.array([1.0 / num_classes] * num_classes)
 
-    # Ensure no zero proportions, which can cause issues with Dirichlet
-    base_proportions[base_proportions == 0] = 1e-6
+    # Ensure no zero proportions (causes Dirichlet issues)
+    base_proportions = np.maximum(base_proportions, 1e-6)
     base_proportions /= base_proportions.sum()
 
-    # 4. --- NEW: Iteratively Assign Data to Sellers Based on Noisy Distributions ---
+    # 4. Calculate safe concentration parameter
+    # Map noise_factor [0, 1] to concentration [0.1, 100]
+    # Higher noise_factor -> higher concentration -> less noise
+    if not (0 <= noise_factor <= 1):
+        raise ValueError(f"noise_factor must be in [0, 1], got {noise_factor}")
+
+    if noise_factor >= 0.999:
+        concentration = 100.0  # Cap at high value
+    elif noise_factor <= 0.001:
+        concentration = 0.1  # Cap at low value
+    else:
+        # Scale: 0 -> 0.1, 0.5 -> 1, 0.9 -> 10, 0.99 -> 100
+        concentration = 10 ** (2 * noise_factor - 1)
+
+    logging.info(f"Using Dirichlet concentration: {concentration:.2f}")
+
+    # 5. Create pool organized by class
+    seller_pool_by_class = {
+        cls: list(seller_pool_indices[targets[seller_pool_indices] == cls])
+        for cls in unique_classes
+    }
+
+    # Log available samples per class
+    for cls, indices in seller_pool_by_class.items():
+        logging.debug(f"Class {cls}: {len(indices)} samples available")
+
+    # 6. Calculate samples per client
+    samples_per_client = len(seller_pool_indices) // num_clients
+    min_samples_per_client = max(10, samples_per_client // 2)  # Minimum threshold
+
+    logging.info(f"Target samples per client: {samples_per_client}")
+
+    # 7. Assign samples to clients
     seller_splits = {i: [] for i in range(num_clients)}
-
-    # Convert seller pool to a dictionary of available indices per class for efficient sampling
-    seller_pool_by_class = {cls: list(seller_pool_indices[targets[seller_pool_indices] == cls]) for cls in
-                            unique_classes}
-
-    samples_per_client = len(seller_pool_indices) // num_clients if num_clients > 0 else 0
-
-    # Translate the 'noise_factor' (e.g., discovery_quality) into a concentration parameter 'alpha'
-    # High quality (close to 1.0) -> high alpha -> low noise
-    # Low quality (close to 0.0) -> low alpha -> high noise
-    concentration = (1 / (1.001 - noise_factor) - 1) * 100
 
     for client_id in range(num_clients):
         if samples_per_client == 0:
+            logging.warning(f"samples_per_client is 0! Skipping client {client_id}")
             continue
 
-        # a. Generate a noisy distribution for this seller
-        noisy_proportions = np.random.dirichlet(base_proportions * concentration)
+        # Generate noisy distribution
+        alpha = base_proportions * concentration
+        noisy_proportions = np.random.dirichlet(alpha)
 
-        # b. Calculate the target number of samples per class for this seller
-        target_counts_for_client = _calculate_target_counts(samples_per_client,
-                                                            dict(zip(unique_classes, noisy_proportions)))
+        # Calculate target counts
+        target_counts = _calculate_target_counts(
+            samples_per_client,
+            dict(zip(unique_classes, noisy_proportions))
+        )
 
-        # c. Sample from the pool to meet the target counts
-        for cls, count in target_counts_for_client.items():
-            # Take available samples for this class
+        # Sample from pool
+        for cls, count in target_counts.items():
             available = seller_pool_by_class.get(cls, [])
             num_to_take = min(count, len(available))
 
             if num_to_take > 0:
-                # Pop samples from the pool and assign to the client
                 assigned_samples = available[:num_to_take]
                 seller_splits[client_id].extend(assigned_samples)
-                seller_pool_by_class[cls] = available[num_to_take:]  # Update pool
+                seller_pool_by_class[cls] = available[num_to_take:]
 
-    # (Optional) Distribute any remaining samples if the pool wasn't perfectly divisible
-    remaining_indices = [idx for cls_indices in seller_pool_by_class.values() for idx in cls_indices]
-    for i, idx in enumerate(remaining_indices):
-        seller_splits[i % num_clients].append(idx)
+    # 8. Distribute remaining samples more fairly
+    remaining_indices = [idx for cls_indices in seller_pool_by_class.values()
+                         for idx in cls_indices]
+
+    if remaining_indices:
+        logging.info(f"Distributing {len(remaining_indices)} remaining samples")
+        np.random.shuffle(remaining_indices)
+
+        # Distribute to clients with fewest samples first
+        client_sizes = [(cid, len(indices)) for cid, indices in seller_splits.items()]
+        client_sizes.sort(key=lambda x: x[1])  # Sort by size ascending
+
+        for idx in remaining_indices:
+            smallest_client = client_sizes[0][0]
+            seller_splits[smallest_client].append(idx)
+            # Update size and re-sort
+            client_sizes[0] = (smallest_client, client_sizes[0][1] + 1)
+            client_sizes.sort(key=lambda x: x[1])
+
+    # 9. Validate and log results
+    logging.info("Client data distribution:")
+    for client_id in range(num_clients):
+        indices = seller_splits[client_id]
+        if len(indices) < min_samples_per_client:
+            logging.warning(f"Client {client_id} has only {len(indices)} samples "
+                            f"(below minimum {min_samples_per_client})")
+
+        if len(indices) > 0:
+            client_targets = targets[indices]
+            class_dist = {cls: np.sum(client_targets == cls) for cls in unique_classes}
+            logging.info(f"  Client {client_id}: {len(indices)} samples, "
+                         f"distribution: {class_dist}")
+        else:
+            logging.error(f"Client {client_id} has NO samples!")
+
+    # Final validation
+    total_assigned = sum(len(indices) for indices in seller_splits.values())
+    if total_assigned != len(seller_pool_indices):
+        logging.warning(f"Sample count mismatch: assigned {total_assigned}, "
+                        f"pool had {len(seller_pool_indices)}")
 
     return buyer_indices, seller_splits
