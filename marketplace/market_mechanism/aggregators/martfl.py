@@ -45,7 +45,7 @@ def _cluster_and_score_martfl(similarities: np.ndarray) -> Tuple[np.ndarray, Dic
     # Identify inlier cluster (highest similarity center)
     inlier_label = np.argmax(centers)
     clustering_info['inlier_cluster_id'] = int(inlier_label)
-    clustering_info['cluster_centers'] = centers.tolist()
+    clustering_info['cluster_centers'] = centers
     clustering_info['cluster_labels'] = labels.tolist()
 
     # Score: keep original similarity for inliers, zero for outliers
@@ -151,7 +151,32 @@ class MartflAggregator(BaseAggregator):
         }
 
         # 5. Cluster and score
-        inlier_scores, clustering_info = _cluster_and_score_martfl(similarities.cpu().numpy())
+        if self.baseline_id in seller_ids:
+            baseline_idx = seller_ids.index(self.baseline_id)
+            # Create a list of indices for all non-baseline sellers
+            other_indices = [i for i in range(len(seller_ids)) if i != baseline_idx]
+            # Create a tensor of similarities for clustering that excludes the baseline's perfect 1.0 score
+            similarities_for_clustering = similarities[other_indices]
+        else:
+            # The baseline is the buyer, so all sellers are included in clustering
+            baseline_idx = -1
+            similarities_for_clustering = similarities
+
+        # 6. Cluster and score using only the non-baseline sellers
+        # This prevents the baseline's self-similarity of 1.0 from skewing the result
+        inlier_scores_others, clustering_info = _cluster_and_score_martfl(
+            similarities_for_clustering.cpu().numpy()
+        )
+
+        # 7. Reconstruct the full scores array, giving the baseline a perfect score by default
+        if baseline_idx != -1:
+            inlier_scores = np.zeros(len(seller_ids), dtype=float)
+            # The baseline is always an inlier with its original similarity score (which is 1.0)
+            inlier_scores[baseline_idx] = similarities[baseline_idx].item()
+            # Fill in the scores for the other sellers
+            inlier_scores[other_indices] = inlier_scores_others
+        else:
+            inlier_scores = inlier_scores_others
 
         # Add clustering metadata
         aggregation_stats['clustering'] = clustering_info
