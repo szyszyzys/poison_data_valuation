@@ -1,0 +1,55 @@
+# FILE: configs/tabular_datasets.yaml
+
+AdultCensus:
+  name: AdultCensus
+  source_type: uci
+  uci_id: 2
+  target_column: 'income'
+  sensitive_column: 'sex'
+  missing_value_placeholder: '?'
+  binarize:
+    income:
+      positive_value: '>50K'
+    sex:
+      positive_value: 'Male'
+
+COMPAS:
+  name: COMPAS
+  source_type: url
+  url: 'https://raw.githubusercontent.com/propublica/compas-analysis/master/compas-scores-two-years.csv'
+  target_column: 'two_year_recid'
+  sensitive_column: 'race'
+  query: "days_b_screening_arrest <= 30 and days_b_screening_arrest >= -30 and is_recid != -1 and c_charge_degree != 'O'"
+  feature_columns:
+    - 'sex'
+    - 'age'
+    - 'age_cat'
+    - 'race'
+    - 'juv_fel_count'
+    - 'decile_score'
+    - 'juv_misd_count'
+    - 'juv_other_count'
+    - 'priors_count'
+    - 'c_charge_degree'
+    - 'c_charge_desc'
+    - 'is_recid'
+    - 'two_year_recid'
+    - 'days_b_screening_arrest'
+
+Purchase100:
+  name: Purchase100
+  source_type: numpy
+  url: 'https://github.com/xehartnort/Purchase100-Texas100-datasets/raw/master/purchase100.npz'
+  has_header: false
+  target_column: 'target'
+  data_key: 'features'
+  labels_key: 'labels'
+
+Texas100:
+  name: Texas100
+  source_type: numpy
+  url: 'https://github.com/xehartnort/Purchase100-Texas100-datasets/raw/master/texas100.npz'
+  has_header: false
+  target_column: 'target'
+  data_key: 'features'
+  labels_key: 'labels'

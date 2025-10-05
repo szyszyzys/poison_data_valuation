@@ -7,11 +7,15 @@ import logging
 from pathlib import Path
 from typing import Tuple, List, Dict
 
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import yaml
+from sklearn.preprocessing import StandardScaler
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
+from common.datasets.tabular_data_processor import get_dataset_tabular
 from common.datasets.text_data_processor import collate_batch
 from common.evaluators import create_evaluators
 from common.factories import SellerFactory
@@ -29,11 +33,10 @@ from model.utils import get_text_model
 def setup_data_and_model(cfg: AppConfig):
     """Loads dataset and creates a model factory from the AppConfig."""
     dataset_name = cfg.experiment.dataset_name
-
-    is_text = cfg.experiment.dataset_type == "text"
+    dataset_type = cfg.experiment.dataset_type
     collate_fn = None
 
-    if is_text:
+    if dataset_type == "text":
         processed_data = get_text_dataset(cfg)
         buyer_loader = processed_data.buyer_loader
         seller_loaders = processed_data.seller_loaders
@@ -46,12 +49,9 @@ def setup_data_and_model(cfg: AppConfig):
         model_init_cfg = {"num_classes": num_classes, "vocab_size": len(vocab), "padding_idx": pad_idx,
                           "dataset_name": dataset_name}
         model_factory = lambda: get_text_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
-
-        # --- FIX 2a: Remove 'model_type' from extra args ---
-        # This dictionary is for runtime OBJECTS, not config values.
         seller_extra_args = {"vocab": vocab, "pad_idx": pad_idx}
 
-    else:  # Image
+    elif dataset_type == "image":
         buyer_loader, seller_loaders, test_loader, stats, num_classes = get_image_dataset(cfg)
 
         image_model_config = get_image_model_config(cfg.experiment.image_model_config_name)
@@ -75,9 +75,56 @@ def setup_data_and_model(cfg: AppConfig):
         )
 
         seller_extra_args = {}
+    elif dataset_type == "tabular":
+        # --- NEW LOGIC FOR TABULAR DATA ---
+        with open("configs/tabular_datasets.yaml", 'r') as f:
+            all_tabular_configs = yaml.safe_load(f)
+        d_cfg = all_tabular_configs[dataset_name]
 
+        df, categorical_cols = get_dataset_tabular(config=d_cfg)
+
+        # Preprocess: One-hot encode categorical features and scale numerical ones
+        df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
+
+        X = df.drop(columns=[d_cfg['target_column']])
+        y = df[d_cfg['target_column']]
+
+        numerical_cols = X.select_dtypes(include=np.number).columns
+        scaler = StandardScaler()
+        X[numerical_cols] = scaler.fit_transform(X[numerical_cols])
+
+        # Convert to PyTorch tensors
+        X_tensor = torch.tensor(X.values, dtype=torch.float32)
+        y_tensor = torch.tensor(y.values, dtype=torch.long)
+
+        # --- TODO: Replace this simple split with your buyer/seller logic ---
+        # For now, we split into a single "seller" training set and a test set
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_tensor, y_tensor, test_size=0.2, random_state=cfg.seed
+        )
+        train_dataset = TensorDataset(X_train, y_train)
+        test_dataset = TensorDataset(X_test, y_test)
+
+        # Create DataLoaders
+        # NOTE: This is a simplified example. You'll need to create multiple seller_loaders.
+        seller_loaders = {0: DataLoader(train_dataset, batch_size=cfg.training.batch_size, shuffle=True)}
+        buyer_loader = None # No buyer data in this simple split
+        test_loader = DataLoader(test_dataset, batch_size=cfg.training.batch_size, shuffle=False)
+
+        # --- TODO: Define a model factory for your tabular models ---
+        # Example: model_factory = lambda: YourMLPModel(input_features=X_tensor.shape[1], ...)
+        model_factory = None
+
+        seller_extra_args = {}
+        collate_fn = None
+        num_classes = len(torch.unique(y_tensor))
+
+    else:
+        raise ValueError(f"Unsupported dataset_type: {dataset_type}")
 
     cfg.experiment.num_classes = num_classes
+    logging.info(f"Data loaded for '{dataset_name}'. Number of classes: {cfg.experiment.num_classes}")
+
     logging.info(f"Data loaded for '{dataset_name}'. Number of classes: {cfg.experiment.num_classes}")
 
     return buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes

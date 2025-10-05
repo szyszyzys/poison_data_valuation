@@ -206,7 +206,6 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     """
     Loads, processes, caches, and splits a text dataset according to the provided AppConfig.
     """
-    # ... (code from your original script is unchanged)
     # 1. --- Input Validation and Setup ---
     exp_cfg = cfg.experiment
     train_cfg = cfg.training
@@ -242,12 +241,25 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         num_classes, class_names = 4, ['World', 'Sports', 'Business', 'Sci/Tech']
         text_field, label_field = "text", "label"
     elif exp_cfg.dataset_name == "TREC":
-        if not hf_datasets_available:
-            raise ImportError("HuggingFace 'datasets' library required for TREC.")
+        # 1. DEFINE the field names first
+        text_field, label_field = "text", "coarse_label"
+
+        # 2. LOAD the Hugging Face dataset
         ds = hf_load("trec", cache_dir=cfg.data_root)
         train_ds_hf, test_ds_hf = ds["train"], ds["test"]
-        num_classes, class_names = 6, ['ABBR', 'ENTY', 'DESC', 'HUM', 'LOC', 'NUM']
-        text_field, label_field = "text", "coarse_label"
+
+        # 3. GET the actual class information from the dataset
+        dataset_features = ds['train'].features[label_field]
+        class_names = dataset_features.names
+        num_classes = len(class_names) # This is the true number of classes in the data
+
+        # 4. VALIDATE the data's class count against your model's configuration
+        if num_classes != expected_num_classes:
+            raise ValueError(
+                f"Configuration mismatch! The '{exp_cfg.dataset_name}' dataset has "
+                f"{num_classes} classes, but your config specifies num_classes={expected_num_classes}."
+            )
+
     else:
         raise ValueError(f"Unsupported dataset: {exp_cfg.dataset_name}")
 

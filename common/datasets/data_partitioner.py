@@ -264,3 +264,144 @@ class FederatedDataPartitioner:
         assign_data(high_clients, config.high_prevalence_ratio)
         assign_data(low_clients, config.low_prevalence_ratio)
         assign_data(security_clients, config.standard_prevalence_ratio)
+
+
+class BasePartitioner:
+    """A base class for federated data partitioning."""
+    def __init__(self, num_clients: int, seed: int = 42):
+        self.num_clients = num_clients
+        self.seed = seed
+        self.buyer_indices: np.ndarray = np.array([], dtype=int)
+        self.client_indices: Dict[int, List[int]] = {i: [] for i in range(num_clients)}
+        random.seed(seed)
+        np.random.seed(seed)
+
+    def partition(self, *args, **kwargs):
+        """This method must be implemented by subclasses."""
+        raise NotImplementedError
+
+    def get_splits(self) -> Tuple[np.ndarray, Dict[int, List[int]]]:
+        """Returns the final buyer and client index splits."""
+        return self.buyer_indices, self.client_indices
+
+class TabularDataPartitioner(BasePartitioner):
+    """Handles partitioning of tabular data stored in pandas DataFrames."""
+    def __init__(self, features: pd.DataFrame, targets: pd.Series, num_clients: int, seed: int = 42):
+        super().__init__(num_clients, seed)
+        if not isinstance(features, pd.DataFrame) or not isinstance(targets, pd.Series):
+            raise TypeError("features must be a pandas DataFrame and targets a pandas Series.")
+
+        self.features = features
+        self.targets = targets
+        self.all_indices = np.array(features.index)
+        logging.info(f"TabularDataPartitioner initialized with {len(self.all_indices)} samples.")
+
+    def partition(self, strategy: str, partition_params: Dict, buyer_fraction: float = 0.2):
+        """
+        Partitions the tabular dataset based on a specified strategy.
+
+        Args:
+            strategy (str): The partitioning strategy ('property_skew' or 'dirichlet').
+            partition_params (Dict): A dictionary of parameters for the chosen strategy.
+            buyer_fraction (float): The fraction of the total data to allocate to the buyer.
+        """
+        np.random.shuffle(self.all_indices)
+
+        # 1. Split into buyer and seller pools
+        buyer_split_idx = int(len(self.all_indices) * buyer_fraction)
+        self.buyer_indices = self.all_indices[:buyer_split_idx]
+        seller_pool_indices = self.all_indices[buyer_split_idx:]
+
+        logging.info(f"Split data into {len(self.buyer_indices)} buyer samples and {len(seller_pool_indices)} seller samples.")
+
+        # 2. Dispatch to the appropriate partitioning method
+        if strategy == 'property_skew':
+            self._partition_property_skew(seller_pool_indices, partition_params)
+        elif strategy == 'dirichlet':
+            if 'dirichlet_alpha' not in partition_params:
+                raise ValueError("Dirichlet strategy requires 'dirichlet_alpha' in partition_params.")
+            self._partition_dirichlet(seller_pool_indices, partition_params['dirichlet_alpha'])
+        else:
+            raise ValueError(f"Unknown partitioning strategy for tabular data: {strategy}")
+        return self
+
+    def _partition_dirichlet(self, seller_pool_indices: np.ndarray, alpha: float):
+        """Partitions seller data using a Dirichlet distribution for Non-IID simulation."""
+        logging.info(f"Partitioning seller data using Dirichlet (alpha={alpha})...")
+
+        pool_targets = self.targets.loc[seller_pool_indices].to_numpy()
+        n_classes = len(np.unique(self.targets))
+
+        # Generate class distribution for each client
+        label_distribution = np.random.dirichlet([alpha] * self.num_clients, n_classes)
+
+        # Map each class to the indices of samples having that class
+        class_to_indices = {
+            label: seller_pool_indices[np.where(pool_targets == label)[0]]
+            for label in range(n_classes)
+        }
+
+        # Distribute indices based on the generated distribution
+        for class_id, indices in class_to_indices.items():
+            np.random.shuffle(indices)
+            proportions = label_distribution[class_id]
+            samples_per_client = (proportions * len(indices)).astype(int)
+            # Ensure the sum is correct due to rounding
+            samples_per_client[-1] = len(indices) - np.sum(samples_per_client[:-1])
+
+            start_idx = 0
+            for client_id in range(self.num_clients):
+                num_samples = samples_per_client[client_id]
+                end_idx = start_idx + num_samples
+                self.client_indices[client_id].extend(indices[start_idx:end_idx])
+                start_idx = end_idx
+
+    def _partition_property_skew(self, seller_pool_indices: np.ndarray, params: Dict):
+        """Partitions sellers based on the prevalence of a specific binary feature (property)."""
+        prop_key = params['property_key']
+        logging.info(f"Partitioning seller data using property skew on column '{prop_key}'...")
+
+        # 1. Identify indices with and without the property from the seller pool
+        seller_features = self.features.loc[seller_pool_indices]
+        prop_true_indices = seller_features[seller_features[prop_key] == 1].index.to_numpy()
+        prop_false_indices = seller_features[seller_features[prop_key] == 0].index.to_numpy()
+        np.random.shuffle(prop_true_indices)
+        np.random.shuffle(prop_false_indices)
+
+        # 2. Define client groups
+        client_ids = list(range(self.num_clients))
+        np.random.shuffle(client_ids)
+
+        num_high_clients = params.get('num_high_prevalence_clients', self.num_clients // 2)
+        high_clients = client_ids[:num_high_clients]
+        low_clients = client_ids[num_high_clients:]
+
+        # 3. Distribute data using a pointer-based method for efficiency
+        samples_per_client = len(seller_pool_indices) // self.num_clients
+        true_ptr, false_ptr = 0, 0
+
+        def assign_data(client_list, prevalence_ratio):
+            nonlocal true_ptr, false_ptr
+            for client_id in client_list:
+                num_prop_true = int(samples_per_client * prevalence_ratio)
+                num_prop_false = samples_per_client - num_prop_true
+
+                # Assign samples with the property
+                end_true = true_ptr + num_prop_true
+                self.client_indices[client_id].extend(prop_true_indices[true_ptr:end_true])
+                true_ptr = end_true
+
+                # Assign samples without the property
+                end_false = false_ptr + num_prop_false
+                self.client_indices[client_id].extend(prop_false_indices[false_ptr:end_false])
+                false_ptr = end_false
+
+        # Assign data to high-prevalence and low-prevalence clients
+        assign_data(high_clients, params.get('high_prevalence_ratio', 0.8))
+        assign_data(low_clients, params.get('low_prevalence_ratio', 0.2))
+
+
+
+
+
+
