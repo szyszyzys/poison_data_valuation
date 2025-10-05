@@ -11,17 +11,12 @@ import time
 from pathlib import Path
 from typing import List, Dict
 
-import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-import yaml
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from torch.utils.data import TensorDataset, DataLoader
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
-from common.datasets.tabular_data_processor import get_dataset_tabular, get_tabular_dataset
+from common.datasets.tabular_data_processor import get_tabular_dataset
 from common.datasets.text_data_processor import collate_batch
 from common.evaluators import create_evaluators
 from common.factories import SellerFactory
