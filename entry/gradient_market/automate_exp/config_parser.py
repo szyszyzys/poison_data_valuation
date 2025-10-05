@@ -44,18 +44,17 @@ def load_config(config_path: str) -> AppConfig:
         with open(config_path, 'r') as f:
             config_dict = yaml.safe_load(f)
 
-        # --- NEW STEP: Pre-process the dictionary before passing to dacite ---
         processed_config_dict = _convert_lists_to_tuples_for_specific_fields(config_dict)
-        # --- END NEW STEP ---
 
-        # Dacite automatically handles the conversion from dict to your nested dataclasses
+        # --- FIX: Added 'Enum' to the cast list ---
+        # This tells dacite to automatically convert strings to Enum members
+        type_config = DaciteConfig(cast=[Enum, bool, int, float, str])
+
         cfg = from_dict(
             data_class=AppConfig,
-            data=processed_config_dict,  # Pass the pre-processed dictionary here
-            config=DaciteConfig(cast=[bool, int, float, str])  # Keep your existing cast config
+            data=processed_config_dict,
+            config=type_config  # Use the updated config object
         )
-
-        # The __post_init__ method in AppConfig is automatically called here.
 
         logger.info("Successfully loaded and validated config.")
         return cfg
