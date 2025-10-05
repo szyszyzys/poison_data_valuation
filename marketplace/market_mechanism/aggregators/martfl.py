@@ -46,7 +46,7 @@ def _cluster_and_score_martfl(similarities: np.ndarray) -> Tuple[np.ndarray, Dic
     inlier_label = np.argmax(centers)
     clustering_info['inlier_cluster_id'] = int(inlier_label)
     clustering_info['cluster_centers'] = centers
-    clustering_info['cluster_labels'] = labels.tolist()
+    clustering_info['cluster_labels'] = labels
 
     # Score: keep original similarity for inliers, zero for outliers
     scores = np.where(labels == inlier_label, similarities, 0.0)
