@@ -109,7 +109,7 @@ def get_tabular_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[str, DataLoade
     test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 
     input_dim = X_train_tensor.shape[1]
-    num_classes = len(torch.unique(y_tensor))
+    num_classes = len(torch.unique(y_test_tensor))
 
     # 4. Partition the training data using the consistent partitioner
     partitioner = TabularDataPartitioner(
