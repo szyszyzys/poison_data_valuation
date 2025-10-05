@@ -1,14 +1,16 @@
 import logging
 import random
 from abc import ABC, abstractmethod
-from typing import List, Tuple, Any
+from typing import Any
+from typing import Dict, Tuple, List
 
 import torch
 from torchtext.data import get_tokenizer
 from torchtext.vocab import Vocab
 
 from common.enums import ImageTriggerType, ImageTriggerLocation
-from common.gradient_market_configs import LabelFlipConfig, BackdoorImageConfig, BackdoorTextConfig
+from common.gradient_market_configs import LabelFlipConfig, BackdoorImageConfig, BackdoorTextConfig, \
+    BackdoorTabularConfig
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -205,3 +207,42 @@ class BackdoorTextGenerator(PoisonGenerator):
             poisoned_data = data + self.trigger_token_ids
 
         return poisoned_data, poisoned_label
+
+
+class BackdoorTabularGenerator(PoisonGenerator):
+    """Applies a feature-based trigger to tabular data."""
+
+    def __init__(self, config: BackdoorTabularConfig, feature_to_idx: Dict[str, int]):
+        self.config = config
+        self.target_label = config.target_label
+
+        # Pre-process the trigger conditions into a more efficient format (index, value)
+        # This avoids dictionary lookups in the hot loop (the apply method).
+        self.trigger_map: List[Tuple[int, float]] = []
+        for feature_name, trigger_value in config.trigger_conditions.items():
+            if feature_name not in feature_to_idx:
+                raise ValueError(f"Trigger feature '{feature_name}' not found in feature map.")
+            feature_index = feature_to_idx[feature_name]
+            self.trigger_map.append((feature_index, float(trigger_value)))
+
+    def apply(self, data: torch.Tensor, label: int) -> Tuple[torch.Tensor, int]:
+        """
+        Applies the feature-based trigger to a tabular data tensor.
+
+        Args:
+            data (torch.Tensor): A 1D tensor representing a single row of data.
+            label (int): The original label (unused in this attack, but part of the interface).
+
+        Returns:
+            A tuple of (poisoned_data_tensor, target_label).
+        """
+        if not isinstance(data, torch.Tensor) or data.dim() != 1:
+            raise TypeError(f"Expected data to be a 1D tensor, but got shape {data.shape}")
+
+        poisoned_data = data.clone()
+
+        # Overwrite the feature values with the trigger values
+        for index, value in self.trigger_map:
+            poisoned_data[index] = value
+
+        return poisoned_data, self.target_label

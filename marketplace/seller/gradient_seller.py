@@ -25,10 +25,10 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
-    BackdoorTextGenerator
+    BackdoorTextGenerator, BackdoorTabularGenerator
 from common.enums import ImageTriggerType, ImageTriggerLocation
 from common.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, BackdoorTextConfig, SybilConfig, \
-    RuntimeDataConfig, TrainingConfig
+    RuntimeDataConfig, TrainingConfig, BackdoorTabularConfig
 from common.utils import unflatten_tensor
 from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.seller.seller import BaseSeller
@@ -1082,5 +1082,18 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
                 location=params.location
             )
             return BackdoorTextGenerator(backdoor_text_cfg)
+        elif model_type == 'tabular':
+            params = poison_cfg.tabular_backdoor_params.active_attack_params
+            feature_to_idx = kwargs.get('feature_to_idx')
+            if not feature_to_idx:
+                raise ValueError("Tabular backdoor generator requires 'feature_to_idx' in kwargs.")
+
+            backdoor_tabular_cfg = BackdoorTabularConfig(
+                target_label=params.target_label,
+                trigger_conditions=params.trigger_conditions
+            )
+            return BackdoorTabularGenerator(backdoor_tabular_cfg, feature_to_idx)
+        ### --- END NEW LOGIC --- ###
+
         else:
             raise ValueError(f"Unsupported model_type for backdoor: {model_type}")

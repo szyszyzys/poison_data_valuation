@@ -19,6 +19,7 @@ class PoisonType(str, Enum):
     LABEL_FLIP = "label_flip"
     IMAGE_BACKDOOR = "image_backdoor"
     TEXT_BACKDOOR = "text_backdoor"
+    TABULAR_BACKDOOR= "tabular_backdoor"
 
 
 class ImageBackdoorAttackName(str, Enum):

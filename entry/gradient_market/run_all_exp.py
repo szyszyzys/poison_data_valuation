@@ -21,7 +21,7 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import TensorDataset, DataLoader
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
-from common.datasets.tabular_data_processor import get_dataset_tabular
+from common.datasets.tabular_data_processor import get_dataset_tabular, get_tabular_dataset
 from common.datasets.text_data_processor import collate_batch
 from common.evaluators import create_evaluators
 from common.factories import SellerFactory
@@ -33,6 +33,7 @@ from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.seller.gradient_seller import SybilCoordinator
 from model.image_model import ImageModelFactory, validate_model_factory
 from model.model_configs import get_image_model_config
+from model.tabular_model import TabularModelFactory, TabularConfigManager
 from model.utils import get_text_model
 
 
@@ -129,48 +130,23 @@ def setup_data_and_model(cfg: AppConfig):
 
         seller_extra_args = {}
     elif dataset_type == "tabular":
-        # --- NEW LOGIC FOR TABULAR DATA ---
-        with open("configs/tabular_datasets.yaml", 'r') as f:
-            all_tabular_configs = yaml.safe_load(f)
-        d_cfg = all_tabular_configs[dataset_name]
+        # 1. Delegate all data loading and partitioning to the helper function
+        buyer_loader, seller_loaders, test_loader, num_classes, input_dim = get_tabular_dataset(cfg)
 
-        df, categorical_cols = get_dataset_tabular(config=d_cfg)
+        # 2. Use your Config Manager and Factory to create the model factory
+        config_manager = TabularConfigManager(config_dir=cfg.data.tabular.model_config_dir)
+        tabular_model_config = config_manager.get_config_by_name(cfg.experiment.tabular_model_config_name)
 
-        # Preprocess: One-hot encode categorical features and scale numerical ones
-        df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
-
-        X = df.drop(columns=[d_cfg['target_column']])
-        y = df[d_cfg['target_column']]
-
-        numerical_cols = X.select_dtypes(include=np.number).columns
-        scaler = StandardScaler()
-        X[numerical_cols] = scaler.fit_transform(X[numerical_cols])
-
-        # Convert to PyTorch tensors
-        X_tensor = torch.tensor(X.values, dtype=torch.float32)
-        y_tensor = torch.tensor(y.values, dtype=torch.long)
-
-        # --- TODO: Replace this simple split with your buyer/seller logic ---
-        # For now, we split into a single "seller" training set and a test set
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_tensor, y_tensor, test_size=0.2, random_state=cfg.seed
+        model_factory = lambda: TabularModelFactory.create_model(
+            model_name=tabular_model_config.model_name,
+            input_dim=input_dim,
+            num_classes=num_classes,
+            config=tabular_model_config
         )
-        train_dataset = TensorDataset(X_train, y_train)
-        test_dataset = TensorDataset(X_test, y_test)
-
-        # Create DataLoaders
-        # NOTE: This is a simplified example. You'll need to create multiple seller_loaders.
-        seller_loaders = {0: DataLoader(train_dataset, batch_size=cfg.training.batch_size, shuffle=True)}
-        buyer_loader = None # No buyer data in this simple split
-        test_loader = DataLoader(test_dataset, batch_size=cfg.training.batch_size, shuffle=False)
-
-        # --- TODO: Define a model factory for your tabular models ---
-        # Example: model_factory = lambda: YourMLPModel(input_features=X_tensor.shape[1], ...)
-        model_factory = None
-
-        seller_extra_args = {}
+        # Tabular data does not require special collate_fn or seller_extra_args
         collate_fn = None
-        num_classes = len(torch.unique(y_tensor))
+        seller_extra_args = {}
+    ### --- END: UPDATED TABULAR LOGIC --- ###
 
     else:
         raise ValueError(f"Unsupported dataset_type: {dataset_type}")

@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Dict, Optional, Tuple, List, Union
 
 from torch.utils.data import Dataset
@@ -37,6 +38,7 @@ class ExperimentConfig:
     evaluation_frequency: int = 1
     evaluations: List[str] = field(default_factory=lambda: ["clean"])
     image_model_config_name: str = "cifar10_cnn"
+    tabular_model_config_name: str = "mlp_texas100_baseline" # Default model config to use
 
 
 @dataclass
@@ -85,6 +87,40 @@ class TextBackdoorParams:
     attack_name: TextBackdoorAttackName = TextBackdoorAttackName.SIMPLE_DATA_POISON
 
 
+
+@dataclass
+class TabularFeatureTriggerParams:
+    """Parameters for a feature-based trigger backdoor attack."""
+    target_label: int = 1
+    # Trigger is a dictionary of {'feature_name': value},
+    # e.g., {'age': 65, 'job_title': 'retired'}
+    trigger_conditions: Dict[str, Any] = field(default_factory=dict)
+
+# --- Step 2: Create the container, just like for image and text ---
+
+class TabularBackdoorAttackName(Enum):
+    """Enum to define the different types of tabular backdoor attacks."""
+    FEATURE_TRIGGER = "feature_trigger"
+
+@dataclass
+class TabularBackdoorParams:
+    """Container for all possible tabular backdoor attack configurations."""
+    # This field determines which of the sub-configurations is active
+    attack_name: TabularBackdoorAttackName = TabularBackdoorAttackName.FEATURE_TRIGGER
+
+    # It holds an instance of every possible sub-configuration
+    feature_trigger_params: TabularFeatureTriggerParams = field(default_factory=TabularFeatureTriggerParams)
+
+    @property
+    def active_attack_params(self) -> Union[TabularFeatureTriggerParams]:
+        """
+        Returns the active parameter object based on the 'attack_name' field.
+        """
+        if self.attack_name == TabularBackdoorAttackName.FEATURE_TRIGGER:
+            return self.feature_trigger_params
+        raise ValueError(f"Unknown tabular backdoor attack name: {self.attack_name}")
+
+
 @dataclass
 class LabelFlipParams:
     """Parameters specific to the label-flipping poisoning attack."""
@@ -99,22 +135,37 @@ class PoisoningConfig:
     poison_rate: float = 0.1
     image_backdoor_params: ImageBackdoorParams = field(default_factory=ImageBackdoorParams)
     text_backdoor_params: TextBackdoorParams = field(default_factory=TextBackdoorParams)
+    tabular_backdoor_params: TabularBackdoorParams = field(default_factory=TabularBackdoorParams)
     label_flip_params: LabelFlipParams = field(default_factory=LabelFlipParams)
 
     @property
-    def active_params(self) -> Union[BackdoorSimpleDataPoisonParams, TextBackdoorParams, LabelFlipParams, None]:
+    def active_params(self) -> Union[ # Add all possible return types here
+        BackdoorSimpleDataPoisonParams,
+        TextBackdoorParams,
+        TabularBackdoorParams,
+        LabelFlipParams,
+        None
+    ]:
         """
         Returns the active parameter object based on the main 'type' field.
         """
         if self.type == PoisonType.IMAGE_BACKDOOR:
-            # We can still leverage the nested property here
             return self.image_backdoor_params.active_attack_params
+
+        # --- FIX 2: Made text_backdoor consistent with the container pattern ---
         elif self.type == PoisonType.TEXT_BACKDOOR:
             return self.text_backdoor_params
+
+        # --- FIX 3: Added the missing case for tabular backdoor ---
+        elif self.type == PoisonType.TABULAR_BACKDOOR:
+            return self.tabular_backdoor_params
+
         elif self.type == PoisonType.LABEL_FLIP:
             return self.label_flip_params
+
         elif self.type == PoisonType.NONE:
             return None
+
         raise ValueError(f"Unknown poison type: {self.type}")
 
 
@@ -222,11 +273,19 @@ class AdversarySellerConfig:
 
 
 @dataclass
+class TabularDataConfig:
+    dataset_config_path: str = "configs/tabular_datasets.yaml"
+    model_config_dir: str = "configs/tabular_models"
+    buyer_ratio: float = 0.1  # Percentage of training data reserved for the buyer
+
+
+@dataclass
 class DataConfig:
     """Holds configuration for one type of data source."""
     text: Optional[TextDataConfig] = None
     image: Optional[ImageDataConfig] = None
     num_workers = 2
+    tabular: Optional[TabularDataConfig] = None
 
 
 @dataclass
@@ -258,6 +317,7 @@ class BackdoorImageConfig:
     randomize_location: bool = False
 
 
+
 @dataclass
 class BackdoorTextConfig:
     """Configuration for the BackdoorTextGenerator."""
@@ -267,6 +327,12 @@ class BackdoorTextConfig:
     location: TextTriggerLocation = TextTriggerLocation.END
     max_seq_len: Optional[int] = None
 
+@dataclass
+class BackdoorTabularConfig:
+    """Configuration for a feature-based tabular backdoor attack."""
+    target_label: int
+    # Defines the trigger, e.g., {'feature_name_A': 1.0, 'feature_name_B': 0.0}
+    trigger_conditions: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class MartFLParams:

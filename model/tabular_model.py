@@ -308,30 +308,3 @@ class TabularConfigManager:
 
         df = pd.DataFrame(records)
         return df.set_index('config_name')
-
-    @staticmethod
-    def get_shokri_vulnerable_config() -> TabularModelConfig:
-        """A vulnerable config replicating the Shokri et al. paper's setup."""
-        return TabularModelConfig(
-            # --- Model Architecture ---
-            model_name="TabularMLP",
-            hidden_dims=[512, 256],  # High capacity
-            use_dropout=False,
-            use_batch_norm=False,
-
-            # --- Training Parameters from Shokri et al. ---
-            epochs=50,
-            batch_size=64,
-            learning_rate=0.01,
-            optimizer_type="sgd",  # CRITICAL: Use SGD with momentum
-            momentum=0.9,
-            weight_decay=0.0,  # No L2 regularization
-            use_scheduler=False,  # A fixed learning rate is used
-            use_early_stopping=False,  # Must be disabled to overfit
-
-            # --- Metadata ---
-            config_name="shokri_vulnerable",
-            description="Vulnerable config based on the Shokri et al. paper."
-        )
-
-

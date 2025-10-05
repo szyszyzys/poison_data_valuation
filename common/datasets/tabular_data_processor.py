@@ -1,12 +1,10 @@
-# FILE: common/datasets/tabular_data_processor.py
-
-import os
-import pandas as pd
-import numpy as np
 import logging
-from urllib import request
+import os
 from typing import Dict, Any, Tuple, List
+from urllib import request
 
+import numpy as np
+import pandas as pd
 import torch
 import yaml
 from sklearn.model_selection import train_test_split
@@ -15,164 +13,144 @@ from torch.utils.data import DataLoader, Subset, TensorDataset
 from ucimlrepo import fetch_ucirepo
 
 from common.datasets.data_partitioner import TabularDataPartitioner
-from common.datasets.image_data_processor import save_data_statistics
+from common.gradient_market_configs import AppConfig  # Import your main config
+
+logger = logging.getLogger(__name__)
 
 
-def get_dataset_tabular(config: Dict[str, Any]) -> Tuple[pd.DataFrame, List[str]]:
-    """
-    A unified function to load and prepare a tabular dataset from various sources
-    based on a configuration dictionary.
-    """
+def _load_and_prepare_tabular_df(config: Dict[str, Any]) -> Tuple[pd.DataFrame, List[str]]:
+    """A unified helper to load and prepare a tabular DataFrame from various sources."""
     dataset_name = config['name']
-    logging.info(f"📦 Loading and preparing the '{dataset_name}' tabular dataset...")
+    logger.info(f"📦 Loading and preparing the '{dataset_name}' tabular dataset...")
 
-    # --- 1. Fetch data based on its source type ---
+    # --- Fetch data based on its source type ---
     if config['source_type'] == 'uci':
         dataset_obj = fetch_ucirepo(id=config['uci_id'])
         df = pd.concat([dataset_obj.data.features, dataset_obj.data.targets], axis=1)
         df.columns = ["".join(c if c.isalnum() else '_' for c in str(x)) for x in df.columns]
-
-    elif config['source_type'] == 'url':
-        df = pd.read_csv(config['url'], header='infer' if config.get('has_header', True) else None)
-        if not config.get('has_header', True):
-            num_features = len(df.columns) - 1
-            df.columns = [f'feature_{i}' for i in range(num_features)] + [config['target_column']]
-
+    elif config['source_type'] in ['url', 'local_csv']:
+        path = config['url'] if config['source_type'] == 'url' else config['path']
+        df = pd.read_csv(path, header='infer' if config.get('has_header', True) else None)
     elif config['source_type'] == 'numpy':
         local_filename = f"{dataset_name.lower()}.npz"
         if not os.path.exists(local_filename):
-            logging.info(f"  - Downloading {dataset_name} dataset...")
+            logger.info(f"  - Downloading {dataset_name} dataset from {config['url']}...")
             request.urlretrieve(config['url'], local_filename)
-            logging.info(f"  - Downloaded to {local_filename}")
         data = np.load(local_filename)
         features, labels = data[config['data_key']], data[config['labels_key']]
         if len(labels.shape) > 1 and labels.shape[1] > 1:
             labels = np.argmax(labels, axis=1)
-        feature_columns = [f'feature_{i}' for i in range(features.shape[1])]
-        df = pd.DataFrame(features, columns=feature_columns)
+        df = pd.DataFrame(features, columns=[f'feature_{i}' for i in range(features.shape[1])])
         df[config['target_column']] = labels
-
-    elif config['source_type'] == 'local_csv':
-        df = pd.read_csv(config['path'], header='infer' if config.get('has_header', True) else None)
-        if not config.get('has_header', True):
-            num_features = len(df.columns) - 1
-            df.columns = [f'feature_{i}' for i in range(num_features)] + [config['target_column']]
-
     else:
         raise ValueError(f"Unsupported source_type: {config['source_type']}")
 
-    if 'feature_columns' in config:
-        df = df[config['feature_columns']]
-
-    if 'query' in config:
-        df = df.query(config['query']).dropna()
-
+    # --- Apply generic preprocessing steps from config ---
+    if 'query' in config: df = df.query(config['query']).dropna()
     if 'missing_value_placeholder' in config:
         df.replace(config['missing_value_placeholder'], np.nan, inplace=True)
         df.dropna(inplace=True)
-
     df.reset_index(drop=True, inplace=True)
-
-    if 'binarize' in config:
-        for column, details in config['binarize'].items():
-            positive_value = details['positive_value']
-            df[column] = df[column].apply(lambda x: 1 if str(x).strip() == str(positive_value) else 0)
 
     categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
     if config['target_column'] in categorical_cols:
         categorical_cols.remove(config['target_column'])
-    if config.get('sensitive_column') in categorical_cols:
-        categorical_cols.remove(config.get('sensitive_column'))
 
-    logging.info(f"  - ✅ Dataset '{dataset_name}' loaded successfully. Shape: {df.shape}")
+    logger.info(f"  - ✅ Dataset '{dataset_name}' loaded successfully. Shape: {df.shape}")
     return df, categorical_cols
 
 
-def get_tabular_dataset_federated(cfg) -> Tuple[DataLoader, Dict[int, DataLoader], DataLoader, Dict, int]:
+def get_tabular_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[str, DataLoader], DataLoader, int, int]:
     """
-    A unified function to load, partition, and prepare federated TABULAR datasets.
+    Loads, preprocesses, and partitions a tabular dataset for a federated experiment.
+
+    Args:
+        cfg (AppConfig): The main application configuration object.
+
+    Returns:
+        A tuple containing:
+        - buyer_loader: DataLoader for the buyer's trusted data.
+        - seller_loaders: A dictionary of DataLoaders for each seller.
+        - test_loader: DataLoader for the final test set.
+        - num_classes: The number of classes in the dataset.
+        - input_dim: The number of features after preprocessing.
     """
-    logger = logging.getLogger(__name__)
     logger.info(f"--- Starting Federated Tabular Dataset Setup for '{cfg.experiment.dataset_name}' ---")
 
-    # === UPDATE 1: Use dynamic config path ===
-    tabular_cfg_path = cfg.data.tabular_config_path
-    with open(tabular_cfg_path, 'r') as f:
+    # 1. Load dataset-specific configuration and raw data
+    with open(cfg.data.tabular.dataset_config_path, 'r') as f:
         all_tabular_configs = yaml.safe_load(f)
     d_cfg = all_tabular_configs[cfg.experiment.dataset_name]
+    df, categorical_cols = _load_and_prepare_tabular_df(config=d_cfg)
+    target_col = d_cfg['target_column']
 
-    df, categorical_cols = get_dataset_tabular(config=d_cfg)
+    # 2. Preprocess Data (Dummify, Scale, Split)
+    df_processed = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
+    X = df_processed.drop(columns=[target_col])
+    y = df_processed[target_col]
 
-    # Preprocess Data
-    df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
-    X = df.drop(columns=[d_cfg['target_column']])
-    y = df[d_cfg['target_column']]
-
-    # Split before scaling to prevent data leakage
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=cfg.seed, stratify=y # Note: stratify assumes classification
+        X, y, test_size=0.2, random_state=cfg.seed, stratify=y
     )
 
-    # Scale numerical features
-    numerical_cols = X_train.select_dtypes(include=np.number).columns
     scaler = StandardScaler()
-    X_train[numerical_cols] = scaler.fit_transform(X_train[numerical_cols])
-    X_test[numerical_cols] = scaler.transform(X_test[numerical_cols])
+    numerical_cols = X_train.select_dtypes(include=np.number).columns
+    if not numerical_cols.empty:
+        X_train[numerical_cols] = scaler.fit_transform(X_train[numerical_cols])
+        X_test[numerical_cols] = scaler.transform(X_test[numerical_cols])
 
-    # Convert to PyTorch Tensors
+    # 3. Convert to PyTorch Datasets
     X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
-    y_train_tensor = torch.tensor(y_train.values, dtype=torch.long) # Note: .long() assumes classification
+    y_train_tensor = torch.tensor(y_train.values, dtype=torch.long)
+    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+
     X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
     y_test_tensor = torch.tensor(y_test.values, dtype=torch.long)
+    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 
-    num_classes = len(torch.unique(y_train_tensor))
+    input_dim = X_train_tensor.shape[1]
+    num_classes = len(torch.unique(y_tensor))
 
-    # Initialize and Run the Partitioner
+    # 4. Partition the training data using the consistent partitioner
     partitioner = TabularDataPartitioner(
+        dataset=train_dataset,
         features=X_train,
         targets=y_train,
         num_clients=cfg.experiment.n_sellers,
         seed=cfg.seed
     )
-
     partitioner.partition(
-        strategy=cfg.data.tabular.strategy,
-        partition_params=cfg.data.tabular.property_skew # Pass the config object/dict
+        client_partition_strategy=cfg.data.tabular.strategy,
+        partition_params=cfg.data.tabular.property_skew,
+        buyer_fraction=cfg.data.tabular.buyer_ratio
     )
-    buyer_indices, seller_splits = partitioner.get_splits() # Unpack only two values
+    buyer_indices, seller_splits, _ = partitioner.get_splits()
 
-    # Generate Statistics
-    stats = save_data_statistics(
-        buyer_indices=buyer_indices,
-        seller_splits=seller_splits,
-        targets=y_train.values, # Use the numpy/pandas values for stats
-        output_dir=cfg.experiment.save_path
-    )
-
-    # Create Datasets and DataLoaders
-    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
-
+    # 5. Create final DataLoaders
     batch_size = cfg.training.batch_size
     num_workers = cfg.data.num_workers
 
-    buyer_loader = DataLoader(Subset(train_dataset, buyer_indices), batch_size=batch_size, shuffle=True,
-                              num_workers=num_workers) if buyer_indices.size > 0 else None
-
+    buyer_loader = DataLoader(
+        Subset(train_dataset, buyer_indices),
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers
+    )
     seller_loaders = {
-        cid: DataLoader(Subset(train_dataset, indices), batch_size=batch_size, shuffle=True,
-                        num_workers=num_workers)
-        for cid, indices in seller_splits.items() if indices
+        f"seller_{cid}": DataLoader(
+            Subset(train_dataset, indices),
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers
+        )
+        for cid, indices in seller_splits.items() if len(indices) > 0
     }
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,  # Shuffle is False for testing
+        num_workers=num_workers
+    )
 
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-
-    logger.info(f"✅ Federated tabular dataset setup complete. Using {num_classes} classes.")
-
-    return buyer_loader, seller_loaders, test_loader, stats, num_classes
-
-
-
-
-
-
+    logger.info(f"✅ Federated tabular dataset setup complete.")
+    return buyer_loader, seller_loaders, test_loader, num_classes, input_dim
