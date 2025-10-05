@@ -275,8 +275,10 @@ class AdversarySellerConfig:
 @dataclass
 class TabularDataConfig:
     dataset_config_path: str = "configs/tabular_datasets.yaml"
-    model_config_dir: str = "configs/tabular_models"
-    buyer_ratio: float = 0.1  # Percentage of training data reserved for the buyer
+    model_config_dir: str = "model/configs"
+    buyer_ratio: float = 0.1
+    strategy: str = "iid"  # Add 'strategy' field
+    property_skew: Dict[str, Any] = field(default_factory=dict) # Add 'property_skew' field
 
 
 @dataclass
