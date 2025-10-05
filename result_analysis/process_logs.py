@@ -865,7 +865,7 @@ if __name__ == "__main__":
     all_rounds_df, summary_df = process_all_experiments(
         output_dir=args.output_dir,
         local_epoch=args.local_epoch,
-        aggregation_methods=args.aggregation_methods,
+        aggregation_methods=args.aggregation.method,
         exp_name=args.exp_name
     )
 

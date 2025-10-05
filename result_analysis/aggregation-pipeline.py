@@ -262,7 +262,6 @@ def main():
     # Step 1: Process the experimental logs
     if not args.skip_processing:
         print("Step 1: Processing experimental logs...")
-        print(f"Aggregation methods: {args.aggregation_methods}")
 
         # Import the processing module
         from process_logs import process_all_experiments
@@ -270,7 +269,7 @@ def main():
         all_rounds_df, summary_df = process_all_experiments(
             output_dir=processed_data_dir,
             local_epoch=args.local_epoch,
-            aggregation_methods=args.aggregation_methods
+            aggregation_methods=args.aggregation.method
         )
 
         print(f"Processed data saved to {processed_data_dir}")

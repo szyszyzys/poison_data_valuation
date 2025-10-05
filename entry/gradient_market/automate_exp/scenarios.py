@@ -84,7 +84,7 @@ def generate_attack_impact_scenarios() -> List[Scenario]:
                     parameter_grid={
                         "experiment.image_model_config_name": [model_config_name],
                         "experiment.model_structure": [model_name],
-                        "experiment.aggregation_method": ALL_AGGREGATORS,
+                        "aggregation.method": ALL_AGGREGATORS,
                         **sweep_params
                     }
                 ))
@@ -94,7 +94,7 @@ def generate_attack_impact_scenarios() -> List[Scenario]:
                 base_config_factory=get_base_text_config,
                 modifiers=[modifier, use_text_backdoor_attack],
                 parameter_grid={
-                    "experiment.aggregation_method": ALL_AGGREGATORS,
+                    "aggregation.method": ALL_AGGREGATORS,
                     **sweep_params
                 }
             ))
@@ -118,7 +118,7 @@ def generate_sybil_impact_scenarios() -> List[Scenario]:
             parameter_grid={
                 "experiment.image_model_config_name": [model_config_name],
                 "experiment.model_structure": [model_name],
-                "experiment.aggregation_method": ALL_AGGREGATORS,
+                "aggregation.method": ALL_AGGREGATORS,
                 "experiment.adv_rate": [0.3],
                 "adversary_seller_config.poisoning.poison_rate": [0.5],
                 "adversary_seller_config.sybil.is_sybil": [False],
@@ -133,7 +133,7 @@ def generate_sybil_impact_scenarios() -> List[Scenario]:
                 parameter_grid={
                     "experiment.image_model_config_name": [model_config_name],
                     "experiment.model_structure": [model_name],
-                    "experiment.aggregation_method": ALL_AGGREGATORS,
+                    "aggregation.method": ALL_AGGREGATORS,
                     "experiment.adv_rate": [0.3],
                     "adversary_seller_config.poisoning.poison_rate": [0.5],
                 }
@@ -157,7 +157,7 @@ def generate_data_heterogeneity_scenarios() -> List[Scenario]:
             parameter_grid={
                 "experiment.image_model_config_name": [model_config_name],
                 "experiment.model_structure": [model_name],
-                "experiment.aggregation_method": ALL_AGGREGATORS,
+                "aggregation.method": ALL_AGGREGATORS,
                 "data.image.property_skew.dirichlet_alpha": DIRICHLET_ALPHAS_TO_SWEEP,
                 "data.image.strategy": ["dirichlet"],
                 "experiment.adv_rate": [0.3],

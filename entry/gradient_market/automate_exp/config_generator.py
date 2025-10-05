@@ -109,7 +109,7 @@ class ExperimentGenerator:
         model_name = config.experiment.model_structure.lower()
 
         # 2. Aggregation Method
-        agg_method = config.experiment.aggregation_method.lower()
+        agg_method = config.aggregation.method.lower()
 
         # 3. Adversary Attack Type
         attack_type = config.adversary_seller_config.poisoning.type.name.lower()
