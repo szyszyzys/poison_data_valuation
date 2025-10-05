@@ -133,7 +133,7 @@ def run_single_experiment(config_path: str, run_id: int, gpu_id: int = None, for
                     run_cfg.experiment.save_path = str(run_save_path)
 
                     if gpu_id is not None:
-                        run_cfg.experiment.device = "cuda:0"
+                        run_cfg.experiment.device = "cuda"
                     else:
                         run_cfg.experiment.device = "cpu"
 
