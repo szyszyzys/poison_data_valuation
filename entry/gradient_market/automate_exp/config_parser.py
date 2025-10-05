@@ -1,5 +1,6 @@
 # config_loader.py
 import logging
+from enum import Enum
 from typing import Any
 
 import yaml
