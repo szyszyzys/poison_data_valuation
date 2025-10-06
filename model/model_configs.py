@@ -14,8 +14,8 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         activation="relu",
         epochs=50,
         batch_size=128,
-        learning_rate=0.01,
-        optimizer_type='sgd',
+        learning_rate=0.001,
+        optimizer_type='adam',
     ),
     "cifar10_cnn": ImageModelConfig(
         config_name="cifar10_cnn",
@@ -28,8 +28,8 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         classifier_layers=[256, 128],
         epochs=100,
         batch_size=128,
-        learning_rate=0.01,
-        optimizer_type='sgd',
+        learning_rate=0.001,
+        optimizer_type='adam',
     ),
     "cifar10_resnet18": ImageModelConfig(
         config_name="cifar10_resnet18",
@@ -41,8 +41,8 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         epochs=150,
         # --- FIX: Reduced batch size to lower GPU memory usage ---
         batch_size=64,
-        learning_rate=0.01,
-        optimizer_type='sgd',
+        learning_rate=0.001,
+        optimizer_type='adam',
     ),
     "cifar100_cnn": ImageModelConfig(
         config_name="cifar100_cnn",
@@ -55,8 +55,8 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         classifier_layers=[512, 256],
         epochs=150,
         batch_size=128,
-        learning_rate=0.01,
-        optimizer_type='sgd',
+        learning_rate=0.001,
+        optimizer_type='adam',
     ),
     "cifar100_resnet18": ImageModelConfig(
         config_name="cifar100_resnet18",
@@ -68,8 +68,8 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         epochs=200,
         # --- FIX: Reduced batch size to lower GPU memory usage ---
         batch_size=64,
-        learning_rate=0.01,
-        optimizer_type='sgd',
+        learning_rate=0.001,
+        optimizer_type='adam',
     ),
 }
 
