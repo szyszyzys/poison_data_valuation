@@ -38,7 +38,7 @@ class ImageModelConfig(BaseModelConfig):
 
     # Architecture parameters
     use_dropout: bool = True
-    dropout_rate: float = 0.1
+    dropout_rate: float = 0.5
     use_batch_norm: bool = False
     activation: str = "relu"  # "relu", "tanh", "sigmoid"
 
@@ -54,7 +54,7 @@ class ImageModelConfig(BaseModelConfig):
     # Training parameters
     epochs: int = 100
     batch_size: int = 64
-    learning_rate: float = 0.01
+    learning_rate: float = 0.001
     weight_decay: float = 0.0
     momentum: float = 0.9
     use_scheduler: bool = True
