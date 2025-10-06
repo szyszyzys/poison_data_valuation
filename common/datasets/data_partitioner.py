@@ -145,7 +145,6 @@ class FederatedDataPartitioner:
             for client_id in range(self.num_clients):
                 num_samples = samples_per_client[client_id]
                 end_idx = start_idx + num_samples
-                # CRITICAL FIX: Populate self.client_indices, not a local dict
                 self.client_indices[client_id].extend(indices[start_idx:end_idx].tolist())
                 start_idx = end_idx
 

@@ -16,6 +16,10 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         batch_size=128,
         learning_rate=0.001,
         optimizer_type='adam',
+        use_scheduler=True,
+        scheduler_step=30,  # Reduce LR every 30 epochs
+        scheduler_gamma=0.1,  # Multiply LR by 0.1
+        weight_decay=1e-4,
     ),
     "cifar10_cnn": ImageModelConfig(
         config_name="cifar10_cnn",
@@ -30,6 +34,10 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         batch_size=128,
         learning_rate=0.001,
         optimizer_type='adam',
+        use_scheduler=True,
+        scheduler_step=30,  # Reduce LR every 30 epochs
+        scheduler_gamma=0.1,  # Multiply LR by 0.1
+        weight_decay=1e-4,
     ),
     "cifar10_resnet18": ImageModelConfig(
         config_name="cifar10_resnet18",
@@ -43,6 +51,10 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         batch_size=64,
         learning_rate=0.001,
         optimizer_type='adam',
+        use_scheduler=True,
+        scheduler_step=30,  # Reduce LR every 30 epochs
+        scheduler_gamma=0.1,  # Multiply LR by 0.1
+        weight_decay=1e-4,
     ),
     "cifar100_cnn": ImageModelConfig(
         config_name="cifar100_cnn",
@@ -57,6 +69,10 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         batch_size=128,
         learning_rate=0.001,
         optimizer_type='adam',
+        use_scheduler=True,
+        scheduler_step=30,  # Reduce LR every 30 epochs
+        scheduler_gamma=0.1,  # Multiply LR by 0.1
+        weight_decay=1e-4,
     ),
     "cifar100_resnet18": ImageModelConfig(
         config_name="cifar100_resnet18",
@@ -70,6 +86,10 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         batch_size=64,
         learning_rate=0.001,
         optimizer_type='adam',
+        use_scheduler=True,
+        scheduler_step=30,  # Reduce LR every 30 epochs
+        scheduler_gamma=0.1,  # Multiply LR by 0.1
+        weight_decay=1e-4,
     ),
 }
 
