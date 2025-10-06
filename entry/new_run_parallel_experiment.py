@@ -97,7 +97,7 @@ def run_single_experiment(config_path: str, run_id: int, gpu_id: int = None, for
         initial_seed = app_config.seed
         original_base_save_path = Path(app_config.experiment.save_path)
 
-        for i in range(3):
+        for i in range(1):
             current_seed = initial_seed + i
             run_save_path = original_base_save_path / f"run_{i}_seed_{current_seed}"
 
