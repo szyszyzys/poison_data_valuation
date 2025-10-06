@@ -35,6 +35,7 @@ class DataMarketplaceFederated(DataMarketplace):
         self.aggregator = aggregator
         self.sellers = sellers
         self.attacker = attacker  # For server-side privacy attacks
+        self.consecutive_failed_rounds = 0
 
         # Conditionally initialize the privacy attacker
         if self.cfg.server_attack_config.attack_name == ServerAttackMode.GRADIENT_INVERSION:
@@ -92,9 +93,18 @@ class DataMarketplaceFederated(DataMarketplace):
             seller_stats_list=seller_stats_list
         )
 
-        # Update global model
+        # In train_federated_round, after the `if agg_grad:` check
         if agg_grad:
-            self.aggregator.apply_gradient(agg_grad)
+            self.consecutive_failed_rounds = 0  # Reset on success
+        else:
+            self.consecutive_failed_rounds += 1
+            logging.warning(
+                f"Round failed to produce an update. Consecutive failures: {self.consecutive_failed_rounds}")
+
+        if self.consecutive_failed_rounds >= 5:  # Or some other threshold
+            logging.error("Stopping experiment after too many consecutive failed rounds.")
+            # Add logic here to gracefully shut down the training
+            raise RuntimeError("Halting due to persistent aggregation failures.")
 
         # Save individual gradients if needed
         if self.cfg.debug.save_individual_gradients:

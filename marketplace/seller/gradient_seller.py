@@ -423,23 +423,6 @@ class GradientSeller(BaseSeller):
 
         return model
 
-    def round_end_process(self, round_number: int, is_selected: bool) -> None:
-        """Logs the outcome of the round and cleans up state."""
-        logging.info(f"[{self.seller_id}] Round {round_number} ended. Selected: {is_selected}")
-
-        round_record = {
-            'event_type': 'federated_round',
-            'round': round_number,
-            'timestamp': time.time(),
-            'was_selected': is_selected,
-            'training_stats': self.last_training_stats
-        }
-        self.federated_round_history.append(round_record)
-
-        self.last_computed_gradient = None
-        self.last_training_stats = None
-        self.selected_last_round = is_selected
-
     def save_round_history_csv(self, subdirectory: str = "history") -> None:
         """Saves the federated round history for this seller to a CSV file in a seller-specific subdirectory."""
         history_dir = self.seller_specific_path / subdirectory
