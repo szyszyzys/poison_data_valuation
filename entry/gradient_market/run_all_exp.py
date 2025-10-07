@@ -559,7 +559,7 @@ def save_model_atomic(state_dict, filepath):
         raise
 
 
-def run_training_loop(cfg, marketplace, test_loader, evaluators, sybil_coordinator):
+def run_training_loop(cfg, marketplace, test_loader, evaluators):
     """Training loop with incremental saving."""
     save_path = Path(cfg.experiment.save_path)
     log_path = save_path / "training_log.csv"
@@ -680,7 +680,7 @@ def run_attack(cfg: AppConfig):
         # 6. Federated Training Loop
         logging.info("🏋️ Starting federated training...")
         final_model, results_buffer = run_training_loop(
-            cfg, marketplace, test_loader, evaluators, sybil_coordinator
+            cfg, marketplace, test_loader, evaluators
         )
 
         # 7. Final Evaluation and Artifact Saving
