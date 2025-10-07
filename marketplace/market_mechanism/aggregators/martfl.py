@@ -116,11 +116,10 @@ class MartflAggregator(BaseAggregator):
 
             if self.clip:
                 trust_gradient = clip_gradient_update(trust_gradient, self.clip_norm)
-
+            trust_gradient = trust_gradient.to(self.device)
             baseline_update_flat = flatten_tensor(trust_gradient)
             baseline_source = 'buyer_trust'
             logger.info("Using pre-computed buyer's trust gradient as baseline")
-            trust_gradient = trust_gradient.to(self.device)
         baseline_norm = torch.norm(baseline_update_flat).item()
 
         # 3. Compute cosine similarities to baseline
