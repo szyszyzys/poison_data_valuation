@@ -6,6 +6,7 @@ A robust and modular script to prepare federated datasets for data marketplace s
 This module supports various data partitioning strategies and facilitates the simulation
 of data-based attacks like property inference by controlling attribute prevalence.
 """
+import collections
 import json
 import logging
 import os
@@ -154,22 +155,44 @@ def load_dataset(name: str, root: str = "./data", download: bool = True) -> Tupl
 # --- 3. Statistics and Orchestration ---
 
 def save_data_statistics(buyer_indices, seller_splits, client_properties, targets, output_dir) -> Dict:
-    """Calculates, logs, and saves the data distribution statistics."""
+    """
+    Calculates, logs, and saves detailed data distribution statistics,
+    including class label distributions for each participant.
+    """
     stats = {"buyer": {}, "sellers": {}, "client_properties": client_properties}
+
+    def get_label_dist(indices):
+        """Calculates the distribution of labels for a given set of indices."""
+        if len(indices) == 0:
+            return {}
+        # Use collections.Counter for a clean and efficient way to count labels
+        label_counts = collections.Counter(targets[indices].tolist())
+        return dict(sorted(label_counts.items()))
+
     # Buyer stats
-    buyer_targets = targets[buyer_indices]
     stats["buyer"]["total_samples"] = len(buyer_indices)
-    logger.info(f"Buyer Stats: {len(buyer_indices)} samples.")
+    # --- CHANGE 2: Add label distribution for the buyer ---
+    stats["buyer"]["label_distribution"] = get_label_dist(buyer_indices)
+
+    logger.info(f"Buyer Stats: {stats['buyer']['total_samples']} samples.")
 
     # Seller stats
     for cid, indices in seller_splits.items():
-        stats["sellers"][cid] = {"total_samples": len(indices), "property": client_properties.get(cid, "N/A")}
+        stats["sellers"][cid] = {
+            "total_samples": len(indices),
+            "property": client_properties.get(cid, "N/A"),
+            # --- CHANGE 3: Add label distribution for each seller ---
+            "label_distribution": get_label_dist(indices)
+        }
         logger.info(f"Client {cid} ({stats['sellers'][cid]['property']}): {len(indices)} samples.")
 
+    # Save to file
+    save_path = os.path.join(output_dir, 'data_statistics.json')
     os.makedirs(output_dir, exist_ok=True)
-    with open(os.path.join(output_dir, 'data_statistics.json'), 'w') as f:
+    with open(save_path, 'w') as f:
         json.dump(stats, f, indent=4)
-    logger.info(f"Data statistics saved to {os.path.join(output_dir, 'data_statistics.json')}")
+    logger.info(f"Data statistics saved to {save_path}")
+
     return stats
 
 

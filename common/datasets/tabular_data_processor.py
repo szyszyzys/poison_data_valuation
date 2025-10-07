@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader, Subset, TensorDataset
 from ucimlrepo import fetch_ucirepo
 
 from common.datasets.data_partitioner import TabularDataPartitioner
+from common.datasets.image_data_processor import save_data_statistics
 from common.gradient_market_configs import AppConfig  # Import your main config
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,14 @@ def get_tabular_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[str, DataLoade
         buyer_fraction=cfg.data.tabular.buyer_ratio
     )
     buyer_indices, seller_splits, _ = partitioner.get_splits()
+    logger.info("Generating and saving tabular data split statistics...")
+    save_data_statistics(
+        buyer_indices=buyer_indices,
+        seller_splits=seller_splits,
+        client_properties={},
+        targets=y_train.values,  # Use the numpy array of training labels
+        output_dir=cfg.experiment.save_path
+    )
 
     # 5. Create final DataLoaders
     batch_size = cfg.training.batch_size
