@@ -30,6 +30,10 @@ from model.image_model import ImageModelFactory, validate_model_factory
 from model.model_configs import get_image_model_config
 from model.tabular_model import TabularModelFactory, TabularConfigManager
 from model.utils import get_text_model
+from marketplace.seller.gradient_seller import (
+    GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator,
+    AdvancedPoisoningAdversarySeller
+)
 
 
 def setup_data_and_model(cfg: AppConfig):
@@ -748,7 +752,7 @@ def run_attack(cfg: AppConfig):
             aggregator=aggregator,
             sellers={},
             input_shape=input_shape,
-            SellerClass=Seller,                # <-- PASS THE SELLER CLASS
+            SellerClass=GradientSeller,  # <-- PASS THE SELLER CLASS
             validation_loader=validation_loader  # <-- PASS THE VALIDATION LOADER
         )
 
