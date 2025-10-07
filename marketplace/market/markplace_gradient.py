@@ -62,8 +62,8 @@ class DataMarketplaceFederated(DataMarketplace):
     def train_federated_round(
             self,
             round_number: int,
-            global_model: nn.Module,  # <-- FIX: Add missing arguments
-            validation_loader: DataLoader,  # <-- Add this for clarity
+            global_model,  # <-- FIX: Add missing arguments
+            validation_loader,  # <-- Add this for clarity
             ground_truth_dict: Dict[str, Dict[str, torch.Tensor]]
     ) -> Tuple[Dict, Any]:
         """Orchestrates a single federated round with the 'virtual seller' design."""
