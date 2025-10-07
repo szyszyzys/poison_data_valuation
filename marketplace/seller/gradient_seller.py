@@ -764,22 +764,26 @@ class PoisonedDataset(Dataset):
         return len(self.original_dataset)
 
     def __getitem__(self, index):
-        # --- MODIFICATION: UNPACK BASED ON FORMAT ---
         original_sample = self.original_dataset[index]
 
+        # Unpack based on format
+        # This part is fine
         if self.data_format == 'text':
-            # For text, the format is (label, data)
             label, data = original_sample
-        else:
-            # For images, the format is (data, label)
+        else:  # image or tabular
             data, label = original_sample
 
-        # The rest of the logic remains the same
+        # Apply poison if needed
         if self.poison_generator and index in self.poison_indices:
-            return self.poison_generator.apply(data, label)
+            # Assuming the generator returns data and a new label
+            poisoned_data, poisoned_label = self.poison_generator.apply(data, label)
 
-        # Return in the standard (data, label) format for consistency
-        return data, label
+            # FIX: Ensure the returned label is a tensor
+            return poisoned_data, torch.tensor(poisoned_label, dtype=torch.long)
+
+        # FIX: For the non-poisoned path, also ensure the label is a tensor!
+        # This guarantees consistency for the DataLoader.
+        return data, torch.tensor(label, dtype=torch.long)
 
 
 class AdvancedPoisoningAdversarySeller(GradientSeller):

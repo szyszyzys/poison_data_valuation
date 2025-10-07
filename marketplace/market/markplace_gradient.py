@@ -12,6 +12,7 @@ from common.gradient_market_configs import AppConfig, ServerAttackConfig
 from entry.gradient_market.privacy_attack import GradientInversionAttacker
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.aggregator import Aggregator
+from marketplace.seller.gradient_seller import GradientSeller
 from marketplace.seller.seller import BaseSeller
 
 
@@ -27,7 +28,8 @@ class MarketplaceConfig:
 
 class DataMarketplaceFederated(DataMarketplace):
     def __init__(self, cfg: AppConfig, aggregator: Aggregator, sellers: dict,
-                 input_shape: tuple, attacker=None):
+                 input_shape: tuple, SellerClass: type, validation_loader, model_factory, num_classes: int,
+                 attacker=None):
         """
         Initializes the marketplace with all necessary components and the main config.
         """
@@ -36,6 +38,12 @@ class DataMarketplaceFederated(DataMarketplace):
         self.sellers = sellers
         self.attacker = attacker  # For server-side privacy attacks
         self.consecutive_failed_rounds = 0
+        self.SellerClass = SellerClass  # <-- Add this
+        self.model_factory = model_factory
+        self.validation_loader = validation_loader
+        self.buyer_seller: GradientSeller = None
+        self.oracle_seller: GradientSeller = None
+        self.num_classes = num_classes
 
         # Conditionally initialize the privacy attacker
         if self.cfg.server_attack_config.attack_name == ServerAttackMode.GRADIENT_INVERSION:
@@ -62,13 +70,23 @@ class DataMarketplaceFederated(DataMarketplace):
     def train_federated_round(
             self,
             round_number: int,
+            global_model,  # <-- FIX: Add missing arguments
+            validation_loader,  # <-- Add this for clarity
             ground_truth_dict: Dict[str, Dict[str, torch.Tensor]]
     ) -> Tuple[Dict, Any]:
-        """Orchestrates a single federated round with comprehensive marketplace logging."""
+        """Orchestrates a single federated round with the 'virtual seller' design."""
         round_start_time = time.time()
         logging.info(f"--- Round {round_number} Started ---")
 
-        # Collect gradients from all sellers
+        # === 1. Compute Root Gradients using Virtual Sellers ===
+        # This ensures the root gradients are calculated with the EXACT same logic as real sellers.
+
+        # Create a "Buyer Seller" to get the buyer's root gradient
+        logging.info("🛒 Creating virtual 'Buyer Seller' to compute root gradient...")
+        buyer_root_gradient, _ = self.buyer_seller.get_gradient_for_upload(global_model)
+        oracle_root_gradient, _ = self.oracle_seller.get_gradient_for_upload(global_model)
+
+        # === 2. Collect Gradients from the Real Marketplace ===
         gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
 
         # Perform privacy attack (optional)
@@ -79,7 +97,9 @@ class DataMarketplaceFederated(DataMarketplace):
         # Aggregation with detailed metrics
         agg_grad, selected_ids, outlier_ids, aggregation_stats = self.aggregator.aggregate(
             global_epoch=round_number,
-            seller_updates=gradients_dict
+            seller_updates=gradients_dict,
+            root_gradient=buyer_root_gradient,
+            buyer_data_loader=self.aggregator.buyer_data_loader
         )
 
         # === NEW: Calculate marketplace metrics ===
@@ -90,7 +110,8 @@ class DataMarketplaceFederated(DataMarketplace):
             selected_ids=selected_ids,
             outlier_ids=outlier_ids,
             aggregation_stats=aggregation_stats,
-            seller_stats_list=seller_stats_list
+            seller_stats_list=seller_stats_list,
+            oracle_root_gradient=oracle_root_gradient  # Pass the oracle gradient for logging
         )
 
         # In train_federated_round, after the `if agg_grad:` check
@@ -189,7 +210,8 @@ class DataMarketplaceFederated(DataMarketplace):
             selected_ids: List[str],
             outlier_ids: List[str],
             aggregation_stats: Dict,
-            seller_stats_list: List[Dict]
+            seller_stats_list: List[Dict],
+            oracle_root_gradient: List[torch.Tensor]
     ) -> Dict:
         """
         Compute comprehensive marketplace metrics for analysis.
@@ -235,6 +257,26 @@ class DataMarketplaceFederated(DataMarketplace):
                 similarities = self._compute_gradient_similarities(gradients_dict)
                 metrics['avg_gradient_similarity'] = np.mean(similarities) if similarities else 0
                 metrics['gradient_similarity_matrix'] = similarities  # Full matrix for detailed analysis
+
+            if hasattr(self.aggregator.strategy,
+                       'root_gradient') and self.aggregator.strategy.root_gradient is not None:
+                g_buyer_root_flat = torch.cat([g.flatten() for g in self.aggregator.strategy.root_gradient])
+                for sid, grad in gradients_dict.items():
+                    if grad is None: continue
+                    g_seller_flat = torch.cat([g.flatten() for g in grad])
+                    sim_score = torch.nn.functional.cosine_similarity(g_buyer_root_flat.unsqueeze(0),
+                                                                      g_seller_flat.unsqueeze(0)).item()
+                    metrics[f'seller_{sid}_sim_to_buyer_root'] = sim_score
+
+            # 2. Calculate Similarity to the Oracle Root Gradient (for analysis)
+            if oracle_root_gradient is not None:
+                g_oracle_root_flat = torch.cat([g.flatten() for g in oracle_root_gradient])
+                for sid, grad in gradients_dict.items():
+                    if grad is None: continue
+                    g_seller_flat = torch.cat([g.flatten() for g in grad])
+                    sim_score = torch.nn.functional.cosine_similarity(g_oracle_root_flat.unsqueeze(0),
+                                                                      g_seller_flat.unsqueeze(0)).item()
+                    metrics[f'seller_{sid}_sim_to_oracle_root'] = sim_score
 
         # === 3. Seller Contribution Metrics ===
         # These come from aggregation_stats if your aggregator provides them

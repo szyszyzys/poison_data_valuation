@@ -14,18 +14,21 @@ from typing import List, Dict
 import pandas as pd
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader, random_split  # Add this import
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
 from common.datasets.tabular_data_processor import get_tabular_dataset
 from common.datasets.text_data_processor import collate_batch
 from common.evaluators import create_evaluators
 from common.factories import SellerFactory
-from common.gradient_market_configs import AppConfig
+from common.gradient_market_configs import AppConfig, RuntimeDataConfig
 from common.utils import set_seed
 from entry.gradient_market.automate_exp.config_parser import load_config
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.aggregator import Aggregator
-from marketplace.seller.gradient_seller import SybilCoordinator
+from marketplace.seller.gradient_seller import (
+    GradientSeller, SybilCoordinator
+)
 from model.image_model import ImageModelFactory, validate_model_factory
 from model.model_configs import get_image_model_config
 from model.tabular_model import TabularModelFactory, TabularConfigManager
@@ -119,7 +122,6 @@ def setup_data_and_model(cfg: AppConfig):
             image_size=image_size,
             config=image_model_config  # Will be deep copied inside create_factory
         )
-
         # Validate factory creates consistent models
         validate_model_factory(model_factory, num_tests=3)
 
@@ -156,9 +158,45 @@ def setup_data_and_model(cfg: AppConfig):
     logging.info(f"  - Test samples: {len(test_loader.dataset) if test_loader else 0}")
     logging.info("=" * 60)
 
-    logging.info(f"Data loaded for '{dataset_name}'. Number of classes: {cfg.experiment.num_classes}")
+    logging.info("Data loaded for '%s'. Number of classes: %d", dataset_name, cfg.experiment.num_classes)
 
-    return buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes
+    # --- CORRECTED VALIDATION SET LOGIC ---
+    logging.info("Attempting to create a validation set by splitting buyer data...")
+    validation_loader = None
+
+    if buyer_loader and len(buyer_loader.dataset) > 1:
+        buyer_dataset = buyer_loader.dataset
+
+        # Define validation split size (e.g., 50% of buyer data, but at least 1 sample)
+        val_size = max(1, int(0.5 * len(buyer_dataset)))
+        train_size = len(buyer_dataset) - val_size
+
+        if train_size > 0:
+            # Split the dataset using a fixed seed for reproducibility
+            generator = torch.Generator().manual_seed(cfg.seed)
+            train_subset, val_subset = random_split(buyer_dataset, [train_size, val_size], generator=generator)
+
+            # Overwrite the buyer_loader with the smaller training part for the aggregator
+            buyer_loader = DataLoader(train_subset, batch_size=cfg.training.batch_size, shuffle=True,
+                                      collate_fn=collate_fn)
+            # Create the new validation loader
+            validation_loader = DataLoader(val_subset, batch_size=cfg.training.batch_size, shuffle=False,
+                                           collate_fn=collate_fn)
+
+            logging.info(f"  -> New buyer data size (for aggregator): {len(train_subset)}")
+            logging.info(f"  -> Validation set size: {len(val_subset)}")
+        else:
+            # This case happens if buyer data is too small to split (e.g., 1 sample)
+            logging.warning("Buyer dataset is too small to split. Using full buyer dataset for aggregator.")
+            validation_loader = buyer_loader  # Use the original buyer loader as validation
+
+    # Final fallback if something went wrong or buyer_loader was initially None
+    if validation_loader is None:
+        logging.warning(
+            "Could not create validation set from buyer data. Falling back to using the TEST SET as the validation set for the Oracle.")
+        validation_loader = test_loader
+
+    return buyer_loader, seller_loaders, test_loader, validation_loader, model_factory, seller_extra_args, collate_fn, num_classes
 
 
 def generate_marketplace_report(save_path: Path, marketplace, total_rounds):
@@ -559,7 +597,7 @@ def save_model_atomic(state_dict, filepath):
         raise
 
 
-def run_training_loop(cfg, marketplace, test_loader, evaluators):
+def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluators, sybil_coordinator):
     """Training loop with incremental saving."""
     save_path = Path(cfg.experiment.save_path)
     log_path = save_path / "training_log.csv"
@@ -569,18 +607,66 @@ def run_training_loop(cfg, marketplace, test_loader, evaluators):
         pd.DataFrame(columns=['round', 'duration_sec', 'num_selected', 'num_outliers']).to_csv(
             log_path, index=False
         )
+
+    # --- 1. EARLY STOPPING INITIALIZATION ---
+    patience = cfg.training.patience
+    patience_counter = 0
+    best_validation_loss = float('inf')
+    best_model_state = None
+    best_model_round = 0
+
+    # Log whether early stopping is active and if the validation set is available
+    if cfg.training.use_early_stopping:
+        logging.info(f"✅ Early stopping enabled with patience: {patience}")
+        if not validation_loader:
+            logging.warning(
+                "⚠️ Early stopping is enabled, but no validation loader was provided! Cannot perform early stopping.")
+
     round_records = []
     for round_num in range(1, cfg.experiment.global_rounds + 1):
+        global_model = marketplace.aggregator.strategy.global_model
+
         round_record, agg_grad = marketplace.train_federated_round(
             round_number=round_num,
-            ground_truth_dict={}
+            global_model=global_model,
+            validation_loader=validation_loader,
+            ground_truth_dict={}  # Pass empty dict for now
         )
+
+        global_model = marketplace.aggregator.strategy.global_model
+
+        # --- ADDED: Perform validation for early stopping in every round ---
+        if cfg.training.use_early_stopping and validation_loader:
+            main_evaluator = evaluators[0]  # Assumes the first evaluator checks loss/accuracy
+            try:
+                val_metrics = main_evaluator.evaluate(global_model, validation_loader, metric_prefix="val")
+                current_loss = val_metrics.get('val_loss')
+
+                if current_loss is not None:
+                    logging.info(f"Round {round_num} | Validation Loss: {current_loss:.4f}")
+                    if current_loss < best_validation_loss:
+                        best_validation_loss = current_loss
+                        patience_counter = 0
+                        best_model_state = copy.deepcopy(global_model.state_dict())
+                        best_model_round = round_num
+                        logging.info(f"  -> New best model found! Patience counter reset.")
+                    else:
+                        patience_counter += 1
+                        logging.info(f"  -> No improvement. Patience: {patience_counter}/{patience}")
+
+                # Merge validation metrics into the record for this round
+                round_record.update(val_metrics)
+
+            except Exception as e:
+                logging.error(f"Validation for early stopping failed in round {round_num}: {e}")
+                patience_counter += 1
+
         round_records.append(round_record)
         save_round_incremental(round_record, save_path)
 
-        # Incremental save - append to CSV
-        df_round = pd.DataFrame([round_record])
-        df_round.to_csv(log_path, mode='a', header=False, index=False)
+        if cfg.training.use_early_stopping and patience_counter >= patience:
+            logging.warning(f"EARLY STOPPING: No improvement for {patience} rounds. Halting at round {round_num}.")
+            break
 
         # Evaluate periodically
         if round_num % cfg.experiment.eval_frequency == 0:
@@ -601,7 +687,14 @@ def run_training_loop(cfg, marketplace, test_loader, evaluators):
         for sid, seller in marketplace.sellers.items():
             seller.save_marketplace_summary()
 
-    return marketplace.aggregator.strategy.global_model, []  # Empty buffer since we saved incrementally
+    if best_model_state:
+        logging.info(f"Loading best model from round {best_model_round} (Val Loss: {best_validation_loss:.4f})")
+        marketplace.aggregator.strategy.global_model.load_state_dict(best_model_state)
+    else:
+        logging.warning("No best model was saved; returning model from the final round.")
+
+    # --- MODIFIED: Return the complete record buffer for final logging ---
+    return marketplace.aggregator.strategy.global_model, round_records
 
 
 def save_round_incremental(round_record, save_path):
@@ -613,6 +706,44 @@ def save_round_incremental(round_record, save_path):
         df.to_csv(log_path, mode='a', header=False, index=False)
     else:
         df.to_csv(log_path, mode='w', header=True, index=False)
+
+
+def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, model_factory):
+    """
+    Creates and attaches the two 'virtual' sellers for root gradient computation.
+    """
+    logging.info("--- Initializing Root Gradient Sellers ---")
+
+    # 1. Create the "Buyer Seller"
+    logging.info("🛒 Creating virtual 'Buyer Seller'...")
+    marketplace.buyer_seller = marketplace.SellerClass(
+        seller_id='virtual_buyer',
+        data_config=RuntimeDataConfig(
+            dataset=buyer_loader.dataset,
+            num_classes=marketplace.num_classes,  # Assuming num_classes is on marketplace
+            collate_fn=getattr(buyer_loader, 'collate_fn', None)
+        ),
+        training_config=cfg.training,
+        model_factory=model_factory,
+        save_path=cfg.experiment.save_path,
+        device=cfg.experiment.device
+    )
+
+    # 2. Create the "Oracle Seller"
+    logging.info("🧪 Creating virtual 'Oracle Seller'...")
+    marketplace.oracle_seller = marketplace.SellerClass(
+        seller_id='virtual_oracle',
+        data_config=RuntimeDataConfig(
+            dataset=validation_loader.dataset,
+            num_classes=marketplace.num_classes,
+            collate_fn=getattr(validation_loader, 'collate_fn', None)
+        ),
+        training_config=cfg.training,
+        model_factory=model_factory,
+        save_path=cfg.experiment.save_path,
+        device=cfg.experiment.device
+    )
+    logging.info("✅ Root gradient sellers initialized.")
 
 
 def run_attack(cfg: AppConfig):
@@ -641,7 +772,7 @@ def run_attack(cfg: AppConfig):
         _save_config_for_reproducibility(cfg, save_path)
 
         # 2. Data and Model Setup
-        buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes = \
+        buyer_loader, seller_loaders, test_loader, validation_loader, model_factory, seller_extra_args, collate_fn, num_classes = \
             setup_data_and_model(cfg)
 
         global_model = model_factory().to(cfg.experiment.device)
@@ -668,7 +799,11 @@ def run_attack(cfg: AppConfig):
             cfg=cfg,
             aggregator=aggregator,
             sellers={},
-            input_shape=input_shape
+            input_shape=input_shape,
+            SellerClass=GradientSeller,  # <-- PASS THE SELLER CLASS
+            validation_loader=validation_loader,  # <-- PASS THE VALIDATION LOADER
+            model_factory=model_factory,  # <-- PASS THE MODEL FACTORY HERE
+            num_classes=num_classes
         )
 
         # 5. Seller Initialization
@@ -677,10 +812,17 @@ def run_attack(cfg: AppConfig):
             seller_extra_args, sybil_coordinator, collate_fn, num_classes
         )
 
+        initialize_root_sellers(
+            cfg, marketplace, buyer_loader, validation_loader, model_factory
+        )
+
         # 6. Federated Training Loop
         logging.info("🏋️ Starting federated training...")
+        # final_model, results_buffer = run_training_loop(
+        #     cfg, marketplace, test_loader, evaluators, sybil_coordinator
+        # )
         final_model, results_buffer = run_training_loop(
-            cfg, marketplace, test_loader, evaluators
+            cfg, marketplace, validation_loader, test_loader, evaluators, sybil_coordinator
         )
 
         # 7. Final Evaluation and Artifact Saving

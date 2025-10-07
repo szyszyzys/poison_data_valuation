@@ -1,12 +1,19 @@
 from typing import Dict, Tuple, List, Any
+
 import torch
 import torch.nn.functional as F
+from torch import clip
 
 from common.utils import clip_gradient_update, flatten_tensor
 from marketplace.market_mechanism.aggregators.base_aggregator import BaseAggregator, logger
 
 
 class FLTrustAggregator(BaseAggregator):
+
+    def __init__(self, global_model, device, loss_fn, buyer_data_loader, clip_norm):
+        super().__init__(global_model, device, loss_fn, buyer_data_loader, clip_norm)
+        self.root_gradient = None  # Holds the root gradient for the current round
+
     def aggregate(
             self,
             global_epoch: int,
@@ -15,21 +22,14 @@ class FLTrustAggregator(BaseAggregator):
     ) -> Tuple[List[torch.Tensor], List[str], List[str], Dict[str, Any]]:
         """
         FLTrust aggregation with comprehensive marketplace metrics.
-
-        Returns:
-            - aggregated_gradient: Weighted average of trusted updates
-            - selected_ids: Sellers with positive trust scores
-            - outlier_ids: Sellers with zero trust scores
-            - aggregation_stats: Detailed metrics for marketplace analysis
         """
         logger.info(f"=== FLTrust Aggregation (Round {global_epoch}) ===")
         logger.info(f"Processing {len(seller_updates)} seller updates")
 
-        clip = kwargs.get('clip', False)
-
-        # 1. Compute trusted baseline from buyer's data
-        logger.debug("Computing trust gradient from buyer's root set...")
-        trust_gradient = self._compute_trust_gradient()
+        # --- CHANGE: Get the pre-computed root gradient from kwargs ---
+        self.root_gradient = kwargs.get('root_gradient')
+        if self.root_gradient is None:
+            raise ValueError("FLTrustAggregator requires a 'root_gradient' to be passed.")
 
         # 2. Process and clip all updates
         processed_updates = {}
@@ -39,8 +39,9 @@ class FLTrustAggregator(BaseAggregator):
             else:
                 processed_updates[sid] = upd
 
+        trust_gradient = self.root_gradient
         if clip:
-            trust_gradient = clip_gradient_update(trust_gradient, self.clip_norm)
+            trust_gradient = clip_gradient_update(self.root_gradient, self.clip_norm)
 
         # 3. Flatten for similarity calculation
         flat_seller_updates = {sid: flatten_tensor(upd) for sid, upd in processed_updates.items()}

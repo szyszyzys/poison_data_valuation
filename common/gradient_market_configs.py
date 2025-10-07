@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple, List, Union
+from typing import Any, Dict, Optional, Tuple, List, Union, Callable
 
 from torch.utils.data import Dataset
 
@@ -48,6 +48,8 @@ class TrainingConfig:
     batch_size: int
     learning_rate: float
     optimizer: str = "Adam"
+    use_early_stopping: bool = False
+    patience: int = 10
 
 
 @dataclass
@@ -295,7 +297,7 @@ class RuntimeDataConfig:
     """Holds runtime data objects passed to sellers."""
     dataset: Dataset
     num_classes: int
-    collate_fn: None
+    collate_fn: Optional[Callable] = None
 
 
 # --- These are RUNTIME configs, not loaded from YAML. Keeping them is correct. ---
@@ -379,7 +381,7 @@ class AppConfig:
     debug: DebugConfig
     aggregation: AggregationConfig
     seed: int = 42
-    n_samples: int = 1
+    n_samples: int = 3
     data_root: str = "./data"
     use_cache: bool = True
 

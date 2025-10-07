@@ -55,7 +55,7 @@ class Aggregator:
             **strategy_kwargs
         )
         self.device = device
-
+        self.buyer_data_loader = buyer_data_loader
         # Cache this for efficiency and consistency
         self.expected_num_params = len(list(self.strategy.global_model.parameters()))
         logger.info(f"Global model has {self.expected_num_params} parameters")

@@ -29,7 +29,7 @@ def get_base_image_config() -> AppConfig:
             save_individual_gradients=False,
             gradient_save_frequency=10
         ),
-        seed=42, n_samples=5,
+        seed=42, n_samples=3,
         aggregation=AggregationConfig(
             method="fedavg"  # Set the default method here
         ),
@@ -59,7 +59,7 @@ def get_base_text_config() -> AppConfig:
             save_individual_gradients=False,
             gradient_save_frequency=10
         ),
-        seed=42, n_samples=5,
+        seed=42, n_samples=3,
         aggregation=AggregationConfig(
             method="fedavg"  # Set the default method here
         ),
