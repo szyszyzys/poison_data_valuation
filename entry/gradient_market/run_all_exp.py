@@ -5,15 +5,16 @@ import copy
 import json
 import logging
 import os
-import pandas as pd
 import shutil
 import tempfile
 import time
+from pathlib import Path
+from typing import List, Dict
+
+import pandas as pd
 import torch
 import torch.nn as nn
-from pathlib import Path
 from torch.utils.data import DataLoader, random_split  # Add this import
-from typing import List, Dict
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
 from common.datasets.tabular_data_processor import get_tabular_dataset
@@ -25,15 +26,13 @@ from common.utils import set_seed
 from entry.gradient_market.automate_exp.config_parser import load_config
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.aggregator import Aggregator
-from marketplace.seller.gradient_seller import SybilCoordinator
+from marketplace.seller.gradient_seller import (
+    GradientSeller, SybilCoordinator
+)
 from model.image_model import ImageModelFactory, validate_model_factory
 from model.model_configs import get_image_model_config
 from model.tabular_model import TabularModelFactory, TabularConfigManager
 from model.utils import get_text_model
-from marketplace.seller.gradient_seller import (
-    GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator,
-    AdvancedPoisoningAdversarySeller
-)
 
 
 def setup_data_and_model(cfg: AppConfig):
@@ -698,6 +697,45 @@ def save_round_incremental(round_record, save_path):
         df.to_csv(log_path, mode='w', header=True, index=False)
 
 
+def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, model_factory):
+    """
+    Creates and attaches the two 'virtual' sellers for root gradient computation.
+    """
+    logging.info("--- Initializing Root Gradient Sellers ---")
+
+    # 1. Create the "Buyer Seller"
+    logging.info("🛒 Creating virtual 'Buyer Seller'...")
+    marketplace.buyer_seller = marketplace.SellerClass(
+        seller_id='virtual_buyer',
+        data_config=RuntimeDataConfig(
+            dataset=buyer_loader.dataset,
+            num_classes=marketplace.num_classes, # Assuming num_classes is on marketplace
+            collate_fn=getattr(buyer_loader, 'collate_fn', None)
+        ),
+        training_config=cfg.training,
+        model_factory=model_factory,
+        save_path=cfg.experiment.save_path,
+        device=cfg.experiment.device
+    )
+
+    # 2. Create the "Oracle Seller"
+    logging.info("🧪 Creating virtual 'Oracle Seller'...")
+    marketplace.oracle_seller = marketplace.SellerClass(
+        seller_id='virtual_oracle',
+        data_config=RuntimeDataConfig(
+            dataset=validation_loader.dataset,
+            num_classes=marketplace.num_classes,
+            collate_fn=getattr(validation_loader, 'collate_fn', None)
+        ),
+        training_config=cfg.training,
+        model_factory=model_factory,
+        save_path=cfg.experiment.save_path,
+        device=cfg.experiment.device
+    )
+    logging.info("✅ Root gradient sellers initialized.")
+
+
+
 def run_attack(cfg: AppConfig):
     """
     Orchestrates the entire experiment from a single config object.
@@ -753,13 +791,18 @@ def run_attack(cfg: AppConfig):
             sellers={},
             input_shape=input_shape,
             SellerClass=GradientSeller,  # <-- PASS THE SELLER CLASS
-            validation_loader=validation_loader  # <-- PASS THE VALIDATION LOADER
+            validation_loader=validation_loader,  # <-- PASS THE VALIDATION LOADER
+            model_factory=model_factory  # <-- PASS THE MODEL FACTORY HERE
         )
 
         # 5. Seller Initialization
         initialize_sellers(
             cfg, marketplace, seller_loaders, model_factory,
             seller_extra_args, sybil_coordinator, collate_fn, num_classes
+        )
+
+        initialize_root_sellers(
+            cfg, marketplace, buyer_loader, validation_loader, model_factory
         )
 
         # 6. Federated Training Loop

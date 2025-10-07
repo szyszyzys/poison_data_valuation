@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple, List, Union
+from typing import Any, Dict, Optional, Tuple, List, Union, Callable
 
 from torch.utils.data import Dataset
 
@@ -297,7 +297,7 @@ class RuntimeDataConfig:
     """Holds runtime data objects passed to sellers."""
     dataset: Dataset
     num_classes: int
-    collate_fn: None
+    collate_fn: Optional[Callable] = None
 
 
 # --- These are RUNTIME configs, not loaded from YAML. Keeping them is correct. ---

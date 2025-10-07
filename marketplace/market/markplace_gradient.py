@@ -1,16 +1,18 @@
 import logging
-import numpy as np
 import time
-import torch
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple
+
+import numpy as np
+import torch
 
 from common.enums import ServerAttackMode
 from common.gradient_market_configs import AppConfig, ServerAttackConfig
 from entry.gradient_market.privacy_attack import GradientInversionAttacker
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.aggregator import Aggregator
+from marketplace.seller.gradient_seller import GradientSeller
 from marketplace.seller.seller import BaseSeller
 
 
@@ -26,7 +28,7 @@ class MarketplaceConfig:
 
 class DataMarketplaceFederated(DataMarketplace):
     def __init__(self, cfg: AppConfig, aggregator: Aggregator, sellers: dict,
-                 input_shape: tuple, SellerClass: type, validation_loader, attacker=None):
+                 input_shape: tuple, SellerClass: type, validation_loader, model_factory, attacker=None):
         """
         Initializes the marketplace with all necessary components and the main config.
         """
@@ -36,6 +38,10 @@ class DataMarketplaceFederated(DataMarketplace):
         self.attacker = attacker  # For server-side privacy attacks
         self.consecutive_failed_rounds = 0
         self.SellerClass = SellerClass  # <-- Add this
+        self.model_factory = model_factory
+        self.validation_loader = validation_loader
+        self.buyer_seller: GradientSeller = None
+        self.oracle_seller: GradientSeller = None
 
         # Conditionally initialize the privacy attacker
         if self.cfg.server_attack_config.attack_name == ServerAttackMode.GRADIENT_INVERSION:
@@ -75,23 +81,8 @@ class DataMarketplaceFederated(DataMarketplace):
 
         # Create a "Buyer Seller" to get the buyer's root gradient
         logging.info("🛒 Creating virtual 'Buyer Seller' to compute root gradient...")
-        buyer_seller = self.SellerClass(
-            sid='virtual_buyer',
-            data_loader=self.aggregator.buyer_data_loader,
-            training_config=self.cfg.training,
-            device=self.cfg.experiment.device
-        )
-        buyer_root_gradient, _ = buyer_seller.get_gradient_for_upload(global_model)
-
-        # Create an "Oracle Seller" to get the oracle gradient for logging
-        logging.info("🧪 Creating virtual 'Oracle Seller' to compute oracle gradient...")
-        oracle_seller = self.SellerClass(
-            sid='virtual_oracle',
-            data_loader=validation_loader,
-            training_config=self.cfg.training,
-            device=self.cfg.experiment.device
-        )
-        oracle_root_gradient, _ = oracle_seller.get_gradient_for_upload(global_model)
+        buyer_root_gradient, _ = self.buyer_seller.get_gradient_for_upload(global_model)
+        oracle_root_gradient, _ = self.oracle_seller.get_gradient_for_upload(global_model)
 
         # === 2. Collect Gradients from the Real Marketplace ===
         gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
