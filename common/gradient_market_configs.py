@@ -48,6 +48,8 @@ class TrainingConfig:
     batch_size: int
     learning_rate: float
     optimizer: str = "Adam"
+    use_early_stopping: bool = False
+    patience: int = 10
 
 
 @dataclass
