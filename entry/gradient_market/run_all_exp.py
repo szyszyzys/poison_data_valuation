@@ -158,32 +158,43 @@ def setup_data_and_model(cfg: AppConfig):
     logging.info(f"  - Test samples: {len(test_loader.dataset) if test_loader else 0}")
     logging.info("=" * 60)
 
-    logging.info(f"Data loaded for '{dataset_name}'. Number of classes: {cfg.experiment.num_classes}")
-    # --- ADD THIS BLOCK to create the validation set ---
+    logging.info("Data loaded for '%s'. Number of classes: %d", dataset_name, cfg.experiment.num_classes)
+
+    # --- CORRECTED VALIDATION SET LOGIC ---
+    logging.info("Attempting to create a validation set by splitting buyer data...")
     validation_loader = None
-    if cfg.training.use_early_stopping and buyer_loader:
-        logging.info("Splitting buyer data to create a validation set...")
+
+    if buyer_loader and len(buyer_loader.dataset) > 1:
         buyer_dataset = buyer_loader.dataset
 
-        # Define validation split size (e.g., 50% of buyer data)
-        val_size = int(0.5 * len(buyer_dataset))
+        # Define validation split size (e.g., 50% of buyer data, but at least 1 sample)
+        val_size = max(1, int(0.5 * len(buyer_dataset)))
         train_size = len(buyer_dataset) - val_size
 
-        if train_size > 0 and val_size > 0:
+        if train_size > 0:
             # Split the dataset using a fixed seed for reproducibility
             generator = torch.Generator().manual_seed(cfg.seed)
             train_subset, val_subset = random_split(buyer_dataset, [train_size, val_size], generator=generator)
 
             # Overwrite the buyer_loader with the smaller training part for the aggregator
-            buyer_loader = DataLoader(train_subset, batch_size=cfg.training.batch_size, shuffle=True)
-            # Create the new validation loader for early stopping
-            validation_loader = DataLoader(val_subset, batch_size=cfg.training.batch_size, shuffle=False)
+            buyer_loader = DataLoader(train_subset, batch_size=cfg.training.batch_size, shuffle=True,
+                                      collate_fn=collate_fn)
+            # Create the new validation loader
+            validation_loader = DataLoader(val_subset, batch_size=cfg.training.batch_size, shuffle=False,
+                                           collate_fn=collate_fn)
 
             logging.info(f"  -> New buyer data size (for aggregator): {len(train_subset)}")
             logging.info(f"  -> Validation set size: {len(val_subset)}")
         else:
-            logging.warning("Buyer dataset is too small to split for validation. Early stopping may not be reliable.")
-            validation_loader = buyer_loader  # Fallback
+            # This case happens if buyer data is too small to split (e.g., 1 sample)
+            logging.warning("Buyer dataset is too small to split. Using full buyer dataset for aggregator.")
+            validation_loader = buyer_loader  # Use the original buyer loader as validation
+
+    # Final fallback if something went wrong or buyer_loader was initially None
+    if validation_loader is None:
+        logging.warning(
+            "Could not create validation set from buyer data. Falling back to using the TEST SET as the validation set for the Oracle.")
+        validation_loader = test_loader
 
     return buyer_loader, seller_loaders, test_loader, validation_loader, model_factory, seller_extra_args, collate_fn, num_classes
 
