@@ -709,7 +709,7 @@ def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, m
         seller_id='virtual_buyer',
         data_config=RuntimeDataConfig(
             dataset=buyer_loader.dataset,
-            num_classes=marketplace.num_classes, # Assuming num_classes is on marketplace
+            num_classes=marketplace.num_classes,  # Assuming num_classes is on marketplace
             collate_fn=getattr(buyer_loader, 'collate_fn', None)
         ),
         training_config=cfg.training,
@@ -733,7 +733,6 @@ def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, m
         device=cfg.experiment.device
     )
     logging.info("✅ Root gradient sellers initialized.")
-
 
 
 def run_attack(cfg: AppConfig):
@@ -792,7 +791,8 @@ def run_attack(cfg: AppConfig):
             input_shape=input_shape,
             SellerClass=GradientSeller,  # <-- PASS THE SELLER CLASS
             validation_loader=validation_loader,  # <-- PASS THE VALIDATION LOADER
-            model_factory=model_factory  # <-- PASS THE MODEL FACTORY HERE
+            model_factory=model_factory,  # <-- PASS THE MODEL FACTORY HERE
+            num_classes=num_classes
         )
 
         # 5. Seller Initialization

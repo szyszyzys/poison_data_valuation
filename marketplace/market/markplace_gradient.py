@@ -28,7 +28,8 @@ class MarketplaceConfig:
 
 class DataMarketplaceFederated(DataMarketplace):
     def __init__(self, cfg: AppConfig, aggregator: Aggregator, sellers: dict,
-                 input_shape: tuple, SellerClass: type, validation_loader, model_factory, attacker=None):
+                 input_shape: tuple, SellerClass: type, validation_loader, model_factory, num_classes: int,
+                 attacker=None):
         """
         Initializes the marketplace with all necessary components and the main config.
         """
@@ -42,6 +43,7 @@ class DataMarketplaceFederated(DataMarketplace):
         self.validation_loader = validation_loader
         self.buyer_seller: GradientSeller = None
         self.oracle_seller: GradientSeller = None
+        self.num_classes = num_classes
 
         # Conditionally initialize the privacy attacker
         if self.cfg.server_attack_config.attack_name == ServerAttackMode.GRADIENT_INVERSION:
