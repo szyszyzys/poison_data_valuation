@@ -65,6 +65,7 @@ class MartflAggregator(BaseAggregator):
         self.clip = clip
         self.change_base = change_base
         self.baseline_id = "buyer"
+        self.root_gradient = None # Will hold the buyer's root gradient for the round
         logger.info(f"MartflAggregator initialized:")
         logger.info(f"  - clip_gradients: {self.clip}")
         logger.info(f"  - change_baseline: {self.change_base}")
@@ -85,6 +86,8 @@ class MartflAggregator(BaseAggregator):
         logger.info(f"=== martFL Aggregation (Round {global_epoch}) ===")
         logger.info(f"Processing {len(seller_updates)} seller updates")
         logger.info(f"Current baseline: {self.baseline_id}")
+        self.root_gradient = kwargs.get('root_gradient')
+        buyer_data_loader = kwargs.get('buyer_data_loader')
 
         seller_ids = list(seller_updates.keys())
 
@@ -103,14 +106,19 @@ class MartflAggregator(BaseAggregator):
             baseline_source = 'seller'
             logger.info(f"Using seller '{self.baseline_id}' as baseline")
         else:
-            # Fallback to buyer's trust gradient
+            # --- CHANGE: Use the pre-computed root gradient ---
             self.baseline_id = "buyer"
-            trust_gradient = self._compute_trust_gradient()
+            if self.root_gradient is None:
+                raise ValueError("MartflAggregator requires a 'root_gradient' when baseline is 'buyer'.")
+
+            trust_gradient = self.root_gradient  # Use the passed-in gradient
+            # --- REMOVED: Call to self._compute_trust_gradient() is gone ---
+
             if self.clip:
                 trust_gradient = clip_gradient_update(trust_gradient, self.clip_norm)
             baseline_update_flat = flatten_tensor(trust_gradient)
             baseline_source = 'buyer_trust'
-            logger.info("Using buyer's trust gradient as baseline")
+            logger.info("Using pre-computed buyer's trust gradient as baseline")
 
         baseline_norm = torch.norm(baseline_update_flat).item()
 

@@ -1,12 +1,11 @@
 import copy
 import logging
-from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple
-
 import torch
 import torch.nn as nn
+from abc import ABC, abstractmethod
 from sklearn.metrics import cohen_kappa_score
 from torch.utils.data import DataLoader
+from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -22,17 +21,6 @@ class BaseAggregator(ABC):
         self.buyer_data_loader = buyer_data_loader
         self.clip_norm = clip_norm
         self._buyer_data_iter = None  # Initialize iterator as None
-
-    def _get_trusted_batch(self):
-        """A robust method to get the next batch, re-creating the iterator if needed."""
-        if self._buyer_data_iter is None:
-            self._buyer_data_iter = iter(self.buyer_data_loader)
-        try:
-            return next(self._buyer_data_iter)
-        except StopIteration:
-            # Ran out of data, create a new iterator
-            self._buyer_data_iter = iter(self.buyer_data_loader)
-            return next(self._buyer_data_iter)
 
     @abstractmethod
     def aggregate(self, global_epoch: int, seller_updates: Dict[str, List[torch.Tensor]], **kwargs) -> Tuple[
@@ -62,34 +50,6 @@ class BaseAggregator(ABC):
                 # The update rule is: param = param - learning_rate * grad
                 # The in-place equivalent is param.add_(grad, alpha=-learning_rate)
                 param.add_(grad, alpha=-learning_rate)
-
-    def _compute_trust_gradient(self) -> List[torch.Tensor]:
-        """
-        NEW: Computes a trusted gradient on the server's clean data (buyer's data).
-        This is used as the baseline for martFL and FLTrust.
-        """
-        if self.buyer_data_loader is None:
-            raise RuntimeError("Cannot compute trust gradient without `buyer_data_loader`.")
-
-        temp_model = copy.deepcopy(self.global_model).to(self.device)
-        temp_model.train()
-        optimizer = torch.optim.SGD(temp_model.parameters(), lr=0.01)  # LR doesn't matter much
-
-        # Use one batch of trusted data
-        data, raw_labels = self._get_trusted_batch()
-        data = data.to(self.device)
-
-        # If it's our custom CelebA dataset, extract the specific property
-        labels = raw_labels.to(self.device)
-
-        optimizer.zero_grad()
-        output = temp_model(data)
-        loss = self.loss_fn(output, labels)
-        loss.backward()
-
-        # The "update" is the negative of the gradient
-        trust_gradient = [-p.grad.detach().clone() for p in temp_model.parameters()]
-        return trust_gradient
 
     def _get_model_from_update(self, update: List[torch.Tensor]) -> nn.Module:
         temp_model = copy.deepcopy(self.global_model)

@@ -379,7 +379,7 @@ class AppConfig:
     debug: DebugConfig
     aggregation: AggregationConfig
     seed: int = 42
-    n_samples: int = 1
+    n_samples: int = 3
     data_root: str = "./data"
     use_cache: bool = True
 

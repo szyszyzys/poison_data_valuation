@@ -297,14 +297,3 @@ if __name__ == '__main__':
     print(f"Generated {len(ALL_SCENARIOS)} focused scenarios:")
     for s in ALL_SCENARIOS:
         print(f"  - {s.name}")
-
-# # --- Create the final list by calling all generator functions ---
-# ALL_SCENARIOS = generate_attack_impact_scenarios()
-# ALL_SCENARIOS.extend(generate_sybil_impact_scenarios())
-# ALL_SCENARIOS.extend(generate_data_heterogeneity_scenarios())
-#
-# # You can print the names of generated scenarios to verify
-# if __name__ == '__main__':
-#     print(f"Generated {len(ALL_SCENARIOS)} scenarios:")
-#     for s in ALL_SCENARIOS:
-#         print(f"  - {s.name}")
