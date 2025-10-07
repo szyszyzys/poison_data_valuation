@@ -8,6 +8,7 @@ import torch
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig, AggregationConfig, DebugConfig, TabularDataConfig, DataConfig, \
     AdversarySellerConfig, ServerAttackConfig, TrainingConfig, ExperimentConfig
+from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator
 
 
 # --- Define the structure of a Scenario ---
@@ -182,15 +183,20 @@ ALL_TABULAR_SCENARIOS.extend(generate_tabular_oracle_vs_buyer_bias_scenarios())
 ALL_TABULAR_SCENARIOS.extend(generate_tabular_sybil_impact_scenarios())
 ALL_TABULAR_SCENARIOS.extend(generate_tabular_data_heterogeneity_scenarios())
 
-# This part can be in a separate runner script, but is included here for completeness
-if __name__ == "__main__":
-    # You would need to import your ExperimentGenerator class
-    # from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator
-
+def main():
+    """Generates all configurations defined in scenarios.py."""
     output_dir = "./configs_generated/tabular_new"
-    # generator = ExperimentGenerator(output_dir)
+    generator = ExperimentGenerator(output_dir)
 
-    print(f"✅ The following {len(ALL_TABULAR_SCENARIOS)} tabular scenarios are defined:")
+    # The loop is now simpler and more powerful
     for scenario in ALL_TABULAR_SCENARIOS:
-        print(f"  - {scenario.name}")
-    print(f"\nRun the main generator script to create config files in '{output_dir}'")
+        # Get the correct base config for THIS specific scenario
+        base_config = scenario.base_config_factory()
+        # Generate all variations
+        generator.generate(base_config, scenario)
+
+    print(f"\n✅ All configurations have been generated in '{output_dir}'")
+
+
+if __name__ == "__main__":
+    main()
