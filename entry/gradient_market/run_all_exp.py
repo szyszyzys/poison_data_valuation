@@ -21,7 +21,7 @@ from common.datasets.tabular_data_processor import get_tabular_dataset
 from common.datasets.text_data_processor import collate_batch
 from common.evaluators import create_evaluators
 from common.factories import SellerFactory
-from common.gradient_market_configs import AppConfig
+from common.gradient_market_configs import AppConfig, RuntimeDataConfig
 from common.utils import set_seed
 from entry.gradient_market.automate_exp.config_parser import load_config
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
