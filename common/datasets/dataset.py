@@ -160,7 +160,7 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         "use_subset": cfg.experiment.use_subset,
         "subset_size": cfg.experiment.subset_size if cfg.experiment.use_subset else None,
         "strategy": image_cfg.strategy,
-        "buyer_config": asdict(image_cfg.buyer_config),
+        "buyer_config": image_cfg.buyer_config,
         "partition_params": asdict(image_cfg.property_skew)
     }
     # Convert dict to a canonical string and hash it for a unique filename
