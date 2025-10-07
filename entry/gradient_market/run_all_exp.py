@@ -5,15 +5,15 @@ import copy
 import json
 import logging
 import os
+import pandas as pd
 import shutil
 import tempfile
 import time
-from pathlib import Path
-from typing import List, Dict
-
-import pandas as pd
 import torch
 import torch.nn as nn
+from pathlib import Path
+from torch.utils.data import DataLoader, random_split  # Add this import
+from typing import List, Dict
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
 from common.datasets.tabular_data_processor import get_tabular_dataset
@@ -119,7 +119,6 @@ def setup_data_and_model(cfg: AppConfig):
             image_size=image_size,
             config=image_model_config  # Will be deep copied inside create_factory
         )
-
         # Validate factory creates consistent models
         validate_model_factory(model_factory, num_tests=3)
 
@@ -157,8 +156,33 @@ def setup_data_and_model(cfg: AppConfig):
     logging.info("=" * 60)
 
     logging.info(f"Data loaded for '{dataset_name}'. Number of classes: {cfg.experiment.num_classes}")
+    # --- ADD THIS BLOCK to create the validation set ---
+    validation_loader = None
+    if cfg.training.use_early_stopping and buyer_loader:
+        logging.info("Splitting buyer data to create a validation set...")
+        buyer_dataset = buyer_loader.dataset
 
-    return buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes
+        # Define validation split size (e.g., 50% of buyer data)
+        val_size = int(0.5 * len(buyer_dataset))
+        train_size = len(buyer_dataset) - val_size
+
+        if train_size > 0 and val_size > 0:
+            # Split the dataset using a fixed seed for reproducibility
+            generator = torch.Generator().manual_seed(cfg.seed)
+            train_subset, val_subset = random_split(buyer_dataset, [train_size, val_size], generator=generator)
+
+            # Overwrite the buyer_loader with the smaller training part for the aggregator
+            buyer_loader = DataLoader(train_subset, batch_size=cfg.training.batch_size, shuffle=True)
+            # Create the new validation loader for early stopping
+            validation_loader = DataLoader(val_subset, batch_size=cfg.training.batch_size, shuffle=False)
+
+            logging.info(f"  -> New buyer data size (for aggregator): {len(train_subset)}")
+            logging.info(f"  -> Validation set size: {len(val_subset)}")
+        else:
+            logging.warning("Buyer dataset is too small to split for validation. Early stopping may not be reliable.")
+            validation_loader = buyer_loader  # Fallback
+
+    return buyer_loader, seller_loaders, test_loader, validation_loader, model_factory, seller_extra_args, collate_fn, num_classes
 
 
 def generate_marketplace_report(save_path: Path, marketplace, total_rounds):
@@ -559,7 +583,7 @@ def save_model_atomic(state_dict, filepath):
         raise
 
 
-def run_training_loop(cfg, marketplace, test_loader, evaluators, sybil_coordinator):
+def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluators, sybil_coordinator):
     """Training loop with incremental saving."""
     save_path = Path(cfg.experiment.save_path)
     log_path = save_path / "training_log.csv"
@@ -569,18 +593,62 @@ def run_training_loop(cfg, marketplace, test_loader, evaluators, sybil_coordinat
         pd.DataFrame(columns=['round', 'duration_sec', 'num_selected', 'num_outliers']).to_csv(
             log_path, index=False
         )
+
+    # --- 1. EARLY STOPPING INITIALIZATION ---
+    patience = cfg.training.patience
+    patience_counter = 0
+    best_validation_loss = float('inf')
+    best_model_state = None
+    best_model_round = 0
+
+    # Log whether early stopping is active and if the validation set is available
+    if cfg.training.use_early_stopping:
+        logging.info(f"✅ Early stopping enabled with patience: {patience}")
+        if not validation_loader:
+            logging.warning(
+                "⚠️ Early stopping is enabled, but no validation loader was provided! Cannot perform early stopping.")
+
     round_records = []
     for round_num in range(1, cfg.experiment.global_rounds + 1):
         round_record, agg_grad = marketplace.train_federated_round(
             round_number=round_num,
             ground_truth_dict={}
         )
+
+        global_model = marketplace.aggregator.strategy.global_model
+
+        # --- ADDED: Perform validation for early stopping in every round ---
+        if cfg.training.use_early_stopping and validation_loader:
+            main_evaluator = evaluators[0]  # Assumes the first evaluator checks loss/accuracy
+            try:
+                val_metrics = main_evaluator.evaluate(global_model, validation_loader, metric_prefix="val")
+                current_loss = val_metrics.get('val_loss')
+
+                if current_loss is not None:
+                    logging.info(f"Round {round_num} | Validation Loss: {current_loss:.4f}")
+                    if current_loss < best_validation_loss:
+                        best_validation_loss = current_loss
+                        patience_counter = 0
+                        best_model_state = copy.deepcopy(global_model.state_dict())
+                        best_model_round = round_num
+                        logging.info(f"  -> New best model found! Patience counter reset.")
+                    else:
+                        patience_counter += 1
+                        logging.info(f"  -> No improvement. Patience: {patience_counter}/{patience}")
+
+                # Merge validation metrics into the record for this round
+                round_record.update(val_metrics)
+
+            except Exception as e:
+                logging.error(f"Validation for early stopping failed in round {round_num}: {e}")
+                patience_counter += 1
+
         round_records.append(round_record)
         save_round_incremental(round_record, save_path)
 
-        # Incremental save - append to CSV
-        df_round = pd.DataFrame([round_record])
-        df_round.to_csv(log_path, mode='a', header=False, index=False)
+        if cfg.training.use_early_stopping and patience_counter >= patience:
+            logging.warning(f"EARLY STOPPING: No improvement for {patience} rounds. Halting at round {round_num}.")
+            break
 
         # Evaluate periodically
         if round_num % cfg.experiment.eval_frequency == 0:
@@ -601,7 +669,14 @@ def run_training_loop(cfg, marketplace, test_loader, evaluators, sybil_coordinat
         for sid, seller in marketplace.sellers.items():
             seller.save_marketplace_summary()
 
-    return marketplace.aggregator.strategy.global_model, []  # Empty buffer since we saved incrementally
+    if best_model_state:
+        logging.info(f"Loading best model from round {best_model_round} (Val Loss: {best_validation_loss:.4f})")
+        marketplace.aggregator.strategy.global_model.load_state_dict(best_model_state)
+    else:
+        logging.warning("No best model was saved; returning model from the final round.")
+
+    # --- MODIFIED: Return the complete record buffer for final logging ---
+    return marketplace.aggregator.strategy.global_model, round_records
 
 
 def save_round_incremental(round_record, save_path):
@@ -641,7 +716,7 @@ def run_attack(cfg: AppConfig):
         _save_config_for_reproducibility(cfg, save_path)
 
         # 2. Data and Model Setup
-        buyer_loader, seller_loaders, test_loader, model_factory, seller_extra_args, collate_fn, num_classes = \
+        buyer_loader, seller_loaders, test_loader, validation_loader, model_factory, seller_extra_args, collate_fn, num_classes = \
             setup_data_and_model(cfg)
 
         global_model = model_factory().to(cfg.experiment.device)
@@ -679,8 +754,11 @@ def run_attack(cfg: AppConfig):
 
         # 6. Federated Training Loop
         logging.info("🏋️ Starting federated training...")
+        # final_model, results_buffer = run_training_loop(
+        #     cfg, marketplace, test_loader, evaluators, sybil_coordinator
+        # )
         final_model, results_buffer = run_training_loop(
-            cfg, marketplace, test_loader, evaluators, sybil_coordinator
+            cfg, marketplace, validation_loader, test_loader, evaluators, sybil_coordinator
         )
 
         # 7. Final Evaluation and Artifact Saving
