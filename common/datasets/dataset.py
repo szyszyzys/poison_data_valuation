@@ -215,13 +215,21 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
             }, f)
     # ===========================================================================
 
-    # Generate statistics (this part is the same as before)
+    # Generate statistics and save to a DEDICATED path
+    logger.info("Generating and saving image data split statistics...")
+
+    # --- CHANGE: Use the hash from the cache logic to create the unique path ---
+    config_hash = Path(cache_file).stem
+    stats_dir = Path(cfg.data_root) / "data_statistics"
+    stats_save_path = stats_dir / f"{config_hash}_stats.json"
+
+    # Pass the new, specific path to the function
     stats = save_data_statistics(
         buyer_indices=buyer_indices,
         seller_splits=seller_splits,
         client_properties=client_properties,
         targets=_extract_targets(train_set),
-        output_dir=cfg.experiment.save_path
+        save_filepath=stats_save_path # Use the new `save_filepath` argument
     )
 
     # Create DataLoaders (this part is the same as before)
@@ -427,20 +435,29 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
             logging.error(f"FATAL: Overlap detected between buyer and seller {seller_id} indices!")
         assigned_indices.update(indices)
     # ==================== ADD THIS SECTION ====================
-    # 6. --- Generate and Save Statistics ---
+    # 6. --- Generate and Save Statistics to a DEDICATED Path ---
     logger.info("Generating and saving data split statistics...")
 
-    # Assumes your StandardFormatDataset has a .targets attribute with all labels
+    # --- ADD THIS: Re-use the hash from your caching logic to create a unique path ---
+    # The split_cache_file path already contains the unique hash.
+    # We can derive the statistics filename from it.
+    config_hash = Path(split_cache_file).stem
+    stats_dir = Path(cfg.data_root) / "data_statistics"
+    stats_save_path = stats_dir / f"{config_hash}_stats.json"
+    # --- END ADDITION ---
+
     train_targets = standardized_train_data.targets
 
+    # Pass the new, specific path to the function
     stats = save_data_statistics(
         buyer_indices=buyer_indices,
         seller_splits=seller_splits,
-        client_properties={},  # Pass an empty dict for now
+        client_properties={},
         targets=train_targets,
-        output_dir=cfg.experiment.save_path
+        save_filepath=stats_save_path # Use the new path
     )
-    # 6. --- Create DataLoaders ---
+
+    # Create DataLoaders ---
     collate_fn = lambda batch: collate_batch(batch, padding_value=pad_idx)
 
     # Use training batch size from the training config

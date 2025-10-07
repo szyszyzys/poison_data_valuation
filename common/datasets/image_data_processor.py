@@ -12,6 +12,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -154,45 +155,37 @@ def load_dataset(name: str, root: str = "./data", download: bool = True) -> Tupl
 
 # --- 3. Statistics and Orchestration ---
 
-def save_data_statistics(buyer_indices, seller_splits, client_properties, targets, output_dir) -> Dict:
+def save_data_statistics(buyer_indices, seller_splits, client_properties, targets, save_filepath) -> Dict:
     """
-    Calculates, logs, and saves detailed data distribution statistics,
-    including class label distributions for each participant.
+    Calculates and saves detailed data distribution statistics to a specific file path.
     """
-    stats = {"buyer": {}, "sellers": {}, "client_properties": client_properties}
+    # --- CHANGE: The function body is mostly the same, but it uses save_filepath ---
+    stats = {
+        "buyer": {
+            "total_samples": len(buyer_indices),
+            "label_distribution": dict(sorted(collections.Counter(targets[buyer_indices].tolist()).items()))
+        },
+        "sellers": {},
+        "client_properties": client_properties
+    }
 
-    def get_label_dist(indices):
-        """Calculates the distribution of labels for a given set of indices."""
-        if len(indices) == 0:
-            return {}
-        # Use collections.Counter for a clean and efficient way to count labels
-        label_counts = collections.Counter(targets[indices].tolist())
-        return dict(sorted(label_counts.items()))
-
-    # Buyer stats
-    stats["buyer"]["total_samples"] = len(buyer_indices)
-    # --- CHANGE 2: Add label distribution for the buyer ---
-    stats["buyer"]["label_distribution"] = get_label_dist(buyer_indices)
-
-    logger.info(f"Buyer Stats: {stats['buyer']['total_samples']} samples.")
-
-    # Seller stats
     for cid, indices in seller_splits.items():
         stats["sellers"][cid] = {
             "total_samples": len(indices),
             "property": client_properties.get(cid, "N/A"),
-            # --- CHANGE 3: Add label distribution for each seller ---
-            "label_distribution": get_label_dist(indices)
+            "label_distribution": dict(sorted(collections.Counter(targets[indices].tolist()).items()))
         }
-        logger.info(f"Client {cid} ({stats['sellers'][cid]['property']}): {len(indices)} samples.")
 
-    # Save to file
-    save_path = os.path.join(output_dir, 'data_statistics.json')
-    os.makedirs(output_dir, exist_ok=True)
+    save_path = Path(save_filepath)
+
+    # Use pathlib to create the parent directory
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # The 'open' function works directly with Path objects
     with open(save_path, 'w') as f:
         json.dump(stats, f, indent=4)
-    logger.info(f"Data statistics saved to {save_path}")
 
+    logger.info(f"Data statistics saved to {save_path}")
     return stats
 
 
