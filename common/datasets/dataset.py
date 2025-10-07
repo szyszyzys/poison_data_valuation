@@ -199,7 +199,7 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         partitioner.partition(
             buyer_split_strategy=buyer_strategy,
             client_partition_strategy=image_cfg.strategy,
-            buyer_config=asdict(image_cfg.buyer_config),
+            buyer_config=image_cfg.buyer_config,
             partition_params=asdict(image_cfg.property_skew)
         )
         buyer_indices, seller_splits, _ = partitioner.get_splits()
