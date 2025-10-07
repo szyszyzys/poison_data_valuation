@@ -764,7 +764,6 @@ class PoisonedDataset(Dataset):
         return len(self.original_dataset)
 
     def __getitem__(self, index):
-        # --- MODIFICATION: UNPACK BASED ON FORMAT ---
         original_sample = self.original_dataset[index]
 
         if self.data_format == 'text':

@@ -1,6 +1,8 @@
+from typing import Dict, Tuple, List, Any
+
 import torch
 import torch.nn.functional as F
-from typing import Dict, Tuple, List, Any
+from torch import clip
 
 from common.utils import clip_gradient_update, flatten_tensor
 from marketplace.market_mechanism.aggregators.base_aggregator import BaseAggregator, logger
@@ -37,8 +39,9 @@ class FLTrustAggregator(BaseAggregator):
             else:
                 processed_updates[sid] = upd
 
+        trust_gradient = self.root_gradient
         if clip:
-            trust_gradient = clip_gradient_update(trust_gradient, self.clip_norm)
+            trust_gradient = clip_gradient_update(self.root_gradient, self.clip_norm)
 
         # 3. Flatten for similarity calculation
         flat_seller_updates = {sid: flatten_tensor(upd) for sid, upd in processed_updates.items()}
