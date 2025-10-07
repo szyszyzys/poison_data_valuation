@@ -26,7 +26,7 @@ class MarketplaceConfig:
 
 class DataMarketplaceFederated(DataMarketplace):
     def __init__(self, cfg: AppConfig, aggregator: Aggregator, sellers: dict,
-                 input_shape: tuple, SellerClass: type, validation_loader: DataLoader, attacker=None):
+                 input_shape: tuple, SellerClass: type, validation_loader, attacker=None):
         """
         Initializes the marketplace with all necessary components and the main config.
         """
