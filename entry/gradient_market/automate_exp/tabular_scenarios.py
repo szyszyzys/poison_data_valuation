@@ -187,7 +187,7 @@ if __name__ == "__main__":
     # You would need to import your ExperimentGenerator class
     # from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator
 
-    output_dir = "./configs_generated/tabular"
+    output_dir = "./configs_generated/tabular_new"
     # generator = ExperimentGenerator(output_dir)
 
     print(f"✅ The following {len(ALL_TABULAR_SCENARIOS)} tabular scenarios are defined:")
