@@ -49,25 +49,27 @@ class StandardFormatDataset(Dataset):
         return self.data[idx]
 
 
-def collate_batch(batch, padding_value=0):
-    """
-    Custom collate function to handle variable-length text data.
-    """
-    label_list, text_list = [], []
+def collate_batch(batch, padding_value):
+    label_list, text_list, lengths = [], [], []
 
-    # Unpack in the correct (data, label) order
-    for (data, label) in batch:
-        label_list.append(label)  # Append the integer label
-        # Append the list/tensor of token IDs
-        text_list.append(torch.tensor(data, dtype=torch.int64))
+    # The batch is delivering (text_sequence, label_integer) tuples.
+    # We unpack them accordingly.
+    for (text_sequence, label) in batch:
 
-    # This will now work, as label_list is a flat list of integers
+        # --- FIX: Append the correct variables to the correct lists ---
+        label_list.append(label)
+
+        processed_text = torch.tensor(text_sequence, dtype=torch.int64)
+        text_list.append(processed_text)
+
+        lengths.append(len(text_sequence))
+        # --- END FIX ---
+
     labels = torch.tensor(label_list, dtype=torch.int64)
+    texts = pad_sequence(text_list, batch_first=True, padding_value=padding_value)
 
-    # This will pad the sequences of token IDs
-    texts_padded = pad_sequence(text_list, batch_first=True, padding_value=padding_value)
+    return labels, texts, torch.tensor(lengths, dtype=torch.int64)
 
-    return texts_padded, labels
 
 
 def get_cache_path(cache_dir: str, prefix: str, params: Tuple) -> str:
@@ -188,7 +190,7 @@ def construct_text_buyer_set(dataset: List[Tuple[int, Any]], buyer_count: int, b
 
 
 def split_text_dataset_martfl_discovery(
-        dataset: List[Tuple[int, Any]],
+        dataset: StandardFormatDataset,
         buyer_count: int,
         num_clients: int,
         noise_factor: float,

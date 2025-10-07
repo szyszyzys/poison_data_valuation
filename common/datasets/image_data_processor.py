@@ -6,11 +6,13 @@ A robust and modular script to prepare federated datasets for data marketplace s
 This module supports various data partitioning strategies and facilitates the simulation
 of data-based attacks like property inference by controlling attribute prevalence.
 """
+import collections
 import json
 import logging
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -153,23 +155,37 @@ def load_dataset(name: str, root: str = "./data", download: bool = True) -> Tupl
 
 # --- 3. Statistics and Orchestration ---
 
-def save_data_statistics(buyer_indices, seller_splits, client_properties, targets, output_dir) -> Dict:
-    """Calculates, logs, and saves the data distribution statistics."""
-    stats = {"buyer": {}, "sellers": {}, "client_properties": client_properties}
-    # Buyer stats
-    buyer_targets = targets[buyer_indices]
-    stats["buyer"]["total_samples"] = len(buyer_indices)
-    logger.info(f"Buyer Stats: {len(buyer_indices)} samples.")
+def save_data_statistics(buyer_indices, seller_splits, client_properties, targets, save_filepath) -> Dict:
+    """
+    Calculates and saves detailed data distribution statistics to a specific file path.
+    """
+    # --- CHANGE: The function body is mostly the same, but it uses save_filepath ---
+    stats = {
+        "buyer": {
+            "total_samples": len(buyer_indices),
+            "label_distribution": dict(sorted(collections.Counter(targets[buyer_indices].tolist()).items()))
+        },
+        "sellers": {},
+        "client_properties": client_properties
+    }
 
-    # Seller stats
     for cid, indices in seller_splits.items():
-        stats["sellers"][cid] = {"total_samples": len(indices), "property": client_properties.get(cid, "N/A")}
-        logger.info(f"Client {cid} ({stats['sellers'][cid]['property']}): {len(indices)} samples.")
+        stats["sellers"][cid] = {
+            "total_samples": len(indices),
+            "property": client_properties.get(cid, "N/A"),
+            "label_distribution": dict(sorted(collections.Counter(targets[indices].tolist()).items()))
+        }
 
-    os.makedirs(output_dir, exist_ok=True)
-    with open(os.path.join(output_dir, 'data_statistics.json'), 'w') as f:
+    save_path = Path(save_filepath)
+
+    # Use pathlib to create the parent directory
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # The 'open' function works directly with Path objects
+    with open(save_path, 'w') as f:
         json.dump(stats, f, indent=4)
-    logger.info(f"Data statistics saved to {os.path.join(output_dir, 'data_statistics.json')}")
+
+    logger.info(f"Data statistics saved to {save_path}")
     return stats
 
 

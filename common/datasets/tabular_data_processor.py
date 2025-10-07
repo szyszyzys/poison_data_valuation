@@ -1,5 +1,8 @@
+import hashlib
+import json
 import logging
 import os
+from pathlib import Path
 from typing import Dict, Any, Tuple, List
 from urllib import request
 
@@ -13,6 +16,7 @@ from torch.utils.data import DataLoader, Subset, TensorDataset
 from ucimlrepo import fetch_ucirepo
 
 from common.datasets.data_partitioner import TabularDataPartitioner
+from common.datasets.image_data_processor import save_data_statistics
 from common.gradient_market_configs import AppConfig  # Import your main config
 
 logger = logging.getLogger(__name__)
@@ -125,6 +129,33 @@ def get_tabular_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[str, DataLoade
         buyer_fraction=cfg.data.tabular.buyer_ratio
     )
     buyer_indices, seller_splits, _ = partitioner.get_splits()
+    # --- ADD THIS SECTION to generate a dedicated path ---
+    logger.info("Generating and saving tabular data split statistics...")
+
+    # Create a unique key for the tabular split
+    tabular_split_params = {
+        "dataset": cfg.experiment.dataset_name,
+        "n_sellers": cfg.experiment.n_sellers,
+        "seed": cfg.seed,
+        "strategy": cfg.data.tabular.strategy,
+        "buyer_ratio": cfg.data.tabular.buyer_ratio,
+        "partition_params": cfg.data.tabular.property_skew
+    }
+    config_string = json.dumps(tabular_split_params, sort_keys=True)
+    config_hash = hashlib.md5(config_string.encode('utf-8')).hexdigest()
+
+    stats_dir = Path(cfg.data_root) / "data_statistics"
+    stats_save_path = stats_dir / f"{config_hash}_stats.json"
+    # --- END ADDITION ---
+
+    # Pass the new path to the function
+    save_data_statistics(
+        buyer_indices=buyer_indices,
+        seller_splits=seller_splits,
+        client_properties={},
+        targets=y_train.values,
+        save_filepath=stats_save_path  # Use the new path
+    )
 
     # 5. Create final DataLoaders
     batch_size = cfg.training.batch_size

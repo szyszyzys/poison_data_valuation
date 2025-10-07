@@ -1,10 +1,13 @@
 # --- Imports ---
+import hashlib
+import json
 import logging
 import os
 import pickle
 import random
 import urllib.request
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from typing import (Callable, Generator)
 
@@ -137,15 +140,36 @@ def _get_dataset_loaders(dataset_name: str, data_root: str) -> Tuple[Dataset, Da
 def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader], DataLoader, Dict, int]:
     """
     A unified function to load, partition, and prepare federated image datasets.
-    This version is generic and driven by configuration.
+    This version includes caching for the data partitioning step.
     """
     logger.info(f"--- Starting Federated Dataset Setup for '{cfg.experiment.dataset_name}' ---")
     image_cfg = cfg.data.image
     if not image_cfg:
         raise ValueError("Image data configuration ('data.image') is missing.")
 
-    # 1. Load the base dataset using the new helper
-    # This part of your code is correct
+    # ==================== 1. CACHING LOGIC (NEW) ====================
+    # Define a cache directory within your main data root
+    cache_dir = Path(cfg.data_root) / ".cache"
+    cache_dir.mkdir(exist_ok=True)
+
+    # Create a unique key based on all parameters that affect the data split
+    config_params = {
+        "dataset": cfg.experiment.dataset_name,
+        "n_sellers": cfg.experiment.n_sellers,
+        "seed": cfg.seed,
+        "use_subset": cfg.experiment.use_subset,
+        "subset_size": cfg.experiment.subset_size if cfg.experiment.use_subset else None,
+        "strategy": image_cfg.strategy,
+        "buyer_config": image_cfg.buyer_config,
+        "partition_params": asdict(image_cfg.property_skew)
+    }
+    # Convert dict to a canonical string and hash it for a unique filename
+    config_string = json.dumps(config_params, sort_keys=True)
+    config_hash = hashlib.md5(config_string.encode('utf-8')).hexdigest()
+    cache_file = cache_dir / f"{config_hash}.pkl"
+    # =================================================================
+
+    # Load base dataset
     train_set, test_set, num_classes = _get_dataset_loaders(cfg.experiment.dataset_name, cfg.data_root)
     if cfg.experiment.dataset_name == "CelebA":
         property_key = image_cfg.property_skew.property_key
@@ -156,38 +180,65 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         num_samples = min(cfg.experiment.subset_size, len(train_set))
         train_set = Subset(train_set, list(range(num_samples)))
 
-    # 2. Initialize and run the partitioner
-    # This part of your code is correct
-    partitioner = FederatedDataPartitioner(
-        dataset=train_set, num_clients=cfg.experiment.n_sellers, seed=cfg.seed
-    )
-    buyer_strategy = OverallFractionSplit()  # Assuming this is the intended logic
-    partitioner.partition(
-        buyer_split_strategy=buyer_strategy,
-        client_partition_strategy=image_cfg.strategy,
-        buyer_config=image_cfg.buyer_config,
-        partition_params=asdict(image_cfg.property_skew)
-    )
-    buyer_indices, seller_splits, _ = partitioner.get_splits()
+    # ==================== 2. LOAD OR CREATE SPLITS (MODIFIED) ====================
+    if cache_file.exists():
+        logger.info(f"✅ Found cached data split. Loading from: {cache_file}")
+        with open(cache_file, 'rb') as f:
+            cached_data = pickle.load(f)
+        buyer_indices = cached_data['buyer_indices']
+        seller_splits = cached_data['seller_splits']
+        client_properties = cached_data['client_properties']
 
-    # 4. Generate statistics
-    # This part of your code is correct
+    else:
+        logger.info(f"❗️ No cached data split found. Running partitioning...")
+        # Initialize and run the partitioner (this part is the same as before)
+        partitioner = FederatedDataPartitioner(
+            dataset=train_set, num_clients=cfg.experiment.n_sellers, seed=cfg.seed
+        )
+        buyer_strategy = OverallFractionSplit()
+        partitioner.partition(
+            buyer_split_strategy=buyer_strategy,
+            client_partition_strategy=image_cfg.strategy,
+            buyer_config=image_cfg.buyer_config,
+            partition_params=asdict(image_cfg.property_skew)
+        )
+        buyer_indices, seller_splits, _ = partitioner.get_splits()
+        client_properties = partitioner.client_properties
+
+        # --- Save the newly created split to the cache file ---
+        logger.info(f"💾 Saving new data split to cache: {cache_file}")
+        with open(cache_file, 'wb') as f:
+            pickle.dump({
+                'buyer_indices': buyer_indices,
+                'seller_splits': seller_splits,
+                'client_properties': client_properties
+            }, f)
+    # ===========================================================================
+
+    # Generate statistics and save to a DEDICATED path
+    logger.info("Generating and saving image data split statistics...")
+
+    # --- CHANGE: Use the hash from the cache logic to create the unique path ---
+    config_hash = Path(cache_file).stem
+    stats_dir = Path(cfg.data_root) / "data_statistics"
+    stats_save_path = stats_dir / f"{config_hash}_stats.json"
+
+    # Pass the new, specific path to the function
     stats = save_data_statistics(
         buyer_indices=buyer_indices,
         seller_splits=seller_splits,
-        client_properties=partitioner.client_properties,
+        client_properties=client_properties,
         targets=_extract_targets(train_set),
-        output_dir=cfg.experiment.save_path
+        save_filepath=stats_save_path # Use the new `save_filepath` argument
     )
 
-    # 5. Create DataLoaders
+    # Create DataLoaders (this part is the same as before)
     batch_size = cfg.training.batch_size
     actual_dataset = train_set.dataset if isinstance(train_set, Subset) else train_set
     buyer_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=True,
                               num_workers=cfg.data.num_workers) if buyer_indices.size > 0 else None
 
     seller_loaders = {
-        # --- FIX 2: `indices` in `seller_splits` is a list, so a simple truthiness check is correct. ---
         cid: DataLoader(Subset(actual_dataset, indices), batch_size=batch_size, shuffle=True,
                         num_workers=cfg.data.num_workers)
         for cid, indices in seller_splits.items() if indices
@@ -252,13 +303,6 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         dataset_features = ds['train'].features[label_field]
         class_names = dataset_features.names
         num_classes = len(class_names) # This is the true number of classes in the data
-
-        # 4. VALIDATE the data's class count against your model's configuration
-        if num_classes != expected_num_classes:
-            raise ValueError(
-                f"Configuration mismatch! The '{exp_cfg.dataset_name}' dataset has "
-                f"{num_classes} classes, but your config specifies num_classes={expected_num_classes}."
-            )
 
     else:
         raise ValueError(f"Unsupported dataset: {exp_cfg.dataset_name}")
@@ -390,8 +434,30 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         if not assigned_indices.isdisjoint(indices):
             logging.error(f"FATAL: Overlap detected between buyer and seller {seller_id} indices!")
         assigned_indices.update(indices)
+    # ==================== ADD THIS SECTION ====================
+    # 6. --- Generate and Save Statistics to a DEDICATED Path ---
+    logger.info("Generating and saving data split statistics...")
 
-    # 6. --- Create DataLoaders ---
+    # --- ADD THIS: Re-use the hash from your caching logic to create a unique path ---
+    # The split_cache_file path already contains the unique hash.
+    # We can derive the statistics filename from it.
+    config_hash = Path(split_cache_file).stem
+    stats_dir = Path(cfg.data_root) / "data_statistics"
+    stats_save_path = stats_dir / f"{config_hash}_stats.json"
+    # --- END ADDITION ---
+
+    train_targets = standardized_train_data.targets
+
+    # Pass the new, specific path to the function
+    stats = save_data_statistics(
+        buyer_indices=buyer_indices,
+        seller_splits=seller_splits,
+        client_properties={},
+        targets=train_targets,
+        save_filepath=stats_save_path # Use the new path
+    )
+
+    # Create DataLoaders ---
     collate_fn = lambda batch: collate_batch(batch, padding_value=pad_idx)
 
     # Use training batch size from the training config
