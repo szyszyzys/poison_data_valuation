@@ -73,101 +73,70 @@ def mark_run_completed(run_save_path: Path):
     success_marker.touch()
 
 
-def run_single_experiment(config_path: str, run_id: int, gpu_id: int = None, force_rerun: bool = False):
+def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: int,
+                          gpu_id: int = None, force_rerun: bool = False):
     """
-    Function to run a single experiment with proper locking and caching.
-
-    Args:
-        config_path: Path to config file
-        run_id: Identifier for this run
-        gpu_id: GPU device ID to use
-        force_rerun: If True, ignore cache and rerun all experiments
+    Function to run a SINGLE experiment instance (one config, one seed)
+    with proper locking and caching.
     """
     try:
         # Set GPU at the very beginning
-        if gpu_id is not None:
+        if gpu_id is not run_id:
             os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            logger.info(f"[Run {run_id}] Assigned to GPU {gpu_id}. Config: {config_path}")
+            log_prefix = f"[Run {run_id} | Sample {sample_idx} | Seed {seed} | GPU {gpu_id}]"
         else:
-            logger.info(f"[Run {run_id}] Starting on CPU. Config: {config_path}")
+            log_prefix = f"[Run {run_id} | Sample {sample_idx} | Seed {seed} | CPU]"
+
+        logger.info(f"{log_prefix} Starting. Config: {config_path}")
 
         app_config = load_config(config_path)
-        initial_seed = app_config.seed
         original_base_save_path = Path(app_config.experiment.save_path)
+        run_save_path = original_base_save_path / f"run_{sample_idx-1}_seed_{seed}"
 
-        for i in range(10):
-            current_seed = initial_seed + i
-            run_save_path = original_base_save_path / f"run_{i}_seed_{current_seed}"
+        # Create directory early
+        run_save_path.mkdir(parents=True, exist_ok=True)
 
-            # Create directory early
-            run_save_path.mkdir(parents=True, exist_ok=True)
+        # Use a lock file to prevent race conditions
+        lock_file = run_save_path / ".lock"
+        lock = FileLock(str(lock_file), timeout=10)
 
-            # Use a lock file to prevent race conditions
-            lock_file = run_save_path / ".lock"
-            lock = FileLock(str(lock_file), timeout=10)
+        with lock.acquire(timeout=2):
+            if is_run_completed(run_save_path) and not force_rerun:
+                logger.info(f"{log_prefix} ✅ Already completed. Skipping.")
+                return # Exit the function for this single run
 
-            try:
-                with lock.acquire(timeout=2):  # Try to acquire lock with short timeout
-                    # Double-check completion status inside the lock
-                    if is_run_completed(run_save_path) and not force_rerun:
-                        logger.info(f"[Run {run_id} - Sample {i + 1}/{app_config.n_samples}] "
-                                    f"✅ Already completed. Skipping: {run_save_path}")
-                        continue
+            if is_run_completed(run_save_path) and force_rerun:
+                logger.info(f"{log_prefix} 🔄 Force rerun enabled.")
 
-                    if is_run_completed(run_save_path) and force_rerun:
-                        logger.info(f"[Run {run_id} - Sample {i + 1}/{app_config.n_samples}] "
-                                    f"🔄 Force rerun enabled. Removing old results...")
-                        # Optionally backup old results here
+            mark_run_in_progress(run_save_path)
 
-                    # Mark as in progress
-                    mark_run_in_progress(run_save_path)
+            # Prepare config for this specific run
+            run_cfg = copy.deepcopy(app_config)
+            set_seed(seed)
+            run_cfg.seed = seed # Ensure the config reflects the correct seed
+            run_cfg.experiment.save_path = str(run_save_path)
+            run_cfg.experiment.device = "cuda" if gpu_id is not run_id else "cpu"
 
-                    logger.info(f"[Run {run_id} - Sample {i + 1}/{app_config.n_samples}] "
-                                f"🚀 Starting... Seed: {current_seed}")
+            # Run the actual experiment
+            run_attack(run_cfg)
+            mark_run_completed(run_save_path)
 
-                    # Prepare config for this specific run
-                    run_cfg = copy.deepcopy(app_config)
-                    set_seed(current_seed)
-                    run_cfg.experiment.save_path = str(run_save_path)
+            logger.info(f"{log_prefix} ✅ Completed successfully.")
 
-                    if gpu_id is not None:
-                        run_cfg.experiment.device = "cuda"
-                    else:
-                        run_cfg.experiment.device = "cpu"
+            # Clean up GPU memory
+            if gpu_id is not run_id and torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
-                    # Run the actual experiment
-                    run_attack(run_cfg)
-
-                    # Mark as completed
-                    mark_run_completed(run_save_path)
-
-                    logger.info(f"[Run {run_id} - Sample {i + 1}/{app_config.n_samples}] "
-                                f"✅ Completed successfully")
-
-                    # Clean up GPU memory between runs
-                    if gpu_id is not None and torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-
-            except TimeoutError:
-                logger.warning(f"[Run {run_id} - Sample {i + 1}/{app_config.n_samples}] "
-                               f"⏳ Another process is running this experiment. Skipping...")
-                continue
-
-            finally:
-                # Clean up lock file
-                if lock_file.exists():
-                    try:
-                        lock_file.unlink()
-                    except:
-                        pass
-
-        logger.info(f"[Run {run_id}] ✅ Finished all sub-runs for config: {config_path}")
-
+    except TimeoutError:
+        logger.warning(f"{log_prefix} ⏳ Another process is running this. Skipping.")
     except Exception as e:
-        logger.error(f"[Run {run_id}] ❌ Error running experiment {config_path}: {e}", exc_info=True)
-        raise  # Re-raise to make failures visible
+        logger.error(f"{log_prefix} ❌ Error running experiment: {e}", exc_info=True)
+        # Optionally create a .failed marker
+        if 'run_save_path' in locals():
+            (run_save_path / ".failed").touch()
+        raise
 
 
 def discover_configs(configs_base_dir: str) -> list:
@@ -216,41 +185,39 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
                   force_rerun: bool = False):
     """
     Main function to orchestrate parallel execution of experiments.
-
-    Args:
-        configs_base_dir: Directory containing config files
-        num_processes: Number of parallel processes
-        gpu_ids_str: Comma-separated GPU IDs (e.g., "0,1,2")
-        force_rerun: If True, ignore cache and rerun all experiments
     """
-    # Discover all configs
     all_config_files = discover_configs(configs_base_dir)
-
     if not all_config_files:
         logger.warning(f"❌ No config.yaml files found in {configs_base_dir}. Exiting.")
         return
 
     logger.info(f"📋 Found {len(all_config_files)} configuration files")
-
-    # Setup GPU allocation
     actual_num_processes, assigned_gpu_ids = setup_gpu_allocation(num_processes, gpu_ids_str)
 
-    # Log execution plan
+    # === NEW: Build the full list of individual run tasks ===
+    tasks = []
+    run_counter = 0
+    for config_path in all_config_files:
+        # Load config just to get n_samples and initial_seed
+        temp_cfg = load_config(config_path)
+        initial_seed = temp_cfg.seed
+        n_samples = temp_cfg.n_samples if hasattr(temp_cfg, 'n_samples') else 10 # Default to 10 if not specified
+
+        for i in range(n_samples):
+            run_counter += 1
+            current_seed = initial_seed + i
+            # Assign GPU in a round-robin fashion
+            current_gpu_id = assigned_gpu_ids[len(tasks) % len(assigned_gpu_ids)] if assigned_gpu_ids else run_id
+            tasks.append((config_path, run_counter, i + 1, current_seed, current_gpu_id, force_rerun))
+
     logger.info(f"{'=' * 60}")
     logger.info(f"🚀 Starting parallel execution:")
-    logger.info(f"   - Configs: {len(all_config_files)}")
-    logger.info(f"   - Processes: {actual_num_processes}")
+    logger.info(f"   - Total Individual Runs: {len(tasks)}")
+    logger.info(f"   - Parallel Processes: {actual_num_processes}")
     logger.info(f"   - GPUs: {assigned_gpu_ids if assigned_gpu_ids else 'CPU only'}")
-    logger.info(f"   - Force rerun: {force_rerun}")
+    logger.info(f"   - Force Rerun: {force_rerun}")
     logger.info(f"{'=' * 60}")
 
-    # Prepare tasks
-    tasks = []
-    for i, config_path in enumerate(all_config_files):
-        current_gpu_id = assigned_gpu_ids[i % len(assigned_gpu_ids)] if assigned_gpu_ids else None
-        tasks.append((config_path, i + 1, current_gpu_id, force_rerun))
-
-    # Execute in parallel
     with NestablePool(processes=actual_num_processes) as pool:
         pool.starmap(run_single_experiment, tasks)
 
