@@ -66,7 +66,7 @@ def use_tabular_backdoor_attack(config: AppConfig) -> AppConfig:
     """Modifier for a backdoor attack on tabular data."""
     # NOTE: You will need to add TABULAR_BACKDOOR to your PoisonType enum
     # and implement the attack logic. A label flip is a good alternative.
-    config.adversary_seller_config.poisoning.type = PoisonType.LABEL_FLIP
+    config.adversary_seller_config.poisoning.type = PoisonType.TABULAR_BACKDOOR
     return config
 
 
