@@ -1,11 +1,10 @@
 import logging
+import numpy as np
 import time
+import torch
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple
-
-import numpy as np
-import torch
 
 from common.enums import ServerAttackMode
 from common.gradient_market_configs import AppConfig, ServerAttackConfig
@@ -89,18 +88,45 @@ class DataMarketplaceFederated(DataMarketplace):
         # === 2. Collect Gradients from the Real Marketplace ===
         gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
 
+        target_device = self.aggregator.device
+        sanitized_gradients = {}
+        for sid, grad_list in gradients_dict.items():
+            # Use a list comprehension for a clean and efficient correction
+            corrected_list = [
+                (tensor.to(target_device) if tensor.device != target_device else tensor)
+                for tensor in grad_list
+            ]
+            # Log a warning only if a correction was actually made
+            if any(t.device.type == 'cpu' for t in grad_list if hasattr(t, 'device')):
+                logging.warning(
+                    f"Sanitizer corrected one or more CPU tensors to '{target_device}' for seller '{sid}'."
+                )
+            sanitized_gradients[sid] = corrected_list
+
+        # Also sanitize the root gradient that will be passed to the aggregator
+        sanitized_root_gradient = [
+            (tensor.to(target_device) if tensor.device != target_device else tensor)
+            for tensor in buyer_root_gradient
+        ]
+
         # Perform privacy attack (optional)
         attack_log = None
         if self.attacker and self.attacker.should_run(round_number):
             attack_log = self.attacker.execute(round_number, gradients_dict, seller_ids, ground_truth_dict)
-
-        # Aggregation with detailed metrics
         agg_grad, selected_ids, outlier_ids, aggregation_stats = self.aggregator.aggregate(
             global_epoch=round_number,
-            seller_updates=gradients_dict,
-            root_gradient=buyer_root_gradient,
+            seller_updates=sanitized_gradients,  # Use the sanitized dictionary
+            root_gradient=sanitized_root_gradient,  # Use the sanitized root gradient
             buyer_data_loader=self.aggregator.buyer_data_loader
         )
+
+        # Aggregation with detailed metrics
+        # agg_grad, selected_ids, outlier_ids, aggregation_stats = self.aggregator.aggregate(
+        #     global_epoch=round_number,
+        #     seller_updates=gradients_dict,
+        #     root_gradient=buyer_root_gradient,
+        #     buyer_data_loader=self.aggregator.buyer_data_loader
+        # )
 
         # === NEW: Calculate marketplace metrics ===
         marketplace_metrics = self._compute_marketplace_metrics(
