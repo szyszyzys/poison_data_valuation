@@ -90,20 +90,38 @@ class DataMarketplaceFederated(DataMarketplace):
 
         target_device = self.aggregator.device
         sanitized_gradients = {}
+
+        # Get the shapes and dtypes of the global model's parameters ONCE
+        param_meta = [(p.shape, p.dtype) for p in self.global_model.parameters()]
+
         for sid, grad_list in gradients_dict.items():
-            # Use a list comprehension for a clean and efficient correction
-            corrected_list = [
-                (tensor.to(target_device) if tensor.device != target_device else tensor)
-                for tensor in grad_list
-            ]
-            # Log a warning only if a correction was actually made
-            if any(t.device.type == 'cpu' for t in grad_list if hasattr(t, 'device')):
-                logging.warning(
-                    f"Sanitizer corrected one or more CPU tensors to '{target_device}' for seller '{sid}'."
-                )
+            # Check if the whole gradient list is missing or invalid
+            if grad_list is None or len(grad_list) != len(param_meta):
+                logging.error(f"Seller '{sid}' returned an invalid gradient list. Replacing with zeros.")
+                # Create a zero-gradient that matches the model structure
+                sanitized_gradients[sid] = [
+                    torch.zeros(shape, dtype=dtype, device=target_device)
+                    for shape, dtype in param_meta
+                ]
+                continue  # Move to the next seller
+
+            # If the list is valid, sanitize each tensor inside it
+            corrected_list = []
+            for i, tensor in enumerate(grad_list):
+                if tensor is None:
+                    logging.warning(
+                        f"Sanitizer: Found None in gradient from seller '{sid}' at index {i}. Replacing with zeros.")
+                    shape, dtype = param_meta[i]
+                    corrected_list.append(torch.zeros(shape, dtype=dtype, device=target_device))
+                elif tensor.device != target_device:
+                    logging.warning(
+                        f"Sanitizer: Correcting device for seller '{sid}' grad: {tensor.device} -> {target_device}")
+                    corrected_list.append(tensor.to(target_device))
+                else:
+                    corrected_list.append(tensor)
             sanitized_gradients[sid] = corrected_list
 
-        # Also sanitize the root gradient that will be passed to the aggregator
+        # Also sanitize the root gradient (no need for the None check if you trust the buyer)
         sanitized_root_gradient = [
             (tensor.to(target_device) if tensor.device != target_device else tensor)
             for tensor in buyer_root_gradient
@@ -131,7 +149,7 @@ class DataMarketplaceFederated(DataMarketplace):
         # === NEW: Calculate marketplace metrics ===
         marketplace_metrics = self._compute_marketplace_metrics(
             round_number=round_number,
-            gradients_dict=gradients_dict,
+            gradients_dict=sanitized_gradients,
             seller_ids=seller_ids,
             selected_ids=selected_ids,
             outlier_ids=outlier_ids,
