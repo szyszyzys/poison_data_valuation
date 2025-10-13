@@ -39,7 +39,7 @@ class ImageModelConfig(BaseModelConfig):
     # Architecture parameters
     use_dropout: bool = True
     dropout_rate: float = 0.5
-    use_batch_norm: bool = False
+    use_batch_norm: bool = True
     activation: str = "relu"  # "relu", "tanh", "sigmoid"
 
     # FlexibleCNN specific
@@ -54,7 +54,7 @@ class ImageModelConfig(BaseModelConfig):
     # Training parameters
     epochs: int = 100
     batch_size: int = 64
-    learning_rate: float = 0.001
+    learning_rate: float = 0.0001
     weight_decay: float = 0.0
     momentum: float = 0.9
     use_scheduler: bool = True
