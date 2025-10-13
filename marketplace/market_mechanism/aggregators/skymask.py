@@ -90,8 +90,33 @@ class SkymaskAggregator(BaseAggregator):
         buyer_params = [p_glob + p_upd for p_glob, p_upd in zip(global_params, trust_gradient)]
         worker_params.append(buyer_params)
 
+        if self.sm_model_type == 'None' or self.sm_model_type is None:
+            # Try to infer from the main model configuration
+            if hasattr(self, 'model_config'):
+                model_name = self.model_config.model_name.lower()
+                if 'resnet18' in model_name:
+                    sm_model_type = 'resnet18'
+                elif 'resnet20' in model_name:
+                    sm_model_type = 'resnet20'
+                elif 'flexiblecnn' in model_name or 'cnn' in model_name:
+                    sm_model_type = 'cnn'
+                elif 'lenet' in model_name:
+                    sm_model_type = 'lenet'
+                else:
+                    # Default fallback
+                    sm_model_type = 'cnn'
+                logging.warning(f"Auto-detected sm_model_type: {sm_model_type}")
+            else:
+                # Default fallback
+                sm_model_type = 'cnn'
+                logging.warning(f"No model config found, defaulting sm_model_type to: {sm_model_type}")
+        else:
+            sm_model_type = self.sm_model_type
+
+        # Now create masknet with the correct type
+
         # 2. Create and train the MaskNet (This section is unchanged)
-        masknet = create_masknet(worker_params, self.sm_model_type, self.device)
+        masknet = create_masknet(worker_params, sm_model_type, self.device)
         masknet = train_masknet(masknet, self.buyer_data_loader, self.mask_epochs, self.mask_lr, self.mask_clip,
                                 self.device)
 
