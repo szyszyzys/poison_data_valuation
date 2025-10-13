@@ -102,23 +102,29 @@ def _infer_net_type_from_params(param_list):
     # Count parameter types
     conv_count = sum(1 for p in param_list[0] if len(p.shape) == 4)
     linear_count = sum(1 for p in param_list[0] if len(p.shape) == 2)
+    bn_count = sum(1 for p in param_list[0] if len(p.shape) == 1)
 
-    print(f"Parameter analysis: total={num_params}, conv_layers={conv_count}, linear_layers={linear_count}")
+    print(f"Parameter analysis: total={num_params}, conv={conv_count}, linear={linear_count}, bn={bn_count}")
 
-    # Exact matches for known structures ONLY if param count matches exactly
-    if num_params == 2 and linear_count == 1:
+    # STRICT exact matches only - must match parameter count AND structure
+    if num_params == 2 and conv_count == 0 and linear_count == 1:
+        print("Matched: LR (2 params, 1 linear)")
         return 'lr'
-    elif num_params == 8 and conv_count == 2:
+    elif num_params == 8 and conv_count == 2 and linear_count == 2:
+        print("Matched: CNN (8 params, 2 conv, 2 linear)")
         return 'cnn'
-    elif num_params == 10 and conv_count == 2:
+    elif num_params == 10 and conv_count == 2 and linear_count == 3:
+        print("Matched: LeNet (10 params, 2 conv, 3 linear)")
         return 'lenet'
-    elif num_params == 16 and conv_count == 3:
+    elif num_params == 16 and conv_count == 3 and linear_count == 2:
+        print("Matched: CifarCNN (16 params, 3 conv, 2 linear)")
         return 'cifarcnn'
     elif num_params > 100:
+        print("Matched: ResNet (>100 params)")
         return 'resnet18'
     else:
-        # Use dynamic for anything else - SAFER DEFAULT
-        print(f"No exact match found (params={num_params}), using 'dynamic'")
+        # Default to dynamic for ANYTHING else
+        print(f"No exact match (params={num_params}, conv={conv_count}, linear={linear_count}), using DYNAMIC")
         return 'dynamic'
 
 
