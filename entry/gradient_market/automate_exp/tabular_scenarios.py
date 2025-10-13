@@ -64,33 +64,32 @@ def get_base_tabular_config() -> AppConfig:
 
 def use_tabular_backdoor_attack(config: AppConfig) -> AppConfig:
     """Modifier for a backdoor attack on tabular data."""
-    # NOTE: You will need to add TABULAR_BACKDOOR to your PoisonType enum
-    # and implement the attack logic. A label flip is a good alternative.
     config.adversary_seller_config.poisoning.type = PoisonType.TABULAR_BACKDOOR
+    return config
+
+
+def use_tabular_label_flipping_attack(config: AppConfig) -> AppConfig:
+    """Modifier for a label-flipping attack on tabular data."""
+    config.adversary_seller_config.poisoning.type = PoisonType.LABEL_FLIP
+    config.adversary_seller_config.poisoning.poison_rate = 1.0
     return config
 
 
 def use_sybil_attack(strategy: str) -> Callable[[AppConfig], AppConfig]:
     """Returns a modifier function that enables a specific Sybil attack strategy."""
-
     def modifier(config: AppConfig) -> AppConfig:
         config.adversary_seller_config.sybil.is_sybil = True
         config.adversary_seller_config.sybil.gradient_default_mode = strategy
         return config
-
     return modifier
 
 
 # --- FOCUSED SCENARIO GENERATORS ---
 
 def generate_tabular_oracle_vs_buyer_bias_scenarios() -> List[Scenario]:
-    """
-    Generates the core Oracle vs. Buyer Bias scenario for a representative tabular dataset.
-    This is the most important new experiment for showing generalizability.
-    """
+    """Generates the core Oracle vs. Buyer Bias scenario for a representative tabular dataset."""
     scenarios = []
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
-
     scenarios.append(Scenario(
         name="oracle_vs_buyer_bias_texas100",
         base_config_factory=get_base_tabular_config,
@@ -108,17 +107,13 @@ def generate_tabular_oracle_vs_buyer_bias_scenarios() -> List[Scenario]:
 
 
 def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
-    """
-    Generates scenarios to test Sybil coordination on tabular data.
-    This provides a valuable deep-dive.
-    """
+    """Generates scenarios to test Sybil coordination on tabular data."""
     scenarios = []
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
     SYBIL_STRATEGIES = ['mimic', 'pivot', 'knock_out']
     dataset_name = "texas100"
     model_config = "mlp_texas100_baseline"
 
-    # Baseline: Attack is active, but no Sybil coordination
     scenarios.append(Scenario(
         name=f"sybil_baseline_{dataset_name}",
         base_config_factory=get_base_tabular_config,
@@ -132,7 +127,6 @@ def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
             "adversary_seller_config.sybil.is_sybil": [False]
         }
     ))
-    # Sybil Scenarios: Attack is active WITH Sybil coordination
     for strategy in SYBIL_STRATEGIES:
         scenarios.append(Scenario(
             name=f"sybil_{strategy}_{dataset_name}",
@@ -150,16 +144,12 @@ def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
 
 
 def generate_tabular_data_heterogeneity_scenarios() -> List[Scenario]:
-    """
-    Generates scenarios to test the impact of Non-IID tabular data UNDER ATTACK.
-    This is a refined, more robust test.
-    """
+    """Generates scenarios to test the impact of Non-IID tabular data UNDER ATTACK."""
     scenarios = []
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
     DIRICHLET_ALPHAS = [100.0, 1.0, 0.1]
     dataset_name = "purchase100"
     model_config = "resnet_purchase100_baseline"
-
     scenarios.append(Scenario(
         name=f"heterogeneity_{dataset_name}",
         base_config_factory=get_base_tabular_config,
@@ -177,25 +167,70 @@ def generate_tabular_data_heterogeneity_scenarios() -> List[Scenario]:
     return scenarios
 
 
-# --- Create the final, focused list by calling the new and refined generator functions ---
+def generate_tabular_attack_impact_scenarios() -> List[Scenario]:
+    """(NEW) Generates scenarios to test attack impact by sweeping rates on tabular data."""
+    scenarios = []
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+    ADV_RATES_TO_SWEEP = [0.1, 0.3, 0.5]
+    POISON_RATES_TO_SWEEP = [0.1, 0.5, 1.0]
+    dataset_name = "texas100"
+    model_config = "mlp_texas100_baseline"
+
+    for group_name, sweep_params in [
+        ("vary_adv_rate", {"experiment.adv_rate": ADV_RATES_TO_SWEEP}),
+        ("vary_poison_rate", {"adversary_seller_config.poisoning.poison_rate": POISON_RATES_TO_SWEEP})
+    ]:
+        scenarios.append(Scenario(
+            name=f"impact_{group_name}_{dataset_name}",
+            base_config_factory=get_base_tabular_config,
+            modifiers=[use_tabular_backdoor_attack],
+            parameter_grid={
+                "experiment.dataset_name": [dataset_name],
+                "experiment.tabular_model_config_name": [model_config],
+                "aggregation.method": ALL_AGGREGATORS,
+                **sweep_params
+            }
+        ))
+    return scenarios
+
+
+def generate_tabular_label_flipping_scenarios() -> List[Scenario]:
+    """(NEW) Generates simple scenarios for a label-flipping attack on tabular data."""
+    scenarios = []
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+    scenarios.append(Scenario(
+        name="label_flip_texas100",
+        base_config_factory=get_base_tabular_config,
+        modifiers=[use_tabular_label_flipping_attack],
+        parameter_grid={
+            "experiment.dataset_name": ["texas100"],
+            "experiment.tabular_model_config_name": ["mlp_texas100_baseline"],
+            "aggregation.method": ALL_AGGREGATORS,
+            "experiment.adv_rate": [0.3],
+        }
+    ))
+    return scenarios
+
+
+# --- Create the final, comprehensive list of all tabular experiments ---
 ALL_TABULAR_SCENARIOS = []
 ALL_TABULAR_SCENARIOS.extend(generate_tabular_oracle_vs_buyer_bias_scenarios())
 ALL_TABULAR_SCENARIOS.extend(generate_tabular_sybil_impact_scenarios())
 ALL_TABULAR_SCENARIOS.extend(generate_tabular_data_heterogeneity_scenarios())
+ALL_TABULAR_SCENARIOS.extend(generate_tabular_attack_impact_scenarios())
+ALL_TABULAR_SCENARIOS.extend(generate_tabular_label_flipping_scenarios())
+
 
 def main():
-    """Generates all configurations defined in scenarios.py."""
+    """Generates all configurations defined in this file."""
     output_dir = "./configs_generated/tabular_new"
     generator = ExperimentGenerator(output_dir)
 
-    # The loop is now simpler and more powerful
     for scenario in ALL_TABULAR_SCENARIOS:
-        # Get the correct base config for THIS specific scenario
         base_config = scenario.base_config_factory()
-        # Generate all variations
         generator.generate(base_config, scenario)
 
-    print(f"\n✅ All configurations have been generated in '{output_dir}'")
+    print(f"\n✅ All {len(ALL_TABULAR_SCENARIOS)} tabular scenarios have been generated in '{output_dir}'")
 
 
 if __name__ == "__main__":
