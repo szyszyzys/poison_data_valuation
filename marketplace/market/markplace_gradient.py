@@ -92,7 +92,13 @@ class DataMarketplaceFederated(DataMarketplace):
         # === 2. Collect Gradients from the Real Marketplace ===
         gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
 
+        # === 3. Sanitize ALL Gradients Before Use ===
         target_device = self.aggregator.device
+
+
+        # === 2. Collect Gradients from the Real Marketplace ===
+        gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
+
         sanitized_gradients = {}
 
         # Get the shapes and dtypes of the global model's parameters ONCE
@@ -131,6 +137,12 @@ class DataMarketplaceFederated(DataMarketplace):
             for tensor in buyer_root_gradient
         ]
 
+        # Sanitize the oracle's root gradient (MOVED HERE)
+        sanitized_oracle_gradient = [
+            (tensor.to(target_device) if tensor is not None and tensor.device != target_device else tensor)
+            for tensor in oracle_root_gradient
+        ]
+
         # Perform privacy attack (optional)
         attack_log = None
         if self.attacker and self.attacker.should_run(round_number):
@@ -159,7 +171,7 @@ class DataMarketplaceFederated(DataMarketplace):
             outlier_ids=outlier_ids,
             aggregation_stats=aggregation_stats,
             seller_stats_list=seller_stats_list,
-            oracle_root_gradient=oracle_root_gradient  # Pass the oracle gradient for logging
+            oracle_root_gradient=sanitized_oracle_gradient  # Pass the oracle gradient for logging
         )
 
         # In train_federated_round, after the `if agg_grad:` check

@@ -126,7 +126,7 @@ def setup_data_and_model(cfg: AppConfig):
         seller_extra_args = {}
     elif dataset_type == "tabular":
         # 1. Delegate all data loading and partitioning to the helper function
-        buyer_loader, seller_loaders, test_loader, num_classes, input_dim = get_tabular_dataset(cfg)
+        buyer_loader, seller_loaders, test_loader, num_classes, input_dim, feature_to_idx = get_tabular_dataset(cfg)
 
         # 2. Use your Config Manager and Factory to create the model factory
         config_manager = TabularConfigManager(config_dir=cfg.data.tabular.model_config_dir)
@@ -140,7 +140,7 @@ def setup_data_and_model(cfg: AppConfig):
         )
         # Tabular data does not require special collate_fn or seller_extra_args
         collate_fn = None
-        seller_extra_args = {}
+        seller_extra_args = {"feature_to_idx": feature_to_idx}
     ### --- END: UPDATED TABULAR LOGIC --- ###
 
     else:

@@ -102,6 +102,7 @@ def get_tabular_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[str, DataLoade
     if not numerical_cols.empty:
         X_train[numerical_cols] = scaler.fit_transform(X_train[numerical_cols])
         X_test[numerical_cols] = scaler.transform(X_test[numerical_cols])
+    feature_to_idx = {col: i for i, col in enumerate(X_train.columns)}
 
     # 3. Convert to PyTorch Datasets
     X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
@@ -184,4 +185,4 @@ def get_tabular_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[str, DataLoade
     )
 
     logger.info(f"✅ Federated tabular dataset setup complete.")
-    return buyer_loader, seller_loaders, test_loader, num_classes, input_dim
+    return buyer_loader, seller_loaders, test_loader, num_classes, input_dim, feature_to_idx
