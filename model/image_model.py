@@ -222,6 +222,7 @@ class ConfigurableFlexibleCNN(nn.Module):
         # CRITICAL: Reinitialize all parameters to ensure no NaN/Inf
         self._safe_initialization()
 
+
     def _get_flattened_size_safe(self) -> int:
         """Calculate flattened size mathematically without forward pass."""
         h, w = self.image_size
@@ -377,6 +378,8 @@ class ImageModelFactory:
             model = ConfigurableResNet(num_classes=num_classes, config=config, input_channels=in_channels)
         else:
             raise ValueError(f"Unknown model name: {model_name}")
+        for i, (name, module) in enumerate(model.named_modules()):
+            print(f"{i}: {name} -> {type(module).__name__}")
 
         # --- 2. Log details of the created model ---
         if model:

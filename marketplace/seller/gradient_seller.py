@@ -60,6 +60,29 @@ class PivotStrategy(BaseGradientStrategy):
         return avg_grad.clone()
 
 
+def diagnose_parameter_issue(model):
+    """Deep diagnostic of parameter issues."""
+    for name, param in model.named_parameters():
+        if torch.isnan(param).any() or torch.isinf(param).any():
+            print(f"\n❌ Problem with parameter: {name}")
+            print(f"  Shape: {param.shape}")
+            print(f"  Dtype: {param.dtype}")
+            print(f"  Device: {param.device}")
+            print(f"  Requires grad: {param.requires_grad}")
+            print(f"  Is leaf: {param.is_leaf}")
+            print(f"  NaN count: {torch.isnan(param).sum().item()}")
+            print(f"  Inf count: {torch.isinf(param).sum().item()}")
+            print(f"  First few values: {param.flatten()[:10]}")
+
+            # Try to see what's in the actual layer
+            layer_idx = name.split('.')[1] if '.' in name else None
+            if layer_idx:
+                layer = dict(model.named_modules()).get(f"features.{layer_idx}")
+                print(f"  Layer type: {type(layer)}")
+                if isinstance(layer, nn.BatchNorm2d):
+                    print(f"  BatchNorm running_mean has NaN: {torch.isnan(layer.running_mean).any()}")
+                    print(f"  BatchNorm running_var has NaN: {torch.isnan(layer.running_var).any()}")
+
 class KnockOutStrategy(BaseGradientStrategy):
     """A more aggressive version of the Mimic strategy."""
 
@@ -145,30 +168,66 @@ def validate_and_fix_model_initialization(model: nn.Module) -> bool:
     Returns True if model is valid, False if unfixable.
     """
     has_issues = False
+    problematic_params = []
 
+    # First pass: detect issues
     for name, param in model.named_parameters():
         if torch.isnan(param).any() or torch.isinf(param).any():
             logging.error(f"❌ NaN/Inf detected in parameter '{name}' during initialization!")
             has_issues = True
+            problematic_params.append(name)
 
-            # Attempt to reinitialize this specific parameter
-            if len(param.shape) >= 2:  # Weight matrix
-                nn.init.xavier_uniform_(param)
-                logging.warning(f"  -> Reinitialized '{name}' with Xavier uniform")
-            else:  # Bias or 1D parameter
-                nn.init.zeros_(param)
-                logging.warning(f"  -> Reinitialized '{name}' with zeros")
+    if not has_issues:
+        return True
+
+    # If we have issues, completely reinitialize the model
+    logging.warning(
+        f"🔄 Attempting complete model reinitialization for {len(problematic_params)} problematic parameters")
+
+    def init_weights(m):
+        """Recursively initialize all layer weights."""
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.BatchNorm2d):
+            nn.init.constant_(m.weight, 1)
+            nn.init.constant_(m.bias, 0)
+            # CRITICAL: Reset running stats
+            if hasattr(m, 'running_mean'):
+                m.running_mean.zero_()
+            if hasattr(m, 'running_var'):
+                m.running_var.fill_(1)
+        elif isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+    # Apply initialization to all modules
+    model.apply(init_weights)
 
     # Verify fix worked
-    if has_issues:
-        for name, param in model.named_parameters():
+    failed_params = []
+    for name, param in model.named_parameters():
+        if torch.isnan(param).any() or torch.isinf(param).any():
+            failed_params.append(name)
+            logging.error(f"❌ Still NaN/Inf in '{name}' after reinitialization!")
+
+            # Nuclear option: manually fill with small values
+            with torch.no_grad():
+                param.fill_(0.01)
+
+            # Check one more time
             if torch.isnan(param).any() or torch.isinf(param).any():
-                logging.error(f"❌ Failed to fix parameter '{name}'!")
+                logging.error(f"❌ CRITICAL: Cannot fix '{name}' - tensor may be corrupted!")
                 return False
+
+    if failed_params:
+        logging.warning(f"⚠️  Had to use nuclear option (fill with 0.01) for {len(failed_params)} parameters")
+    else:
         logging.info("✅ Successfully fixed all NaN/Inf parameters")
 
     return True
-
 class GradientSeller(BaseSeller):
     """
     A seller that participates in federated learning by providing gradient updates.
