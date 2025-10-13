@@ -3,14 +3,12 @@ import copy
 import logging
 import multiprocessing
 import os
-import time
 from multiprocessing.pool import Pool
 from pathlib import Path
-from filelock import FileLock  # pip install filelock
 
 import torch
+from filelock import FileLock  # pip install filelock
 
-from common.utils import set_seed
 from entry.gradient_market.automate_exp.config_parser import load_config
 from entry.gradient_market.run_all_exp import run_attack
 
@@ -80,20 +78,37 @@ def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: 
     with proper locking and caching.
     """
     try:
-        # Set GPU at the very beginning
-        if gpu_id is not run_id:
+        # ===== CRITICAL: Set GPU and seed IMMEDIATELY at the very beginning =====
+        if gpu_id is not None:
             os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             log_prefix = f"[Run {run_id} | Sample {sample_idx} | Seed {seed} | GPU {gpu_id}]"
         else:
             log_prefix = f"[Run {run_id} | Sample {sample_idx} | Seed {seed} | CPU]"
+
+        # Seed everything BEFORE any PyTorch operations
+        import random
+        import numpy as np
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+
+        if torch.cuda.is_available():
+            # CRITICAL: Seed CUDA before any CUDA operations
+            torch.cuda.manual_seed(seed)
+            torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
+
+            # Make operations deterministic (prevents NaN from non-deterministic ops)
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+
+            # NOW clear cache after seeding
+            torch.cuda.empty_cache()
 
         logger.info(f"{log_prefix} Starting. Config: {config_path}")
 
         app_config = load_config(config_path)
         original_base_save_path = Path(app_config.experiment.save_path)
-        run_save_path = original_base_save_path / f"run_{sample_idx-1}_seed_{seed}"
+        run_save_path = original_base_save_path / f"run_{sample_idx - 1}_seed_{seed}"
 
         # Create directory early
         run_save_path.mkdir(parents=True, exist_ok=True)
@@ -105,7 +120,7 @@ def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: 
         with lock.acquire(timeout=2):
             if is_run_completed(run_save_path) and not force_rerun:
                 logger.info(f"{log_prefix} ✅ Already completed. Skipping.")
-                return # Exit the function for this single run
+                return
 
             if is_run_completed(run_save_path) and force_rerun:
                 logger.info(f"{log_prefix} 🔄 Force rerun enabled.")
@@ -114,10 +129,10 @@ def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: 
 
             # Prepare config for this specific run
             run_cfg = copy.deepcopy(app_config)
-            set_seed(seed)
-            run_cfg.seed = seed # Ensure the config reflects the correct seed
+            # Don't call set_seed again here - we already did it above
+            run_cfg.seed = seed
             run_cfg.experiment.save_path = str(run_save_path)
-            run_cfg.experiment.device = "cuda" if gpu_id is not run_id else "cpu"
+            run_cfg.experiment.device = "cuda" if torch.cuda.is_available() else "cpu"
 
             # Run the actual experiment
             run_attack(run_cfg)
@@ -126,7 +141,7 @@ def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: 
             logger.info(f"{log_prefix} ✅ Completed successfully.")
 
             # Clean up GPU memory
-            if gpu_id is not run_id and torch.cuda.is_available():
+            if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
     except TimeoutError:
@@ -194,20 +209,22 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
     logger.info(f"📋 Found {len(all_config_files)} configuration files")
     actual_num_processes, assigned_gpu_ids = setup_gpu_allocation(num_processes, gpu_ids_str)
 
-    # === NEW: Build the full list of individual run tasks ===
+    # === Build the full list of individual run tasks ===
     tasks = []
     run_counter = 0
     for config_path in all_config_files:
-        # Load config just to get n_samples and initial_seed
         temp_cfg = load_config(config_path)
         initial_seed = temp_cfg.seed
-        n_samples = temp_cfg.n_samples if hasattr(temp_cfg, 'n_samples') else 10 # Default to 10 if not specified
+        n_samples = temp_cfg.n_samples if hasattr(temp_cfg, 'n_samples') else 10
 
         for i in range(n_samples):
             run_counter += 1
             current_seed = initial_seed + i
-            # Assign GPU in a round-robin fashion
-            current_gpu_id = assigned_gpu_ids[len(tasks) % len(assigned_gpu_ids)] if assigned_gpu_ids else run_id
+            # FIX: Use None for CPU, not run_id
+            if assigned_gpu_ids:
+                current_gpu_id = assigned_gpu_ids[len(tasks) % len(assigned_gpu_ids)]
+            else:
+                current_gpu_id = None  # Changed from run_id
             tasks.append((config_path, run_counter, i + 1, current_seed, current_gpu_id, force_rerun))
 
     logger.info(f"{'=' * 60}")
