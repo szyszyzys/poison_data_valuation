@@ -101,6 +101,24 @@ class SkymaskAggregator(BaseAggregator):
 
         # 3. Create and train the MaskNet
         masknet = create_masknet(worker_params, sm_model_type, self.device)
+        print("\n" + "=" * 80)
+        print("MASKNET STRUCTURE ANALYSIS:")
+        print("=" * 80)
+        for i, (name, module) in enumerate(masknet.named_modules()):
+            print(f"{i}: {name} -> {type(module).__name__}")
+        print("=" * 80 + "\n")
+
+        # Also test with dummy input to see where it fails
+        print("Testing masknet with dummy input...")
+        try:
+            dummy_x = torch.randn(4, 3, 32, 32).to(self.device)  # Batch of 4, 3 channels, 32x32
+            with torch.no_grad():
+                dummy_out = masknet(dummy_x)
+            print(f"✅ Masknet forward pass successful! Output shape: {dummy_out.shape}")
+        except Exception as e:
+            print(f"❌ Masknet forward pass failed: {e}")
+            print("This confirms the dimension mismatch issue.")
+        print("=" * 80 + "\n")
 
         if masknet is None:
             # NO FALLBACK - raise error instead
