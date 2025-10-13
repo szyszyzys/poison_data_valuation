@@ -175,7 +175,7 @@ class DataMarketplaceFederated(DataMarketplace):
             logging.warning(
                 f"Round failed to produce an update. Consecutive failures: {self.consecutive_failed_rounds}")
 
-        max_failures = self.cfg.training.get('max_consecutive_failures', 5)
+        max_failures = getattr(self.cfg.training, 'max_consecutive_failures', 5)
         if self.consecutive_failed_rounds >= max_failures:
             logging.error(f"Stopping experiment after {max_failures} consecutive failed rounds.")
             raise RuntimeError("Halting due to persistent aggregation failures.")
