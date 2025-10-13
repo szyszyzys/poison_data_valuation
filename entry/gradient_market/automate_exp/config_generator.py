@@ -39,12 +39,35 @@ for numpy_type in (np.integer, np.floating, np.ndarray, np.bool_):
 
 
 # --- Helper function to safely set nested dataclass attributes ---
-def set_nested_attr(obj: object, attr_path: str, value):
-    """Safely sets a nested attribute on an object using dot notation."""
-    keys = attr_path.split('.')
-    for key in keys[:-1]:
-        obj = getattr(obj, key)
-    setattr(obj, keys[-1], value)
+# def set_nested_attr(obj: object, attr_path: str, value):
+#     """Safely sets a nested attribute on an object using dot notation."""
+#     keys = attr_path.split('.')
+#     for key in keys[:-1]:
+#         obj = getattr(obj, key)
+#     setattr(obj, keys[-1], value)
+def set_nested_attr(obj: Any, key: str, value: Any):
+    """
+    Sets a nested attribute on an object or a key in a nested dict
+    using a dot-separated key.
+    """
+    keys = key.split('.')
+    current_obj = obj
+
+    # Traverse to the second-to-last object in the path
+    for k in keys[:-1]:
+        current_obj = getattr(current_obj, k)
+
+    # Get the final key/attribute to be set
+    final_key = keys[-1]
+
+    # --- THIS IS THE CRITICAL LOGIC ---
+    # Check if the object we need to modify is a dictionary
+    if isinstance(current_obj, dict):
+        # If it's a dict, use item assignment (e.g., my_dict['key'] = value)
+        current_obj[final_key] = value
+    else:
+        # Otherwise, use attribute assignment (e.g., my_obj.key = value)
+        setattr(current_obj, final_key, value)
 
 
 class ExperimentGenerator:
