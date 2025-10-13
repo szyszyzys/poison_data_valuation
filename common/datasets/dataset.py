@@ -372,7 +372,7 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
             if text and label is not None:
                 processed_text = text_pipeline(text)
                 if processed_text:
-                    processed_data.append((label, processed_text))
+                    processed_data.append((processed_text, label)) # Swapped order
 
         if cfg.use_cache:
             with open(cache_path, "wb") as f: pickle.dump(processed_data, f)
@@ -382,8 +382,8 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     processed_test_data = numericalize_dataset(lambda: hf_iterator(test_ds_hf, text_field, label_field), "test")
     if not processed_train_data:
         raise ValueError("Training data is empty after processing.")
-    standardized_train_data = StandardFormatDataset(processed_train_data, label_first=True)
-    standardized_test_data = StandardFormatDataset(processed_test_data, label_first=True)
+    standardized_train_data = StandardFormatDataset(processed_train_data, label_first=False)
+    standardized_test_data = StandardFormatDataset(processed_test_data, label_first=False)
 
     # 5. --- Split Data ---
     split_params = (

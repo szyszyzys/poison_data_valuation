@@ -1016,7 +1016,7 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
         # 1. Create the specific poison generator for this backdoor attack.
         #    This is the primary job of this specialized class.
         backdoor_generator = self._create_poison_generator(
-            adversary_config, model_type, **kwargs
+            adversary_config, model_type, device,**kwargs
         )
 
         # 2. Call the PARENT's constructor. It receives the fully configured
@@ -1038,10 +1038,8 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
             f"with a '{type(backdoor_generator).__name__}'."
         )
 
-    # This method is now static as it doesn't depend on instance state ('self').
-    # It's a pure factory function that translates config into an object.
     @staticmethod
-    def _create_poison_generator(adv_cfg: AdversarySellerConfig, model_type: str, **kwargs: Any) -> PoisonGenerator:
+    def _create_poison_generator(adv_cfg: AdversarySellerConfig, model_type: str, device: str, **kwargs: Any) -> PoisonGenerator: # <-- CHANGE 2: Accept device
         """Factory method to create the correct backdoor generator from configuration."""
         poison_cfg = adv_cfg.poisoning
         if 'backdoor' not in poison_cfg.type.value:
@@ -1054,8 +1052,8 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
                 trigger_type=ImageTriggerType(params.trigger_type),
                 location=ImageTriggerLocation(params.location)
             )
-            return BackdoorImageGenerator(backdoor_image_cfg)
-
+            # Pass the device to the generator's constructor
+            return BackdoorImageGenerator(backdoor_image_cfg, device=device)
         elif model_type == 'text':
             params = poison_cfg.text_backdoor_params
             vocab = kwargs.get('vocab')

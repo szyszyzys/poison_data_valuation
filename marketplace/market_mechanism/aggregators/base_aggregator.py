@@ -80,3 +80,32 @@ class BaseAggregator(ABC):
         avg_loss = total_loss / total_samples
         kappa = cohen_kappa_score(all_labels, all_preds)
         return avg_loss, acc, kappa, 0.0
+
+    def _compute_trust_gradient(self) -> list[torch.Tensor]:
+        """
+        Computes the gradient on the server's trusted (buyer's) dataset.
+        This is a common utility needed by multiple robust aggregators.
+        """
+        logger.info("Computing trust gradient on server's data...")
+        # Use a deepcopy to avoid altering the main model's state
+        model_copy = copy.deepcopy(self.global_model).to(self.device)
+        model_copy.train()
+
+        try:
+            # Get a single batch from the trusted data loader
+            inputs, labels = next(iter(self.buyer_data_loader))
+            inputs, labels = inputs.to(self.device), labels.to(self.device)
+        except StopIteration:
+            logger.error("The trusted (buyer) data loader is empty!")
+            raise
+
+        model_copy.zero_grad()
+        outputs = model_copy(inputs)
+        loss = self.loss_fn(outputs, labels)
+        loss.backward()
+
+        # Extract and return the gradients
+        trust_gradient = [p.grad.clone().detach() for p in model_copy.parameters()]
+        logger.info("Trust gradient computed successfully.")
+        return trust_gradient
+    # ==========================================================

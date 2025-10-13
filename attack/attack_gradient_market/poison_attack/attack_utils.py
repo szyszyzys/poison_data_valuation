@@ -1,12 +1,11 @@
 import logging
 import random
-from abc import ABC, abstractmethod
-from typing import Any
-from typing import Dict, Tuple, List
-
 import torch
+from abc import ABC, abstractmethod
 from torchtext.data import get_tokenizer
 from torchtext.vocab import Vocab
+from typing import Any
+from typing import Dict, Tuple, List
 
 from common.enums import ImageTriggerType, ImageTriggerLocation
 from common.gradient_market_configs import LabelFlipConfig, BackdoorImageConfig, BackdoorTextConfig, \
@@ -38,7 +37,7 @@ class PoisonGenerator(ABC):
 
 class BackdoorImageGenerator(PoisonGenerator):
     # The __init__ signature is now much simpler
-    def __init__(self, config: BackdoorImageConfig):
+    def __init__(self, config: BackdoorImageConfig, device: torch.device):
         if not (0.0 <= config.blend_alpha <= 1.0):
             raise ValueError("blend_alpha must be between 0.0 and 1.0")
 
@@ -48,7 +47,7 @@ class BackdoorImageGenerator(PoisonGenerator):
         self.location = config.location
         self.randomize_location = config.randomize_location
         self.trigger_pattern = self._generate_trigger_pattern(
-            config.trigger_type, config.channels, config.trigger_size
+            config.trigger_type, config.channels, config.trigger_size, device
         )
 
     def apply(self, data: torch.Tensor, label: int) -> Tuple[torch.Tensor, int]:
@@ -91,23 +90,27 @@ class BackdoorImageGenerator(PoisonGenerator):
         return image
 
     @staticmethod
-    def _generate_trigger_pattern(trigger_type: ImageTriggerType, channels: int, size: Tuple[int, int]) -> torch.Tensor:
-        """Generates a trigger pattern tensor on the CPU."""
+    def _generate_trigger_pattern(trigger_type: ImageTriggerType, channels: int, size: Tuple[int, int],
+                                  device: torch.device) -> torch.Tensor:
+        """Generates a trigger pattern tensor on the SPECIFIED device."""
         h, w = size
         if trigger_type == ImageTriggerType.BLENDED_PATCH:
-            return torch.ones(channels, h, w)
+            # Use the 'device' argument when creating the tensor
+            return torch.ones(channels, h, w, device=device)
         elif trigger_type == ImageTriggerType.CHECKERBOARD:
-            coords = torch.arange(h).unsqueeze(1) + torch.arange(w).unsqueeze(0)
+            # Move intermediate tensors to the correct device
+            coords = torch.arange(h, device=device).unsqueeze(1) + torch.arange(w, device=device).unsqueeze(0)
             checkerboard = (coords % 2 == 0).float()
             return checkerboard.unsqueeze(0).repeat(channels, 1, 1)
         elif trigger_type == ImageTriggerType.NOISE:
-            return torch.rand(channels, h, w)
+            return torch.rand(channels, h, w, device=device)
         else:
             raise ValueError(f"Unknown trigger_type: {trigger_type}")
 
     def update_trigger(self, new_trigger: torch.Tensor):
         """Allows for dynamically updating the trigger, e.g., after optimization."""
-        self.trigger_pattern = new_trigger.clone().cpu()
+        # Let the trigger live on its current device (e.g., the GPU)
+        self.trigger_pattern = new_trigger.clone()
 
     def get_trigger(self) -> torch.Tensor:
         """Returns a copy of the current trigger pattern."""

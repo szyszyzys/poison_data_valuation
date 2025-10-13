@@ -48,9 +48,7 @@ def setup_data_and_model(cfg: AppConfig):
         test_loader = processed_data.test_loader
         num_classes = processed_data.num_classes
         vocab = processed_data.vocab
-        pad_idx = processed_data.pad_idx
-
-        collate_fn = lambda batch: collate_batch(batch, padding_value=pad_idx)
+        collate_fn = processed_data.collate_fn
 
         model_init_cfg = {"num_classes": num_classes, "vocab_size": len(vocab), "padding_idx": pad_idx,
                           "dataset_name": dataset_name}
