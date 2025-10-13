@@ -131,7 +131,7 @@ def _infer_net_type_from_params(param_list):
 class DynamicMaskNet(nn.Module):
     """
     Dynamically builds a mask network by analyzing the parameter structure.
-    Supports arbitrary CNN architectures with conv, batchnorm, and linear layers.
+    Properly calculates flattened dimensions after conv layers.
     """
 
     def __init__(self, worker_param_list: List[List[torch.Tensor]], num_workers: int, device: torch.device):
@@ -151,11 +151,14 @@ class DynamicMaskNet(nn.Module):
         self.conv_layers = nn.ModuleList()
         self.bn_layers = nn.ModuleList()
         self.fc_layers = nn.ModuleList()
+        self.pool = nn.MaxPool2d(2, 2)
 
         # Parse parameters and build layers
         i = 0
         layer_idx = 0
-        self.layer_sequence = []  # Track the order of operations
+        self.layer_sequence = []
+        num_pools = 0  # Track number of pooling operations
+        last_conv_channels = None
 
         while i < num_params:
             param = worker_param_list[0][i]
@@ -163,18 +166,17 @@ class DynamicMaskNet(nn.Module):
             # Conv2d layer (4D weight)
             if len(param.shape) == 4:
                 out_channels = param.shape[0]
+                last_conv_channels = out_channels  # Track for flattened size calculation
 
                 # Check for bias
                 has_bias = False
-                bias_param = None
                 if i + 1 < num_params:
                     next_param = worker_param_list[0][i + 1]
                     if len(next_param.shape) == 1 and next_param.shape[0] == out_channels:
                         has_bias = True
-                        bias_param = next_param
 
                 if has_bias:
-                    print(f"  [{layer_idx}] Conv2d: weight={param.shape}, bias={bias_param.shape}")
+                    print(f"  [{layer_idx}] Conv2d: weight={param.shape}, bias={worker_param_list[0][i + 1].shape}")
                     conv_layer = my.myconv2d(
                         num_workers, device,
                         [w[i] for w in worker_param_list],
@@ -199,7 +201,6 @@ class DynamicMaskNet(nn.Module):
                     p1 = worker_param_list[0][i]
                     p2 = worker_param_list[0][i + 1]
 
-                    # BatchNorm has weight and bias of same size as conv output channels
                     if (len(p1.shape) == 1 and len(p2.shape) == 1 and
                             p1.shape[0] == out_channels and p2.shape[0] == out_channels):
                         print(f"  [{layer_idx}] BatchNorm: weight={p1.shape}, bias={p2.shape}")
@@ -212,9 +213,10 @@ class DynamicMaskNet(nn.Module):
                         self.layer_sequence.append(('bn', len(self.bn_layers) - 1))
                         i += 2
 
-                # Add activation and pooling after each conv block
+                # Add activation and pooling
                 self.layer_sequence.append(('relu', None))
                 self.layer_sequence.append(('pool', None))
+                num_pools += 1
                 layer_idx += 1
 
             # Linear layer (2D weight)
@@ -250,8 +252,7 @@ class DynamicMaskNet(nn.Module):
                 self.fc_layers.append(fc_layer)
                 self.layer_sequence.append(('fc', len(self.fc_layers) - 1))
 
-                # Add ReLU for all but last FC layer
-                # Check if this is the last linear layer (no more 2D params ahead)
+                # Check if this is the last linear layer
                 is_last_fc = True
                 for j in range(i, num_params):
                     if len(worker_param_list[0][j].shape) == 2:
@@ -264,19 +265,27 @@ class DynamicMaskNet(nn.Module):
                 layer_idx += 1
 
             else:
-                # Skip unknown parameter types (e.g., running_mean, running_var from BatchNorm)
+                # Skip unknown parameter types
                 print(f"  [SKIP] Param {i}: shape={param.shape}")
                 i += 1
+
+        # Calculate expected flattened size (assuming CIFAR-like 32x32 input)
+        # After num_pools pooling operations (each divides by 2):
+        # 32 -> 16 -> 8 -> 4 (for 3 pools)
+        if last_conv_channels is not None and num_pools > 0:
+            spatial_size = 32 // (2 ** num_pools)
+            expected_flatten = last_conv_channels * spatial_size * spatial_size
+            print(
+                f"\n  Expected flattened size: {expected_flatten} ({last_conv_channels} channels × {spatial_size}×{spatial_size})")
+            print(f"  (After {num_pools} pooling operations from 32x32 input)")
 
         print(f"{'=' * 80}")
         print(f"Built network with:")
         print(f"  - {len(self.conv_layers)} conv layers")
         print(f"  - {len(self.bn_layers)} batchnorm layers")
         print(f"  - {len(self.fc_layers)} fc layers")
-        print(f"  - Layer sequence length: {len(self.layer_sequence)}")
+        print(f"  - {num_pools} pooling operations")
         print(f"{'=' * 80}\n")
-
-        self.pool = nn.MaxPool2d(2, 2)
 
     def forward(self, x):
         need_flatten = True
@@ -292,6 +301,7 @@ class DynamicMaskNet(nn.Module):
                 x = self.pool(x)
             elif op_type == 'fc':
                 if need_flatten:
+                    print(f"DEBUG: Flattening from shape {x.shape} to {x.shape[0]}x{x.view(x.size(0), -1).shape[1]}")
                     x = torch.flatten(x, start_dim=1)
                     need_flatten = False
                 x = self.fc_layers[idx](x)
