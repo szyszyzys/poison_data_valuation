@@ -196,8 +196,11 @@ class ConfigurableFlexibleCNN(nn.Module):
 
         self.features = nn.Sequential(*features)
 
-        # Calculate flattened size
-        flattened_size = self._get_flattened_size()
+        # Calculate flattened size SAFELY
+        flattened_size = self._get_flattened_size_safe()
+
+        if flattened_size <= 0:
+            raise ValueError(f"Invalid flattened size: {flattened_size}. Check image size and pooling layers.")
 
         # Build classifier dynamically
         classifier = []
@@ -215,6 +218,50 @@ class ConfigurableFlexibleCNN(nn.Module):
         # Final output layer
         classifier.append(nn.Linear(prev_size, self.num_classes))
         self.classifier = nn.Sequential(*classifier)
+
+        # CRITICAL: Reinitialize all parameters to ensure no NaN/Inf
+        self._safe_initialization()
+
+    def _get_flattened_size_safe(self) -> int:
+        """Calculate flattened size mathematically without forward pass."""
+        h, w = self.image_size
+        num_pools = len(self.config.conv_channels)
+
+        # Calculate spatial dimensions after all pooling
+        h_out = h // (2 ** num_pools)
+        w_out = w // (2 ** num_pools)
+
+        if h_out <= 0 or w_out <= 0:
+            raise ValueError(
+                f"Image size {self.image_size} is too small for {num_pools} pooling layers. "
+                f"Resulting dimensions: {h_out}x{w_out}"
+            )
+
+        # Final channels is the last conv layer's output
+        final_channels = self.config.conv_channels[-1]
+        flattened_size = final_channels * h_out * w_out
+
+        return flattened_size
+
+    def _safe_initialization(self):
+        """Reinitialize all parameters to prevent NaN/Inf values."""
+        for name, param in self.named_parameters():
+            if 'weight' in name:
+                if len(param.shape) >= 2:
+                    # Use Xavier/Glorot initialization for weights
+                    nn.init.xavier_uniform_(param, gain=1.0)
+                else:
+                    # For 1D weights (shouldn't happen but just in case)
+                    nn.init.uniform_(param, -0.1, 0.1)
+            elif 'bias' in name:
+                # Initialize biases to zero
+                nn.init.zeros_(param)
+
+            # Verify no NaN/Inf after initialization
+            if torch.isnan(param).any() or torch.isinf(param).any():
+                # Last resort: fill with small random values
+                param.data.uniform_(-0.01, 0.01)
+                logging.warning(f"Had to manually fill parameter '{name}' due to persistent NaN/Inf")
 
     def _get_flattened_size(self) -> int:
         """Calculate flattened size mathematically without forward pass."""
