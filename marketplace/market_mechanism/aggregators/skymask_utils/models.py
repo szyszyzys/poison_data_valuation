@@ -12,7 +12,7 @@ def create_masknet(param_list, net_type, ctx):
     nworker = len(param_list)
     if net_type == "cnn":
         masknet = CNNMaskNet(param_list, nworker, ctx)
-    elif net_type == "resnet20":
+    elif net_type in ["resnet20", "resnet18"]:  # Also check for "resnet18"
         masknet = ResMaskNet(param_list, nworker, ctx)
     elif net_type == "LR":
         masknet = LRMaskNet(param_list, nworker, ctx)
