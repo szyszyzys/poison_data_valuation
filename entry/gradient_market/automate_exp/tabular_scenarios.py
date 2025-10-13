@@ -28,7 +28,7 @@ def set_nested_attr(obj: Any, key: str, value: Any):
     # Get the final key/attribute to be set
     final_key = keys[-1]
 
-    # --- THIS IS THE NEW LOGIC ---
+    # --- THIS IS THE CRITICAL LOGIC ---
     # Check if the object we need to modify is a dictionary
     if isinstance(current_obj, dict):
         # If it's a dict, use item assignment (e.g., my_dict['key'] = value)
@@ -36,7 +36,6 @@ def set_nested_attr(obj: Any, key: str, value: Any):
     else:
         # Otherwise, use attribute assignment (e.g., my_obj.key = value)
         setattr(current_obj, final_key, value)
-
 
 # --- Define the structure of a Scenario ---
 @dataclass
