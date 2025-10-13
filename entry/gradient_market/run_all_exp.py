@@ -35,7 +35,7 @@ from model.tabular_model import TabularModelFactory, TabularConfigManager
 from model.utils import get_text_model
 
 
-def setup_data_and_model(cfg: AppConfig):
+def setup_data_and_model(cfg: AppConfig, device):
     """Loads dataset and creates a model factory from the AppConfig."""
     dataset_name = cfg.experiment.dataset_name
     dataset_type = cfg.experiment.dataset_type
@@ -118,7 +118,8 @@ def setup_data_and_model(cfg: AppConfig):
             num_classes=num_classes,
             in_channels=in_channels,
             image_size=image_size,
-            config=image_model_config  # Will be deep copied inside create_factory
+            config=image_model_config,
+            device=device
         )
         # Validate factory creates consistent models
         validate_model_factory(model_factory, num_tests=3)
@@ -771,7 +772,7 @@ def run_attack(cfg: AppConfig):
 
         # 2. Data and Model Setup
         buyer_loader, seller_loaders, test_loader, validation_loader, model_factory, seller_extra_args, collate_fn, num_classes = \
-            setup_data_and_model(cfg)
+            setup_data_and_model(cfg, device=cfg.experiment.device)
 
         global_model = model_factory().to(cfg.experiment.device)
         logging.info(f"✅ Global model created and moved to {cfg.experiment.device}")

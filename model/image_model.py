@@ -362,7 +362,8 @@ class ImageModelFactory:
 
     @staticmethod
     def create_model(model_name: str, num_classes: int, in_channels: int,
-                     image_size: Tuple[int, int], config: ImageModelConfig) -> nn.Module:
+                     image_size: Tuple[int, int], config: ImageModelConfig,
+                     device: str = 'cpu') -> nn.Module:  # Add device parameter
         """Create a model based on configuration."""
         logger.info(f"Creating model '{model_name}' with config '{config.config_name}'")
 
@@ -374,30 +375,53 @@ class ImageModelFactory:
         elif model_name.lower() == 'flexiblecnn':
             model = ConfigurableFlexibleCNN(in_channels, image_size, num_classes, config)
         elif model_name.lower() == 'resnet18':
-            # This uses the new class that accepts the config object
             model = ConfigurableResNet(num_classes=num_classes, config=config, input_channels=in_channels)
         else:
             raise ValueError(f"Unknown model name: {model_name}")
-        for i, (name, module) in enumerate(model.named_modules()):
-            print(f"{i}: {name} -> {type(module).__name__}")
+
+        # --- MOVE TO DEVICE IMMEDIATELY AFTER CREATION ---
+        model = model.to(device)
+
+        # --- REINITIALIZE ON THE CORRECT DEVICE ---
+        for m in model.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                # CRITICAL: Reinitialize BatchNorm on correct device
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+                m.running_mean.zero_()
+                m.running_var.fill_(1)
+                if hasattr(m, 'num_batches_tracked'):
+                    m.num_batches_tracked.zero_()
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+        # --- VERIFY NO NaN/Inf ---
+        for name, param in model.named_parameters():
+            if torch.isnan(param).any() or torch.isinf(param).any():
+                raise RuntimeError(f"NaN/Inf in parameter '{name}' after device transfer to {device}")
+
+        # Optional: Print model structure (remove after debugging)
+        # for i, (name, module) in enumerate(model.named_modules()):
+        #     print(f"{i}: {name} -> {type(module).__name__}")
 
         # --- 2. Log details of the created model ---
         if model:
             num_params = sum(p.numel() for p in model.parameters())
             num_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-            # This log confirms exactly which Python class was used
             logger.info(f"  -> Instantiated model class: '{model.__class__.__name__}'")
-
-            # This is a great sanity check for model complexity
             logger.info(f"  -> Total parameters: {num_params:,}")
             logger.info(f"  -> Trainable parameters: {num_trainable:,}")
 
         return model
-
     @staticmethod
     def create_factory(model_name: str, num_classes: int, in_channels: int,
-                       image_size: Tuple[int, int], config: ImageModelConfig) -> Callable[[], nn.Module]:
+                       image_size: Tuple[int, int], config: ImageModelConfig, device:str = 'cpu') -> Callable[[], nn.Module]:
         """
         Create a zero-argument factory function with frozen parameters.
 
@@ -435,7 +459,8 @@ class ImageModelFactory:
                 num_classes=frozen_num_classes,
                 in_channels=frozen_in_channels,
                 image_size=frozen_image_size,
-                config=frozen_config
+                config=frozen_config,
+                device=device
             )
 
         # Validate factory creates valid models
@@ -538,51 +563,3 @@ def validate_model_factory(factory: Callable[[], nn.Module], num_tests: int = 3)
     del models
 
     return True
-
-
-def create_model_factory_from_config(cfg: AppConfig) -> Callable[[], nn.Module]:
-    """
-    Create a model factory from AppConfig with frozen parameters.
-
-    This function extracts all necessary parameters from the config
-    and creates a factory that won't be affected by subsequent config changes.
-
-    Args:
-        cfg: Application configuration
-
-    Returns:
-        A zero-argument callable that creates models
-    """
-    logger.info("Creating model factory from config...")
-
-    # Extract and validate required parameters
-    try:
-        model_name = cfg.experiment.model_structure
-        num_classes = cfg.experiment.num_classes
-        in_channels = cfg.experiment.in_channels
-        image_size = cfg.experiment.image_size
-        model_config = cfg.model
-
-        logger.info(f"Model factory configuration:")
-        logger.info(f"  - Model: {model_name}")
-        logger.info(f"  - Classes: {num_classes}")
-        logger.info(f"  - Input channels: {in_channels}")
-        logger.info(f"  - Image size: {image_size}")
-
-    except AttributeError as e:
-        raise ValueError(f"Config missing required fields: {e}")
-
-    # Create factory with frozen parameters
-    factory = ImageModelFactory.create_factory(
-        model_name=model_name,
-        num_classes=num_classes,
-        in_channels=in_channels,
-        image_size=image_size,
-        config=model_config
-    )
-
-    # Validate the factory
-    validate_model_factory(factory, num_tests=3)
-
-    logger.info("Model factory created and validated successfully")
-    return factory
