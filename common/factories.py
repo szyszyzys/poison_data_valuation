@@ -25,6 +25,7 @@ class SellerFactory:
     ADVERSARY_CLASS_MAP = {
         PoisonType.IMAGE_BACKDOOR: AdvancedBackdoorAdversarySeller,
         PoisonType.TEXT_BACKDOOR: AdvancedBackdoorAdversarySeller,
+        PoisonType.TABULAR_BACKDOOR: AdvancedBackdoorAdversarySeller,
         PoisonType.LABEL_FLIP: AdvancedPoisoningAdversarySeller,
     }
 

@@ -65,6 +65,10 @@ class DataMarketplaceFederated(DataMarketplace):
         """Registers a new seller in the marketplace."""
         self.sellers[seller_id] = seller
         logging.info(f"Marketplace: Registered seller '{seller_id}'. Total sellers: {len(self.sellers)}")
+    @property
+    def global_model(self) -> torch.nn.Module:
+        """Provides convenient, direct access to the global model."""
+        return self.aggregator.strategy.global_model
 
     def train_federated_round(
             self,

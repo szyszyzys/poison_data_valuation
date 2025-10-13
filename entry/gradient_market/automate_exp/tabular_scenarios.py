@@ -171,7 +171,7 @@ def generate_tabular_data_heterogeneity_scenarios() -> List[Scenario]:
             "experiment.adv_rate": [0.3],
             "adversary_seller_config.poisoning.poison_rate": [0.5],
             "data.tabular.strategy": ["dirichlet"],
-            "data.tabular.property_skew": [{"dirichlet_alpha": alpha} for alpha in DIRICHLET_ALPHAS]
+            "data.tabular.property_skew.dirichlet_alpha": DIRICHLET_ALPHAS
         }
     ))
     return scenarios
