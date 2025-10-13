@@ -1,4 +1,3 @@
-from dataclasses import field, dataclass
 import copy
 import json
 import logging
@@ -306,14 +305,32 @@ class ImageModelFactory:
         """Create a model based on configuration."""
         logger.info(f"Creating model '{model_name}' with config '{config.config_name}'")
 
+        model = None
+
+        # --- 1. Instantiate the correct model class ---
         if model_name.lower() == 'lenet':
-            return ConfigurableLeNet(in_channels, image_size, num_classes, config)
+            model = ConfigurableLeNet(in_channels, image_size, num_classes, config)
         elif model_name.lower() == 'flexiblecnn':
-            return ConfigurableFlexibleCNN(in_channels, image_size, num_classes, config)
+            model = ConfigurableFlexibleCNN(in_channels, image_size, num_classes, config)
         elif model_name.lower() == 'resnet18':
-            return ConfigurableResNet(in_channels, num_classes, config)
+            # This uses the new class that accepts the config object
+            model = ConfigurableResNet(num_classes=num_classes, config=config, input_channels=in_channels)
         else:
             raise ValueError(f"Unknown model name: {model_name}")
+
+        # --- 2. Log details of the created model ---
+        if model:
+            num_params = sum(p.numel() for p in model.parameters())
+            num_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+            # This log confirms exactly which Python class was used
+            logger.info(f"  -> Instantiated model class: '{model.__class__.__name__}'")
+
+            # This is a great sanity check for model complexity
+            logger.info(f"  -> Total parameters: {num_params:,}")
+            logger.info(f"  -> Trainable parameters: {num_trainable:,}")
+
+        return model
 
     @staticmethod
     def create_factory(model_name: str, num_classes: int, in_channels: int,
