@@ -1016,7 +1016,7 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
         # 1. Create the specific poison generator for this backdoor attack.
         #    This is the primary job of this specialized class.
         backdoor_generator = self._create_poison_generator(
-            adversary_config, model_type, device,**kwargs
+            adversary_config, model_type, device, **kwargs
         )
 
         # 2. Call the PARENT's constructor. It receives the fully configured

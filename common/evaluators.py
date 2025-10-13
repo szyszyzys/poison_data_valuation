@@ -1,11 +1,10 @@
 # in marketplace/market/evaluation/base.py
 import logging
-from abc import ABC, abstractmethod
-from typing import Dict, Any, List
-
 import torch
+from abc import ABC, abstractmethod
 from torch import nn
 from torch.utils.data import DataLoader
+from typing import Dict, Any, List
 
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance
 from common.gradient_market_configs import AppConfig
@@ -80,6 +79,7 @@ class BackdoorEvaluator(BaseEvaluator):
             self.backdoor_generator = AdvancedBackdoorAdversarySeller._create_poison_generator(
                 adv_cfg=self.cfg.adversary_seller_config,
                 model_type=self.cfg.experiment.dataset_type,
+                device=device,
                 **kwargs_for_generator  # Unpack the cleaned dictionary
             )
         else:
