@@ -65,6 +65,7 @@ class DataMarketplaceFederated(DataMarketplace):
         """Registers a new seller in the marketplace."""
         self.sellers[seller_id] = seller
         logging.info(f"Marketplace: Registered seller '{seller_id}'. Total sellers: {len(self.sellers)}")
+
     @property
     def global_model(self) -> torch.nn.Module:
         """Provides convenient, direct access to the global model."""
@@ -88,16 +89,16 @@ class DataMarketplaceFederated(DataMarketplace):
         logging.info("🛒 Creating virtual 'Buyer Seller' to compute root gradient...")
         buyer_root_gradient, _ = self.buyer_seller.get_gradient_for_upload(global_model)
         oracle_root_gradient, _ = self.oracle_seller.get_gradient_for_upload(global_model)
+        if buyer_root_gradient is None:
+            logging.error("Virtual buyer failed to compute a gradient, which is a fatal error for this round.")
+            # This indicates a severe problem (like a CUDA crash) that should stop the experiment.
+            raise RuntimeError("Buyer root gradient is None, indicating a fatal error in local training.")
 
         # === 2. Collect Gradients from the Real Marketplace ===
         gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
 
         # === 3. Sanitize ALL Gradients Before Use ===
         target_device = self.aggregator.device
-
-
-        # === 2. Collect Gradients from the Real Marketplace ===
-        gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
 
         sanitized_gradients = {}
 
@@ -154,14 +155,6 @@ class DataMarketplaceFederated(DataMarketplace):
             buyer_data_loader=self.aggregator.buyer_data_loader
         )
 
-        # Aggregation with detailed metrics
-        # agg_grad, selected_ids, outlier_ids, aggregation_stats = self.aggregator.aggregate(
-        #     global_epoch=round_number,
-        #     seller_updates=gradients_dict,
-        #     root_gradient=buyer_root_gradient,
-        #     buyer_data_loader=self.aggregator.buyer_data_loader
-        # )
-
         # === NEW: Calculate marketplace metrics ===
         marketplace_metrics = self._compute_marketplace_metrics(
             round_number=round_number,
@@ -182,9 +175,9 @@ class DataMarketplaceFederated(DataMarketplace):
             logging.warning(
                 f"Round failed to produce an update. Consecutive failures: {self.consecutive_failed_rounds}")
 
-        if self.consecutive_failed_rounds >= 5:  # Or some other threshold
-            logging.error("Stopping experiment after too many consecutive failed rounds.")
-            # Add logic here to gracefully shut down the training
+        max_failures = self.cfg.training.get('max_consecutive_failures', 5)
+        if self.consecutive_failed_rounds >= max_failures:
+            logging.error(f"Stopping experiment after {max_failures} consecutive failed rounds.")
             raise RuntimeError("Halting due to persistent aggregation failures.")
 
         # Save individual gradients if needed

@@ -2,27 +2,26 @@ import collections
 import csv
 import json
 import logging
+import numpy as np
 import os
+import pandas as pd
 import random
 import sys
 import time
+import torch
+import torch.nn.functional as F
 # Add these class definitions as well
 from abc import ABC, abstractmethod
 from collections import abc  # abc.Mapping for general dicts
 from dataclasses import field, dataclass
 from pathlib import Path
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
 from typing import Any, Callable, Set
 from typing import Dict
 from typing import List, Optional
 from typing import Tuple
 from typing import Union
-
-import numpy as np
-import pandas as pd
-import torch
-import torch.nn.functional as F
-from torch import nn
-from torch.utils.data import DataLoader, Dataset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
     BackdoorTextGenerator, BackdoorTabularGenerator
@@ -386,9 +385,9 @@ class GradientSeller(BaseSeller):
             logging.warning(f"[{self.seller_id}] Returning zero gradients due to training failure")
             zero_grad = [torch.zeros_like(p) for p in model_to_train.parameters()]
 
-            return zero_grad, {
+            return zero_grad, {  # This is a robust return value
                 'error': str(e),
-                'train_loss': None,
+                'train_loss': float('nan'),
                 'compute_time_ms': (time.time() - start_time) * 1000,
                 'upload_bytes': estimate_byte_size(zero_grad)
             }
@@ -1039,7 +1038,8 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
         )
 
     @staticmethod
-    def _create_poison_generator(adv_cfg: AdversarySellerConfig, model_type: str, device: str, **kwargs: Any) -> PoisonGenerator: # <-- CHANGE 2: Accept device
+    def _create_poison_generator(adv_cfg: AdversarySellerConfig, model_type: str, device: str,
+                                 **kwargs: Any) -> PoisonGenerator:  # <-- CHANGE 2: Accept device
         """Factory method to create the correct backdoor generator from configuration."""
         poison_cfg = adv_cfg.poisoning
         if 'backdoor' not in poison_cfg.type.value:
