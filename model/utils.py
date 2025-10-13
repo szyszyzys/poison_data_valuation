@@ -155,6 +155,25 @@ def test_local_model(model: nn.Module,
     accuracy = total_correct / total_samples
     return {"loss": avg_loss, "accuracy": accuracy}
 
+def log_param_stats(params: List[torch.Tensor], prefix: str = ""):
+    """Logs key statistics for a specific parameter tensor to debug instability."""
+    TENSOR_INDEX_TO_DEBUG = 12
+    if len(params) > TENSOR_INDEX_TO_DEBUG:
+        p = params[TENSOR_INDEX_TO_DEBUG]
+        # Check if the tensor is on a CUDA device and has elements before calculating stats
+        if p.is_cuda and p.numel() > 0:
+            stats = {
+                'shape': p.shape,
+                'min': torch.min(p).item(),
+                'max': torch.max(p).item(),
+                'mean': torch.mean(p).item(),
+                'has_nan': torch.isnan(p).any().item(),
+                'has_inf': torch.isinf(p).any().item()
+            }
+            logging.info(f"  -> Stats for {prefix} Param[{TENSOR_INDEX_TO_DEBUG}]: {stats}")
+        else:
+            logging.info(f"  -> {prefix} Param[{TENSOR_INDEX_TO_DEBUG}] is on CPU or empty, skipping stats.")
+
 
 def local_training_and_get_gradient(
         model: nn.Module,
@@ -171,8 +190,13 @@ def local_training_and_get_gradient(
     """
     logging.debug(f"Starting local training: {local_epochs} epochs, lr={lr}, optimizer={opt_str}")
 
+
     # Store initial parameters on their original device (the GPU)
     initial_params = [p.data.clone() for p in model.parameters()]  # <-- REMOVED .cpu()
+    # ==================== NEW LOGGING (BEFORE) ====================
+    print("--- Inspecting Model Parameters PRE-TRAINING ---")
+    log_param_stats(initial_params, prefix="Initial")
+    # ==============================================================
 
     model_for_training = copy.deepcopy(model)
     model_for_training.to(device)
@@ -199,6 +223,10 @@ def local_training_and_get_gradient(
     with torch.no_grad():
         # Get trained parameters, which are already on the correct device
         trained_params = [p.data for p in trained_model.parameters()]  # <-- REMOVED .cpu()
+        # ==================== NEW LOGGING (AFTER) =====================
+        print("--- Inspecting Model Parameters POST-TRAINING ---")
+        log_param_stats(trained_params, prefix="Trained")
+        # ==============================================================
 
         if len(trained_params) != len(initial_params):
             logging.error(f"Parameter count mismatch! Initial: {len(initial_params)}, Trained: {len(trained_params)}")
