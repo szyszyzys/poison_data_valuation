@@ -182,6 +182,32 @@ class GradientSeller(BaseSeller):
         self.performance_history = []  # Track contribution to global model
         self.reward_history = []  # Track hypothetical rewards
 
+        # ==================== NEW DEBUGGING LOGS ====================
+        # This block will run every time a seller is created.
+        logging.info(f"--- 🕵️ Initializing Seller: {self.seller_id} ---")
+        try:
+            # 1. Log Data Config
+            dataset_size = len(self.data_config.dataset) if self.data_config.dataset else 0
+            logging.info(f"  [Data] Dataset size: {dataset_size} samples")
+
+            # 2. Log Training Config
+            logging.info(f"  [Training] LR: {self.training_config.learning_rate}, "
+                         f"Epochs: {self.training_config.local_epochs}, "
+                         f"Batch Size: {self.training_config.batch_size}")
+
+            # 3. Log Model Factory Info by creating a test instance
+            test_model = self.model_factory()
+            num_params = sum(p.numel() for p in test_model.parameters())
+            logging.info(f"  [Model] Factory creates model of type: '{test_model.__class__.__name__}'")
+            logging.info(f"  [Model] Parameter count: {num_params:,}")
+            del test_model  # Clean up the test model
+
+            logging.info(f"--- ✅ Seller '{self.seller_id}' initialized successfully ---")
+
+        except Exception as e:
+            logging.error(f"--- ❌ FAILED to properly initialize seller '{self.seller_id}': {e} ---", exc_info=True)
+        # ==========================================================
+
     def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
         Computes and returns the gradient update and training statistics.
