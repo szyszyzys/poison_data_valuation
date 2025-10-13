@@ -7,17 +7,10 @@ import torch.nn.functional as F
 
 import marketplace.market_mechanism.aggregators.skymask_utils.mytorch as my
 
-from collections import OrderedDict
-from typing import List
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-import marketplace.market_mechanism.aggregators.skymask_utils.mytorch as my
-
 
 def create_masknet(param_list, net_type, ctx):
     """Create a mask network based on the architecture type."""
+
     nworker = len(param_list)
 
     if not param_list or not param_list[0]:
@@ -31,20 +24,45 @@ def create_masknet(param_list, net_type, ctx):
     net_type = net_type.lower()
 
     try:
+        # Try to match specific architectures first
         if net_type == "cnn":
-            masknet = CNNMaskNet(param_list, nworker, ctx)
+            if len(param_list[0]) == 8:
+                masknet = CNNMaskNet(param_list, nworker, ctx)
+            else:
+                print(f"Warning: 'cnn' typically expects 8 params but got {len(param_list[0])}, using DynamicMaskNet")
+                masknet = DynamicMaskNet(param_list, nworker, ctx)
+
         elif net_type in ["resnet20", "resnet18"]:
             masknet = ResMaskNet(param_list, nworker, ctx)
+
         elif net_type == "lr":
-            masknet = LRMaskNet(param_list, nworker, ctx)
+            if len(param_list[0]) == 2:
+                masknet = LRMaskNet(param_list, nworker, ctx)
+            else:
+                print(f"Warning: 'lr' expects 2 params but got {len(param_list[0])}, using DynamicMaskNet")
+                masknet = DynamicMaskNet(param_list, nworker, ctx)
+
         elif net_type == "lenet":
-            masknet = LeNetMaskNet(param_list, nworker, ctx)
+            if len(param_list[0]) == 10:
+                masknet = LeNetMaskNet(param_list, nworker, ctx)
+            else:
+                print(f"Warning: 'lenet' expects 10 params but got {len(param_list[0])}, using DynamicMaskNet")
+                masknet = DynamicMaskNet(param_list, nworker, ctx)
+
         elif net_type == "cifarcnn":
-            masknet = CnnCifarMaskNet(param_list, nworker, ctx)
-        elif net_type == "flexiblecnn":
-            masknet = FlexibleCNNMaskNet(param_list, nworker, ctx)
+            if len(param_list[0]) == 16:
+                masknet = CnnCifarMaskNet(param_list, nworker, ctx)
+            else:
+                print(f"Warning: 'cifarcnn' expects 16 params but got {len(param_list[0])}, using DynamicMaskNet")
+                masknet = DynamicMaskNet(param_list, nworker, ctx)
+
+        elif net_type in ["flexiblecnn", "dynamic"]:
+            masknet = DynamicMaskNet(param_list, nworker, ctx)
+
         else:
-            raise ValueError(f"Unknown net_type: {net_type}")
+            # Unknown type - try dynamic as last resort
+            print(f"Warning: Unknown net_type '{net_type}', attempting DynamicMaskNet")
+            masknet = DynamicMaskNet(param_list, nworker, ctx)
 
     except Exception as e:
         print(f"\n{'=' * 80}")
@@ -55,11 +73,14 @@ def create_masknet(param_list, net_type, ctx):
         print(f"  - Params per worker: {len(param_list[0]) if param_list else 0}")
         if param_list and param_list[0]:
             print(f"  - Parameter shapes:")
-            for i, p in enumerate(param_list[0][:20]):  # Show first 20
-                print(f"      Param {i:2d}: {str(p.shape):20s} ({p.numel():8d} elements)")
+            for i, p in enumerate(param_list[0][:30]):  # Show first 30
+                param_type = "Conv2d" if len(p.shape) == 4 else "Linear" if len(p.shape) == 2 else f"{len(p.shape)}D"
+                print(f"      Param {i:2d}: {str(p.shape):25s} ({p.numel():10d} elements) [{param_type}]")
         print(f"{'=' * 80}\n")
         raise RuntimeError(
-            f"Cannot create masknet for type '{net_type}'. This is a configuration error, not a runtime error that should be ignored.")
+            f"Cannot create masknet for type '{net_type}'. "
+            f"Check the error above and parameter structure. "
+            f"You may need to set sm_model_type='dynamic' in your config.")
 
     return masknet
 
@@ -67,54 +88,191 @@ def create_masknet(param_list, net_type, ctx):
 def _infer_net_type_from_params(param_list):
     """Infer the network type from parameter structure."""
     if not param_list or not param_list[0]:
-        return 'flexiblecnn'  # Changed default
+        return 'dynamic'
 
     num_params = len(param_list[0])
 
-    # Specific known structures
-    if num_params == 2:
+    # Count parameter types
+    conv_count = sum(1 for p in param_list[0] if len(p.shape) == 4)
+    linear_count = sum(1 for p in param_list[0] if len(p.shape) == 2)
+
+    print(f"Parameter analysis: total={num_params}, conv_layers={conv_count}, linear_layers={linear_count}")
+
+    # Exact matches for known structures
+    if num_params == 2 and linear_count == 1:
         return 'lr'
-    elif num_params == 8:
+    elif num_params == 8 and conv_count == 2:
         return 'cnn'
-    elif num_params == 10:
+    elif num_params == 10 and conv_count == 2:
         return 'lenet'
-    elif num_params == 16:
+    elif num_params == 16 and conv_count == 3:
         return 'cifarcnn'
     elif num_params > 100:
         return 'resnet18'
     else:
-        # Use flexible for unknown structures
-        print(f"Unknown parameter count {num_params}, using flexiblecnn")
-        return 'flexiblecnn'
-def _infer_net_type_from_params(param_list):
-    """Infer the network type from parameter structure."""
-    if not param_list or not param_list[0]:
-        return 'cifarcnn'
+        # Use dynamic for anything else
+        print(f"No exact match found, defaulting to 'dynamic'")
+        return 'dynamic'
 
-    num_params = len(param_list[0])
 
-    # Count different parameter types
-    conv_params = sum(1 for p in param_list[0] if len(p.shape) == 4)
-    bn_params = sum(1 for p in param_list[0] if len(p.shape) == 1 and p.shape[0] > 1)
-    linear_params = sum(1 for p in param_list[0] if len(p.shape) == 2)
+class DynamicMaskNet(nn.Module):
+    """
+    Dynamically builds a mask network by analyzing the parameter structure.
+    Supports arbitrary CNN architectures with conv, batchnorm, and linear layers.
+    """
 
-    print(f"Parameter analysis: total={num_params}, conv={conv_params}, bn={bn_params}, linear={linear_params}")
+    def __init__(self, worker_param_list: List[List[torch.Tensor]], num_workers: int, device: torch.device):
+        super(DynamicMaskNet, self).__init__()
 
-    # Decision logic based on parameter counts
-    if num_params == 2:  # Only weight and bias
-        return 'lr'
-    elif num_params == 8:  # CNNMaskNet structure
-        return 'cnn'
-    elif num_params == 10:  # LeNet structure
-        return 'lenet'
-    elif num_params == 16:  # CnnCifar structure
-        return 'cifarcnn'
-    elif num_params > 100:  # ResNet structure
-        return 'resnet18'
-    else:
-        # Default to cifarcnn for unknown structures
-        print(f"Unknown parameter count {num_params}, defaulting to cifarcnn")
-        return 'cifarcnn'
+        self.num_workers = num_workers
+        self.device = device
+
+        if not worker_param_list or not worker_param_list[0]:
+            raise ValueError("Empty parameter list")
+
+        num_params = len(worker_param_list[0])
+        print(f"\n{'=' * 80}")
+        print(f"Building DynamicMaskNet from {num_params} parameters")
+        print(f"{'=' * 80}")
+
+        self.conv_layers = nn.ModuleList()
+        self.bn_layers = nn.ModuleList()
+        self.fc_layers = nn.ModuleList()
+
+        # Parse parameters and build layers
+        i = 0
+        layer_idx = 0
+        self.layer_sequence = []  # Track the order of operations
+
+        while i < num_params:
+            param = worker_param_list[0][i]
+
+            # Conv2d layer (4D weight)
+            if len(param.shape) == 4:
+                out_channels = param.shape[0]
+
+                # Check for bias
+                has_bias = False
+                if i + 1 < num_params:
+                    next_param = worker_param_list[0][i + 1]
+                    if len(next_param.shape) == 1 and next_param.shape[0] == out_channels:
+                        has_bias = True
+
+                if has_bias:
+                    print(f"  [{layer_idx}] Conv2d: weight={param.shape}, bias={worker_param_list[0][i + 1].shape}")
+                    conv_layer = my.myconv2d(
+                        num_workers, device,
+                        [w[i] for w in worker_param_list],
+                        [w[i + 1] for w in worker_param_list],
+                        padding=1
+                    )
+                    i += 2
+                else:
+                    print(f"  [{layer_idx}] Conv2d: weight={param.shape}, no bias")
+                    conv_layer = my.myconv2d(
+                        num_workers, device,
+                        [w[i] for w in worker_param_list],
+                        None,  # No bias
+                        padding=1
+                    )
+                    i += 1
+
+                self.conv_layers.append(conv_layer)
+                self.layer_sequence.append(('conv', len(self.conv_layers) - 1))
+
+                # Check for BatchNorm after conv
+                if i + 1 < num_params:
+                    p1 = worker_param_list[0][i]
+                    p2 = worker_param_list[0][i + 1]
+
+                    # BatchNorm has weight and bias of same size as conv output channels
+                    if (len(p1.shape) == 1 and len(p2.shape) == 1 and
+                            p1.shape[0] == out_channels and p2.shape[0] == out_channels):
+                        print(f"  [{layer_idx}] BatchNorm: weight={p1.shape}, bias={p2.shape}")
+                        bn_layer = my.mybatch_norm(
+                            num_workers, device,
+                            [w[i] for w in worker_param_list],
+                            [w[i + 1] for w in worker_param_list]
+                        )
+                        self.bn_layers.append(bn_layer)
+                        self.layer_sequence.append(('bn', len(self.bn_layers) - 1))
+                        i += 2
+
+                # Add activation and pooling
+                self.layer_sequence.append(('relu', None))
+                self.layer_sequence.append(('pool', None))
+                layer_idx += 1
+
+            # Linear layer (2D weight)
+            elif len(param.shape) == 2:
+                # Check for bias
+                has_bias = False
+                if i + 1 < num_params:
+                    next_param = worker_param_list[0][i + 1]
+                    if len(next_param.shape) == 1 and next_param.shape[0] == param.shape[0]:
+                        has_bias = True
+
+                if has_bias:
+                    print(f"  [{layer_idx}] Linear: weight={param.shape}, bias={worker_param_list[0][i + 1].shape}")
+                    fc_layer = my.mylinear(
+                        num_workers, device,
+                        [w[i] for w in worker_param_list],
+                        [w[i + 1] for w in worker_param_list]
+                    )
+                    i += 2
+                else:
+                    print(f"  [{layer_idx}] Linear: weight={param.shape}, no bias")
+                    fc_layer = my.mylinear(
+                        num_workers, device,
+                        [w[i] for w in worker_param_list],
+                        None
+                    )
+                    i += 1
+
+                self.fc_layers.append(fc_layer)
+                self.layer_sequence.append(('fc', len(self.fc_layers) - 1))
+
+                # Add ReLU for all but last FC layer
+                if i < num_params:  # Not the last layer
+                    self.layer_sequence.append(('relu', None))
+
+                layer_idx += 1
+
+            else:
+                # Skip unknown parameter types (e.g., running_mean, running_var)
+                print(f"  [SKIP] Param {i}: shape={param.shape}")
+                i += 1
+
+        print(f"{'=' * 80}")
+        print(f"Built network with:")
+        print(f"  - {len(self.conv_layers)} conv layers")
+        print(f"  - {len(self.bn_layers)} batchnorm layers")
+        print(f"  - {len(self.fc_layers)} fc layers")
+        print(f"  - Layer sequence: {self.layer_sequence}")
+        print(f"{'=' * 80}\n")
+
+        self.pool = nn.MaxPool2d(2, 2)
+
+    def forward(self, x):
+        need_flatten = True
+
+        for op_type, idx in self.layer_sequence:
+            if op_type == 'conv':
+                x = self.conv_layers[idx](x)
+            elif op_type == 'bn':
+                x = self.bn_layers[idx](x)
+            elif op_type == 'relu':
+                x = F.relu(x)
+            elif op_type == 'pool':
+                x = self.pool(x)
+            elif op_type == 'fc':
+                if need_flatten:
+                    x = torch.flatten(x, start_dim=1)
+                    need_flatten = False
+                x = self.fc_layers[idx](x)
+
+        x = F.log_softmax(x, dim=1)
+        return x
 
 
 class CNNMaskNet(nn.Module):
@@ -148,6 +306,7 @@ class CNNMaskNet(nn.Module):
         x = self.fc2(x)
         x = F.log_softmax(x, dim=1)  # Changed from dim=0 to dim=1 (correct for batch)
         return x
+
 
 class ResidualBlock(nn.Module):
     """A standard ResNet residual block."""

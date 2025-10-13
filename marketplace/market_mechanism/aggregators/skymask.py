@@ -102,19 +102,12 @@ class SkymaskAggregator(BaseAggregator):
         masknet = create_masknet(worker_params, sm_model_type, self.device)
 
         if masknet is None:
-            logger.error(f"Failed to create masknet with type '{sm_model_type}'. Falling back to FedAvg.")
-            # Fallback: simple averaging
-            aggregated_gradient = [torch.zeros_like(p) for p in self.global_model.parameters()]
-            for update in processed_updates.values():
-                for agg_grad, upd_grad in zip(aggregated_gradient, update):
-                    agg_grad.add_(upd_grad, alpha=1 / len(processed_updates))
-
-            aggregation_stats = {
-                "skymask_num_selected": len(seller_ids),
-                "skymask_num_rejected": 0,
-                "skymask_fallback": True
-            }
-            return aggregated_gradient, seller_ids, [], aggregation_stats
+            # NO FALLBACK - raise error instead
+            raise RuntimeError(
+                f"Failed to create masknet with type '{sm_model_type}'. "
+                f"This is a configuration error. Check your model architecture matches the sm_model_type. "
+                f"Available types: cnn, resnet18, resnet20, lr, lenet, cifarcnn, flexiblecnn"
+            )
 
         masknet = train_masknet(masknet, self.buyer_data_loader, self.mask_epochs, self.mask_lr, self.mask_clip,
                                 self.device)
