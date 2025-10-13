@@ -1,59 +1,95 @@
 from collections import OrderedDict
 from typing import List
 
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+import marketplace.market_mechanism.aggregators.skymask_utils.mytorch as my
+
+from collections import OrderedDict
+from typing import List
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 import marketplace.market_mechanism.aggregators.skymask_utils.mytorch as my
 
 
 def create_masknet(param_list, net_type, ctx):
+    """
+    Create a mask network based on the architecture type.
+
+    Args:
+        param_list: List of parameter lists from workers
+        net_type: Architecture type string
+        ctx: Device context
+
+    Returns:
+        Mask network or None if creation fails
+    """
     nworker = len(param_list)
-    if net_type == "cnn":
-        masknet = CNNMaskNet(param_list, nworker, ctx)
-    elif net_type in ["resnet20", "resnet18"]:  # Also check for "resnet18"
-        masknet = ResMaskNet(param_list, nworker, ctx)
-    elif net_type == "LR":
-        masknet = LRMaskNet(param_list, nworker, ctx)
-    elif net_type == "lenet":
-        masknet = LeNetMaskNet(param_list, nworker, ctx)
-    elif net_type == "cifarcnn":
-        masknet = CnnCifarMaskNet(param_list, nworker, ctx)
-    else:
+
+    # Normalize the net_type
+    if net_type is None or net_type == 'None' or net_type == '':
+        # Infer from parameter structure
+        net_type = _infer_net_type_from_params(param_list)
+        print(f"Auto-inferred net_type: {net_type}")
+
+    net_type = net_type.lower()
+
+    try:
+        if net_type == "cnn":
+            masknet = CNNMaskNet(param_list, nworker, ctx)
+        elif net_type in ["resnet20", "resnet18"]:
+            masknet = ResMaskNet(param_list, nworker, ctx)
+        elif net_type == "lr":
+            masknet = LRMaskNet(param_list, nworker, ctx)
+        elif net_type == "lenet":
+            masknet = LeNetMaskNet(param_list, nworker, ctx)
+        elif net_type == "cifarcnn":
+            masknet = CnnCifarMaskNet(param_list, nworker, ctx)
+        else:
+            print(f"Unknown net_type: {net_type}, attempting cifarcnn as fallback")
+            masknet = CnnCifarMaskNet(param_list, nworker, ctx)
+    except Exception as e:
+        print(f"Failed to create masknet of type {net_type}: {e}")
+        print(
+            f"Parameter list structure: {len(param_list)} workers, {len(param_list[0]) if param_list else 0} params per worker")
         masknet = None
 
     return masknet
 
 
-class CNN(nn.Module):
-    def __init__(self):
-        super(CNN, self).__init__()
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(1, 30, kernel_size=3),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2)
-        )
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(30, 50, kernel_size=3),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2)
-        )
+def _infer_net_type_from_params(param_list):
+    """Infer the network type from parameter structure."""
+    if not param_list or not param_list[0]:
+        return 'cifarcnn'
 
-        self.fc1 = nn.Linear(1250, 100)
-        self.fc2 = nn.Linear(100, 10)
+    num_params = len(param_list[0])
 
-    def forward(self, x):
-        # x尺寸：(batch_size, image_channels, image_width, image_height)
+    # Count different parameter types
+    conv_params = sum(1 for p in param_list[0] if len(p.shape) == 4)
+    bn_params = sum(1 for p in param_list[0] if len(p.shape) == 1 and p.shape[0] > 1)
+    linear_params = sum(1 for p in param_list[0] if len(p.shape) == 2)
 
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = torch.flatten(x, start_dim=1, end_dim=-1)
+    print(f"Parameter analysis: total={num_params}, conv={conv_params}, bn={bn_params}, linear={linear_params}")
 
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
-
-        x = F.log_softmax(x, dim=0)
-
-        return x
+    # Decision logic based on parameter counts
+    if num_params == 2:  # Only weight and bias
+        return 'lr'
+    elif num_params == 8:  # CNNMaskNet structure
+        return 'cnn'
+    elif num_params == 10:  # LeNet structure
+        return 'lenet'
+    elif num_params == 16:  # CnnCifar structure
+        return 'cifarcnn'
+    elif num_params > 100:  # ResNet structure
+        return 'resnet18'
+    else:
+        # Default to cifarcnn for unknown structures
+        print(f"Unknown parameter count {num_params}, defaulting to cifarcnn")
+        return 'cifarcnn'
 
 
 class CNNMaskNet(nn.Module):
@@ -79,30 +115,14 @@ class CNNMaskNet(nn.Module):
         self.fc1 = my.mylinear(num_workers, device, [x[4] for x in param_list], [x[5] for x in param_list])
         self.fc2 = my.mylinear(num_workers, device, [x[6] for x in param_list], [x[7] for x in param_list])
 
-    def update(self, param_list):
-        self.param_list = param_list
-        self.conv1.conv1.update([x[0] for x in param_list], [x[1] for x in param_list])
-        self.conv2.conv1.update([x[2] for x in param_list], [x[3] for x in param_list])
-        self.fc1.update([x[4] for x in param_list], [x[5] for x in param_list])
-        self.fc2.update([x[6] for x in param_list], [x[7] for x in param_list])
-
     def forward(self, x):
         x = self.conv1(x)
         x = self.conv2(x)
         x = torch.flatten(x, start_dim=1, end_dim=-1)
-
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
-
-        x = F.log_softmax(x, dim=0)
-
+        x = F.log_softmax(x, dim=1)  # Changed from dim=0 to dim=1 (correct for batch)
         return x
-
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 
 class ResidualBlock(nn.Module):
     """A standard ResNet residual block."""

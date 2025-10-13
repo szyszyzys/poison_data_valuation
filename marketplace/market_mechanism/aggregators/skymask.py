@@ -73,11 +73,11 @@ class SkymaskAggregator(BaseAggregator):
         logger.info(f"SkymaskAggregator initialized with mask_epochs={self.mask_epochs}, mask_lr={self.mask_lr}")
 
     def aggregate(self, global_epoch: int, seller_updates: Dict[str, List[torch.Tensor]], **kwargs) -> Tuple[
-        List[torch.Tensor], List[str], List[str], Dict[str, Any]]:  # Added Dict
+        List[torch.Tensor], List[str], List[str], Dict[str, Any]]:
 
         logger.info(f"--- SkyMask Aggregation (Epoch {global_epoch}) ---")
 
-        # 1. Compute full model parameters (This section is unchanged)
+        # 1. Compute full model parameters
         global_params = [p.data.clone() for p in self.global_model.parameters()]
         trust_gradient = self._compute_trust_gradient()
         worker_params = []
@@ -90,37 +90,36 @@ class SkymaskAggregator(BaseAggregator):
         buyer_params = [p_glob + p_upd for p_glob, p_upd in zip(global_params, trust_gradient)]
         worker_params.append(buyer_params)
 
-        if self.sm_model_type == 'None' or self.sm_model_type is None:
-            # Try to infer from the main model configuration
-            if hasattr(self, 'model_config'):
-                model_name = self.model_config.model_name.lower()
-                if 'resnet18' in model_name:
-                    sm_model_type = 'resnet18'
-                elif 'resnet20' in model_name:
-                    sm_model_type = 'resnet20'
-                elif 'flexiblecnn' in model_name or 'cnn' in model_name:
-                    sm_model_type = 'cnn'
-                elif 'lenet' in model_name:
-                    sm_model_type = 'lenet'
-                else:
-                    # Default fallback
-                    sm_model_type = 'cnn'
-                logging.warning(f"Auto-detected sm_model_type: {sm_model_type}")
-            else:
-                # Default fallback
-                sm_model_type = 'cnn'
-                logging.warning(f"No model config found, defaulting sm_model_type to: {sm_model_type}")
+        # 2. Determine the correct model type
+        if self.sm_model_type == 'None' or self.sm_model_type is None or self.sm_model_type == '':
+            # Try to infer from global_model architecture
+            sm_model_type = self._infer_model_type_from_params(worker_params)
+            logger.warning(f"sm_model_type not set. Inferred: {sm_model_type}")
         else:
             sm_model_type = self.sm_model_type
 
-        # Now create masknet with the correct type
-
-        # 2. Create and train the MaskNet (This section is unchanged)
+        # 3. Create and train the MaskNet
         masknet = create_masknet(worker_params, sm_model_type, self.device)
+
+        if masknet is None:
+            logger.error(f"Failed to create masknet with type '{sm_model_type}'. Falling back to FedAvg.")
+            # Fallback: simple averaging
+            aggregated_gradient = [torch.zeros_like(p) for p in self.global_model.parameters()]
+            for update in processed_updates.values():
+                for agg_grad, upd_grad in zip(aggregated_gradient, update):
+                    agg_grad.add_(upd_grad, alpha=1 / len(processed_updates))
+
+            aggregation_stats = {
+                "skymask_num_selected": len(seller_ids),
+                "skymask_num_rejected": 0,
+                "skymask_fallback": True
+            }
+            return aggregated_gradient, seller_ids, [], aggregation_stats
+
         masknet = train_masknet(masknet, self.buyer_data_loader, self.mask_epochs, self.mask_lr, self.mask_clip,
                                 self.device)
 
-        # 3. Extract masks and classify with GMM (This section is unchanged)
+        # 4. Extract masks and classify with GMM
         seller_masks_np = []
         t = torch.tensor([self.mask_threshold], device=self.device)
         for i in range(len(seller_ids)):
@@ -140,20 +139,18 @@ class SkymaskAggregator(BaseAggregator):
         if len(seller_masks_np) < 2:
             gmm_labels = np.ones(len(seller_masks_np))
         else:
-            # We assume GMM2 returns labels (1 for inlier, 0 for outlier)
             gmm_labels = GMM2(seller_masks_np)
 
-        # 4. Aggregate using inliers and create stats log
+        # 5. Aggregate using inliers
         aggregated_gradient = [torch.zeros_like(p) for p in self.global_model.parameters()]
         selected_sids, outlier_sids = [], []
         inlier_updates = []
 
-        # --- FIX 2: Create the stats dictionary for logging ---
         aggregation_stats = {}
 
         for i, sid in enumerate(seller_ids):
             is_inlier = i < len(gmm_labels) and gmm_labels[i] == 1
-            aggregation_stats[f"skymask_gmm_label_{sid}"] = int(is_inlier)  # Log 1 if inlier, 0 if outlier
+            aggregation_stats[f"skymask_gmm_label_{sid}"] = int(is_inlier)
 
             if is_inlier:
                 selected_sids.append(sid)
@@ -171,5 +168,32 @@ class SkymaskAggregator(BaseAggregator):
         aggregation_stats["skymask_num_selected"] = len(selected_sids)
         aggregation_stats["skymask_num_rejected"] = len(outlier_sids)
 
-        # --- FIX 3: Return the new stats dictionary ---
         return aggregated_gradient, selected_sids, outlier_sids, aggregation_stats
+
+    def _infer_model_type_from_params(self, worker_params: List[List[torch.Tensor]]) -> str:
+        """Infer the model architecture type from parameter shapes."""
+        if not worker_params or not worker_params[0]:
+            return 'cifarcnn'  # Safe default
+
+        # Look at the first worker's parameters
+        params = worker_params[0]
+
+        # Count conv and linear layers
+        conv_count = sum(1 for p in params if len(p.shape) == 4)
+        linear_count = sum(1 for p in params if len(p.shape) == 2)
+
+        # Check parameter sizes to distinguish architectures
+        if conv_count > 0:
+            # Check if it looks like ResNet (deeper, larger channels)
+            max_channels = max((p.shape[0] for p in params if len(p.shape) == 4), default=0)
+
+            if conv_count >= 15 and max_channels >= 256:  # ResNet-like
+                return 'resnet18'
+            elif conv_count <= 4 and max_channels <= 32:  # Small CNN
+                return 'lenet'
+            else:  # Medium CNN
+                return 'cifarcnn'
+        elif linear_count > 0:
+            return 'lr'
+        else:
+            return 'cifarcnn'  # Default fallback
