@@ -1,17 +1,17 @@
 # FILE: entry/gradient_market/automate_exp/tabular_scenarios.py
 
-from dataclasses import dataclass, field
-from typing import List, Callable, Dict, Any
-
 import torch
+from dataclasses import dataclass, field
+from typing import Any
+from typing import List, Callable, Dict, Any
 
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig, AggregationConfig, DebugConfig, TabularDataConfig, DataConfig, \
     AdversarySellerConfig, ServerAttackConfig, TrainingConfig, ExperimentConfig
 from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator
-# In entry/gradient_market/automate_exp/config_generator.py
 
-from typing import Any
+
+# In entry/gradient_market/automate_exp/config_generator.py
 
 def set_nested_attr(obj: Any, key: str, value: Any):
     """
@@ -36,6 +36,7 @@ def set_nested_attr(obj: Any, key: str, value: Any):
     else:
         # Otherwise, use attribute assignment (e.g., my_obj.key = value)
         setattr(current_obj, final_key, value)
+
 
 # --- Define the structure of a Scenario ---
 @dataclass
@@ -86,34 +87,36 @@ def get_base_tabular_config() -> AppConfig:
     )
 
 
-# --- Reusable Modifier Functions ---
+@dataclass
+class Scenario:
+    """A declarative representation of an experimental scenario."""
+    name: str
+    base_config_factory: Callable[[], AppConfig]
+    modifiers: List[Callable[[AppConfig], AppConfig]] = field(default_factory=list)
+    parameter_grid: Dict[str, List[Any]] = field(default_factory=dict)
+
 
 def use_tabular_backdoor_attack(config: AppConfig) -> AppConfig:
-    """Modifier for a backdoor attack on tabular data."""
     config.adversary_seller_config.poisoning.type = PoisonType.TABULAR_BACKDOOR
     return config
 
 
 def use_tabular_label_flipping_attack(config: AppConfig) -> AppConfig:
-    """Modifier for a label-flipping attack on tabular data."""
     config.adversary_seller_config.poisoning.type = PoisonType.LABEL_FLIP
     config.adversary_seller_config.poisoning.poison_rate = 1.0
     return config
 
 
 def use_sybil_attack(strategy: str) -> Callable[[AppConfig], AppConfig]:
-    """Returns a modifier function that enables a specific Sybil attack strategy."""
     def modifier(config: AppConfig) -> AppConfig:
         config.adversary_seller_config.sybil.is_sybil = True
         config.adversary_seller_config.sybil.gradient_default_mode = strategy
         return config
+
     return modifier
 
 
-# --- FOCUSED SCENARIO GENERATORS ---
-
 def generate_tabular_oracle_vs_buyer_bias_scenarios() -> List[Scenario]:
-    """Generates the core Oracle vs. Buyer Bias scenario for a representative tabular dataset."""
     scenarios = []
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
     scenarios.append(Scenario(
@@ -133,7 +136,6 @@ def generate_tabular_oracle_vs_buyer_bias_scenarios() -> List[Scenario]:
 
 
 def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
-    """Generates scenarios to test Sybil coordination on tabular data."""
     scenarios = []
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
     SYBIL_STRATEGIES = ['mimic', 'pivot', 'knock_out']
@@ -170,7 +172,6 @@ def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
 
 
 def generate_tabular_data_heterogeneity_scenarios() -> List[Scenario]:
-    """Generates scenarios to test the impact of Non-IID tabular data UNDER ATTACK."""
     scenarios = []
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
     DIRICHLET_ALPHAS = [100.0, 1.0, 0.1]
@@ -194,14 +195,12 @@ def generate_tabular_data_heterogeneity_scenarios() -> List[Scenario]:
 
 
 def generate_tabular_attack_impact_scenarios() -> List[Scenario]:
-    """(NEW) Generates scenarios to test attack impact by sweeping rates on tabular data."""
     scenarios = []
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
     ADV_RATES_TO_SWEEP = [0.1, 0.3, 0.5]
     POISON_RATES_TO_SWEEP = [0.1, 0.5, 1.0]
     dataset_name = "texas100"
     model_config = "mlp_texas100_baseline"
-
     for group_name, sweep_params in [
         ("vary_adv_rate", {"experiment.adv_rate": ADV_RATES_TO_SWEEP}),
         ("vary_poison_rate", {"adversary_seller_config.poisoning.poison_rate": POISON_RATES_TO_SWEEP})
@@ -221,7 +220,6 @@ def generate_tabular_attack_impact_scenarios() -> List[Scenario]:
 
 
 def generate_tabular_label_flipping_scenarios() -> List[Scenario]:
-    """(NEW) Generates simple scenarios for a label-flipping attack on tabular data."""
     scenarios = []
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
     scenarios.append(Scenario(
@@ -238,7 +236,10 @@ def generate_tabular_label_flipping_scenarios() -> List[Scenario]:
     return scenarios
 
 
-# --- Create the final, comprehensive list of all tabular experiments ---
+# ==============================================================================
+# SECTION 4: MAIN EXECUTION
+# ==============================================================================
+
 ALL_TABULAR_SCENARIOS = []
 ALL_TABULAR_SCENARIOS.extend(generate_tabular_oracle_vs_buyer_bias_scenarios())
 ALL_TABULAR_SCENARIOS.extend(generate_tabular_sybil_impact_scenarios())
@@ -251,12 +252,10 @@ def main():
     """Generates all configurations defined in this file."""
     output_dir = "./configs_generated/tabular_new"
     generator = ExperimentGenerator(output_dir)
-
     for scenario in ALL_TABULAR_SCENARIOS:
         base_config = scenario.base_config_factory()
         generator.generate(base_config, scenario)
-
-    print(f"\n✅ All {len(ALL_TABULAR_SCENARIOS)} tabular scenarios have been generated in '{output_dir}'")
+    print(f"\n✅ All configurations for {len(ALL_TABULAR_SCENARIOS)} tabular scenarios have been generated.")
 
 
 if __name__ == "__main__":
