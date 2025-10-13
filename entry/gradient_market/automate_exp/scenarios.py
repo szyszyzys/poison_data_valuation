@@ -276,6 +276,90 @@ def generate_adv_rate_trend_scenarios() -> List[Scenario]:
     ))
     return scenarios
 
+def use_label_flipping_attack(config: AppConfig) -> AppConfig:
+    """Modifier to set up for a simple label-flipping attack."""
+    config.adversary_seller_config.poisoning.type = PoisonType.LABEL_FLIP
+    # For a simple label-flipping attack, adversaries often flip all their data
+    config.adversary_seller_config.poisoning.poison_rate = 1.0
+    return config
+def generate_label_flipping_scenarios() -> List[Scenario]:
+    """
+    Generates simple scenarios to test defenses against a label-flipping attack.
+    """
+    scenarios = []
+    AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+    fixed_attack_params = {
+        "experiment.adv_rate": [0.3],  # Set a fixed adversary rate
+    }
+
+    # --- Image Scenario (CIFAR-10) ---
+    for model_name in ["cnn", "resnet18"]:
+        scenarios.append(Scenario(
+            name=f"label_flip_cifar10_{model_name}",
+            base_config_factory=get_base_image_config,
+            modifiers=[use_cifar10_config, use_label_flipping_attack],
+            parameter_grid={
+                "experiment.image_model_config_name": [f"cifar10_{model_name}"],
+                "experiment.model_structure": [model_name],
+                "aggregation.method": AGGREGATORS,
+                **fixed_attack_params
+            }
+        ))
+
+    # --- Text Scenario (TREC) ---
+    scenarios.append(Scenario(
+        name="label_flip_trec",
+        base_config_factory=get_base_text_config,
+        modifiers=[use_trec_config, use_label_flipping_attack],
+        parameter_grid={
+            "aggregation.method": AGGREGATORS,
+            **fixed_attack_params
+        }
+    ))
+    return scenarios
+
+
+def generate_sybil_selection_rate_scenarios() -> List[Scenario]:
+    """
+    Generates scenarios to test a Sybil strategy aimed at maximizing selection rate.
+    """
+    scenarios = []
+    # Test against defenses that are vulnerable to this
+    AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+    # See how the strategy performs as the number of Sybils increases
+    ADV_RATES_TO_SWEEP = [0.1, 0.2, 0.3, 0.4]
+
+    # --- Baseline: Poisoning attack WITHOUT Sybil coordination ---
+    scenarios.append(Scenario(
+        name="selection_rate_baseline_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[use_cifar10_config, use_image_backdoor_attack],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.method": AGGREGATORS,
+            "experiment.adv_rate": ADV_RATES_TO_SWEEP,
+            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "adversary_seller_config.sybil.is_sybil": [False], # Baseline
+        }
+    ))
+
+    # --- Test Scenario: The "Cluster Creation" Sybil strategy ---
+    scenarios.append(Scenario(
+        name="selection_rate_cluster_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        # Assume 'cluster' is a new strategy you'll implement
+        modifiers=[use_cifar10_config, use_image_backdoor_attack, use_sybil_attack('cluster')],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.method": AGGREGATORS,
+            "experiment.adv_rate": ADV_RATES_TO_SWEEP,
+            "adversary_seller_config.poisoning.poison_rate": [0.5],
+        }
+    ))
+    return scenarios
+
 
 ALL_SCENARIOS = []
 # 1. The core new experiment comparing the Oracle vs. Biased Buyer setups
@@ -291,6 +375,8 @@ ALL_SCENARIOS.extend(generate_sybil_impact_scenarios())
 ALL_SCENARIOS.extend(generate_data_heterogeneity_scenarios())
 
 ALL_SCENARIOS.extend(generate_main_summary_figure_scenarios())
+ALL_SCENARIOS.extend(generate_label_flipping_scenarios())
+ALL_SCENARIOS.extend(generate_sybil_selection_rate_scenarios())
 
 # You can print the names of generated scenarios to verify
 if __name__ == '__main__':
