@@ -92,11 +92,12 @@ class SkymaskAggregator(BaseAggregator):
 
         # 2. Determine the correct model type
         if self.sm_model_type == 'None' or self.sm_model_type is None or self.sm_model_type == '':
-            # Try to infer from global_model architecture
-            sm_model_type = self._infer_model_type_from_params(worker_params)
-            logger.warning(f"sm_model_type not set. Inferred: {sm_model_type}")
+            # Always use dynamic for flexibility - it auto-adapts to any architecture
+            sm_model_type = 'dynamic'
+            logger.warning(f"sm_model_type not set. Using 'dynamic' which auto-adapts to model architecture.")
         else:
             sm_model_type = self.sm_model_type
+            logger.info(f"Using explicitly set sm_model_type: {sm_model_type}")
 
         # 3. Create and train the MaskNet
         masknet = create_masknet(worker_params, sm_model_type, self.device)
