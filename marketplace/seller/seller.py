@@ -1,12 +1,11 @@
 import json
 import logging
+import numpy as np
+import pandas as pd
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any
-
-import numpy as np
-import pandas as pd
 
 
 @dataclass
@@ -30,7 +29,7 @@ class BaseSeller(ABC):
                  base_price: float = 1.0,
                  price_variation: float = 0.2,
                  save_path="",
-                 device='cpu'):
+                 device='cpu', **kwargs):
         self.seller_id = seller_id
         self.dataset = dataset  # Full dataset (whether used for data selling or gradient).
         self.price_strategy = price_strategy
