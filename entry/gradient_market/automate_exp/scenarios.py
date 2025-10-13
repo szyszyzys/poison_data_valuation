@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Callable, Dict, Any, Tuple
+from typing import List, Callable, Dict, Any
 
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig
@@ -254,6 +254,44 @@ def generate_oracle_vs_buyer_bias_scenarios() -> List[Scenario]:
     return scenarios
 
 
+def generate_buyer_data_impact_scenarios() -> List[Scenario]:
+    """
+    Generates scenarios to test the impact of the buyer's local data size
+    on the effectiveness of various defense aggregators.
+    """
+    scenarios = []
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl', 'skymask']
+
+    # This scenario uses a fixed, challenging attack setting
+    fixed_attack_params = {
+        "experiment.adv_rate": [0.3],
+        "adversary_seller_config.poisoning.poison_rate": [0.5],
+    }
+
+    scenarios.append(Scenario(
+        name="buyer_data_impact_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[use_cifar10_config, use_image_backdoor_attack, use_sybil_attack('mimic')],
+        parameter_grid={
+            # --- Fixed Parameters for this Experiment ---
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.root_gradient_source": ["buyer"],  # We only care about the buyer's data here
+
+            # --- Swept Parameters ---
+            "aggregation.method": ALL_AGGREGATORS,  # Test against all defenses
+
+            # ✅ THIS IS THE KEY: Sweep over the buyer's data percentage
+            # It will test the defenses when the buyer has 1%, 5%, 10%, and 20% of the data.
+            "data.image.buyer_config.buyer_percentage": [0.01, 0.05, 0.10, 0.20],
+
+            # --- Attack Parameters ---
+            **fixed_attack_params
+        }
+    ))
+    return scenarios
+
+
 def generate_adv_rate_trend_scenarios() -> List[Scenario]:
     """
     A lean set of scenarios to show the trend of ASR vs. Adversary Rate for MartFL.
@@ -276,12 +314,15 @@ def generate_adv_rate_trend_scenarios() -> List[Scenario]:
     ))
     return scenarios
 
+
 def use_label_flipping_attack(config: AppConfig) -> AppConfig:
     """Modifier to set up for a simple label-flipping attack."""
     config.adversary_seller_config.poisoning.type = PoisonType.LABEL_FLIP
     # For a simple label-flipping attack, adversaries often flip all their data
     config.adversary_seller_config.poisoning.poison_rate = 1.0
     return config
+
+
 def generate_label_flipping_scenarios() -> List[Scenario]:
     """
     Generates simple scenarios to test defenses against a label-flipping attack.
@@ -340,7 +381,7 @@ def generate_sybil_selection_rate_scenarios() -> List[Scenario]:
             "aggregation.method": AGGREGATORS,
             "experiment.adv_rate": ADV_RATES_TO_SWEEP,
             "adversary_seller_config.poisoning.poison_rate": [0.5],
-            "adversary_seller_config.sybil.is_sybil": [False], # Baseline
+            "adversary_seller_config.sybil.is_sybil": [False],  # Baseline
         }
     ))
 
@@ -377,6 +418,7 @@ ALL_SCENARIOS.extend(generate_data_heterogeneity_scenarios())
 ALL_SCENARIOS.extend(generate_main_summary_figure_scenarios())
 ALL_SCENARIOS.extend(generate_label_flipping_scenarios())
 ALL_SCENARIOS.extend(generate_sybil_selection_rate_scenarios())
+ALL_SCENARIOS.extend(generate_buyer_data_impact_scenarios())
 
 # You can print the names of generated scenarios to verify
 if __name__ == '__main__':

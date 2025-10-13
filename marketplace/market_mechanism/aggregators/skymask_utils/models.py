@@ -101,67 +101,82 @@ class CNNMaskNet(nn.Module):
         return x
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
 class ResidualBlock(nn.Module):
-    def __init__(self, inchannel, outchannel, stride=1):
+    """A standard ResNet residual block."""
+
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, use_batch_norm: bool = True):
         super(ResidualBlock, self).__init__()
-        self.left = nn.Sequential(
-            nn.Conv2d(inchannel, outchannel, kernel_size=3, stride=stride, padding=1, bias=False),
-            nn.BatchNorm2d(outchannel),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(outchannel, outchannel, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(outchannel)
-        )
+
+        # Main path
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels) if use_batch_norm else nn.Identity()
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels) if use_batch_norm else nn.Identity()
+
+        # Shortcut connection to match dimensions
         self.shortcut = nn.Sequential()
-        if stride != 1 or inchannel != outchannel:
+        if stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential(
-                nn.Conv2d(inchannel, outchannel, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(outchannel)
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels) if use_batch_norm else nn.Identity()
             )
 
-    def forward(self, x):
-        out = self.left(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
         out += self.shortcut(x)
         out = F.relu(out)
         return out
 
+class ConfigurableResNet(nn.Module):
+    """A configurable ResNet-18 model based on ModelConfig."""
 
-class ResNet(nn.Module):
-    def __init__(self, ResidualBlock, num_classes=10):
-        super(ResNet, self).__init__()
-        self.inchannel = 16
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-        )
-        self.layer1 = self.make_layer(ResidualBlock, 16, 3, stride=1)
-        self.layer2 = self.make_layer(ResidualBlock, 32, 3, stride=2)
-        self.layer3 = self.make_layer(ResidualBlock, 64, 3, stride=2)
-        self.fc = nn.Linear(64, num_classes)
+    def __init__(self, input_channels: int, num_classes: int, config: ImageModelConfig):
+        super(ConfigurableResNet, self).__init__()
+        self.in_channels = 64
+        self.config = config
 
-    def make_layer(self, block, channels, num_blocks, stride):
+        self.conv1 = nn.Conv2d(input_channels, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(64) if self.config.use_batch_norm else nn.Identity()
+
+        # ResNet-18 specific layer structure
+        self.layer1 = self._make_layer(ResidualBlock, 64, 2, stride=1)
+        self.layer2 = self._make_layer(ResidualBlock, 128, 2, stride=2)
+        self.layer3 = self._make_layer(ResidualBlock, 256, 2, stride=2)
+        self.layer4 = self._make_layer(ResidualBlock, 512, 2, stride=2)
+
+        # Dropout layer before the final fully connected layer
+        self.dropout = nn.Dropout(self.config.dropout_rate) if self.config.use_dropout else nn.Identity()
+
+        self.linear = nn.Linear(512, num_classes)
+
+    def _make_layer(self, block: type, out_channels: int, num_blocks: int, stride: int) -> nn.Sequential:
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
-        for stride in strides:
-            layers.append(block(self.inchannel, channels, stride))
-            self.inchannel = channels
+        for s in strides:
+            layers.append(block(self.in_channels, out_channels, s, self.config.use_batch_norm))
+            self.in_channels = out_channels
         return nn.Sequential(*layers)
 
-    def forward(self, x):
-        out = self.conv1(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = F.relu(self.bn1(self.conv1(x)))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
-        out = F.avg_pool2d(out, 8)
+        out = self.layer4(out)
+        out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
-        out = self.fc(out)
-
-        out = F.log_softmax(out, dim=0)
+        out = self.dropout(out)
+        out = self.linear(out)
         return out
 
 
-def ResNet20():
-    return ResNet(ResidualBlock)
+
 
 
 class ResidualMaskBlock(nn.Module):

@@ -98,9 +98,5 @@ def get_image_model_config(name: str) -> ImageModelConfig:
     """
     Acts as a "cookbook" to retrieve a pre-designed model configuration by name.
     """
-    # --- THIS IS THE FIX ---
-    # The previous code was not correctly looking up the name.
-    # .get(name, _MODEL_CONFIG_REGISTRY["default"]) correctly retrieves the
-    # config by name, and falls back to the default if the name is not found.
     return _MODEL_CONFIG_REGISTRY.get(name, _MODEL_CONFIG_REGISTRY["default"])
 
