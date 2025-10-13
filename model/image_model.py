@@ -217,9 +217,22 @@ class ConfigurableFlexibleCNN(nn.Module):
         self.classifier = nn.Sequential(*classifier)
 
     def _get_flattened_size(self) -> int:
-        dummy_input = torch.randn(1, self.input_channels, self.image_size[0], self.image_size[1])
-        dummy_output = self.features(dummy_input)
-        return dummy_output.numel()
+        """Calculate flattened size mathematically without forward pass."""
+        h, w = self.image_size
+
+        # Each conv block has MaxPool2d(2, 2) which halves dimensions
+        num_pools = len(self.config.conv_channels)
+
+        # Calculate spatial dimensions after all pooling
+        h_out = h // (2 ** num_pools)
+        w_out = w // (2 ** num_pools)
+
+        # Final channels is the last conv layer's output
+        final_channels = self.config.conv_channels[-1]
+
+        flattened_size = final_channels * h_out * w_out
+
+        return flattened_size
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.features(x)

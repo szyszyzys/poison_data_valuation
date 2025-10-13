@@ -139,6 +139,36 @@ def estimate_byte_size(data: Any) -> int:
     return total_size
 
 
+def validate_and_fix_model_initialization(model: nn.Module) -> bool:
+    """
+    Check for and fix NaN/Inf values in model parameters.
+    Returns True if model is valid, False if unfixable.
+    """
+    has_issues = False
+
+    for name, param in model.named_parameters():
+        if torch.isnan(param).any() or torch.isinf(param).any():
+            logging.error(f"❌ NaN/Inf detected in parameter '{name}' during initialization!")
+            has_issues = True
+
+            # Attempt to reinitialize this specific parameter
+            if len(param.shape) >= 2:  # Weight matrix
+                nn.init.xavier_uniform_(param)
+                logging.warning(f"  -> Reinitialized '{name}' with Xavier uniform")
+            else:  # Bias or 1D parameter
+                nn.init.zeros_(param)
+                logging.warning(f"  -> Reinitialized '{name}' with zeros")
+
+    # Verify fix worked
+    if has_issues:
+        for name, param in model.named_parameters():
+            if torch.isnan(param).any() or torch.isinf(param).any():
+                logging.error(f"❌ Failed to fix parameter '{name}'!")
+                return False
+        logging.info("✅ Successfully fixed all NaN/Inf parameters")
+
+    return True
+
 class GradientSeller(BaseSeller):
     """
     A seller that participates in federated learning by providing gradient updates.
@@ -293,6 +323,10 @@ class GradientSeller(BaseSeller):
                 'upload_bytes': estimate_byte_size(zero_grad),
                 'num_samples': 0
             }
+
+        if not validate_and_fix_model_initialization(model_to_train):
+            logging.error(f"[{self.seller_id}] ❌ Model has unfixable NaN/Inf values!")
+            return None, {'error': 'Model initialization contains NaN/Inf'}
 
         logging.info(f"[{self.seller_id}] Training on {len(dataset_to_use)} samples...")
 
