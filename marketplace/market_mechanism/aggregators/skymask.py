@@ -136,8 +136,10 @@ class SkymaskAggregator(BaseAggregator):
         t = torch.tensor([self.mask_threshold], device=self.device)
         for i in range(len(seller_ids)):
             seller_mask_layers = []
-            for layer in masknet.children():
+            # ✅ This loop WILL find all layers, no matter how deeply nested
+            for layer in masknet.modules():
                 if isinstance(layer, (myconv2d, mylinear)):
+                    # This code will now execute correctly
                     if hasattr(layer, 'weight_mask'):
                         seller_mask_layers.append(torch.flatten(torch.sigmoid(layer.weight_mask[i].data)))
                     if hasattr(layer, 'bias_mask') and layer.bias_mask is not None:
