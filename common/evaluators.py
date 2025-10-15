@@ -24,16 +24,17 @@ class BaseEvaluator(ABC):
         raise NotImplementedError
 
 
+# In common/evaluators.py
+
 class CleanEvaluator(BaseEvaluator):
     """Evaluates standard model performance (accuracy and loss)."""
 
     def __init__(self, cfg, device, **kwargs):
         super().__init__(cfg, device, **kwargs)
-        # FIX: Instantiate the loss function here to make the class self-contained.
         self.loss_fn = nn.CrossEntropyLoss()
 
     def evaluate(self, model: nn.Module, test_loader: DataLoader) -> Dict[str, float]:
-        if len(test_loader.dataset) == 0:
+        if not test_loader or len(test_loader.dataset) == 0:
             logging.warning("CleanEvaluator: Test loader is empty. Returning zero metrics.")
             return {"acc": 0.0, "loss": 0.0}
 
@@ -41,18 +42,29 @@ class CleanEvaluator(BaseEvaluator):
         model.eval()
         total_loss, total_correct, total_samples = 0.0, 0, 0
         with torch.no_grad():
-            for X, y in test_loader:
-                X, y = X.to(self.device), y.to(self.device)
-                outputs = model(X)
-                total_loss += self.loss_fn(outputs, y).item() * X.size(0)
+            # --- FIX IS HERE: Make the loop modality-aware --- ✅
+            for batch in test_loader:
+                # Check the batch format to handle different data modalities
+                if len(batch) == 3:  # Text data: (labels, texts, lengths)
+                    labels, data, _ = batch
+                else:  # Image/Tabular data: (data, labels)
+                    data, labels = batch
+
+                data, labels = data.to(self.device), labels.to(self.device)
+                outputs = model(data)
+
+                total_loss += self.loss_fn(outputs, labels).item() * data.size(0)
                 _, preds = torch.max(outputs, 1)
-                total_correct += (preds == y).sum().item()
-                total_samples += X.size(0)
+                total_correct += (preds == labels).sum().item()
+                total_samples += data.size(0)
+
+        # Handle division by zero if no samples were processed
+        if total_samples == 0:
+            return {"acc": 0.0, "loss": 0.0}
 
         acc = total_correct / total_samples
         loss = total_loss / total_samples
         return {"acc": acc, "loss": loss}
-
 
 # in marketplace/market/evaluation/base.py
 
