@@ -13,6 +13,23 @@ from entry.gradient_market.automate_exp.config_generator import ExperimentGenera
 
 # In entry/gradient_market/automate_exp/config_generator.py
 
+def use_tabular_backdoor_with_trigger(trigger_conditions: Dict[str, Any]) -> Callable[[AppConfig], AppConfig]:
+    """
+    Returns a modifier to enable the tabular backdoor attack with specific trigger conditions.
+    """
+
+    def modifier(config: AppConfig) -> AppConfig:
+        # 1. Set the attack type
+        config.adversary_seller_config.poisoning.type = PoisonType.TABULAR_BACKDOOR
+
+        # 2. Set the trigger conditions using the nested attribute helper
+        trigger_key = "adversary_seller_config.poisoning.tabular_backdoor_params.active_attack_params.trigger_conditions"
+        set_nested_attr(config, trigger_key, trigger_conditions)
+
+        return config
+
+    return modifier
+
 def set_nested_attr(obj: Any, key: str, value: Any):
     """
     Sets a nested attribute on an object or a key in a nested dict
