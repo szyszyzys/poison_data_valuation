@@ -18,7 +18,6 @@ from torch.utils.data import DataLoader, random_split  # Add this import
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
 from common.datasets.tabular_data_processor import get_tabular_dataset
-from common.datasets.text_data_processor import collate_batch
 from common.evaluators import create_evaluators
 from common.factories import SellerFactory
 from common.gradient_market_configs import AppConfig, RuntimeDataConfig

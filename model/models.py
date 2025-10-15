@@ -84,20 +84,29 @@ class TextCNN(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, text: torch.Tensor) -> torch.Tensor:
-        # text: (batch_size, seq_len)
+        # text shape: (batch_size, seq_len)
         embedded = self.embedding(text)
-        # embedded: (batch_size, seq_len, embed_dim)
+        # embedded shape: (batch_size, seq_len, embed_dim)
+
         embedded = embedded.unsqueeze(1)
-        # embedded: (batch_size, 1, seq_len, embed_dim)
+        # embedded shape: (batch_size, 1, seq_len, embed_dim)
 
-        # Convolve, activate, and pool
+        # --- REFINED POOLING LOGIC --- ✅
+        # 1. Apply convolution and ReLU activation.
         conved = [F.relu(conv(embedded)) for conv in self.convs]
-        # conved[i]: (batch_size, num_filters, seq_len - fs + 1, 1)
-        pooled = [F.max_pool2d(conv, (conv.shape[2], conv.shape[3])).squeeze(3).squeeze(2) for conv in conved]
-        # pooled[i]: (batch_size, num_filters)
+        # conved[i] shape: (batch_size, num_filters, new_height, 1)
 
-        # Concatenate, dropout, and classify
+        # 2. Squeeze the last dimension to prepare for 1D pooling.
+        squeezed = [conv.squeeze(3) for conv in conved]
+        # squeezed[i] shape: (batch_size, num_filters, new_height)
+
+        # 3. Apply max pooling over the sequence length dimension.
+        pooled = [F.max_pool1d(sq, sq.shape[2]).squeeze(2) for sq in squeezed]
+        # pooled[i] shape: (batch_size, num_filters)
+
+        # --- END REFINEMENT ---
+
         cat = self.dropout(torch.cat(pooled, dim=1))
-        # cat: (batch_size, num_filters * len(filter_sizes))
-        return self.fc(cat)
+        # cat shape: (batch_size, num_filters * len(filter_sizes))
 
+        return self.fc(cat)

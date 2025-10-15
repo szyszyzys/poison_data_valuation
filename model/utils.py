@@ -32,7 +32,6 @@ def train_local_model(model: nn.Module,
                       optimizer: optim.Optimizer,
                       device: torch.device,
                       epochs: int = 1,
-                      # Add a parameter for gradient clipping
                       max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
     model.train()
     batch_losses_all = []
@@ -45,7 +44,14 @@ def train_local_model(model: nn.Module,
     for epoch in range(epochs):
         for batch_idx, batch_data in enumerate(train_loader):
             try:
-                data, labels = batch_data[0], batch_data[1]
+                # --- FIX: Modality-Aware Data Unpacking ---
+                # Check the batch format to handle different data modalities.
+                if len(batch_data) == 3:  # Text data: (labels, texts, lengths)
+                    labels, data, _ = batch_data
+                else:  # Image/Tabular data: (data, labels)
+                    data, labels = batch_data
+                # --- END FIX ---
+
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
 
                 optimizer.zero_grad()
@@ -59,14 +65,9 @@ def train_local_model(model: nn.Module,
                     continue
 
                 loss.backward()
-
-                # --- NEW: GRADIENT CLIPPING ---
-                # This is the crucial step. It rescales gradients that are too large.
-                # It must be called after .backward() and before .step().
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
-                # -----------------------------
-
                 optimizer.step()
+
                 batch_losses_all.append(loss.item())
 
             except Exception as e:
@@ -78,15 +79,14 @@ def train_local_model(model: nn.Module,
 
     if not batch_losses_all:
         logging.warning("No batches were successfully processed during training.")
-        overall_avg_loss = None
+        return model, None
     else:
         overall_avg_loss = np.mean(batch_losses_all)
         logging.info(
             f"Finished local training. Total successful batches: {len(batch_losses_all)}. "
             f"Overall Avg Loss: {overall_avg_loss:.4f}"
         )
-
-    return model, overall_avg_loss
+        return model, overall_avg_loss
 
 
 def compute_gradient_update(initial_model: nn.Module,
