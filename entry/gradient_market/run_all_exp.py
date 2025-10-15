@@ -49,6 +49,7 @@ def setup_data_and_model(cfg: AppConfig, device):
         num_classes = processed_data.num_classes
         vocab = processed_data.vocab
         collate_fn = processed_data.collate_fn
+        pad_idx = processed_data.pad_idx
 
         model_init_cfg = {"num_classes": num_classes, "vocab_size": len(vocab), "padding_idx": pad_idx,
                           "dataset_name": dataset_name}
