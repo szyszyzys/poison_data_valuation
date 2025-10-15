@@ -1,16 +1,46 @@
+import torch
+import torch
+import torch.nn as nn
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.nn.functional as F
 from collections import OrderedDict
 from typing import List
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 import marketplace.market_mechanism.aggregators.skymask_utils.mytorch as my
+from . import mytorch as my  # Assuming your custom layers are here
+
+
+# In marketplace/market_mechanism/aggregators/skymask_utils/models.py
+
+
+# Helper function to avoid repeating the parameter check logic
+def _create_with_param_check(
+        MaskNetClass,
+        param_list,
+        expected_params,
+        nworker,
+        ctx
+):
+    """
+    Creates a specific MaskNet if param count matches, otherwise falls back to DynamicMaskNet.
+    """
+    if len(param_list[0]) == expected_params:
+        print(f"✅ Using {MaskNetClass.__name__} (exact match: {expected_params} params)")
+        return MaskNetClass(param_list, nworker, ctx)
+    else:
+        print(
+            f"⚠️  Warning: '{MaskNetClass.__name__}' expects {expected_params} params but got {len(param_list[0])}. "
+            f"Falling back to DynamicMaskNet."
+        )
+        return DynamicMaskNet(param_list, nworker, ctx)
 
 
 def create_masknet(param_list, net_type, ctx):
-    """Create a mask network based on the architecture type."""
-
+    """
+    Create a mask network based on the architecture type.
+    This version is corrected and refactored for robustness.
+    """
     nworker = len(param_list)
 
     if not param_list or not param_list[0]:
@@ -20,74 +50,84 @@ def create_masknet(param_list, net_type, ctx):
     if net_type is None or net_type == 'None' or net_type == '':
         net_type = _infer_net_type_from_params(param_list)
         print(f"Auto-inferred net_type: {net_type}")
-
     net_type = net_type.lower()
 
+    masknet = None
     try:
-        # Try to match specific architectures first
+        # --- ROUTING LOGIC ---
         if net_type == "cnn":
-            if len(param_list[0]) == 8:
-                print(f"✅ Using CNNMaskNet (exact match: 8 params)")
-                masknet = CNNMaskNet(param_list, nworker, ctx)
-            else:
-                print(
-                    f"⚠️  Warning: 'cnn' typically expects 8 params but got {len(param_list[0])}, using DynamicMaskNet")
-                masknet = DynamicMaskNet(param_list, nworker, ctx)
+            masknet = _create_with_param_check(CNNMaskNet, param_list, 8, nworker, ctx)
 
+        # ✅ THIS IS THE CORRECT, MERGED RESNET LOGIC
         elif net_type in ["resnet20", "resnet18"]:
-            print(f"✅ Using ResMaskNet")
-            masknet = ResMaskNet(param_list, nworker, ctx)
+            print("✅ Using robust ResMaskNet by inspecting real model structure...")
+            # This requires the "real" model to inspect its structure.
+            # We build a temporary real model to pass to the MaskNet constructor.
+            # Make sure these imports are valid in your project structure.
+            from your_model_module import ConfigurableResNet
+            from your_config_module import get_resnet_config_for_cifar10
+
+            # Assuming ctx holds the device
+            device = ctx if isinstance(ctx, torch.device) else torch.device("cpu")
+
+            # The number of workers is nworker - 1 because param_list includes the buyer
+            num_workers = nworker - 1
+
+            temp_real_model = ConfigurableResNet(num_classes=10, config=get_resnet_config_for_cifar10())
+            masknet = ResMaskNet(temp_real_model, param_list, num_workers, device)
 
         elif net_type == "lr":
-            if len(param_list[0]) == 2:
-                print(f"✅ Using LRMaskNet (exact match: 2 params)")
-                masknet = LRMaskNet(param_list, nworker, ctx)
-            else:
-                print(f"⚠️  Warning: 'lr' expects 2 params but got {len(param_list[0])}, using DynamicMaskNet")
-                masknet = DynamicMaskNet(param_list, nworker, ctx)
+            masknet = _create_with_param_check(LRMaskNet, param_list, 2, nworker, ctx)
 
         elif net_type == "lenet":
-            if len(param_list[0]) == 10:
-                print(f"✅ Using LeNetMaskNet (exact match: 10 params)")
-                masknet = LeNetMaskNet(param_list, nworker, ctx)
-            else:
-                print(f"⚠️  Warning: 'lenet' expects 10 params but got {len(param_list[0])}, using DynamicMaskNet")
-                masknet = DynamicMaskNet(param_list, nworker, ctx)
+            masknet = _create_with_param_check(LeNetMaskNet, param_list, 10, nworker, ctx)
 
         elif net_type == "cifarcnn":
-            if len(param_list[0]) == 16:
-                print(f"✅ Using CnnCifarMaskNet (exact match: 16 params)")
-                masknet = CnnCifarMaskNet(param_list, nworker, ctx)
-            else:
-                print(f"⚠️  Warning: 'cifarcnn' expects 16 params but got {len(param_list[0])}, using DynamicMaskNet")
-                masknet = DynamicMaskNet(param_list, nworker, ctx)
+            masknet = _create_with_param_check(CnnCifarMaskNet, param_list, 16, nworker, ctx)
 
         elif net_type in ["flexiblecnn", "dynamic"]:
             print(f"✅ Using DynamicMaskNet (flexible architecture support)")
             masknet = DynamicMaskNet(param_list, nworker, ctx)
 
         else:
-            # Unknown type - try dynamic as last resort
-            print(f"⚠️  Warning: Unknown net_type '{net_type}', attempting DynamicMaskNet")
+            print(f"⚠️  Warning: Unknown net_type '{net_type}', attempting DynamicMaskNet as fallback.")
             masknet = DynamicMaskNet(param_list, nworker, ctx)
 
     except Exception as e:
+
         print(f"\n{'=' * 80}")
         print(f"ERROR: Failed to create masknet of type '{net_type}'")
+
         print(f"Reason: {e}")
+
         print(f"\nParameter structure:")
+
         print(f"  - Number of workers: {len(param_list)}")
+
         print(f"  - Params per worker: {len(param_list[0]) if param_list else 0}")
+
         if param_list and param_list[0]:
+
             print(f"  - Parameter shapes:")
+
             for i, p in enumerate(param_list[0][:30]):  # Show first 30
+
                 param_type = "Conv2d" if len(p.shape) == 4 else "Linear" if len(p.shape) == 2 else f"{len(p.shape)}D"
+
                 print(f"      Param {i:2d}: {str(p.shape):25s} ({p.numel():10d} elements) [{param_type}]")
+
         print(f"{'=' * 80}\n")
+
         raise RuntimeError(
+
             f"Cannot create masknet for type '{net_type}'. "
+
             f"Check the error above and parameter structure. "
+
             f"You may need to set sm_model_type='dynamic' in your config.")
+
+    if masknet is None:
+        raise RuntimeError(f"MaskNet was not created for an unknown reason for net_type '{net_type}'.")
 
     return masknet
 
@@ -401,31 +441,91 @@ class ResidualBlock(nn.Module):
 
 
 class ResidualMaskBlock(nn.Module):
-    def __init__(self, param_list, num_workers, device, stride=1):
-        super(ResidualMaskBlock, self).__init__()
+    """A masked version of a ResNet ResidualBlock."""
 
-        self.num_workers = num_workers
-        self.param_list = param_list
-        self.device = device
+    def __init__(self, real_block, all_workers_params, param_idx, num_workers, device):
+        super().__init__()
 
-        self.left = nn.Sequential(
-            my.myconv2d(num_workers, device, [x[0] for x in param_list], stride=stride, padding=1),
-            my.mybatch_norm(num_workers, device, [x[1] for x in param_list], [x[2] for x in param_list]),
-            nn.ReLU(),
-            my.myconv2d(num_workers, device, [x[5] for x in param_list], padding=1),
-            my.mybatch_norm(num_workers, device, [x[6] for x in param_list], [x[7] for x in param_list])
-        )
+        # This tracks how many parameters this block consumes from the flat list
+        self.params_consumed = 0
+
+        # --- Main Path ---
+        # Conv1 -> BN1 -> ReLU
+        self.conv1 = my.myconv2d(num_workers, device, [p[param_idx] for p in all_workers_params])
+        self.params_consumed += 1
+        self.bn1 = my.mybatch_norm(num_workers, device, [p[param_idx + 1] for p in all_workers_params],
+                                   [p[param_idx + 2] for p in all_workers_params])
+        self.params_consumed += 2
+
+        # Conv2 -> BN2
+        self.conv2 = my.myconv2d(num_workers, device, [p[param_idx + 3] for p in all_workers_params])
+        self.params_consumed += 1
+        self.bn2 = my.mybatch_norm(num_workers, device, [p[param_idx + 4] for p in all_workers_params],
+                                   [p[param_idx + 5] for p in all_workers_params])
+        self.params_consumed += 2
+
+        # --- Shortcut Path ---
         self.shortcut = nn.Sequential()
-        if len(param_list[0]) > 10:
+        # Check if the real block has a shortcut connection
+        if len(real_block.shortcut) > 0:
             self.shortcut = nn.Sequential(
-                my.myconv2d(num_workers, device, [x[10] for x in param_list], stride=stride),
-                my.mybatch_norm(num_workers, device, [x[11] for x in param_list], [x[12] for x in param_list])
+                my.myconv2d(num_workers, device, [p[param_idx + 6] for p in all_workers_params]),
+                my.mybatch_norm(num_workers, device, [p[param_idx + 7] for p in all_workers_params],
+                                [p[param_idx + 8] for p in all_workers_params])
             )
+            self.params_consumed += 3
 
     def forward(self, x):
-        out = self.left(x)
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
         out += self.shortcut(x)
         out = F.relu(out)
+        return out
+
+
+class ResMaskNet(nn.Module):
+    """A robust MaskNet that correctly mirrors a CIFAR-adapted ResNet model."""
+
+    def __init__(self, real_model, all_workers_params, num_workers, device):
+        super().__init__()
+
+        # This index tracks our position in the flat parameter list
+        self.param_idx = 0
+
+        # --- Build network by iterating through the REAL model's layers ---
+        self.conv1 = my.myconv2d(num_workers, device, [p[self.param_idx] for p in all_workers_params])
+        self.param_idx += 1
+        self.bn1 = my.mybatch_norm(num_workers, device, [p[self.param_idx] for p in all_workers_params],
+                                   [p[self.param_idx + 1] for p in all_workers_params])
+        self.param_idx += 2
+
+        self.layer1 = self._make_masked_layer(real_model.layer1, all_workers_params, num_workers, device)
+        self.layer2 = self._make_masked_layer(real_model.layer2, all_workers_params, num_workers, device)
+        self.layer3 = self._make_masked_layer(real_model.layer3, all_workers_params, num_workers, device)
+        self.layer4 = self._make_masked_layer(real_model.layer4, all_workers_params, num_workers, device)
+
+        self.linear = my.mylinear(num_workers, device, [p[self.param_idx] for p in all_workers_params],
+                                  [p[self.param_idx + 1] for p in all_workers_params])
+        self.param_idx += 2
+
+    def _make_masked_layer(self, real_layer, all_params, num_workers, device):
+        layers = []
+        for real_block in real_layer:
+            masked_block = ResidualMaskBlock(real_block, all_params, self.param_idx, num_workers, device)
+            layers.append(masked_block)
+            self.param_idx += masked_block.params_consumed
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = F.avg_pool2d(out, 4)
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        # Return raw logits, as expected by the training loss function
         return out
 
 

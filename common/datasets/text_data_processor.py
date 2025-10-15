@@ -1,16 +1,15 @@
 # --- Imports ---
 import hashlib
 import logging
+import numpy as np
 import os
 import random
-from dataclasses import dataclass
-from typing import (Any, Dict, List, Optional, Tuple, Callable)
-
-import numpy as np
 import torch
+from dataclasses import dataclass
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
 from torchtext.vocab import Vocab
+from typing import (Any, Dict, List, Optional, Tuple, Callable)
 
 # --- HuggingFace datasets dynamic import ---
 try:
@@ -29,17 +28,26 @@ logger = logging.getLogger(__name__)
 
 class StandardFormatDataset(Dataset):
     """A wrapper for text data that provides a uniform interface."""
+
     def __init__(self, data: List[Tuple[Any, Any]], label_first: bool = True):
         self.data = data
         self.label_first = label_first
 
-        # --- THIS IS THE KEY ADDITION ---
-        # Pre-extract all labels into a numpy array for efficient access.
-        # This solves the error and speeds up partitioning.
-        if label_first:
-            self.targets = np.array([item[0] for item in self.data])
-        else:
-            self.targets = np.array([item[1] for item in self.data])
+        # --- CORRECTED LOGIC ---
+        # Determine the correct index for the label
+        label_index = 0 if self.label_first else 1
+
+        processed_labels = []
+        for item in self.data:
+            label = item[label_index]
+
+            # Normalize the label format (handle lists/tuples)
+            if isinstance(label, (list, tuple)):
+                processed_labels.append(label[0])
+            else:
+                processed_labels.append(label)
+
+        self.targets = np.array(processed_labels)
 
     def __len__(self):
         return len(self.data)
@@ -55,7 +63,6 @@ def collate_batch(batch, padding_value):
     # The batch is delivering (text_sequence, label_integer) tuples.
     # We unpack them accordingly.
     for (text_sequence, label) in batch:
-
         # --- FIX: Append the correct variables to the correct lists ---
         label_list.append(label)
 
@@ -69,7 +76,6 @@ def collate_batch(batch, padding_value):
     texts = pad_sequence(text_list, batch_first=True, padding_value=padding_value)
 
     return labels, texts, torch.tensor(lengths, dtype=torch.int64)
-
 
 
 def get_cache_path(cache_dir: str, prefix: str, params: Tuple) -> str:

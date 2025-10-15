@@ -73,6 +73,7 @@ def generate_main_summary_figure_scenarios() -> List[Scenario]:
     # --- Image Scenarios ---
     for dataset_name, dataset_modifier in IMAGE_DATASETS_TO_TEST:
         for model_name in ["cnn", "resnet18"]:
+            sm_model_type = 'flexiblecnn' if model_name == 'cnn' else 'resnet18'
             scenarios.append(Scenario(
                 name=f"main_summary_{dataset_name}_{model_name}",
                 base_config_factory=get_base_image_config,
@@ -82,6 +83,7 @@ def generate_main_summary_figure_scenarios() -> List[Scenario]:
                     "experiment.model_structure": [model_name],
                     # Use the correct list
                     "aggregation.method": IMAGE_AGGREGATORS,
+                    "aggregation.sm_model_type": [sm_model_type],
                     **fixed_attack_params
                 }
             ))
@@ -248,6 +250,7 @@ def generate_oracle_vs_buyer_bias_scenarios() -> List[Scenario]:
             "aggregation.method": ALL_AGGREGATORS,
             # This is the key parameter we sweep over
             "aggregation.root_gradient_source": ["buyer", "validation"],
+            "aggregation.sm_model_type": ["flexiblecnn"],
             **fixed_attack_params
         }
     ))
