@@ -58,24 +58,20 @@ class StandardFormatDataset(Dataset):
 
 
 def collate_batch(batch, padding_value):
-    label_list, text_list, lengths = [], [], []
+    labels = []
+    texts = []
+    lengths = []
 
-    # The batch is delivering (text_sequence, label_integer) tuples.
-    # We unpack them accordingly.
-    for (text_sequence, label) in batch:
-        # --- FIX: Append the correct variables to the correct lists ---
-        label_list.append(label)
+    for text_sequence, label in batch:
+        labels.append(label)
+        texts.append(torch.tensor(text_sequence, dtype=torch.int64))
+        lengths.append(len(text_sequence))  # This will now work correctly
 
-        processed_text = torch.tensor(text_sequence, dtype=torch.int64)
-        text_list.append(processed_text)
+    labels = torch.tensor(labels, dtype=torch.int64)
+    texts = pad_sequence(texts, batch_first=True, padding_value=padding_value)
+    lengths = torch.tensor(lengths, dtype=torch.int64)
 
-        lengths.append(len(text_sequence))
-        # --- END FIX ---
-
-    labels = torch.tensor(label_list, dtype=torch.int64)
-    texts = pad_sequence(text_list, batch_first=True, padding_value=padding_value)
-
-    return labels, texts, torch.tensor(lengths, dtype=torch.int64)
+    return labels, texts, lengths
 
 
 def get_cache_path(cache_dir: str, prefix: str, params: Tuple) -> str:
