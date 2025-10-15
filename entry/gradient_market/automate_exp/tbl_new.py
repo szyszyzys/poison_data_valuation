@@ -6,7 +6,7 @@ from typing import Any, List, Callable, Dict
 
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig, AggregationConfig, TabularDataConfig, DataConfig, \
-    AdversarySellerConfig, ServerAttackConfig, TrainingConfig, ExperimentConfig
+    AdversarySellerConfig, ServerAttackConfig, TrainingConfig, ExperimentConfig, DebugConfig
 from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 
 
@@ -48,7 +48,8 @@ def get_base_tabular_config() -> AppConfig:
         ),
         aggregation=AggregationConfig(method="fedavg"),
         seed=42,
-        n_samples=3
+        n_samples=3,
+        debug=DebugConfig(),
     )
 
 
