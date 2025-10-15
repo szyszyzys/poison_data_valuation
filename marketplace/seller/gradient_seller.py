@@ -1332,3 +1332,70 @@ class AdaptiveAttackerSeller(GradientSeller):
         super().round_end_process(round_number=round_number, was_selected=was_selected, **kwargs)
         if self.phase == "exploration":
             self.strategy_history.append((round_number, self.current_strategy, was_selected))
+
+
+class DrowningAttackerSeller(GradientSeller):
+    """
+    Implements the Targeted Drowning (Centroid Poisoning) Attack.
+
+    This seller first acts honestly to gain the aggregator's trust, then
+    slowly and consistently drifts its gradient away from the honest direction.
+    This is designed to poison the memory of adaptive defenses like MartFL,
+    eventually making honest sellers appear to be outliers.
+    """
+
+    def __init__(self, *args, adversary_config: AdversarySellerConfig, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.adv_cfg = adversary_config.drowning_attack
+        if not self.adv_cfg.is_active:
+            raise ValueError("DrowningAttackerSeller created but is_active is False in config.")
+
+        # --- Attack State ---
+        self.phase = "mimicry"  # Can be "mimicry" or "drift"
+        self.round_counter = 0
+        self.drift_vector: Optional[List[torch.Tensor]] = None
+
+        logging.info(
+            f"[{self.seller_id}] Initialized as DrowningAttacker. "
+            f"Mimicking for {self.adv_cfg.mimicry_rounds} rounds."
+        )
+
+    def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
+        self.round_counter += 1
+
+        # --- Phase Transition Logic ---
+        if self.phase == "mimicry" and self.round_counter > self.adv_cfg.mimicry_rounds:
+            self.phase = "drift"
+            logging.info(f"[{self.seller_id}] Transitioning to Drift Phase.")
+
+        # 1. Always compute the honest gradient first.
+        # This represents the gradient of the honest, high-quality target we are mimicking.
+        honest_gradient, stats = super().get_gradient_for_upload(global_model)
+        if honest_gradient is None:
+            return None, stats
+
+        stats['attack_phase'] = self.phase
+
+        # 2. If in the mimicry phase, act honestly to build trust.
+        if self.phase == "mimicry":
+            logging.info(f"[{self.seller_id}][Mimicry] Round {self.round_counter}: Submitting honest gradient.")
+            return honest_gradient, stats
+
+        # 3. If in the drift phase, apply the consistent poisoning.
+        else:  # self.phase == "drift"
+            # Initialize the drift direction on the first drift round
+            if self.drift_vector is None:
+                logging.info(f"[{self.seller_id}] Initializing a random, consistent drift vector.")
+                self.drift_vector = [
+                    torch.randn_like(p, device=self.device) for p in honest_gradient
+                ]
+
+            # Apply the drift
+            drifted_gradient = []
+            for i, tensor in enumerate(honest_gradient):
+                # Add the scaled drift vector to the honest gradient
+                drift_update = self.drift_vector[i] * self.adv_cfg.drift_factor
+                drifted_gradient.append(tensor + drift_update)
+
+            logging.info(f"[{self.seller_id}][Drift] Round {self.round_counter}: Submitting drifted gradient.")
+            return drifted_gradient, stats

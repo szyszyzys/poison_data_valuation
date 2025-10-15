@@ -885,24 +885,40 @@ def _get_sample_data(test_loader, seller_loaders):
     """
     Get a sample batch of data for shape inference.
     Tries test_loader first, then falls back to seller loaders.
+    This version is robust to different numbers of returned items from the loader.
     """
     sample_data = None
 
-    # Try test loader first
+    # --- Try test loader first ---
     if test_loader:
         try:
-            sample_data, _ = next(iter(test_loader))
+            # Get the whole batch first without unpacking it immediately
+            batch = next(iter(test_loader))
+
+            # Check how many items the loader returned to handle different data types
+            if len(batch) == 3:  # This is the text case: (labels, texts, lengths)
+                sample_data = batch[1]  # The actual data is the second item ('texts')
+            else:  # Assume the standard (data, label) case for image/tabular
+                sample_data = batch[0]  # The data is the first item
+
             logging.info("✅ Sample data obtained from test loader")
+
         except StopIteration:
             logging.warning("⚠️  Test loader is available but empty")
 
-    # Fall back to seller loaders
+    # --- Fall back to seller loaders if needed ---
     if sample_data is None:
         logging.info("🔍 No test data found. Trying seller loaders...")
         for sid, loader in seller_loaders.items():
             if loader:
                 try:
-                    sample_data, _ = next(iter(loader))
+                    # Apply the same robust logic here
+                    batch = next(iter(loader))
+                    if len(batch) == 3:
+                        sample_data = batch[1]
+                    else:
+                        sample_data = batch[0]
+
                     logging.info(f"✅ Sample data obtained from seller {sid} loader")
                     break
                 except StopIteration:

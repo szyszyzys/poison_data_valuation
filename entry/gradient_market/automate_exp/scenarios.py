@@ -458,6 +458,59 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
     return scenarios
 
 
+def use_drowning_attack(mimicry_rounds: int, drift_factor: float) -> Callable[[AppConfig], AppConfig]:
+    """
+    Returns a modifier to enable the Targeted Drowning (Centroid Poisoning) attack.
+    It also disables other attack types to prevent interference.
+    """
+
+    def modifier(config: AppConfig) -> AppConfig:
+        # Activate the drowning attack with specified parameters
+        adv_cfg = config.adversary_seller_config.drowning_attack
+        adv_cfg.is_active = True
+        adv_cfg.mimicry_rounds = mimicry_rounds
+        adv_cfg.drift_factor = drift_factor
+
+        # Deactivate other attacks to ensure the experiment is isolated
+        config.adversary_seller_config.poisoning.type = PoisonType.NO_POISON
+        config.adversary_seller_config.sybil.is_sybil = False
+        config.adversary_seller_config.adaptive_attack.is_active = False
+        return config
+
+    return modifier
+
+
+def generate_drowning_attack_scenarios() -> List[Scenario]:
+    """
+    Generates scenarios to test the DrowningAttackerSeller's ability
+    to poison the centroid of adaptive defenses like MartFL.
+    """
+    scenarios = []
+    # Test against defenses that learn a centroid or are susceptible to drift
+    AGGREGATORS_TO_TEST = ['fedavg', 'fltrust', 'martfl']
+    ADV_RATES_TO_SWEEP = [0.1, 0.2, 0.3, 0.4]  # See how the attack scales with more colluders
+
+    scenarios.append(Scenario(
+        name="drowning_attack_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        # Use the new modifier to set up the attack
+        modifiers=[
+            use_cifar10_config,
+            # Configure the attack: 10 rounds of mimicry, then a 10% drift
+            use_drowning_attack(mimicry_rounds=10, drift_factor=0.1)
+        ],
+        parameter_grid={
+            # --- Fixed Parameters for this test ---
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- Swept Parameters ---
+            "aggregation.method": AGGREGATORS_TO_TEST,
+            "experiment.adv_rate": ADV_RATES_TO_SWEEP,
+        }
+    ))
+
+    return scenarios
 
 
 ALL_SCENARIOS = []
@@ -478,6 +531,7 @@ ALL_SCENARIOS.extend(generate_label_flipping_scenarios())
 ALL_SCENARIOS.extend(generate_sybil_selection_rate_scenarios())
 ALL_SCENARIOS.extend(generate_buyer_data_impact_scenarios())
 ALL_SCENARIOS.extend(generate_adaptive_attack_scenarios())
+ALL_SCENARIOS.extend(generate_drowning_attack_scenarios())
 
 # You can print the names of generated scenarios to verify
 if __name__ == '__main__':
