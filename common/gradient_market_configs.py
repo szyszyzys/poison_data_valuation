@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple, List, Union, Callable
+from typing import Any, Dict, Optional, Tuple, List, Union, Callable, Literal
 
 from torch.utils.data import Dataset
 
