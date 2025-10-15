@@ -1,10 +1,9 @@
-# FILE: entry/gradient_market/automate_exp/generate_focused_tabular_configs.py
+# FILE: entry/gradient_market/automate_exp/tabular_scenarios.py
 
 import torch
 from dataclasses import dataclass, field
 from typing import Any, List, Callable, Dict
 
-# Make sure these imports match your project structure
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig, AggregationConfig, TabularDataConfig, DataConfig, \
     AdversarySellerConfig, ServerAttackConfig, TrainingConfig, ExperimentConfig
@@ -27,7 +26,8 @@ def get_base_tabular_config() -> AppConfig:
     return AppConfig(
         experiment=ExperimentConfig(
             dataset_name="Texas100",
-            model_structure="None",  # Not used for tabular, but required by class
+            model_structure="None",
+            aggregation_method="fedavg",
             global_rounds=100,
             n_sellers=10,
             adv_rate=0.0,
@@ -48,88 +48,185 @@ def get_base_tabular_config() -> AppConfig:
         ),
         aggregation=AggregationConfig(method="fedavg"),
         seed=42,
-        n_samples=3,
+        n_samples=3
     )
+
+
+# --- CRITICAL: DEFINE YOUR TRIGGER PATTERNS HERE ---
+# You MUST verify that these feature names match your datasets.
+TEXAS100_TRIGGER = {"feature_0": 99.0, "feature_1": -99.0}
+PURCHASE100_TRIGGER = {"feature_0": 99.0, "feature_1": -99.0}
 
 
 # --- Reusable Modifier Functions ---
 def use_tabular_backdoor_with_trigger(trigger_conditions: Dict[str, Any]) -> Callable[[AppConfig], AppConfig]:
-    """
-    Returns a modifier to enable the tabular backdoor attack with specific trigger conditions.
-    """
+    """Returns a modifier to enable the tabular backdoor attack with specific trigger conditions."""
 
     def modifier(config: AppConfig) -> AppConfig:
-        # 1. Set the attack type to activate the correct adversary class
         config.adversary_seller_config.poisoning.type = PoisonType.TABULAR_BACKDOOR
-
-        # 2. Set the specific trigger pattern for the attack
         trigger_key = "adversary_seller_config.poisoning.tabular_backdoor_params.active_attack_params.trigger_conditions"
         set_nested_attr(config, trigger_key, trigger_conditions)
-
         return config
 
     return modifier
 
 
 def use_tabular_label_flipping_attack(config: AppConfig) -> AppConfig:
-    """Modifier to set up for a simple label-flipping attack."""
+    """Modifier for a simple label-flipping attack."""
     config.adversary_seller_config.poisoning.type = PoisonType.LABEL_FLIP
     config.adversary_seller_config.poisoning.poison_rate = 1.0
     return config
 
 
-# --- Main Scenario Generator ---
-def generate_focused_tabular_scenarios() -> List[Scenario]:
-    """
-    Generates a focused set of scenarios for tabular data, including an active backdoor attack.
-    """
+def use_sybil_attack(strategy: str) -> Callable[[AppConfig], AppConfig]:
+    """Modifier to enable a specific Sybil attack strategy."""
+
+    def modifier(config: AppConfig) -> AppConfig:
+        config.adversary_seller_config.sybil.is_sybil = True
+        config.adversary_seller_config.sybil.gradient_default_mode = strategy
+        return config
+
+    return modifier
+
+
+# --- Scenario Generator Functions (All Updated) ---
+def generate_tabular_oracle_vs_buyer_bias_scenarios() -> List[Scenario]:
     scenarios = []
-    AGGREGATORS_TO_TEST = ['fedavg', 'fltrust', 'martfl']
-
-    # --- IMPORTANT: Define your backdoor trigger here ---
-    # The feature names (e.g., "feature_0") MUST match the actual column names in your dataset.
-    # The values (e.g., 99.0) should be unusual or out-of-distribution to create a strong trigger.
-    TEXAS100_TRIGGER = {
-        "feature_0": 99.0,
-        "feature_1": -99.0
-    }
-
-    # --- Scenario 1: Backdoor Attack (Now Active) ---
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
     scenarios.append(Scenario(
-        name="tabular_backdoor_attack",
+        name="oracle_vs_buyer_bias_texas100",
+        base_config_factory=get_base_tabular_config,
+        modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER), use_sybil_attack('mimic')],
+        parameter_grid={
+            "experiment.dataset_name": ["texas100"],
+            "experiment.tabular_model_config_name": ["mlp_texas100_baseline"],
+            "aggregation.method": ALL_AGGREGATORS,
+            "experiment.adv_rate": [0.3],
+            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "aggregation.root_gradient_source": ["buyer", "validation"],
+        }
+    ))
+    return scenarios
+
+
+def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
+    scenarios = []
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+    SYBIL_STRATEGIES = ['mimic', 'pivot', 'knock_out']
+    dataset_name = "texas100"
+    model_config = "mlp_texas100_baseline"
+
+    scenarios.append(Scenario(
+        name=f"sybil_baseline_{dataset_name}",
         base_config_factory=get_base_tabular_config,
         modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER)],
         parameter_grid={
+            "experiment.dataset_name": [dataset_name],
+            "experiment.tabular_model_config_name": [model_config],
+            "aggregation.method": ALL_AGGREGATORS,
             "experiment.adv_rate": [0.3],
             "adversary_seller_config.poisoning.poison_rate": [0.5],
-            "aggregation.method": AGGREGATORS_TO_TEST,
+            "adversary_seller_config.sybil.is_sybil": [False]
         }
     ))
+    for strategy in SYBIL_STRATEGIES:
+        scenarios.append(Scenario(
+            name=f"sybil_{strategy}_{dataset_name}",
+            base_config_factory=get_base_tabular_config,
+            modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER), use_sybil_attack(strategy)],
+            parameter_grid={
+                "experiment.dataset_name": [dataset_name],
+                "experiment.tabular_model_config_name": [model_config],
+                "aggregation.method": ALL_AGGREGATORS,
+                "experiment.adv_rate": [0.3],
+                "adversary_seller_config.poisoning.poison_rate": [0.5],
+            }
+        ))
+    return scenarios
 
-    # --- Scenario 2: Label-Flipping Attack ---
+
+def generate_tabular_data_heterogeneity_scenarios() -> List[Scenario]:
+    scenarios = []
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+    DIRICHLET_ALPHAS = [100.0, 1.0, 0.1]
+    dataset_name = "texas100"
+    model_config = "mlp_texas100_baseline"  # Assuming a model config for purchase100 exists
     scenarios.append(Scenario(
-        name="tabular_label_flip_attack",
+        name=f"heterogeneity_{dataset_name}",
+        base_config_factory=get_base_tabular_config,
+        modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER)],
+        parameter_grid={
+            "experiment.dataset_name": [dataset_name],
+            "experiment.tabular_model_config_name": [model_config],
+            "aggregation.method": ALL_AGGREGATORS,
+            "experiment.adv_rate": [0.3],
+            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "data.tabular.strategy": ["dirichlet"],
+            "data.tabular.property_skew.dirichlet_alpha": DIRICHLET_ALPHAS
+        }
+    ))
+    return scenarios
+
+
+def generate_tabular_attack_impact_scenarios() -> List[Scenario]:
+    scenarios = []
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+    ADV_RATES_TO_SWEEP = [0.1, 0.3, 0.5]
+    POISON_RATES_TO_SWEEP = [0.1, 0.5, 1.0]
+    dataset_name = "texas100"
+    model_config = "mlp_texas100_baseline"
+    for group_name, sweep_params in [
+        ("vary_adv_rate",
+         {"experiment.adv_rate": ADV_RATES_TO_SWEEP, "adversary_seller_config.poisoning.poison_rate": [0.5]}),
+        ("vary_poison_rate",
+         {"experiment.adv_rate": [0.3], "adversary_seller_config.poisoning.poison_rate": POISON_RATES_TO_SWEEP})
+    ]:
+        scenarios.append(Scenario(
+            name=f"impact_{group_name}_{dataset_name}",
+            base_config_factory=get_base_tabular_config,
+            modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER)],
+            parameter_grid={
+                "experiment.dataset_name": [dataset_name],
+                "experiment.tabular_model_config_name": [model_config],
+                "aggregation.method": ALL_AGGREGATORS,
+                **sweep_params
+            }
+        ))
+    return scenarios
+
+
+def generate_tabular_label_flipping_scenarios() -> List[Scenario]:
+    scenarios = []
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+    scenarios.append(Scenario(
+        name="label_flip_texas100",
         base_config_factory=get_base_tabular_config,
         modifiers=[use_tabular_label_flipping_attack],
         parameter_grid={
+            "experiment.dataset_name": ["texas100"],
+            "experiment.tabular_model_config_name": ["mlp_texas100_baseline"],
+            "aggregation.method": ALL_AGGREGATORS,
             "experiment.adv_rate": [0.3],
-            "aggregation.method": AGGREGATORS_TO_TEST,
         }
     ))
-
     return scenarios
 
 
 # --- Main Execution Block ---
 if __name__ == "__main__":
-    output_dir = "./configs_generated/tabular_focused"
+    output_dir = "./configs_generated/tabular_new_with_trigger"  # Changed output dir to avoid overwriting old results
     generator = ExperimentGenerator(output_dir)
 
-    all_scenarios = generate_focused_tabular_scenarios()
+    ALL_TABULAR_SCENARIOS = []
+    ALL_TABULAR_SCENARIOS.extend(generate_tabular_oracle_vs_buyer_bias_scenarios())
+    ALL_TABULAR_SCENARIOS.extend(generate_tabular_sybil_impact_scenarios())
+    ALL_TABULAR_SCENARIOS.extend(generate_tabular_data_heterogeneity_scenarios())
+    ALL_TABULAR_SCENARIOS.extend(generate_tabular_attack_impact_scenarios())
+    ALL_TABULAR_SCENARIOS.extend(generate_tabular_label_flipping_scenarios())
 
-    for scenario in all_scenarios:
+    for scenario in ALL_TABULAR_SCENARIOS:
         base_config = scenario.base_config_factory()
         generator.generate(base_config, scenario)
 
-    print(f"\n✅ Generated all configurations for {len(all_scenarios)} focused tabular scenarios.")
+    print(f"\n✅ All configurations for {len(ALL_TABULAR_SCENARIOS)} tabular scenarios have been generated.")
     print(f"   Configs saved to: {output_dir}")
