@@ -170,6 +170,15 @@ class SellerFactory:
 
         if not is_adversary:
             return GradientSeller(**base_kwargs, **self.runtime_kwargs)
+
+        if self.cfg.adversary_seller_config.drowning_attack.is_active:
+            logging.info(f"Creating DrowningAttackerSeller for {seller_id}")
+            return DrowningAttackerSeller(
+                **base_kwargs,
+                adversary_config=self.cfg.adversary_seller_config,
+                **self.runtime_kwargs
+            )
+
         if self.cfg.adversary_seller_config.adaptive_attack.is_active:
             logging.info(f"Creating AdaptiveAttackerSeller for {seller_id}")
 

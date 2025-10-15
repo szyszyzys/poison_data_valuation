@@ -2,26 +2,27 @@ import collections
 import csv
 import json
 import logging
-import numpy as np
 import os
-import pandas as pd
 import random
 import sys
 import time
-import torch
-import torch.nn.functional as F
 # Add these class definitions as well
 from abc import ABC, abstractmethod
 from collections import abc  # abc.Mapping for general dicts
 from dataclasses import field, dataclass
 from pathlib import Path
-from torch import nn
-from torch.utils.data import DataLoader, Dataset
 from typing import Any, Callable, Set
 from typing import Dict
 from typing import List, Optional
 from typing import Tuple
 from typing import Union
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn.functional as F
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
     BackdoorTextGenerator, BackdoorTabularGenerator
@@ -1218,6 +1219,7 @@ class AdaptiveAttackerSeller(GradientSeller):
                  poison_generator_factory: Optional[Callable] = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.adv_cfg = adversary_config.adaptive_attack
+        self.adversary_config = adversary_config
         if not self.adv_cfg.is_active:
             raise ValueError("AdaptiveAttackerSeller created but is_active is False in config.")
 
@@ -1269,8 +1271,8 @@ class AdaptiveAttackerSeller(GradientSeller):
             self.best_strategy = "honest"
             return
 
-        strategy_success = defaultdict(int)
-        strategy_attempts = defaultdict(int)
+        strategy_success = collections.defaultdict(int)
+        strategy_attempts = collections.defaultdict(int)
 
         for _, strategy, was_selected in self.strategy_history:
             strategy_attempts[strategy] += 1

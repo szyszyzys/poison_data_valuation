@@ -5,21 +5,18 @@ import logging
 import os
 import pickle
 import random
-import urllib.request
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from typing import (Callable, Generator)
 
 import numpy as np
-import pandas as pd
 import torch
 import torchvision
 from torch.utils.data import DataLoader, Subset
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import Vocab, build_vocab_from_iterator
 from torchvision.transforms import v2 as transforms
-from ucimlrepo import fetch_ucirepo
 
 from common.datasets.data_partitioner import FederatedDataPartitioner, _extract_targets
 from common.datasets.data_split import OverallFractionSplit
