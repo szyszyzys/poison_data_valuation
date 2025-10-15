@@ -194,6 +194,13 @@ class ServerAttackConfig:
     # You could add others here in the future
     # membership_inference: MembershipInferenceParams = field(default_factory=MembershipInferenceParams)
 
+@dataclass
+class DrowningAttackConfig:
+    """Configuration for the Targeted Drowning (Centroid Poisoning) Attack."""
+    is_active: bool = False
+    mimicry_rounds: int = 10  # Number of rounds to act honestly to build trust
+    drift_factor: float = 0.1   # How much to shift the gradient each drift round
+
 
 @dataclass
 class SybilConfig:
@@ -298,6 +305,7 @@ class AdversarySellerConfig:
     poisoning: PoisoningConfig = field(default_factory=PoisoningConfig)
     sybil: SybilConfig = field(default_factory=SybilConfig)
     adaptive_attack: AdaptiveAttackConfig = field(default_factory=AdaptiveAttackConfig)
+    drowning_attack: DrowningAttackConfig = field(default_factory=DrowningAttackConfig)
 
 
 @dataclass

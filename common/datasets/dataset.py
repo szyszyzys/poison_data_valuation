@@ -229,7 +229,7 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         seller_splits=seller_splits,
         client_properties=client_properties,
         targets=_extract_targets(train_set),
-        save_filepath=stats_save_path # Use the new `save_filepath` argument
+        save_filepath=stats_save_path  # Use the new `save_filepath` argument
     )
 
     # Create DataLoaders (this part is the same as before)
@@ -302,7 +302,7 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         # 3. GET the actual class information from the dataset
         dataset_features = ds['train'].features[label_field]
         class_names = dataset_features.names
-        num_classes = len(class_names) # This is the true number of classes in the data
+        num_classes = len(class_names)  # This is the true number of classes in the data
 
     else:
         raise ValueError(f"Unsupported dataset: {exp_cfg.dataset_name}")
@@ -311,7 +311,14 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         for ex in dataset_obj:
             text_content, label_content = ex.get(text_fld), ex.get(label_fld) if label_fld else None
             if isinstance(text_content, str):
-                yield (label_content, text_content) if label_fld else text_content
+                # --- FIX 1: Yield data in the standard (data, label) format ---
+                yield (text_content, label_content) if label_fld else text_content
+
+    # def hf_iterator(dataset_obj, text_fld, label_fld=None) -> Generator[Any, None, None]:
+    #     for ex in dataset_obj:
+    #         text_content, label_content = ex.get(text_fld), ex.get(label_fld) if label_fld else None
+    #         if isinstance(text_content, str):
+    #             yield (label_content, text_content) if label_fld else text_content
 
     # 3. --- Build or Load Vocabulary ---
     vocab_cache_params = (
@@ -358,21 +365,31 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
 
     unk_idx, pad_idx = vocab[vocab_cfg.unk_token], vocab[vocab_cfg.pad_token]
 
+    def hf_iterator(dataset_obj, text_fld, label_fld=None) -> Generator[Any, None, None]:
+        for ex in dataset_obj:
+            text_content, label_content = ex.get(text_fld), ex.get(label_fld) if label_fld else None
+            if isinstance(text_content, str):
+                # --- FIX 1: Yield data in the standard (data, label) format ---
+                yield (text_content, label_content) if label_fld else text_content
+
     # 4. --- Numericalize Data ---
     def numericalize_dataset(data_iterator_func: Callable, split_name: str) -> List[Tuple[int, List[int]]]:
         cache_params = (exp_cfg.dataset_name, vocab_cache_file, split_name)
         cache_path = get_cache_path(app_cache_dir, f"num_{split_name}", cache_params)
-        if cfg.use_cache and os.path.exists(cache_path):
-            with open(cache_path, "rb") as f: return pickle.load(f)
+        # if cfg.use_cache and os.path.exists(cache_path):
+        #     with open(cache_path, "rb") as f: return pickle.load(f)
 
         logging.info(f"Numericalizing {split_name} data...")
         processed_data = []
         text_pipeline = lambda x: vocab(tokenizer(x))
-        for label, text in data_iterator_func():
+
+        # --- FIX 2: Unpack the tuple in the new (data, label) order ---
+        for text, label in data_iterator_func():
             if text and label is not None:
                 processed_text = text_pipeline(text)
                 if processed_text:
-                    processed_data.append((processed_text, label)) # Swapped order
+                    # This append is now correct and consistent
+                    processed_data.append((processed_text, label))
 
         if cfg.use_cache:
             with open(cache_path, "wb") as f: pickle.dump(processed_data, f)
@@ -454,7 +471,7 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         seller_splits=seller_splits,
         client_properties={},
         targets=train_targets,
-        save_filepath=stats_save_path # Use the new path
+        save_filepath=stats_save_path  # Use the new path
     )
 
     # Create DataLoaders ---
@@ -493,5 +510,3 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         num_classes=num_classes,
         collate_fn=collate_fn
     )
-
-
