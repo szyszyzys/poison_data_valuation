@@ -38,7 +38,7 @@ class ExperimentConfig:
     evaluation_frequency: int = 1
     evaluations: List[str] = field(default_factory=lambda: ["clean"])
     image_model_config_name: str = "cifar10_cnn"
-    tabular_model_config_name: str = "mlp_texas100_baseline" # Default model config to use
+    tabular_model_config_name: str = "mlp_texas100_baseline"  # Default model config to use
 
 
 @dataclass
@@ -89,7 +89,6 @@ class TextBackdoorParams:
     attack_name: TextBackdoorAttackName = TextBackdoorAttackName.SIMPLE_DATA_POISON
 
 
-
 @dataclass
 class TabularFeatureTriggerParams:
     """Parameters for a feature-based trigger backdoor attack."""
@@ -98,11 +97,13 @@ class TabularFeatureTriggerParams:
     # e.g., {'age': 65, 'job_title': 'retired'}
     trigger_conditions: Dict[str, Any] = field(default_factory=dict)
 
+
 # --- Step 2: Create the container, just like for image and text ---
 
 class TabularBackdoorAttackName(Enum):
     """Enum to define the different types of tabular backdoor attacks."""
     FEATURE_TRIGGER = "feature_trigger"
+
 
 @dataclass
 class TabularBackdoorParams:
@@ -141,7 +142,7 @@ class PoisoningConfig:
     label_flip_params: LabelFlipParams = field(default_factory=LabelFlipParams)
 
     @property
-    def active_params(self) -> Union[ # Add all possible return types here
+    def active_params(self) -> Union[  # Add all possible return types here
         BackdoorSimpleDataPoisonParams,
         TextBackdoorParams,
         TabularBackdoorParams,
@@ -267,11 +268,36 @@ class ImageDataConfig:
 
 
 @dataclass
+class AdaptiveAttackConfig:
+    """Configuration for the adaptive learning attacker."""
+    is_active: bool = False
+    # The primary mode of attack: either manipulate the gradient or poison the data
+    attack_mode: Literal["gradient_manipulation", "data_poisoning"] = "gradient_manipulation"
+
+    # --- General Learning Parameters ---
+    exploration_rounds: int = 20
+
+    # --- Gradient Manipulation Strategies (if mode is 'gradient_manipulation') ---
+    gradient_strategies: List[str] = field(
+        default_factory=lambda: ["honest", "scale_up", "add_noise"]
+    )
+    scale_factor: float = 1.5
+    noise_level: float = 0.01
+
+    # --- Data Poisoning Strategies (if mode is 'data_poisoning') ---
+    # These map to poison types you already have configured
+    data_strategies: List[str] = field(
+        default_factory=lambda: ["honest", "label_flip"]  # e.g., 'label_flip', 'image_backdoor'
+    )
+
+
+@dataclass
 class AdversarySellerConfig:
     """A unified profile for an adversarial seller."""
     name: str = "benign"
     poisoning: PoisoningConfig = field(default_factory=PoisoningConfig)
     sybil: SybilConfig = field(default_factory=SybilConfig)
+    adaptive_attack: AdaptiveAttackConfig = field(default_factory=AdaptiveAttackConfig)
 
 
 @dataclass
@@ -280,7 +306,7 @@ class TabularDataConfig:
     model_config_dir: str = "model/configs"
     buyer_ratio: float = 0.1
     strategy: str = "iid"  # Add 'strategy' field
-    property_skew: Dict[str, Any] = field(default_factory=dict) # Add 'property_skew' field
+    property_skew: Dict[str, Any] = field(default_factory=dict)  # Add 'property_skew' field
 
 
 @dataclass
@@ -321,7 +347,6 @@ class BackdoorImageConfig:
     randomize_location: bool = False
 
 
-
 @dataclass
 class BackdoorTextConfig:
     """Configuration for the BackdoorTextGenerator."""
@@ -331,12 +356,14 @@ class BackdoorTextConfig:
     location: TextTriggerLocation = TextTriggerLocation.END
     max_seq_len: Optional[int] = None
 
+
 @dataclass
 class BackdoorTabularConfig:
     """Configuration for a feature-based tabular backdoor attack."""
     target_label: int
     # Defines the trigger, e.g., {'feature_name_A': 1.0, 'feature_name_B': 0.0}
     trigger_conditions: Dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass
 class MartFLParams:

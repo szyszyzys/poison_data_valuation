@@ -2,27 +2,26 @@ import collections
 import csv
 import json
 import logging
+import numpy as np
 import os
+import pandas as pd
 import random
 import sys
 import time
+import torch
+import torch.nn.functional as F
 # Add these class definitions as well
 from abc import ABC, abstractmethod
 from collections import abc  # abc.Mapping for general dicts
 from dataclasses import field, dataclass
 from pathlib import Path
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
 from typing import Any, Callable, Set
 from typing import Dict
 from typing import List, Optional
 from typing import Tuple
 from typing import Union
-
-import numpy as np
-import pandas as pd
-import torch
-import torch.nn.functional as F
-from torch import nn
-from torch.utils.data import DataLoader, Dataset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
     BackdoorTextGenerator, BackdoorTabularGenerator
@@ -82,6 +81,7 @@ def diagnose_parameter_issue(model):
                 if isinstance(layer, nn.BatchNorm2d):
                     print(f"  BatchNorm running_mean has NaN: {torch.isnan(layer.running_mean).any()}")
                     print(f"  BatchNorm running_var has NaN: {torch.isnan(layer.running_var).any()}")
+
 
 class KnockOutStrategy(BaseGradientStrategy):
     """A more aggressive version of the Mimic strategy."""
@@ -228,6 +228,8 @@ def validate_and_fix_model_initialization(model: nn.Module) -> bool:
         logging.info("✅ Successfully fixed all NaN/Inf parameters")
 
     return True
+
+
 class GradientSeller(BaseSeller):
     """
     A seller that participates in federated learning by providing gradient updates.
@@ -1202,3 +1204,129 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
 
         else:
             raise ValueError(f"Unsupported model_type for backdoor: {model_type}")
+
+
+class AdaptiveAttackerSeller(GradientSeller):
+    """
+    An adaptive adversary that learns the best strategy to get selected.
+    It can operate in two modes:
+    1. Gradient Manipulation: Directly alters the computed gradient.
+    2. Data Poisoning: Changes its dataset distribution before training.
+    """
+
+    def __init__(self, *args, adversary_config: AdversarySellerConfig,
+                 poison_generator_factory: Optional[Callable] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.adv_cfg = adversary_config.adaptive_attack
+        if not self.adv_cfg.is_active:
+            raise ValueError("AdaptiveAttackerSeller created but is_active is False in config.")
+
+        self.poison_generator_factory = poison_generator_factory
+        self.phase = "exploration"
+        self.strategy_history = []
+        self.current_strategy = "honest"
+        self.best_strategy = "honest"
+        self.round_counter = 0
+
+        logging.info(f"[{self.seller_id}] Initialized as AdaptiveAttacker in '{self.adv_cfg.attack_mode}' mode.")
+        logging.info(f" -> Exploring for {self.adv_cfg.exploration_rounds} rounds.")
+
+    def _apply_gradient_manipulation(self, gradient: List[torch.Tensor], strategy: str) -> List[torch.Tensor]:
+        """Applies a manipulation directly to the gradient tensors."""
+        if strategy == "honest": return gradient
+
+        manipulated_grad = []
+        for tensor in gradient:
+            if strategy == "scale_up":
+                manipulated_grad.append(tensor * self.adv_cfg.scale_factor)
+            elif strategy == "scale_down":
+                manipulated_grad.append(tensor / self.adv_cfg.scale_factor)
+            elif strategy == "add_noise":
+                noise = torch.randn_like(tensor) * self.adv_cfg.noise_level
+                manipulated_grad.append(tensor + noise)
+            else:
+                manipulated_grad.append(tensor)
+        return manipulated_grad
+
+    def _get_poisoned_dataset(self, strategy: str) -> Dataset:
+        """Creates a poisoned dataset based on the chosen strategy."""
+        if strategy == "honest" or not self.poison_generator_factory:
+            return self.dataset
+
+        # Use the factory to create a poison generator for the chosen strategy
+        poison_generator = self.poison_generator_factory(poison_type_str=strategy)
+        if poison_generator:
+            return PoisonedDataset(
+                original_dataset=self.dataset,
+                poison_generator=poison_generator,
+                poison_rate=self.adversary_config.poisoning.poison_rate  # Use existing config
+            )
+        return self.dataset  # Fallback to clean data
+
+    def _determine_best_strategy(self):
+        """Analyzes history to find the most successful strategy."""
+        if not self.strategy_history:
+            self.best_strategy = "honest"
+            return
+
+        strategy_success = defaultdict(int)
+        strategy_attempts = defaultdict(int)
+
+        for _, strategy, was_selected in self.strategy_history:
+            strategy_attempts[strategy] += 1
+            if was_selected:
+                strategy_success[strategy] += 1
+
+        success_rates = {s: strategy_success[s] / strategy_attempts[s] for s in strategy_attempts}
+
+        if success_rates:
+            self.best_strategy = max(success_rates, key=success_rates.get)
+
+        logging.info(
+            f"[{self.seller_id}] Exploration complete. Success Rates: {dict(success_rates)}. Best Strategy: '{self.best_strategy}'")
+
+    def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
+        self.round_counter += 1
+
+        if self.phase == "exploration" and self.round_counter > self.adv_cfg.exploration_rounds:
+            self.phase = "exploitation"
+            self._determine_best_strategy()
+
+        # 1. Choose a strategy for this round
+        strategy_pool = self.adv_cfg.gradient_strategies if self.adv_cfg.attack_mode == "gradient_manipulation" else self.adv_cfg.data_strategies
+        if self.phase == "exploration":
+            self.current_strategy = random.choice(strategy_pool)
+        else:
+            self.current_strategy = self.best_strategy
+
+        logging.info(
+            f"[{self.seller_id}][{self.phase.capitalize()}] Round {self.round_counter}: Using strategy '{self.current_strategy}'")
+
+        # 2. Prepare for gradient computation based on mode
+        dataset_for_training = self.dataset
+        if self.adv_cfg.attack_mode == "data_poisoning":
+            dataset_for_training = self._get_poisoned_dataset(self.current_strategy)
+
+        local_model = self.model_factory().to(self.device)
+        local_model.load_state_dict(global_model.state_dict())
+
+        # 3. Compute the base gradient
+        base_gradient, stats = self._compute_local_grad(local_model, dataset_for_training)
+        if base_gradient is None:
+            return None, stats
+
+        stats['attack_strategy'] = self.current_strategy
+
+        # 4. If in gradient manipulation mode, apply the change now
+        if self.adv_cfg.attack_mode == "gradient_manipulation":
+            final_gradient = self._apply_gradient_manipulation(base_gradient, self.current_strategy)
+            return final_gradient, stats
+
+        # Otherwise, the manipulation was already done via the dataset
+        return base_gradient, stats
+
+    def round_end_process(self, round_number: int, was_selected: bool, **kwargs):
+        """Records the outcome of the strategy used."""
+        super().round_end_process(round_number=round_number, was_selected=was_selected, **kwargs)
+        if self.phase == "exploration":
+            self.strategy_history.append((round_number, self.current_strategy, was_selected))
