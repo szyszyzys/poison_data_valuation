@@ -458,7 +458,7 @@ class MaliciousDataSeller(DataSeller):
         plt.legend()
         plt.grid(True)
         plt.axis('equal')
-        plt.show()
+        plt.close()
 
     def get_statistics(self) -> Dict:
         """Get enhanced statistics including attack metrics"""

@@ -493,7 +493,7 @@ def plot_image_selection_rate(figure_path, results, eval_range):
         plt.savefig(figure_path, bbox_inches="tight")
         print(f"Figure saved to {figure_path}")
     else:
-        plt.show()
+        plt.close()
 
 
 def plot_results_data_selection(plot_type, figure_path, results, eval_range):
@@ -714,7 +714,7 @@ def plot_selection_weights(initial_weights, updated_weights, save_path=None):
     if save_path:
         plt.savefig(save_path)
     else:
-        plt.show()
+        plt.close()
 
 
 def save_results(results, save_dir, save_name):

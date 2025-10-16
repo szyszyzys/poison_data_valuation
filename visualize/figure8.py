@@ -108,7 +108,7 @@ def plot_payment_model_comparison(data: pd.DataFrame):
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     plt.savefig("final_payment_analysis.png", dpi=300)
     print("Plot saved to final_payment_analysis.png")
-    plt.show()
+    plt.close()
 
 
 if __name__ == '__main__':

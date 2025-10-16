@@ -63,7 +63,7 @@ def plot_buyer_data_impact(data: pd.DataFrame):
     plt.tight_layout()
     plt.savefig("figure_5_buyer_data_impact.png", dpi=300)
     print("Plot saved to figure_5_buyer_data_impact.png")
-    plt.show()
+    plt.close()
 
 if __name__ == '__main__':
     # --- Step 1: Update these paths to your experiment output folders ---

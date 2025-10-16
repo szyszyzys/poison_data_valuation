@@ -113,7 +113,7 @@
 #     plt.ylabel("Selected (1) / Unselected (0)")
 #     plt.yticks([0, 1])
 #     plt.grid(True, axis='y')
-#     plt.show()
+#     plt.close()
 #
 #
 # def display_top_samples(X, ranked_indices, selected_indices, unselected_indices, top_k=10):
@@ -233,7 +233,7 @@
 #     plt.xlabel("Score")
 #     plt.ylabel("Frequency")
 #     plt.legend()
-#     plt.show()
+#     plt.close()
 #
 #     # Save the reconstructed embedding and scores if needed
 #     # np.save("reconstructed_embedding.npy", q)
@@ -447,7 +447,7 @@ def plot_alignment(x_true, x_est):
     plt.ylabel('Feature Value')
     plt.legend()
     plt.grid(True)
-    plt.show()
+    plt.close()
 
 
 def reverse_engineer_query_workflow():

@@ -51,7 +51,7 @@ def plot_main_summary(data: pd.DataFrame):
     plt.tight_layout()
     plt.savefig("figure_1_main_summary.png", dpi=300)
     print("Plot saved to figure_1_main_summary.png")
-    plt.show()
+    plt.close()
 
 if __name__ == '__main__':
     # --- Step 1: Update these paths to your experiment output folders ---

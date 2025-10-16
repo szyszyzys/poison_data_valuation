@@ -2,27 +2,26 @@ import collections
 import csv
 import json
 import logging
+import numpy as np
 import os
+import pandas as pd
 import random
 import sys
 import time
+import torch
+import torch.nn.functional as F
 # Add these class definitions as well
 from abc import ABC, abstractmethod
 from collections import abc  # abc.Mapping for general dicts
 from dataclasses import field, dataclass
 from pathlib import Path
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
 from typing import Any, Callable, Set
 from typing import Dict
 from typing import List, Optional
 from typing import Tuple
 from typing import Union
-
-import numpy as np
-import pandas as pd
-import torch
-import torch.nn.functional as F
-from torch import nn
-from torch.utils.data import DataLoader, Dataset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
     BackdoorTextGenerator, BackdoorTabularGenerator
@@ -402,7 +401,8 @@ class GradientSeller(BaseSeller):
                 shuffle=True,
                 collate_fn=collate_fn,
                 num_workers=0,  # Important for multiprocessing compatibility
-                pin_memory=False  # Avoid issues with CUDA in multiprocessing
+                pin_memory=False,  # Avoid issues with CUDA in multiprocessing
+                drop_last=True
             )
 
             # Validate DataLoader

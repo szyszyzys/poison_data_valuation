@@ -183,31 +183,3 @@ class SkymaskAggregator(BaseAggregator):
         aggregation_stats["skymask_num_rejected"] = len(outlier_sids)
 
         return aggregated_gradient, selected_sids, outlier_sids, aggregation_stats
-
-    def _infer_model_type_from_params(self, worker_params: List[List[torch.Tensor]]) -> str:
-        """Infer the model architecture type from parameter shapes."""
-        if not worker_params or not worker_params[0]:
-            return 'cifarcnn'  # Safe default
-
-        # Look at the first worker's parameters
-        params = worker_params[0]
-
-        # Count conv and linear layers
-        conv_count = sum(1 for p in params if len(p.shape) == 4)
-        linear_count = sum(1 for p in params if len(p.shape) == 2)
-
-        # Check parameter sizes to distinguish architectures
-        if conv_count > 0:
-            # Check if it looks like ResNet (deeper, larger channels)
-            max_channels = max((p.shape[0] for p in params if len(p.shape) == 4), default=0)
-
-            if conv_count >= 15 and max_channels >= 256:  # ResNet-like
-                return 'resnet18'
-            elif conv_count <= 4 and max_channels <= 32:  # Small CNN
-                return 'lenet'
-            else:  # Medium CNN
-                return 'cifarcnn'
-        elif linear_count > 0:
-            return 'lr'
-        else:
-            return 'cifarcnn'  # Default fallback

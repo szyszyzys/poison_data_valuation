@@ -514,7 +514,7 @@ def run_attack_experiment(
     plt.ylabel('Weight')
     plt.title('Comparison of Weights Before and After Attack')
     plt.legend()
-    plt.show()
+    plt.close()
 
     # Return all results
     results = {

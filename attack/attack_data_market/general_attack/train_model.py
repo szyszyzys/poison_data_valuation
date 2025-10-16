@@ -216,7 +216,7 @@ def plot_evaluation_metrics(comparison_metrics):
     autolabel(rects2)
 
     plt.tight_layout()
-    plt.show()
+    plt.close()
 
 
 def plot_residuals(model, X, y, title="Residuals Plot"):
@@ -238,7 +238,7 @@ def plot_residuals(model, X, y, title="Residuals Plot"):
     plt.xlabel('Predicted Values')
     plt.ylabel('Residuals')
     plt.title(title)
-    plt.show()
+    plt.close()
 
 
 def comprehensive_evaluation(

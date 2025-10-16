@@ -87,7 +87,7 @@ def plot_matrix(symmetric_matrix):
     # Show the plot
     plt.gca().set_aspect("equal", adjustable="box")
     plt.grid()
-    plt.show()
+    plt.close()
 
 
 def project_onto_subspace(v, W):

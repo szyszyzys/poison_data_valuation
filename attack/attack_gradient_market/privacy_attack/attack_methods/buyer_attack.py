@@ -333,7 +333,7 @@ def plot_results(df: pd.DataFrame, run_name: str):
     save_path = f"task3_1_leakage_comparison_{run_name}.png"
     plt.savefig(save_path);
     logging.info(f"Results plot saved to {save_path}");
-    plt.show()
+    plt.close()
 
 
 if __name__ == "__main__":

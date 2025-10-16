@@ -482,7 +482,7 @@ class MarketplaceAdversary(Adversary):
         save_path = f"system_leakage_audit_{run_name}.png"
         plt.savefig(save_path)
         logging.info(f"Correlation heatmap saved to {save_path}")
-        plt.show()
+        plt.close()
 
 
 class PostHocAnalysisPipeline:

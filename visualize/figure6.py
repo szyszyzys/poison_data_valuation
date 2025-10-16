@@ -78,7 +78,7 @@ def plot_economic_impact(data: pd.DataFrame):
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     plt.savefig("figure_6_economic_impact.png", dpi=300)
     print("Plot saved to figure_6_economic_impact.png")
-    plt.show()
+    plt.close()
 
 if __name__ == '__main__':
     # --- Step 1: Update paths to experiments with a fixed adversary rate (e.g., 0.3) ---

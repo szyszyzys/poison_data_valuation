@@ -43,7 +43,7 @@ def plot_final_reconstruction(x_true, x_final, title='Final Ensemble Reconstruct
     plt.ylabel('Feature Value')
     plt.legend()
     plt.grid(True)
-    plt.show()
+    plt.close()
 
 
 def run_ensemble_experiment(

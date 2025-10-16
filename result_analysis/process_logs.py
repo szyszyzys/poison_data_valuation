@@ -816,7 +816,7 @@ def analyze_client_level_selection(processed_data, seller_raw_data_stats):
     plt.ylabel('Number of Sellers')
     plt.title('Histogram of Seller Selection Frequencies')
     plt.grid(True)
-    plt.show()
+    plt.close()
 
     # Compile analysis results into a dictionary
     analysis_results = {

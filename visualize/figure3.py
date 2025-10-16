@@ -58,7 +58,7 @@ def plot_selection_impact(all_data: pd.DataFrame):
     plt.tight_layout()
     plt.savefig("figure_3_sybil_selection_impact.png", dpi=300)
     print("Plot saved to figure_3_sybil_selection_impact.png")
-    plt.show()
+    plt.close()
 
 if __name__ == '__main__':
     # --- Step 1: Update paths to your experiment output folders ---

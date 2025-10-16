@@ -179,7 +179,7 @@ def visualize_ranking(scores, selected_indices, unselected_indices, top_n=50):
     plt.ylabel("Selected (1) / Unselected (0)")
     plt.yticks([0, 1])
     plt.grid(True, axis='y')
-    plt.show()
+    plt.close()
 
 
 def display_top_samples(X, ranked_indices, selected_indices, unselected_indices, top_k=10):
@@ -218,7 +218,7 @@ def plot_precision_recall_curve(metrics):
     for bar, value in zip(bars, values):
         plt.text(bar.get_x() + bar.get_width() / 2, bar.get_height() - 0.05, f"{value:.2f}", ha='center', color='white',
                  fontsize=12)
-    plt.show()
+    plt.close()
 
 
 def plot_roc_curve(labels, scores):
@@ -244,7 +244,7 @@ def plot_roc_curve(labels, scores):
     plt.title('Receiver Operating Characteristic (ROC) Curve')
     plt.legend(loc="lower right")
     plt.grid(True)
-    plt.show()
+    plt.close()
 
 
 def visualize_embedding_space(X, q, selected_indices, unselected_indices, method='pca'):
@@ -279,7 +279,7 @@ def visualize_embedding_space(X, q, selected_indices, unselected_indices, method
     plt.ylabel('Component 2')
     plt.legend()
     plt.grid(True)
-    plt.show()
+    plt.close()
 
 
 def fim_reverse_opt_refined(X, selected_indices, unselected_indices, dim, lambda_reg=0.1, margin=1.0, iterations=100,

@@ -66,7 +66,7 @@ def plot_accuracy_vs_asr(data: pd.DataFrame):
     plt.tight_layout()
     plt.savefig("figure_2_stealth_attack.png", dpi=300)
     print("Plot saved to figure_2_stealth_attack.png")
-    plt.show()
+    plt.close()
 
 if __name__ == '__main__':
     # --- Step 1: Update these paths to your experiment output folders ---

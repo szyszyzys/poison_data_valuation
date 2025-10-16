@@ -101,7 +101,7 @@ def plot_metrics(agg_results, query_label, attack_scenario):
     plt.title("ASR")
 
     plt.tight_layout()
-    plt.show()
+    plt.close()
 
 
 # -----------------------------

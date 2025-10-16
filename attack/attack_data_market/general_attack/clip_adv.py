@@ -57,7 +57,7 @@ def show_images(original, modified, title1='Original Image', title2='Modified Im
     axs[1].set_title(title2)
     axs[1].axis('off')
 
-    plt.show()
+    plt.close()
 
 
 def optimize_image_to_target(
@@ -212,7 +212,7 @@ def run_experiment(original_img, target_image):
     plt.ylabel('Loss')
     plt.title('Optimization Loss History')
     plt.legend()
-    plt.show()
+    plt.close()
 
     # Calculate the amount of change (L2 distance)
     original_tensor = preprocess(original_image).unsqueeze(0).to(device)

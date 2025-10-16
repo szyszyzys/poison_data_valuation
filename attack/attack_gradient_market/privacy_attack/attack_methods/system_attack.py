@@ -146,7 +146,7 @@ def analyze_and_plot_correlation(df: pd.DataFrame, run_name: str, is_sybil_attac
     save_path = f"task3_3_sybil_leakage_correlation_{run_name}.png"
     plt.savefig(save_path)
     logging.info(f"Correlation heatmap saved to {save_path}")
-    plt.show()
+    plt.close()
 
 
 if __name__ == "__main__":

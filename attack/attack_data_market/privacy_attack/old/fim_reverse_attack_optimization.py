@@ -51,7 +51,7 @@ def plot_reconstruction_comparison(x_true, x_hat, title='Reconstruction Comparis
     plt.ylabel('Feature Value')
     plt.legend()
     plt.grid(True)
-    plt.show()
+    plt.close()
 
 
 def run_optimization_based_experiment(

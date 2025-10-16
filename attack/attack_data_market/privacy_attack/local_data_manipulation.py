@@ -532,7 +532,7 @@ def plot_results(
     plt.legend()
     plt.grid(True)
     plt.axis('equal')
-    plt.show()
+    plt.close()
 
 ###############################################################################
 # 8) MAIN PIPELINE EXECUTION
@@ -703,7 +703,7 @@ def main_pipeline_demo(
     plt.ylabel('Frequency')
 
     plt.tight_layout()
-    plt.show()
+    plt.close()
 
     # Optional: Scatter plots of true vs inferred vectors
     plt.figure(figsize=(8, 6))
@@ -712,7 +712,7 @@ def main_pipeline_demo(
     plt.xlabel('Cosine Similarity')
     plt.ylabel('Pearson Correlation')
     plt.grid(True)
-    plt.show()
+    plt.close()
 
 ###############################################################################
 # EXECUTE PIPELINE

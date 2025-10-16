@@ -517,7 +517,7 @@ class Adv:
         plt.title("Eigenvalues of the Weighted Fisher Information Matrix")
         plt.xlabel("Eigenvalue Index")
         plt.ylabel("Eigenvalue Magnitude")
-        plt.show()
+        plt.close()
 
     def visualize_principal_components(self, eigenvectors, X, num_components=2):
         """
@@ -539,7 +539,7 @@ class Adv:
         plt.title(f"Data Projected onto Top {num_components} Principal Components")
         plt.xlabel("Principal Component 1")
         plt.ylabel("Principal Component 2")
-        plt.show()
+        plt.close()
 
     def fim_exploration_classifier_training(self):
         """

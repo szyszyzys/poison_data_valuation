@@ -528,54 +528,6 @@ class ResMaskNet(nn.Module):
         # Return raw logits, as expected by the training loss function
         return out
 
-
-class ResMaskNet(nn.Module):
-    def __init__(self, param_list, num_workers, device):
-        super(ResMaskNet, self).__init__()
-
-        self.num_workers = num_workers
-        self.param_list = param_list
-        self.device = device
-        self.conv1 = nn.Sequential(
-            my.myconv2d(num_workers, device, [x[0] for x in param_list], stride=1, padding=1),
-            my.mybatch_norm(num_workers, device, [x[1] for x in param_list], [x[2] for x in param_list]),
-            nn.ReLU()
-        )
-        self.layer1 = self.make_layer(ResidualMaskBlock, [x[5:35] for x in param_list], num_workers, device, 3,
-                                      stride=1)  # 10+10+10
-        self.layer2 = self.make_layer(ResidualMaskBlock, [x[35:70] for x in param_list], num_workers, device, 3,
-                                      stride=2)  # 15+10+10
-        self.layer3 = self.make_layer(ResidualMaskBlock, [x[70:105] for x in param_list], num_workers, device, 3,
-                                      stride=2)  # 15+10+10
-        self.fc = my.mylinear(num_workers, device, [x[105] for x in param_list], [x[106] for x in param_list])
-
-    def make_layer(self, block, param_list, num_workers, device, num_blocks, stride):
-        strides = [stride] + [1] * (num_blocks - 1)
-        layers = []
-        head = 0
-        for stride in strides:
-            if stride == 1:
-                layers.append(block([x[head:head + 10] for x in param_list], num_workers, device, stride))
-                head += 10
-            else:
-                layers.append(block([x[head:head + 15] for x in param_list], num_workers, device, stride))
-                head += 15
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        out = self.conv1(x)
-        out = self.layer1(out)
-        out = self.layer2(out)
-        out = self.layer3(out)
-        out = F.avg_pool2d(out, 8)
-        out = out.view(out.size(0), -1)
-        out = self.fc(out)
-
-        out = F.log_softmax(out, dim=0)
-        return out
-
-
 class LR(nn.Module):
     def __init__(self):
         super().__init__()

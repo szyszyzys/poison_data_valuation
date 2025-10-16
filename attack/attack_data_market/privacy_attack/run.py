@@ -74,7 +74,7 @@ def plot_and_save_metrics(avg_metrics_by_attack, save_dir="plots"):
         print(f"Saved plot to {filename}")
 
         # Optionally, if you also want to show the plot, uncomment the following line:
-        # plt.show()
+        # plt.close()
         plt.close()
 
 
@@ -169,7 +169,7 @@ def plot_attacks_for_single_k(df, k_value, metric='selection_f1', title=None):
     plt.xticks(rotation=30, ha='right')
     plt.ylim(0, df_k[metric].max() * 1.1)  # give some space on top
     plt.grid(True, axis='y')
-    plt.show()
+    plt.close()
 
 
 def plot_metric_across_selection_sizes(df, metric='selection_f1', title=None):
@@ -192,7 +192,7 @@ def plot_metric_across_selection_sizes(df, metric='selection_f1', title=None):
     plt.ylabel(metric)
     plt.grid(True)
     plt.legend(title='Method', loc='best')
-    plt.show()
+    plt.close()
 
 
 def run_attack_experiment(dataset_type="gaussian", dim=100, num_seller=1000,
@@ -352,7 +352,7 @@ def plot_results(eval_results, eval_range):
     plt.legend()
 
     plt.tight_layout()
-    plt.show()
+    plt.close()
 
 
 def setup(data_manager: DatasetManager, adversary_ratio=0.25, seller_configs=None):

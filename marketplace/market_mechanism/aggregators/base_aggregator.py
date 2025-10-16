@@ -64,21 +64,36 @@ class BaseAggregator(ABC):
         model.eval()
         total_loss, total_correct, total_samples = 0.0, 0, 0
         all_preds, all_labels = [], []
-        if not self.buyer_data_loader: return 0.0, 0.0, 0.0, 0.0
+        if not self.buyer_data_loader:
+            return 0.0, 0.0, 0.0, 0.0
+
         with torch.no_grad():
-            for data, labels in self.buyer_data_loader:
+            # --- FIX: Make the loop modality-aware --- ✅
+            for batch in self.buyer_data_loader:
+                # Check the batch format to handle different data types
+                if len(batch) == 3:  # Text data: (labels, texts, lengths)
+                    labels, data, _ = batch
+                else:  # Image/Tabular data: (data, labels)
+                    data, labels = batch
+
                 data, labels = data.to(self.device), labels.to(self.device)
                 outputs = model(data)
+
                 total_loss += self.loss_fn(outputs, labels).item() * data.size(0)
                 _, preds = torch.max(outputs, 1)
                 total_correct += (preds == labels).sum().item()
                 total_samples += data.size(0)
                 all_preds.extend(preds.cpu().numpy())
                 all_labels.extend(labels.cpu().numpy())
-        if total_samples == 0: return 0.0, 0.0, 0.0, 0.0
+
+        if total_samples == 0:
+            return 0.0, 0.0, 0.0, 0.0
+
         acc = total_correct / total_samples
         avg_loss = total_loss / total_samples
         kappa = cohen_kappa_score(all_labels, all_preds)
+
+        # Returning 4 values as the original function signature expects
         return avg_loss, acc, kappa, 0.0
 
     def _compute_trust_gradient(self) -> list[torch.Tensor]:

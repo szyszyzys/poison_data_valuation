@@ -214,7 +214,7 @@ class SellerAttackAnalyzer:
         plt.tight_layout()
         plt.savefig(save_path)
         logging.info(f"Plot saved to {save_path}")
-        plt.show()
+        plt.close()
 
 
 if __name__ == "__main__":

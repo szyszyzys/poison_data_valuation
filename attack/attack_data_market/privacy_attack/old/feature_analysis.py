@@ -40,7 +40,7 @@ def mutual_information_feature_analysis(X_selected, X_unselected, x_test, bins=1
         plt.title('Mutual Information Scores per Feature')
         plt.xlabel('Feature Index')
         plt.ylabel('Mutual Information')
-        plt.show()
+        plt.close()
 
     return mi_scores
 

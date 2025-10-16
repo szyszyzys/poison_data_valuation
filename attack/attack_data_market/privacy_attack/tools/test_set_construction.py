@@ -240,7 +240,7 @@ class ReconstructionExperimentExtended(ReconstructionExperiment):
         plt.ylabel('Frequency')
 
         plt.tight_layout()
-        plt.show()
+        plt.close()
 
     def detailed_evaluation(self, results: List[Dict[str, Any]]):
         """

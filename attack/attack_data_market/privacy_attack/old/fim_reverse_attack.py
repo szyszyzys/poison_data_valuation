@@ -241,7 +241,7 @@ def plot_eigenvalues(eigenvalues, top_k=10):
     plt.xlabel('Eigenvalue Index')
     plt.ylabel('Eigenvalue')
     plt.grid(True)
-    plt.show()
+    plt.close()
 
 
 def plot_reconstruction(x_test, x_test_hat):
@@ -261,7 +261,7 @@ def plot_reconstruction(x_test, x_test_hat):
     plt.ylabel('Feature Value')
     plt.legend()
     plt.grid(True)
-    plt.show()
+    plt.close()
 
 
 def visualize_ranking(scores, selected_indices, unselected_indices, top_n=50):
@@ -288,7 +288,7 @@ def visualize_ranking(scores, selected_indices, unselected_indices, top_n=50):
     plt.ylabel("Selected (1) / Unselected (0)")
     plt.yticks([0, 1])
     plt.grid(True, axis='y')
-    plt.show()
+    plt.close()
 
 
 def display_top_samples(X, ranked_indices, selected_indices, unselected_indices, top_k=10):

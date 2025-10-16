@@ -112,7 +112,7 @@ def sample_images(generator, latent_dim, n_features, epoch):
         plt.stem(gen_samples[i], use_line_collection=True)
         plt.title(f'Epoch {epoch}')
         plt.tight_layout()
-    plt.show()
+    plt.close()
 
 
 def reconstruct_x_test_gan(generator, x_test, latent_dim=100):
@@ -151,7 +151,7 @@ def reconstruct_x_test_gan(generator, x_test, latent_dim=100):
     plt.ylabel('Feature Value')
     plt.legend(['True x_test', 'Closest Generated Sample'])
     plt.grid(True)
-    plt.show()
+    plt.close()
 
     print(f"GAN-Based Reconstruction MSE: {mse[closest_idx]:.6f}")
     print(f"Cosine Similarity: {cosine_sim:.6f}")
