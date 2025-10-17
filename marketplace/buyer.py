@@ -1,10 +1,11 @@
 # In marketplace/seller/gradient_seller.py
 
 import logging
+from typing import List, Dict, Any, Optional, Tuple
+
 import torch
 import torch.nn as nn
 from torch.utils.data import Subset
-from typing import List, Dict, Any, Optional, Tuple
 
 from common.gradient_market_configs import BuyerAttackConfig
 from marketplace.seller.gradient_seller import GradientSeller
@@ -230,7 +231,7 @@ class MaliciousBuyerProxy(GradientSeller):
             )
             if not all_seller_gradients or target_seller_id not in all_seller_gradients:
                 logging.error(
-                    f"Targeted exclusion failed: Target '{target_seller_id}' gradient not provided."
+                    f"Targeted exclusion failed: Target '{target_seller_id}' gradient not provided, current gradients: {all_seller_gradients.keys()}."
                 )
                 return super().get_gradient_for_upload(global_model)
 
