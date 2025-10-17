@@ -92,7 +92,7 @@ class DataMarketplaceFederated(DataMarketplace):
         buyer_root_gradient, _ = self.buyer_seller.get_gradient_for_upload(
             global_model,
             all_seller_gradients=gradients_dict,
-            target_seller_id=getattr(self.cfg.buyer_attack, 'target_seller_id', None)  # Example for config
+            target_seller_id=getattr(self.cfg.buyer_attack_config, 'target_seller_id', None)  # Example for config
         )
         oracle_root_gradient, _ = self.oracle_seller.get_gradient_for_upload(global_model)
         if buyer_root_gradient is None:
