@@ -716,7 +716,7 @@ def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, m
     logging.info("--- Initializing Root Gradient Sellers ---")
 
     # 1. Conditionally create the "Buyer Seller"
-    if cfg.buyer_attack.is_active:
+    if cfg.buyer_attack_config.is_active:
         # --- MALICIOUS PATH ---
         logging.warning("🚨 Buyer-side attack is active! Creating MaliciousBuyerProxy.")
         marketplace.buyer_seller = MaliciousBuyerProxy(
