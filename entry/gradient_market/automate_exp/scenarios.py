@@ -982,7 +982,7 @@ def generate_attack_scalability_scenarios_OLD() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
 
             # --- PRIMARY SWEEP: Marketplace Size ---
-            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.n_sellers": MARKETPLACE_SIZES,
 
             # --- FIXED: Adversary Rate (30% at all scales) ---
             "experiment.adv_rate": [FIXED_ADV_RATE],
@@ -1012,7 +1012,7 @@ def generate_attack_scalability_scenarios_OLD() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
 
             # --- PRIMARY SWEEP: Marketplace Size ---
-            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.n_sellers": MARKETPLACE_SIZES,
 
             # --- SECONDARY SWEEP: Defense Method ---
             "aggregation.method": AGGREGATORS_TO_TEST,
@@ -1042,7 +1042,7 @@ def generate_attack_scalability_scenarios_OLD() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
 
             # --- PRIMARY SWEEP: Marketplace Size ---
-            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.n_sellers": MARKETPLACE_SIZES,
 
             # --- SECONDARY SWEEP: Defense Method ---
             "aggregation.method": AGGREGATORS_TO_TEST,
@@ -1074,7 +1074,7 @@ def generate_attack_scalability_scenarios_OLD() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
 
             # --- PRIMARY SWEEP: Marketplace Size ---
-            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.n_sellers": MARKETPLACE_SIZES,
 
             # --- FIXED: Adversary Rate ---
             "experiment.adv_rate": [FIXED_ADV_RATE],
@@ -1120,7 +1120,7 @@ def generate_attack_scalability_multirate_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
 
             # --- SWEEP BOTH: Size and Rate ---
-            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.n_sellers": MARKETPLACE_SIZES,
             "experiment.adv_rate": ADVERSARY_RATES,
 
             # --- Focus on most vulnerable defense ---
@@ -1165,7 +1165,7 @@ def generate_extreme_scale_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
 
             # --- Extreme marketplace sizes ---
-            "marketplace.num_sellers": EXTREME_SIZES,
+            "experiment.n_sellers": EXTREME_SIZES,
 
             # --- Fixed: 30% adversary rate ---
             "experiment.adv_rate": [FIXED_ADV_RATE],
@@ -1193,7 +1193,7 @@ def generate_extreme_scale_scenarios() -> List[Scenario]:
             "experiment.image_model_config_name": ["cifar10_cnn"],
             "experiment.model_structure": ["cnn"],
 
-            "marketplace.num_sellers": EXTREME_SIZES,
+            "experiment.n_sellers": EXTREME_SIZES,
             "aggregation.method": ["fltrust"],
 
             "experiment.num_rounds": [50],
@@ -1250,7 +1250,7 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
 
             # --- PRIMARY SWEEP: Marketplace Size ---
-            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.n_sellers": MARKETPLACE_SIZES,
 
             # --- FIXED: Attack Parameters ---
             "experiment.adv_rate": [FIXED_ADV_RATE],
@@ -1279,7 +1279,7 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["resnet18"],
 
             # --- PRIMARY SWEEP: Marketplace Size ---
-            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.n_sellers": MARKETPLACE_SIZES,
 
             # --- FIXED: Attack Parameters ---
             "experiment.adv_rate": [FIXED_ADV_RATE],
@@ -1312,7 +1312,7 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
 
             # --- PRIMARY SWEEP: Marketplace Size ---
-            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.n_sellers": MARKETPLACE_SIZES,
 
             # --- SECONDARY SWEEP: Defense Method ---
             "aggregation.method": IMAGE_AGGREGATORS,
@@ -1342,7 +1342,7 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
 
             # --- PRIMARY SWEEP: Marketplace Size ---
-            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.n_sellers": MARKETPLACE_SIZES,
 
             # --- SECONDARY SWEEP: Defense Method ---
             "aggregation.method": IMAGE_AGGREGATORS,
@@ -1371,7 +1371,7 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
 
             # --- PRIMARY SWEEP: Marketplace Size ---
-            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.n_sellers": MARKETPLACE_SIZES,
 
             # --- FIXED: Seller Attack Parameters ---
             "experiment.adv_rate": [FIXED_ADV_RATE],
@@ -1410,7 +1410,7 @@ def generate_text_scalability_scenarios() -> List[Scenario]:
         ],
         parameter_grid={
             # --- PRIMARY SWEEP: Marketplace Size ---
-            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.n_sellers": MARKETPLACE_SIZES,
 
             # --- FIXED: Attack Parameters ---
             "experiment.adv_rate": [0.3],
@@ -1455,7 +1455,7 @@ def generate_extreme_scale_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
 
             # --- Extreme marketplace sizes ---
-            "marketplace.num_sellers": EXTREME_SIZES,
+            "experiment.n_sellers": EXTREME_SIZES,
 
             # --- Fixed: 30% adversary rate, 50% poison ---
             "experiment.adv_rate": [FIXED_ADV_RATE],
@@ -1484,7 +1484,7 @@ def generate_extreme_scale_scenarios() -> List[Scenario]:
             "experiment.image_model_config_name": ["cifar10_cnn"],
             "experiment.model_structure": ["cnn"],
 
-            "marketplace.num_sellers": EXTREME_SIZES,
+            "experiment.n_sellers": EXTREME_SIZES,
             "aggregation.method": ["fltrust"],
 
             "experiment.num_rounds": [50],
@@ -1516,7 +1516,7 @@ def generate_baseline_scalability_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
 
             # --- PRIMARY SWEEP: Marketplace Size ---
-            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.n_sellers": MARKETPLACE_SIZES,
 
             # --- NO ATTACKS ---
             "experiment.adv_rate": [0.0],
@@ -1552,7 +1552,7 @@ def generate_cifar100_scalability_scenarios() -> List[Scenario]:
         parameter_grid={
             "experiment.image_model_config_name": ["cifar100_cnn"],
             "experiment.model_structure": ["cnn"],
-            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.n_sellers": MARKETPLACE_SIZES,
             "experiment.adv_rate": [0.3],
             "adversary_seller_config.poisoning.poison_rate": [0.5],
             "aggregation.method": ['fedavg', 'fltrust', 'martfl'],  # Fewer for speed
