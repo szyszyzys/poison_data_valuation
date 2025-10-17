@@ -940,7 +940,7 @@ def generate_attack_comparison_scenarios() -> List[Scenario]:
 # 🆕 NEW: Attack Scalability Analysis (Rate-Based)
 # ============================================================================
 
-def generate_attack_scalability_scenarios() -> List[Scenario]:
+def generate_attack_scalability_scenarios_OLD() -> List[Scenario]:
     """
     Generates scenarios to test how attack effectiveness scales with marketplace size.
     Uses a FIXED adversary rate (30%) to maintain consistent attacker proportion.
@@ -992,7 +992,6 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
 
             # Keep these fixed for consistency
             "experiment.num_rounds": [100],
-            "marketplace.selection_rate": [0.3],  # 30% of sellers selected per round
         }
     ))
 
@@ -1020,7 +1019,6 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
 
             # Keep these fixed
             "experiment.num_rounds": [100],
-            "marketplace.selection_rate": [0.3],
         }
     ))
 
@@ -1050,7 +1048,6 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
             "aggregation.method": AGGREGATORS_TO_TEST,
 
             "experiment.num_rounds": [100],
-            "marketplace.selection_rate": [0.3],
         }
     ))
 
@@ -1086,7 +1083,6 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
             "aggregation.method": AGGREGATORS_TO_TEST,
 
             "experiment.num_rounds": [100],
-            "marketplace.selection_rate": [0.3],
         }
     ))
 
@@ -1131,7 +1127,6 @@ def generate_attack_scalability_multirate_scenarios() -> List[Scenario]:
             "aggregation.method": ["martfl"],
 
             "experiment.num_rounds": [100],
-            "marketplace.selection_rate": [0.3],
         }
     ))
 
@@ -1180,7 +1175,6 @@ def generate_extreme_scale_scenarios() -> List[Scenario]:
 
             # Reduce rounds for faster experiments
             "experiment.num_rounds": [50],
-            "marketplace.selection_rate": [0.2],  # Select fewer sellers per round
         }
     ))
 
@@ -1203,7 +1197,6 @@ def generate_extreme_scale_scenarios() -> List[Scenario]:
             "aggregation.method": ["fltrust"],
 
             "experiment.num_rounds": [50],
-            "marketplace.selection_rate": [0.2],
         }
     ))
 
@@ -1269,7 +1262,6 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
 
             # Keep these fixed for consistency
             "experiment.num_rounds": [100],
-            "marketplace.selection_rate": [0.3],  # 30% of sellers selected per round
         }
     ))
 
@@ -1298,7 +1290,7 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
             "aggregation.sm_model_type": ["resnet18"],
 
             "experiment.num_rounds": [100],
-            "marketplace.selection_rate": [0.3],
+
         }
     ))
 
@@ -1328,7 +1320,6 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
 
             # Keep these fixed
             "experiment.num_rounds": [100],
-            "marketplace.selection_rate": [0.3],
         }
     ))
 
@@ -1358,7 +1349,6 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
             "aggregation.sm_model_type": ["flexiblecnn"],
 
             "experiment.num_rounds": [100],
-            "marketplace.selection_rate": [0.3],
         }
     ))
 
@@ -1392,7 +1382,6 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
             "aggregation.sm_model_type": ["flexiblecnn"],
 
             "experiment.num_rounds": [100],
-            "marketplace.selection_rate": [0.3],
         }
     ))
 
@@ -1431,7 +1420,6 @@ def generate_text_scalability_scenarios() -> List[Scenario]:
             "aggregation.method": TEXT_AGGREGATORS,
 
             "experiment.num_rounds": [100],
-            "marketplace.selection_rate": [0.3],
         }
     ))
 
@@ -1478,7 +1466,6 @@ def generate_extreme_scale_scenarios() -> List[Scenario]:
 
             # Reduce rounds for faster experiments
             "experiment.num_rounds": [50],
-            "marketplace.selection_rate": [0.2],  # Select fewer sellers per round
         }
     ))
 
@@ -1501,7 +1488,44 @@ def generate_extreme_scale_scenarios() -> List[Scenario]:
             "aggregation.method": ["fltrust"],
 
             "experiment.num_rounds": [50],
-            "marketplace.selection_rate": [0.2],
+        }
+    ))
+
+    return scenarios
+
+
+def generate_baseline_scalability_scenarios() -> List[Scenario]:
+    """
+    Test how defenses perform at different scales WITHOUT any attacks.
+    Essential baseline for comparison.
+    """
+    scenarios = []
+
+    MARKETPLACE_SIZES = [10, 20, 30, 50, 100]
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl', 'skymask']
+
+    scenarios.append(Scenario(
+        name="scalability_baseline_no_attack_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks  # Pure benign
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- PRIMARY SWEEP: Marketplace Size ---
+            "marketplace.num_sellers": MARKETPLACE_SIZES,
+
+            # --- NO ATTACKS ---
+            "experiment.adv_rate": [0.0],
+
+            # --- Test all defenses ---
+            "aggregation.method": ALL_AGGREGATORS,
+            "aggregation.sm_model_type": ["flexiblecnn"],
+
+            "experiment.num_rounds": [100],
         }
     ))
 
@@ -1511,13 +1535,44 @@ def generate_extreme_scale_scenarios() -> List[Scenario]:
 # ============================================================================
 # Add to ALL_SCENARIOS
 # ============================================================================
+def generate_cifar100_scalability_scenarios() -> List[Scenario]:
+    """Test scalability on more complex dataset (CIFAR-100)"""
+    scenarios = []
 
+    MARKETPLACE_SIZES = [10, 30, 50, 100]  # Fewer sizes for efficiency
+
+    scenarios.append(Scenario(
+        name="scalability_backdoor_sybil_cifar100_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar100_config,  # Different dataset
+            use_image_backdoor_attack,
+            use_sybil_attack('mimic')
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar100_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "marketplace.num_sellers": MARKETPLACE_SIZES,
+            "experiment.adv_rate": [0.3],
+            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "aggregation.method": ['fedavg', 'fltrust', 'martfl'],  # Fewer for speed
+            "experiment.num_rounds": [100],
+        }
+    ))
+
+    return scenarios
+
+
+# Add to ALL_SCENARIOS
 ALL_SCENARIOS = []
+ALL_SCENARIOS.extend(generate_cifar100_scalability_scenarios())
 
 # ... [Keep all your existing scenario generators] ...
 
 # 🆕 Add scalability scenarios with BACKDOOR attacks
 ALL_SCENARIOS.extend(generate_attack_scalability_scenarios())
+# Add to ALL_SCENARIOS:
+ALL_SCENARIOS.extend(generate_baseline_scalability_scenarios())
 
 # 🆕 OPTIONAL: Add text scalability
 ALL_SCENARIOS.extend(generate_text_scalability_scenarios())
