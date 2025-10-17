@@ -106,6 +106,23 @@ class TabularBackdoorAttackName(Enum):
 
 
 @dataclass
+class BuyerAttackConfig:
+    """A unified configuration for all buyer-side attacks."""
+    is_active: bool = False
+
+    # Renamed for clarity
+    attack_type: Literal["dos", "starvation", "erosion", "orthogonal_pivot"] = "dos"
+
+    # --- Parameters for "Economic Starvation" ---
+    starvation_classes: List[int] = field(default_factory=list)
+
+    # --- Parameters for "Trust Erosion" (if using a pivoting strategy) ---
+    erosion_pivot_classes: List[List[int]] = field(default_factory=list)
+
+    # --- Parameters for "Targeted Exclusion via Orthogonal Pivot" ---
+    noise_scale: float = 0.5 # Controls the magnitude of the orthogonal vector
+
+@dataclass
 class TabularBackdoorParams:
     """Container for all possible tabular backdoor attack configurations."""
     # This field determines which of the sub-configurations is active
@@ -194,12 +211,13 @@ class ServerAttackConfig:
     # You could add others here in the future
     # membership_inference: MembershipInferenceParams = field(default_factory=MembershipInferenceParams)
 
+
 @dataclass
 class DrowningAttackConfig:
     """Configuration for the Targeted Drowning (Centroid Poisoning) Attack."""
     is_active: bool = False
     mimicry_rounds: int = 10  # Number of rounds to act honestly to build trust
-    drift_factor: float = 0.1   # How much to shift the gradient each drift round
+    drift_factor: float = 0.1  # How much to shift the gradient each drift round
 
 
 @dataclass
@@ -419,6 +437,7 @@ class AppConfig:
     n_samples: int = 3
     data_root: str = "./data"
     use_cache: bool = True
+    buyer_attack_config: BuyerAttackConfig = field(default_factory=BuyerAttackConfig)
 
     def __post_init__(self):
         """

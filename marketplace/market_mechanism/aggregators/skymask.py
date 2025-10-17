@@ -72,22 +72,29 @@ class SkymaskAggregator(BaseAggregator):
         self.mask_threshold = mask_threshold
         logger.info(f"SkymaskAggregator initialized with mask_epochs={self.mask_epochs}, mask_lr={self.mask_lr}")
 
-    def aggregate(self, global_epoch: int, seller_updates: Dict[str, List[torch.Tensor]], **kwargs) -> Tuple[
-        List[torch.Tensor], List[str], List[str], Dict[str, Any]]:
+    def aggregate(
+            self,
+            global_epoch: int,
+            seller_updates: Dict[str, List[torch.Tensor]],
+            root_gradient: List[torch.Tensor],  # <-- Now a required, named argument
+            **kwargs
+    ) -> Tuple[List[torch.Tensor], List[str], List[str], Dict[str, Any]]:
 
         logger.info(f"--- SkyMask Aggregation (Epoch {global_epoch}) ---")
 
         # 1. Compute full model parameters
         global_params = [p.data.clone() for p in self.global_model.parameters()]
-        trust_gradient = self._compute_trust_gradient()
         worker_params = []
         seller_ids = list(seller_updates.keys())
         processed_updates = {}
+
         for sid in seller_ids:
             update = clip_gradient_update(seller_updates[sid], self.clip_norm) if self.clip else seller_updates[sid]
             processed_updates[sid] = update
             worker_params.append([p_glob + p_upd for p_glob, p_upd in zip(global_params, update)])
-        buyer_params = [p_glob + p_upd for p_glob, p_upd in zip(global_params, trust_gradient)]
+
+        # Here, we use the passed-in root_gradient to construct the buyer's parameters
+        buyer_params = [p_glob + p_upd for p_glob, p_upd in zip(global_params, root_gradient)]
         worker_params.append(buyer_params)
 
         # 2. Determine the correct model type

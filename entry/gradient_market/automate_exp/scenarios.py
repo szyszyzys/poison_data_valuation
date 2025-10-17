@@ -4,7 +4,15 @@ from typing import List, Callable, Dict, Any
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
-
+def disable_all_seller_attacks(config: AppConfig) -> AppConfig:
+    """Modifier to ensure a clean environment with only benign sellers."""
+    config.experiment.adv_rate = 0.0  # No adversarial sellers
+    config.adversary_seller_config.poisoning.type = PoisonType.NONE
+    config.adversary_seller_config.sybil.is_sybil = False
+    # Add any other seller-side attacks you might have
+    # config.adversary_seller_config.drowning_attack.is_active = False
+    # config.adversary_seller_config.adaptive_attack.is_active = False
+    return config
 
 # --- Define the structure of a Scenario ---
 @dataclass
@@ -513,6 +521,46 @@ def generate_drowning_attack_scenarios() -> List[Scenario]:
     return scenarios
 
 
+def generate_buyer_attack_scenarios() -> List[Scenario]:
+    """
+    Generates scenarios to test the impact of all buyer-side attacks.
+    This testbed uses ONLY benign sellers to isolate the buyer's malicious impact.
+    """
+    scenarios = []
+    # Test against aggregators that actually use the buyer's root gradient,
+    # plus FedAvg as a control to prove it's unaffected.
+    AGGREGATORS_TO_TEST = ['fedavg', 'fltrust', 'martfl']
+
+    # Define the buyer attacks to sweep over
+    BUYER_ATTACKS = ["dos", "starvation", "erosion", "orthogonal_pivot"]
+
+    for attack_type in BUYER_ATTACKS:
+        scenario = Scenario(
+            name=f"buyer_attack_{attack_type}_cifar10_cnn",
+            base_config_factory=get_base_image_config,
+            # CRITICAL: This modifier ensures no seller-side attacks interfere
+            modifiers=[use_cifar10_config, disable_all_seller_attacks],
+            parameter_grid={
+                # --- Fixed Parameters for a focused test ---
+                "experiment.image_model_config_name": ["cifar10_cnn"],
+                "experiment.model_structure": ["cnn"],
+
+                # --- Swept Parameter ---
+                "aggregation.method": AGGREGATORS_TO_TEST,
+
+                # --- Activate and Configure the Buyer Attack ---
+                "buyer_attack_config.is_active": [True],
+                "buyer_attack_config.attack_type": [attack_type],
+
+                # --- Add specific parameters for certain attacks ---
+                # For the 'starvation' attack, we target classes 0 and 1.
+                "buyer_attack_config.starvation_classes": [[0, 1]],
+            }
+        )
+        scenarios.append(scenario)
+
+    return scenarios
+
 ALL_SCENARIOS = []
 # 1. The core new experiment comparing the Oracle vs. Biased Buyer setups
 ALL_SCENARIOS.extend(generate_oracle_vs_buyer_bias_scenarios())
@@ -532,7 +580,7 @@ ALL_SCENARIOS.extend(generate_sybil_selection_rate_scenarios())
 ALL_SCENARIOS.extend(generate_buyer_data_impact_scenarios())
 ALL_SCENARIOS.extend(generate_adaptive_attack_scenarios())
 ALL_SCENARIOS.extend(generate_drowning_attack_scenarios())
-
+ALL_SCENARIOS.extend(generate_buyer_attack_scenarios())
 # You can print the names of generated scenarios to verify
 if __name__ == '__main__':
     print(f"Generated {len(ALL_SCENARIOS)} focused scenarios:")

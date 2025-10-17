@@ -65,7 +65,6 @@ class MartflAggregator(BaseAggregator):
         self.clip = clip
         self.change_base = change_base
         self.baseline_id = "buyer"
-        self.root_gradient = None # Will hold the buyer's root gradient for the round
         logger.info(f"MartflAggregator initialized:")
         logger.info(f"  - clip_gradients: {self.clip}")
         logger.info(f"  - change_baseline: {self.change_base}")
@@ -75,7 +74,8 @@ class MartflAggregator(BaseAggregator):
             self,
             global_epoch: int,
             seller_updates: Dict[str, List[torch.Tensor]],
-            **kwargs
+            root_gradient: List[torch.Tensor],  # <-- Now a required, named argument
+            **kwargs  # Keep for any other optional args
     ) -> Tuple[List[torch.Tensor], List[str], List[str], Dict[str, Any]]:
         """
         martFL aggregation with comprehensive marketplace metrics.
@@ -86,36 +86,21 @@ class MartflAggregator(BaseAggregator):
         logger.info(f"=== martFL Aggregation (Round {global_epoch}) ===")
         logger.info(f"Processing {len(seller_updates)} seller updates")
         logger.info(f"Current baseline: {self.baseline_id}")
-        self.root_gradient = kwargs.get('root_gradient')
-        buyer_data_loader = kwargs.get('buyer_data_loader')
-
         seller_ids = list(seller_updates.keys())
 
         # 1. Flatten and optionally clip updates
         flat_updates = {}
-        for sid, upd in seller_updates.items():
-            if self.clip:
-                clipped = clip_gradient_update(upd, self.clip_norm)
-                flat_updates[sid] = flatten_tensor(clipped)
-            else:
-                flat_updates[sid] = flatten_tensor(upd)
-
-        # 2. Get or compute baseline
         if self.baseline_id and self.baseline_id in seller_updates:
             baseline_update_flat = flat_updates[self.baseline_id]
             baseline_source = 'seller'
             logger.info(f"Using seller '{self.baseline_id}' as baseline")
         else:
-            # --- CHANGE: Use the pre-computed root gradient ---
             self.baseline_id = "buyer"
-            if self.root_gradient is None:
-                raise ValueError("MartflAggregator requires a 'root_gradient' when baseline is 'buyer'.")
 
-            trust_gradient = self.root_gradient  # Use the passed-in gradient
-            # --- REMOVED: Call to self._compute_trust_gradient() is gone ---
-
+            trust_gradient = root_gradient  # Use the passed-in gradient
             if self.clip:
                 trust_gradient = clip_gradient_update(trust_gradient, self.clip_norm)
+
             trust_gradient = [t.to(self.device) for t in trust_gradient]
             baseline_update_flat = flatten_tensor(trust_gradient)
             baseline_source = 'buyer_trust'

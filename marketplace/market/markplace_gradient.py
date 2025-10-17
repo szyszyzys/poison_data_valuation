@@ -1,10 +1,12 @@
 import logging
-import numpy as np
 import time
-import torch
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
+
+import numpy as np
+import torch
 
 from common.enums import ServerAttackMode
 from common.gradient_market_configs import AppConfig, ServerAttackConfig
@@ -28,7 +30,7 @@ class MarketplaceConfig:
 class DataMarketplaceFederated(DataMarketplace):
     def __init__(self, cfg: AppConfig, aggregator: Aggregator, sellers: dict,
                  input_shape: tuple, SellerClass: type, validation_loader, model_factory, num_classes: int,
-                 attacker=None):
+                 attacker=None, buyer_seller: GradientSeller = None, oracle_seller: GradientSeller = None):
         """
         Initializes the marketplace with all necessary components and the main config.
         """
@@ -40,8 +42,8 @@ class DataMarketplaceFederated(DataMarketplace):
         self.SellerClass = SellerClass  # <-- Add this
         self.model_factory = model_factory
         self.validation_loader = validation_loader
-        self.buyer_seller: GradientSeller = None
-        self.oracle_seller: GradientSeller = None
+        self.buyer_seller: GradientSeller = buyer_seller
+        self.oracle_seller: GradientSeller = oracle_seller
         self.num_classes = num_classes
 
         # Conditionally initialize the privacy attacker
@@ -82,20 +84,23 @@ class DataMarketplaceFederated(DataMarketplace):
         round_start_time = time.time()
         logging.info(f"--- Round {round_number} Started ---")
 
-        # === 1. Compute Root Gradients using Virtual Sellers ===
-        # This ensures the root gradients are calculated with the EXACT same logic as real sellers.
 
-        # Create a "Buyer Seller" to get the buyer's root gradient
+        # === 2. Collect Gradients from the Real Marketplace ===
+        gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
+
+
+        # === 1. Compute Root Gradients using Virtual Sellers ===
         logging.info("🛒 Creating virtual 'Buyer Seller' to compute root gradient...")
-        buyer_root_gradient, _ = self.buyer_seller.get_gradient_for_upload(global_model)
+        buyer_root_gradient, _ = self.buyer_seller.get_gradient_for_upload(
+            global_model,
+            all_seller_gradients=gradients_dict,
+            target_seller_id=getattr(self.cfg.buyer_attack, 'target_seller_id', None)  # Example for config
+        )
         oracle_root_gradient, _ = self.oracle_seller.get_gradient_for_upload(global_model)
         if buyer_root_gradient is None:
             logging.error("Virtual buyer failed to compute a gradient, which is a fatal error for this round.")
             # This indicates a severe problem (like a CUDA crash) that should stop the experiment.
             raise RuntimeError("Buyer root gradient is None, indicating a fatal error in local training.")
-
-        # === 2. Collect Gradients from the Real Marketplace ===
-        gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
 
         # === 3. Sanitize ALL Gradients Before Use ===
         target_device = self.aggregator.device

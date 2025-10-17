@@ -2,26 +2,27 @@ import collections
 import csv
 import json
 import logging
-import numpy as np
 import os
-import pandas as pd
 import random
 import sys
 import time
-import torch
-import torch.nn.functional as F
 # Add these class definitions as well
 from abc import ABC, abstractmethod
 from collections import abc  # abc.Mapping for general dicts
 from dataclasses import field, dataclass
 from pathlib import Path
-from torch import nn
-from torch.utils.data import DataLoader, Dataset
 from typing import Any, Callable, Set
 from typing import Dict
 from typing import List, Optional
 from typing import Tuple
 from typing import Union
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn.functional as F
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
     BackdoorTextGenerator, BackdoorTabularGenerator
@@ -300,7 +301,9 @@ class GradientSeller(BaseSeller):
             logging.error(f"--- ❌ FAILED to properly initialize seller '{self.seller_id}': {e} ---", exc_info=True)
         # ==========================================================
 
-    def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
+    def get_gradient_for_upload(self, global_model: nn.Module,
+                                all_seller_gradients: Dict[str, List[torch.Tensor]] = None,
+                                target_seller_id: str = None) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
         Computes and returns the gradient update and training statistics.
         This is the primary method for the federated learning coordinator to call.
@@ -943,7 +946,9 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
         # The seller simply stores the generator it was given.
         self.poison_generator = poison_generator
 
-    def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
+    def get_gradient_for_upload(self, global_model: nn.Module,
+                                all_seller_gradients: Dict[str, List[torch.Tensor]] = None,
+                                target_seller_id: str = None) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
         Overrides the base method to implement poisoning and Sybil logic.
         Returns gradient as a list of tensors matching global_model parameters.
@@ -1287,7 +1292,9 @@ class AdaptiveAttackerSeller(GradientSeller):
         logging.info(
             f"[{self.seller_id}] Exploration complete. Success Rates: {dict(success_rates)}. Best Strategy: '{self.best_strategy}'")
 
-    def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
+    def get_gradient_for_upload(self, global_model: nn.Module,
+                                all_seller_gradients: Dict[str, List[torch.Tensor]] = None,
+                                target_seller_id: str = None) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         self.round_counter += 1
 
         if self.phase == "exploration" and self.round_counter > self.adv_cfg.exploration_rounds:
@@ -1360,7 +1367,9 @@ class DrowningAttackerSeller(GradientSeller):
             f"Mimicking for {self.adv_cfg.mimicry_rounds} rounds."
         )
 
-    def get_gradient_for_upload(self, global_model: nn.Module) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
+    def get_gradient_for_upload(self, global_model: nn.Module,
+                                all_seller_gradients: Dict[str, List[torch.Tensor]] = None,
+                                target_seller_id: str = None) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         self.round_counter += 1
 
         # --- Phase Transition Logic ---
