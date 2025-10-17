@@ -119,7 +119,7 @@ class BuyerAttackConfig:
     """Configuration for malicious buyer attacks"""
     is_active: bool = False
     attack_type: str = "none"  # "dos", "starvation", "erosion", "class_exclusion", "oscillating", "orthogonal_pivot"
-    target_seller_id = "seller_2"
+    target_seller_id = "bn_5"
     # --- Starvation Attack ---
     starvation_classes: List[int] = field(default_factory=list)
 
