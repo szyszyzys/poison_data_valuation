@@ -875,7 +875,7 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
         modifiers=[
             use_cifar10_config,
             disable_all_seller_attacks,
-            use_buyer_orthogonal_pivot_attack(target_seller_id="seller_2")
+            use_buyer_orthogonal_pivot_attack(target_seller_id="bn_5")
         ],
         parameter_grid={
             "experiment.image_model_config_name": ["cifar10_cnn"],
