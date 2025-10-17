@@ -724,13 +724,15 @@ def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, m
             attack_config=cfg.buyer_attack_config,  # Pass the specific attack config
             data_config=RuntimeDataConfig(
                 dataset=buyer_loader.dataset,
-                num_classes=marketplace.num_classes,  # Assuming num_classes is on marketplace
+                num_classes=marketplace.num_classes,
                 collate_fn=getattr(buyer_loader, 'collate_fn', None)
             ),
             training_config=cfg.training,
             model_factory=model_factory,
             save_path=cfg.experiment.save_path,
-            device=cfg.experiment.device)
+            device=cfg.experiment.device,
+            num_classes=marketplace.num_classes  # 🆕 ADD THIS for oscillating/class_exclusion attacks
+        )
     else:
         # --- HONEST PATH ---
         logging.info("🛒 Creating honest virtual 'Buyer Seller'...")
@@ -738,7 +740,7 @@ def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, m
             seller_id='virtual_buyer',
             data_config=RuntimeDataConfig(
                 dataset=buyer_loader.dataset,
-                num_classes=marketplace.num_classes,  # Assuming num_classes is on marketplace
+                num_classes=marketplace.num_classes,
                 collate_fn=getattr(buyer_loader, 'collate_fn', None)
             ),
             training_config=cfg.training,
@@ -746,7 +748,7 @@ def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, m
             save_path=cfg.experiment.save_path,
             device=cfg.experiment.device)
 
-    # 2. Create the "Oracle Seller"
+    # 2. Create the "Oracle Seller" (no changes needed)
     logging.info("🧪 Creating virtual 'Oracle Seller'...")
     marketplace.oracle_seller = marketplace.SellerClass(
         seller_id='virtual_oracle',
@@ -761,7 +763,6 @@ def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, m
         device=cfg.experiment.device
     )
     logging.info("✅ Root gradient sellers initialized.")
-
 
 def run_attack(cfg: AppConfig):
     """

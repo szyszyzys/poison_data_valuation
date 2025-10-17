@@ -1408,3 +1408,147 @@ class DrowningAttackerSeller(GradientSeller):
 
             logging.info(f"[{self.seller_id}][Drift] Round {self.round_counter}: Submitting drifted gradient.")
             return drifted_gradient, stats
+
+
+class CompetitorMimicrySeller(GradientSeller):
+    """
+    Implements the Direct Competitor Mimicry Attack.
+
+    This seller identifies a high-quality target competitor and submits gradients
+    that closely mimic the target's updates with small perturbations. The goal is
+    to evade detection while stealing market share from the target.
+
+    Success Metric: Target's selection rate drops (e.g., 80% → 40%) while
+    attacker gains similar selection rate (0% → 40%).
+    """
+
+    def __init__(self, *args, adversary_config: AdversarySellerConfig, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.adv_cfg = adversary_config.mimicry_attack  # Note: changed from drowning_attack
+        if not self.adv_cfg.is_active:
+            raise ValueError("CompetitorMimicrySeller created but is_active is False in config.")
+
+        # --- Attack Configuration ---
+        self.target_seller_id = self.adv_cfg.target_seller_id  # Who to mimic
+        self.noise_scale = self.adv_cfg.noise_scale  # How much noise to add (e.g., 0.05)
+        self.mimicry_strategy = self.adv_cfg.strategy  # "exact_copy", "noisy_copy", or "scaled_copy"
+
+        # --- Attack State ---
+        self.round_counter = 0
+        self.observation_rounds = self.adv_cfg.observation_rounds  # Learn target's pattern first (e.g., 3)
+        self.target_gradient_history = []  # Store recent target gradients for averaging
+
+        logging.info(
+            f"[{self.seller_id}] Initialized as CompetitorMimicry attacker. "
+            f"Target: {self.target_seller_id}, Strategy: {self.mimicry_strategy}, "
+            f"Noise: {self.noise_scale}, Observing for {self.observation_rounds} rounds."
+        )
+
+    def get_gradient_for_upload(
+            self,
+            global_model: nn.Module,
+            all_seller_gradients: Dict[str, List[torch.Tensor]] = None,
+            target_seller_id: str = None
+    ) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
+
+        self.round_counter += 1
+
+        # 1. Compute our own honest gradient (we may not use it, but compute for stats)
+        honest_gradient, stats = super().get_gradient_for_upload(global_model)
+        if honest_gradient is None:
+            return None, stats
+
+        stats['attack_type'] = 'competitor_mimicry'
+        stats['target_id'] = self.target_seller_id
+
+        # 2. Check if we have access to target's gradient
+        if all_seller_gradients is None or self.target_seller_id not in all_seller_gradients:
+            logging.warning(
+                f"[{self.seller_id}] Round {self.round_counter}: "
+                f"Cannot access target {self.target_seller_id}'s gradient. "
+                f"Falling back to honest gradient."
+            )
+            stats['fallback_reason'] = 'target_unavailable'
+            return honest_gradient, stats
+
+        target_gradient = all_seller_gradients[self.target_seller_id]
+
+        # 3. Observation Phase: Learn target's gradient pattern
+        if self.round_counter <= self.observation_rounds:
+            self.target_gradient_history.append([t.clone() for t in target_gradient])
+            logging.info(
+                f"[{self.seller_id}][Observation] Round {self.round_counter}/{self.observation_rounds}: "
+                f"Learning target's pattern. Submitting honest gradient."
+            )
+            stats['attack_phase'] = 'observation'
+            return honest_gradient, stats
+
+        # 4. Attack Phase: Mimic the target
+        stats['attack_phase'] = 'active_mimicry'
+
+        if self.mimicry_strategy == "exact_copy":
+            # Strategy 1: Exact copy (most aggressive, easiest to detect if defense checks for duplicates)
+            malicious_gradient = [t.clone() for t in target_gradient]
+            logging.info(f"[{self.seller_id}][Attack] Submitting exact copy of target's gradient.")
+
+        elif self.mimicry_strategy == "noisy_copy":
+            # Strategy 2: Add small Gaussian noise (more stealthy)
+            malicious_gradient = []
+            for tensor in target_gradient:
+                noise = torch.randn_like(tensor) * self.noise_scale * tensor.abs().mean()
+                malicious_gradient.append(tensor + noise)
+            logging.info(
+                f"[{self.seller_id}][Attack] Submitting noisy copy "
+                f"(noise_scale={self.noise_scale})."
+            )
+
+        elif self.mimicry_strategy == "scaled_copy":
+            # Strategy 3: Scale magnitude slightly (preserves direction, changes norm)
+            scale_factor = 1.0 + torch.randn(1).item() * self.noise_scale  # e.g., 1.0 ± 0.05
+            malicious_gradient = [tensor * scale_factor for tensor in target_gradient]
+            logging.info(
+                f"[{self.seller_id}][Attack] Submitting scaled copy "
+                f"(scale={scale_factor:.3f})."
+            )
+
+        elif self.mimicry_strategy == "averaged_history":
+            # Strategy 4: Average of target's recent gradients (smooths out noise)
+            if len(self.target_gradient_history) > 0:
+                malicious_gradient = []
+                for param_idx in range(len(target_gradient)):
+                    # Average this parameter across historical observations
+                    param_history = [g[param_idx] for g in self.target_gradient_history]
+                    avg_param = torch.stack(param_history).mean(dim=0)
+                    # Add current target gradient with weight
+                    blended = 0.7 * target_gradient[param_idx] + 0.3 * avg_param
+                    malicious_gradient.append(blended)
+                logging.info(
+                    f"[{self.seller_id}][Attack] Submitting averaged gradient from "
+                    f"{len(self.target_gradient_history)} historical observations."
+                )
+            else:
+                # Fallback if no history
+                malicious_gradient = [t.clone() for t in target_gradient]
+
+        else:
+            raise ValueError(f"Unknown mimicry strategy: {self.mimicry_strategy}")
+
+        # 5. Update history (rolling window)
+        max_history = 5
+        self.target_gradient_history.append([t.clone() for t in target_gradient])
+        if len(self.target_gradient_history) > max_history:
+            self.target_gradient_history.pop(0)
+
+        # 6. Compute similarity for logging
+        with torch.no_grad():
+            target_flat = torch.cat([t.flatten() for t in target_gradient])
+            malicious_flat = torch.cat([t.flatten() for t in malicious_gradient])
+            cosine_sim = F.cosine_similarity(target_flat.unsqueeze(0), malicious_flat.unsqueeze(0))
+            stats['cosine_similarity_to_target'] = cosine_sim.item()
+
+        logging.info(
+            f"[{self.seller_id}][Attack] Round {self.round_counter}: "
+            f"Cosine similarity to target: {stats['cosine_similarity_to_target']:.4f}"
+        )
+
+        return malicious_gradient, stats
