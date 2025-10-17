@@ -426,7 +426,7 @@ def use_adaptive_attack(mode: str, exploration_rounds: int = 30) -> Callable[[Ap
         config.adversary_seller_config.adaptive_attack.exploration_rounds = exploration_rounds
 
         # Deactivate other attacks to prevent interference
-        config.adversary_seller_config.poisoning.type = PoisonType.NO_POISON
+        config.adversary_seller_config.poisoning.type = PoisonType.NONE
         config.adversary_seller_config.sybil.is_sybil = False
         return config
 
@@ -480,7 +480,7 @@ def use_drowning_attack(mimicry_rounds: int, drift_factor: float) -> Callable[[A
         adv_cfg.drift_factor = drift_factor
 
         # Deactivate other attacks to ensure the experiment is isolated
-        config.adversary_seller_config.poisoning.type = PoisonType.NO_POISON
+        config.adversary_seller_config.poisoning.type = PoisonType.NONE
         config.adversary_seller_config.sybil.is_sybil = False
         config.adversary_seller_config.adaptive_attack.is_active = False
         return config
