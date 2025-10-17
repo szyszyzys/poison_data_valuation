@@ -84,10 +84,8 @@ class DataMarketplaceFederated(DataMarketplace):
         round_start_time = time.time()
         logging.info(f"--- Round {round_number} Started ---")
 
-
         # === 2. Collect Gradients from the Real Marketplace ===
         gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
-
 
         # === 1. Compute Root Gradients using Virtual Sellers ===
         logging.info("🛒 Creating virtual 'Buyer Seller' to compute root gradient...")
@@ -205,7 +203,8 @@ class DataMarketplaceFederated(DataMarketplace):
             # Selection details
             "selected_seller_ids": selected_ids,
             "outlier_seller_ids": outlier_ids,
-
+            "buyer_attack_active": self.cfg.buyer_attack_config.is_active,
+            "buyer_attack_type": self.cfg.buyer_attack_config.attack_type if self.cfg.buyer_attack_config.is_active else "none",
             # Attack info
             "attack_performed": bool(attack_log),
             "attack_victim": attack_log.get('victim_id') if attack_log else None,
