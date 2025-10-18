@@ -655,12 +655,6 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
     save_path = Path(cfg.experiment.save_path)
     log_path = save_path / "training_log.csv"
 
-    # Initialize CSV with headers (this is fine)
-    if not log_path.exists():
-        pd.DataFrame(columns=['round', 'duration_sec', 'num_selected', 'num_outliers']).to_csv(
-            log_path, index=False
-        )
-
     # --- 1. EARLY STOPPING INITIALIZATION ---
     patience = cfg.training.patience
     patience_counter = 0
@@ -754,14 +748,35 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
 
 
 def save_round_incremental(round_record, save_path):
+    """Saves the full round_record dictionary, handling header dynamically."""
     log_path = Path(save_path) / "training_log.csv"
-    df = pd.DataFrame([round_record])
 
-    # Append to existing file or create new
-    if log_path.exists():
-        df.to_csv(log_path, mode='a', header=False, index=False)
-    else:
-        df.to_csv(log_path, mode='w', header=True, index=False)
+    # --- START FIX ---
+    # Create DataFrame from the full dictionary
+    # Important: Convert record to a list containing the dictionary for DataFrame creation
+    try:
+        df = pd.DataFrame([round_record])
+    except Exception as e:
+        logging.error(f"Error creating DataFrame from round_record: {e}")
+        logging.error(f"Round Record Keys: {list(round_record.keys())}")
+        # Optional: Log problematic values if possible
+        # for k, v in round_record.items():
+        #     if not isinstance(v, (int, float, str, bool, type(None))):
+        #         logging.warning(f"  Potentially problematic key '{k}' type: {type(v)}")
+        return  # Skip saving this round if DataFrame creation fails
+
+    # Check if file exists to decide whether to write header
+    file_exists = log_path.exists()
+
+    try:
+        df.to_csv(
+            log_path,
+            mode='a',  # Always append
+            header=not file_exists,  # Write header only if file doesn't exist yet
+            index=False
+        )
+    except Exception as e:
+        logging.error(f"Error writing round {round_record.get('round', 'N/A')} to {log_path}: {e}")
 
 
 def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, model_factory):
