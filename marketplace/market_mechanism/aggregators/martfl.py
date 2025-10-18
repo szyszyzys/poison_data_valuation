@@ -99,7 +99,6 @@ class MartflAggregator(BaseAggregator):
                 flat_updates[sid] = flatten_tensor(clipped)
             else:
                 flat_updates[sid] = flatten_tensor(upd)
-
         # 2. Get or compute baseline
         if self.baseline_id and self.baseline_id in seller_updates:
             baseline_update_flat = flat_updates[self.baseline_id]
