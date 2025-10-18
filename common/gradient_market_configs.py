@@ -44,7 +44,6 @@ class ExperimentConfig:
     use_subset: bool = False
     subset_size: int = 3000  # Number of samples to use in the subset
     dataset_type: str = "text"
-    evaluation_frequency: int = 1
     evaluations: List[str] = field(default_factory=lambda: ["clean"])
     image_model_config_name: str = "cifar10_cnn"
     tabular_model_config_name: str = "mlp_texas100_baseline"  # Default model config to use
