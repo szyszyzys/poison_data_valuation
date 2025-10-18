@@ -153,7 +153,8 @@ class Aggregator:
         logger.info(f"✅ Validated {len(standardized)}/{len(updates)} seller updates")
         return standardized
 
-    def aggregate(self, global_epoch: int, seller_updates: Dict, **kwargs) -> Tuple[
+    def aggregate(self, global_epoch: int, seller_updates: Dict, root_gradient: Optional[List[torch.Tensor]] = None,
+                  **kwargs) -> Tuple[
         List[torch.Tensor], List[str], List[str], Dict[str, Any]]:
         """
         Standardizes updates and delegates the aggregation to the selected strategy.
@@ -173,11 +174,22 @@ class Aggregator:
             return zero_grad, [], list(seller_updates.keys()), {}
 
         logger.info(f"✅ Proceeding with {len(s_updates_tensor)} valid updates")
-        return self.strategy.aggregate(
-            global_epoch=global_epoch,
-            seller_updates=s_updates_tensor,
-            **kwargs
-        )
+
+        # === 2. Build the arguments for the strategy call ===
+        strategy_args = {
+            'global_epoch': global_epoch,
+            'seller_updates': s_updates_tensor,
+            **kwargs  # Pass through any other miscellaneous args
+        }
+
+        if isinstance(self.strategy, (FLTrustAggregator, MartflAggregator, SkymaskAggregator)):
+            if root_gradient is None:
+                # This is a critical error if the wrong configuration is used.
+                raise ValueError(f"{self.strategy.__class__.__name__} requires a 'root_gradient', but received None.")
+            strategy_args['root_gradient'] = root_gradient
+
+        # === 4. Call the strategy with the prepared arguments ===
+        return self.strategy.aggregate(**strategy_args)
 
     def apply_gradient(self, aggregated_gradient: List[torch.Tensor]):
         self.strategy.apply_gradient(aggregated_gradient)

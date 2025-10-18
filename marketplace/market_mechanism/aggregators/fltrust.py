@@ -2,7 +2,6 @@ from typing import Dict, Tuple, List, Any
 
 import torch
 import torch.nn.functional as F
-from torch import clip
 
 from common.utils import clip_gradient_update, flatten_tensor
 from marketplace.market_mechanism.aggregators.base_aggregator import BaseAggregator, logger
@@ -12,45 +11,46 @@ class FLTrustAggregator(BaseAggregator):
 
     def __init__(self, global_model, device, loss_fn, buyer_data_loader, clip_norm):
         super().__init__(global_model, device, loss_fn, buyer_data_loader, clip_norm)
-        self.root_gradient = None  # Holds the root gradient for the current round
 
     def aggregate(
             self,
             global_epoch: int,
             seller_updates: Dict[str, List[torch.Tensor]],
-            **kwargs
+            root_gradient: List[torch.Tensor],  # <-- Now a required, named argument
+            **kwargs  # Keep for any other optional args
     ) -> Tuple[List[torch.Tensor], List[str], List[str], Dict[str, Any]]:
         """
-        FLTrust aggregation with comprehensive marketplace metrics.
+        FLTrust aggregation with an explicit root_gradient argument.
         """
         logger.info(f"=== FLTrust Aggregation (Round {global_epoch}) ===")
         logger.info(f"Processing {len(seller_updates)} seller updates")
 
-        # --- CHANGE: Get the pre-computed root gradient from kwargs ---
-        self.root_gradient = kwargs.get('root_gradient')
-        if self.root_gradient is None:
-            raise ValueError("FLTrustAggregator requires a 'root_gradient' to be passed.")
+        # 2. REMOVED: Logic that gets root_gradient from **kwargs is gone.
+        # We now use the 'root_gradient' argument directly.
 
-        # 2. Process and clip all updates
+        # 3. FIX: Clarified clipping logic based on self.clip_norm
+        clip_enabled = self.clip_norm is not None and self.clip_norm > 0
+
+        # 4. CHANGE: Use the 'root_gradient' argument directly
+        trust_gradient = root_gradient
         processed_updates = {}
         for sid, upd in seller_updates.items():
-            if clip:
+            if clip_enabled:
                 processed_updates[sid] = clip_gradient_update(upd, self.clip_norm)
+                trust_gradient = clip_gradient_update(root_gradient, self.clip_norm)
             else:
                 processed_updates[sid] = upd
 
-        trust_gradient = self.root_gradient
-        if clip:
-            trust_gradient = clip_gradient_update(self.root_gradient, self.clip_norm)
+        # --- The rest of the function logic remains the same ---
 
-        # 3. Flatten for similarity calculation
+        # Flatten for similarity calculation
         flat_seller_updates = {sid: flatten_tensor(upd) for sid, upd in processed_updates.items()}
         flat_trust_gradient = flatten_tensor(trust_gradient)
         trust_norm = torch.norm(flat_trust_gradient)
 
         logger.info(f"Trust gradient norm: {trust_norm.item():.4f}")
 
-        # 4. Compute trust scores (cosine similarity with ReLU)
+        # Compute trust scores (cosine similarity with ReLU)
         seller_ids = list(flat_seller_updates.keys())
         seller_updates_stack = torch.stack(list(flat_seller_updates.values()))
 
@@ -59,75 +59,56 @@ class FLTrustAggregator(BaseAggregator):
             flat_trust_gradient.unsqueeze(0),
             dim=1
         )
-        trust_scores = torch.relu(cos_sim)  # Negative similarities become 0
+        trust_scores = torch.relu(cos_sim)
 
         logger.info(f"Trust scores - Mean: {trust_scores.mean().item():.4f}, "
                     f"Std: {trust_scores.std().item():.4f}, "
                     f"Min: {trust_scores.min().item():.4f}, "
                     f"Max: {trust_scores.max().item():.4f}")
 
-        # 5. Initialize comprehensive stats dictionary
+        # Initialize comprehensive stats dictionary
         aggregation_stats = {
-            # Method metadata
             'aggregation_method': 'fltrust',
             'round': global_epoch,
-            'clip_enabled': clip,
-            'clip_norm': self.clip_norm if clip else None,
-
-            # Trust baseline metrics
+            'clip_enabled': clip_enabled,
+            'clip_norm': self.clip_norm if clip_enabled else None,
             'trust_gradient_norm': trust_norm.item(),
-
-            # Trust score statistics
             'avg_trust_score': trust_scores.mean().item(),
             'std_trust_score': trust_scores.std().item(),
             'min_trust_score': trust_scores.min().item(),
             'max_trust_score': trust_scores.max().item(),
             'median_trust_score': trust_scores.median().item(),
-
-            # Per-seller raw scores
             'trust_scores': {sid: score.item() for sid, score in zip(seller_ids, trust_scores)},
-
-            # Per-seller cosine similarities (before ReLU)
             'cosine_similarities': {sid: sim.item() for sid, sim in zip(seller_ids, cos_sim)}
         }
 
-        # 6. Normalize trust scores to get aggregation weights
+        # Normalize trust scores to get aggregation weights
         total_trust = trust_scores.sum()
-
         if total_trust > 1e-9:
             weights = trust_scores / total_trust
         else:
             logger.warning("Total trust score near zero! Using uniform weights.")
             weights = torch.ones_like(trust_scores) / len(trust_scores)
 
-        # Log per-seller weights
-        aggregation_stats['seller_weights'] = {
-            sid: w.item() for sid, w in zip(seller_ids, weights)
-        }
+        aggregation_stats['seller_weights'] = {sid: w.item() for sid, w in zip(seller_ids, weights)}
         aggregation_stats['total_trust_sum'] = total_trust.item()
 
-        # 7. Weighted aggregation
+        # Weighted aggregation
         aggregated_gradient = [torch.zeros_like(p) for p in self.global_model.parameters()]
-
         for i, sid in enumerate(seller_ids):
             weight = weights[i].item()
-
             if weight > 0:
                 for agg_grad, seller_grad in zip(aggregated_gradient, processed_updates[sid]):
                     agg_grad.add_(seller_grad, alpha=weight)
-
                 logger.debug(f"Seller {sid}: trust={trust_scores[i].item():.4f}, weight={weight:.4f}")
 
-        # 8. Scale by trust norm (FLTrust paper's normalization)
+        # Scale by trust norm
         for agg_grad in aggregated_gradient:
             agg_grad.mul_(trust_norm.item())
 
-        # 9. Determine selected vs outlier sellers
+        # Determine selected vs outlier sellers
         selected_ids = [sid for i, sid in enumerate(seller_ids) if weights[i] > 0]
         outlier_ids = [sid for i, sid in enumerate(seller_ids) if weights[i] == 0]
-
-        logger.info(f"Selected: {len(selected_ids)} sellers")
-        logger.info(f"Rejected (outliers): {len(outlier_ids)} sellers")
 
         if outlier_ids:
             logger.info(f"Outlier IDs: {outlier_ids}")

@@ -1,11 +1,12 @@
 import copy
 import logging
+from abc import ABC, abstractmethod
+from typing import Dict, List, Tuple
+
 import torch
 import torch.nn as nn
-from abc import ABC, abstractmethod
 from sklearn.metrics import cohen_kappa_score
 from torch.utils.data import DataLoader
-from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,8 @@ class BaseAggregator(ABC):
         self._buyer_data_iter = None  # Initialize iterator as None
 
     @abstractmethod
-    def aggregate(self, global_epoch: int, seller_updates: Dict[str, List[torch.Tensor]], **kwargs) -> Tuple[
+    def aggregate(self, global_epoch: int, seller_updates: Dict[str, List[torch.Tensor]],
+                  root_gradient: List[torch.Tensor], **kwargs) -> Tuple[
         List[torch.Tensor], List[str], List[str]]:
         """
         The core aggregation logic. Must be implemented by all subclasses.

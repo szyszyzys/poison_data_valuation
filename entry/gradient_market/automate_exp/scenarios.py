@@ -6,6 +6,17 @@ from common.gradient_market_configs import AppConfig
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
 
 
+def disable_all_seller_attacks(config: AppConfig) -> AppConfig:
+    """Modifier to ensure a clean environment with only benign sellers."""
+    config.experiment.adv_rate = 0.0  # No adversarial sellers
+    config.adversary_seller_config.poisoning.type = PoisonType.NONE
+    config.adversary_seller_config.sybil.is_sybil = False
+    # Add any other seller-side attacks you might have
+    # config.adversary_seller_config.drowning_attack.is_active = False
+    # config.adversary_seller_config.adaptive_attack.is_active = False
+    return config
+
+
 # --- Define the structure of a Scenario ---
 @dataclass
 class Scenario:
@@ -418,7 +429,7 @@ def use_adaptive_attack(mode: str, exploration_rounds: int = 30) -> Callable[[Ap
         config.adversary_seller_config.adaptive_attack.exploration_rounds = exploration_rounds
 
         # Deactivate other attacks to prevent interference
-        config.adversary_seller_config.poisoning.type = PoisonType.NO_POISON
+        config.adversary_seller_config.poisoning.type = PoisonType.NONE
         config.adversary_seller_config.sybil.is_sybil = False
         return config
 
@@ -472,7 +483,7 @@ def use_drowning_attack(mimicry_rounds: int, drift_factor: float) -> Callable[[A
         adv_cfg.drift_factor = drift_factor
 
         # Deactivate other attacks to ensure the experiment is isolated
-        config.adversary_seller_config.poisoning.type = PoisonType.NO_POISON
+        config.adversary_seller_config.poisoning.type = PoisonType.NONE
         config.adversary_seller_config.sybil.is_sybil = False
         config.adversary_seller_config.adaptive_attack.is_active = False
         return config
@@ -480,31 +491,106 @@ def use_drowning_attack(mimicry_rounds: int, drift_factor: float) -> Callable[[A
     return modifier
 
 
-def generate_drowning_attack_scenarios() -> List[Scenario]:
+# ============================================================================
+# 🆕 NEW: Competitor Mimicry Attack (Replaces Drowning Attack)
+# ============================================================================
+
+def use_competitor_mimicry_attack(
+        target_seller_id: str = "seller_0",
+        strategy: str = "noisy_copy",
+        noise_scale: float = 0.03,
+        observation_rounds: int = 5
+) -> Callable[[AppConfig], AppConfig]:
     """
-    Generates scenarios to test the DrowningAttackerSeller's ability
-    to poison the centroid of adaptive defenses like MartFL.
+    Returns a modifier to enable the Competitor Mimicry attack.
+    This attack is simpler and more effective than the drowning attack.
+
+    Args:
+        target_seller_id: Which seller to mimic (steal market share from)
+        strategy: "exact_copy", "noisy_copy", "scaled_copy", or "averaged_history"
+        noise_scale: Amount of noise for noisy_copy/scaled_copy strategies
+        observation_rounds: Rounds to observe target before attacking
+    """
+
+    def modifier(config: AppConfig) -> AppConfig:
+        # Activate the mimicry attack
+        adv_cfg = config.adversary_seller_config.mimicry_attack
+        adv_cfg.is_active = True
+        adv_cfg.target_seller_id = target_seller_id
+        adv_cfg.strategy = strategy
+        adv_cfg.noise_scale = noise_scale
+        adv_cfg.observation_rounds = observation_rounds
+
+        # Deactivate other attacks
+        config.adversary_seller_config.poisoning.type = PoisonType.NONE
+        config.adversary_seller_config.sybil.is_sybil = False
+        config.adversary_seller_config.adaptive_attack.is_active = False
+        config.adversary_seller_config.drowning_attack.is_active = False
+        return config
+
+    return modifier
+
+
+def generate_competitor_mimicry_scenarios() -> List[Scenario]:
+    """
+    Generates scenarios to test the CompetitorMimicrySeller's ability
+    to steal market share from a high-quality target seller.
+
+    Success Metric: Target's selection rate drops while attacker's increases.
     """
     scenarios = []
-    # Test against defenses that learn a centroid or are susceptible to drift
     AGGREGATORS_TO_TEST = ['fedavg', 'fltrust', 'martfl']
-    ADV_RATES_TO_SWEEP = [0.1, 0.2, 0.3, 0.4]  # See how the attack scales with more colluders
+    MIMICRY_STRATEGIES = ["noisy_copy", "scaled_copy", "averaged_history"]
+    ADV_RATES = [0.2, 0.3, 0.4]  # See how multiple attackers amplify the effect
+
+    for strategy in MIMICRY_STRATEGIES:
+        scenarios.append(Scenario(
+            name=f"competitor_mimicry_{strategy}_cifar10_cnn",
+            base_config_factory=get_base_image_config,
+            modifiers=[
+                use_cifar10_config,
+                use_competitor_mimicry_attack(
+                    target_seller_id="seller_0",  # Target the first (often high-quality) seller
+                    strategy=strategy,
+                    noise_scale=0.03,
+                    observation_rounds=5
+                )
+            ],
+            parameter_grid={
+                "experiment.image_model_config_name": ["cifar10_cnn"],
+                "experiment.model_structure": ["cnn"],
+                "aggregation.method": AGGREGATORS_TO_TEST,
+                "experiment.adv_rate": ADV_RATES,
+            }
+        ))
+
+    return scenarios
+
+
+# ============================================================================
+# 🔧 KEEP: Drowning Attack (Now marked as legacy comparison)
+# ============================================================================
+
+
+def generate_drowning_attack_scenarios() -> List[Scenario]:
+    """
+    [LEGACY] Generates scenarios to test the DrowningAttackerSeller.
+    Kept for comparison purposes.
+    """
+    scenarios = []
+    AGGREGATORS_TO_TEST = ['fedavg', 'fltrust', 'martfl']
+    ADV_RATES_TO_SWEEP = [0.1, 0.2, 0.3, 0.4]
 
     scenarios.append(Scenario(
-        name="drowning_attack_cifar10_cnn",
+        name="drowning_attack_cifar10_cnn_legacy",
         base_config_factory=get_base_image_config,
-        # Use the new modifier to set up the attack
         modifiers=[
             use_cifar10_config,
-            # Configure the attack: 10 rounds of mimicry, then a 10% drift
             use_drowning_attack(mimicry_rounds=10, drift_factor=0.1)
         ],
         parameter_grid={
-            # --- Fixed Parameters for this test ---
             "experiment.image_model_config_name": ["cifar10_cnn"],
             "experiment.model_structure": ["cnn"],
-
-            # --- Swept Parameters ---
             "aggregation.method": AGGREGATORS_TO_TEST,
             "experiment.adv_rate": ADV_RATES_TO_SWEEP,
         }
@@ -513,28 +599,1009 @@ def generate_drowning_attack_scenarios() -> List[Scenario]:
     return scenarios
 
 
+# ============================================================================
+# 🆕 NEW: Enhanced Buyer Attack Scenarios
+# ============================================================================
+
+def use_buyer_dos_attack() -> Callable[[AppConfig], AppConfig]:
+    """Enable buyer DoS attack (zero-gradient)"""
+
+    def modifier(config: AppConfig) -> AppConfig:
+        config.buyer_attack_config.is_active = True
+        config.buyer_attack_config.attack_type = "dos"
+        return config
+
+    return modifier
+
+
+def use_buyer_starvation_attack(target_classes: List[int]) -> Callable[[AppConfig], AppConfig]:
+    """Enable buyer starvation attack (focus on specific classes)"""
+
+    def modifier(config: AppConfig) -> AppConfig:
+        config.buyer_attack_config.is_active = True
+        config.buyer_attack_config.attack_type = "starvation"
+        config.buyer_attack_config.starvation_classes = target_classes
+        return config
+
+    return modifier
+
+
+def use_buyer_erosion_attack() -> Callable[[AppConfig], AppConfig]:
+    """Enable buyer trust erosion attack (random gradients)"""
+
+    def modifier(config: AppConfig) -> AppConfig:
+        config.buyer_attack_config.is_active = True
+        config.buyer_attack_config.attack_type = "erosion"
+        return config
+
+    return modifier
+
+
+def use_buyer_class_exclusion_attack(
+        exclude_classes: List[int] = None,
+        target_classes: List[int] = None,
+        gradient_scale: float = 1.0
+) -> Callable[[AppConfig], AppConfig]:
+    """
+    🆕 Enable buyer class-based exclusion attack.
+    More realistic replacement for orthogonal_pivot.
+
+    Args:
+        exclude_classes: Classes to exclude from buyer baseline (negative selection)
+        target_classes: Classes to include in buyer baseline (positive selection)
+        gradient_scale: Amplification factor for bias (>1.0 increases bias)
+    """
+
+    def modifier(config: AppConfig) -> AppConfig:
+        config.buyer_attack_config.is_active = True
+        config.buyer_attack_config.attack_type = "class_exclusion"
+
+        if exclude_classes:
+            config.buyer_attack_config.exclusion_exclude_classes = exclude_classes
+        if target_classes:
+            config.buyer_attack_config.exclusion_target_classes = target_classes
+
+        config.buyer_attack_config.exclusion_gradient_scale = gradient_scale
+        config.buyer_attack_config.num_classes = 10  # Adjust based on dataset
+        return config
+
+    return modifier
+
+
+def use_buyer_oscillating_attack(
+        strategy: str = "binary_flip",
+        period: int = 2,
+        classes_a: List[int] = None,
+        classes_b: List[int] = None,
+        subset_size: int = 3,
+        drift_rounds: int = 50
+) -> Callable[[AppConfig], AppConfig]:
+    """
+    🆕 Enable buyer oscillating objective attack.
+
+    Args:
+        strategy: "binary_flip", "rotating", "random_walk", or "adversarial_drift"
+        period: Rounds before switching objectives (for binary_flip/rotating)
+        classes_a: Phase A classes (for binary_flip/adversarial_drift)
+        classes_b: Phase B classes (for binary_flip)
+        subset_size: Number of random classes per round (for random_walk)
+        drift_rounds: Total rounds for drift cycle (for adversarial_drift)
+    """
+
+    def modifier(config: AppConfig) -> AppConfig:
+        config.buyer_attack_config.is_active = True
+        config.buyer_attack_config.attack_type = "oscillating"
+        config.buyer_attack_config.oscillation_strategy = strategy
+        config.buyer_attack_config.oscillation_period = period
+        config.buyer_attack_config.num_classes = 10  # Adjust based on dataset
+
+        if classes_a:
+            config.buyer_attack_config.oscillation_classes_a = classes_a
+        else:
+            config.buyer_attack_config.oscillation_classes_a = [0, 1, 2, 3, 4]
+
+        if classes_b:
+            config.buyer_attack_config.oscillation_classes_b = classes_b
+        else:
+            config.buyer_attack_config.oscillation_classes_b = [5, 6, 7, 8, 9]
+
+        config.buyer_attack_config.oscillation_subset_size = subset_size
+        config.buyer_attack_config.oscillation_drift_total_rounds = drift_rounds
+
+        return config
+
+    return modifier
+
+
+def use_buyer_orthogonal_pivot_attack(target_seller_id: str) -> Callable[[AppConfig], AppConfig]:
+    """
+    [LEGACY] Enable buyer orthogonal pivot attack.
+    NOTE: Consider using class_exclusion_attack for more realistic exclusion.
+    """
+
+    def modifier(config: AppConfig) -> AppConfig:
+        config.buyer_attack_config.is_active = True
+        config.buyer_attack_config.attack_type = "orthogonal_pivot"
+        config.buyer_attack_config.target_seller_id = target_seller_id
+        return config
+
+    return modifier
+
+
+def generate_buyer_attack_scenarios() -> List[Scenario]:
+    """
+    🔧 UPDATED: Generates scenarios to test ALL buyer-side attacks.
+    Now includes the new class_exclusion and oscillating attacks.
+    """
+    scenarios = []
+    AGGREGATORS_TO_TEST = ['fedavg', 'fltrust', 'martfl']
+
+    # --- Attack 1: DoS ---
+    scenarios.append(Scenario(
+        name="buyer_attack_dos_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[use_cifar10_config, disable_all_seller_attacks, use_buyer_dos_attack()],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.method": AGGREGATORS_TO_TEST,
+        }
+    ))
+
+    # --- Attack 2: Starvation ---
+    scenarios.append(Scenario(
+        name="buyer_attack_starvation_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks,
+            use_buyer_starvation_attack(target_classes=[0, 1])
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.method": AGGREGATORS_TO_TEST,
+        }
+    ))
+
+    # --- Attack 3: Trust Erosion ---
+    scenarios.append(Scenario(
+        name="buyer_attack_erosion_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[use_cifar10_config, disable_all_seller_attacks, use_buyer_erosion_attack()],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.method": AGGREGATORS_TO_TEST,
+        }
+    ))
+
+    # --- 🆕 Attack 4: Class-Based Exclusion (Exclude sellers with classes 7,8,9) ---
+    scenarios.append(Scenario(
+        name="buyer_attack_class_exclusion_negative_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks,
+            use_buyer_class_exclusion_attack(exclude_classes=[7, 8, 9], gradient_scale=1.2)
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.method": AGGREGATORS_TO_TEST,
+        }
+    ))
+
+    # --- 🆕 Attack 5: Class-Based Exclusion (Only favor sellers with classes 0,1,2) ---
+    scenarios.append(Scenario(
+        name="buyer_attack_class_exclusion_positive_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks,
+            use_buyer_class_exclusion_attack(target_classes=[0, 1, 2], gradient_scale=1.0)
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.method": AGGREGATORS_TO_TEST,
+        }
+    ))
+
+    # --- 🆕 Attack 6: Oscillating (Binary Flip) ---
+    scenarios.append(Scenario(
+        name="buyer_attack_oscillating_binary_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks,
+            use_buyer_oscillating_attack(
+                strategy="binary_flip",
+                period=2,
+                classes_a=[0, 1, 2, 3, 4],
+                classes_b=[5, 6, 7, 8, 9]
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.method": AGGREGATORS_TO_TEST,
+        }
+    ))
+
+    # --- 🆕 Attack 7: Oscillating (Random Walk) ---
+    scenarios.append(Scenario(
+        name="buyer_attack_oscillating_random_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks,
+            use_buyer_oscillating_attack(
+                strategy="random_walk",
+                subset_size=3
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.method": AGGREGATORS_TO_TEST,
+        }
+    ))
+
+    # --- 🆕 Attack 8: Oscillating (Adversarial Drift) ---
+    scenarios.append(Scenario(
+        name="buyer_attack_oscillating_drift_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks,
+            use_buyer_oscillating_attack(
+                strategy="adversarial_drift",
+                drift_rounds=60,
+                classes_a=[0, 1]  # Final poisoned focus
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.method": AGGREGATORS_TO_TEST,
+        }
+    ))
+
+    # --- [LEGACY] Attack 9: Orthogonal Pivot (kept for comparison) ---
+    scenarios.append(Scenario(
+        name="buyer_attack_orthogonal_pivot_legacy_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks,
+            use_buyer_orthogonal_pivot_attack(target_seller_id="bn_5")
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.method": AGGREGATORS_TO_TEST,
+        }
+    ))
+
+    return scenarios
+
+
+# ============================================================================
+# 🆕 NEW: Comparative Analysis Scenarios
+# ============================================================================
+
+def generate_attack_comparison_scenarios() -> List[Scenario]:
+    """
+    Generates scenarios to directly compare old vs. new attack effectiveness.
+    Useful for validating that the new attacks are improvements.
+    """
+    scenarios = []
+
+    # Compare Drowning vs. Competitor Mimicry
+    scenarios.append(Scenario(
+        name="comparison_drowning_vs_mimicry_martfl",
+        base_config_factory=get_base_image_config,
+        modifiers=[use_cifar10_config],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.method": ["martfl"],  # Focus on MartFL as it's most vulnerable
+            "experiment.adv_rate": [0.3],
+            # Sweep between the two attack types
+            "adversary_seller_config.drowning_attack.is_active": [True, False],
+            "adversary_seller_config.mimicry_attack.is_active": [False, True],
+        }
+    ))
+
+    # Compare Orthogonal Pivot vs. Class Exclusion
+    scenarios.append(Scenario(
+        name="comparison_orthogonal_vs_class_exclusion_fltrust",
+        base_config_factory=get_base_image_config,
+        modifiers=[use_cifar10_config, disable_all_seller_attacks],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "aggregation.method": ["fltrust"],  # Focus on FLTrust
+            # Sweep between buyer attack types
+            "buyer_attack_config.is_active": [True],
+            "buyer_attack_config.attack_type": ["orthogonal_pivot", "class_exclusion"],
+            "buyer_attack_config.exclusion_exclude_classes": [[7, 8, 9]],
+        }
+    ))
+
+    return scenarios
+
+
+# ============================================================================
+# Updated ALL_SCENARIOS List
+# ============================================================================
+# ============================================================================
+# 🆕 NEW: Attack Scalability Analysis (Rate-Based)
+# ============================================================================
+
+def generate_attack_scalability_scenarios_OLD() -> List[Scenario]:
+    """
+    Generates scenarios to test how attack effectiveness scales with marketplace size.
+    Uses a FIXED adversary rate (30%) to maintain consistent attacker proportion.
+
+    Key Research Questions:
+    1. Does 30% attackers remain equally effective as the market grows?
+    2. How does market size affect the absolute impact of the same proportion of attackers?
+    3. Do defenses become more/less robust at larger scales?
+
+    Tests both seller-side (Competitor Mimicry) and buyer-side (Class Exclusion) attacks.
+    """
+    scenarios = []
+
+    # Sweep marketplace sizes from small (10 sellers) to large (100 sellers)
+    # With adv_rate=0.3: 10 sellers = 3 attackers, 100 sellers = 30 attackers
+    MARKETPLACE_SIZES = [10, 20, 30, 50, 100]
+
+    # Fixed adversary rate across all scales
+    FIXED_ADV_RATE = 0.3  # 30% of sellers are attackers
+
+    # Focus on defenses most vulnerable to these attacks
+    AGGREGATORS_TO_TEST = ['fltrust', 'martfl']
+
+    # --- Scenario 1: Seller-Side Attack Scalability (Competitor Mimicry) ---
+    scenarios.append(Scenario(
+        name="scalability_competitor_mimicry_rate_cifar10",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            use_competitor_mimicry_attack(
+                target_seller_id="seller_0",  # Always target the first seller
+                strategy="noisy_copy",
+                noise_scale=0.03,
+                observation_rounds=5
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- PRIMARY SWEEP: Marketplace Size ---
+            "experiment.n_sellers": MARKETPLACE_SIZES,
+
+            # --- FIXED: Adversary Rate (30% at all scales) ---
+            "experiment.adv_rate": [FIXED_ADV_RATE],
+
+            # --- SECONDARY SWEEP: Defense Method ---
+            "aggregation.method": AGGREGATORS_TO_TEST,
+
+            # Keep these fixed for consistency
+            "experiment.num_rounds": [100],
+        }
+    ))
+
+    # --- Scenario 2: Buyer-Side Attack Scalability (Class Exclusion) ---
+    scenarios.append(Scenario(
+        name="scalability_buyer_class_exclusion_rate_cifar10",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks,  # Pure buyer attack, no seller interference
+            use_buyer_class_exclusion_attack(
+                exclude_classes=[7, 8, 9],  # Exclude sellers with these classes
+                gradient_scale=1.2
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- PRIMARY SWEEP: Marketplace Size ---
+            "experiment.n_sellers": MARKETPLACE_SIZES,
+
+            # --- SECONDARY SWEEP: Defense Method ---
+            "aggregation.method": AGGREGATORS_TO_TEST,
+
+            # Keep these fixed
+            "experiment.num_rounds": [100],
+        }
+    ))
+
+    # --- Scenario 3: Oscillating Buyer Attack Scalability ---
+    # This is interesting because buyer attacks should be scale-independent
+    scenarios.append(Scenario(
+        name="scalability_buyer_oscillating_rate_cifar10",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks,
+            use_buyer_oscillating_attack(
+                strategy="binary_flip",
+                period=2,
+                classes_a=[0, 1, 2, 3, 4],
+                classes_b=[5, 6, 7, 8, 9]
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- PRIMARY SWEEP: Marketplace Size ---
+            "experiment.n_sellers": MARKETPLACE_SIZES,
+
+            # --- SECONDARY SWEEP: Defense Method ---
+            "aggregation.method": AGGREGATORS_TO_TEST,
+
+            "experiment.num_rounds": [100],
+        }
+    ))
+
+    # --- Scenario 4: Combined Attack Scalability (Both attacks active) ---
+    scenarios.append(Scenario(
+        name="scalability_combined_attacks_rate_cifar10",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            # Enable BOTH attacks simultaneously
+            use_competitor_mimicry_attack(
+                target_seller_id="seller_0",
+                strategy="noisy_copy",
+                noise_scale=0.03,
+                observation_rounds=5
+            ),
+            use_buyer_class_exclusion_attack(
+                exclude_classes=[7, 8, 9],
+                gradient_scale=1.2
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- PRIMARY SWEEP: Marketplace Size ---
+            "experiment.n_sellers": MARKETPLACE_SIZES,
+
+            # --- FIXED: Adversary Rate ---
+            "experiment.adv_rate": [FIXED_ADV_RATE],
+
+            # --- SECONDARY SWEEP: Defense Method ---
+            "aggregation.method": AGGREGATORS_TO_TEST,
+
+            "experiment.num_rounds": [100],
+        }
+    ))
+
+    return scenarios
+
+
+# ============================================================================
+# 🆕 OPTIONAL: Multi-Rate Comparison (if you want to compare rates later)
+# ============================================================================
+
+def generate_attack_scalability_multirate_scenarios() -> List[Scenario]:
+    """
+    OPTIONAL: Compare how different adversary rates perform at multiple scales.
+    Use this if you want to study the interaction between rate and scale.
+    """
+    scenarios = []
+
+    MARKETPLACE_SIZES = [10, 30, 50, 100]  # Fewer sizes to keep experiments manageable
+    ADVERSARY_RATES = [0.1, 0.2, 0.3, 0.4]  # Compare multiple rates
+
+    scenarios.append(Scenario(
+        name="scalability_multirate_competitor_mimicry_cifar10",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            use_competitor_mimicry_attack(
+                target_seller_id="seller_0",
+                strategy="noisy_copy",
+                noise_scale=0.03,
+                observation_rounds=5
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- SWEEP BOTH: Size and Rate ---
+            "experiment.n_sellers": MARKETPLACE_SIZES,
+            "experiment.adv_rate": ADVERSARY_RATES,
+
+            # --- Focus on most vulnerable defense ---
+            "aggregation.method": ["martfl"],
+
+            "experiment.num_rounds": [100],
+        }
+    ))
+
+    return scenarios
+
+
+# ============================================================================
+# 🆕 NEW: Extreme Scale Test (Stress Testing)
+# ============================================================================
+
+def generate_extreme_scale_scenarios() -> List[Scenario]:
+    """
+    Stress test: Can attacks work in VERY large marketplaces (200-500 sellers)?
+    Maintains 30% adversary rate even at extreme scales.
+    """
+    scenarios = []
+
+    EXTREME_SIZES = [200, 300, 500]
+    FIXED_ADV_RATE = 0.3
+
+    # Test only the most effective attack configurations
+    scenarios.append(Scenario(
+        name="extreme_scale_competitor_mimicry_martfl",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            use_competitor_mimicry_attack(
+                target_seller_id="seller_0",
+                strategy="noisy_copy",
+                noise_scale=0.03,
+                observation_rounds=5
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- Extreme marketplace sizes ---
+            "experiment.n_sellers": EXTREME_SIZES,
+
+            # --- Fixed: 30% adversary rate ---
+            "experiment.adv_rate": [FIXED_ADV_RATE],
+
+            # --- Fixed: Most vulnerable defense ---
+            "aggregation.method": ["martfl"],
+
+            # Reduce rounds for faster experiments
+            "experiment.num_rounds": [50],
+        }
+    ))
+
+    scenarios.append(Scenario(
+        name="extreme_scale_buyer_class_exclusion_fltrust",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks,
+            use_buyer_class_exclusion_attack(
+                exclude_classes=[7, 8, 9],
+                gradient_scale=1.2
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            "experiment.n_sellers": EXTREME_SIZES,
+            "aggregation.method": ["fltrust"],
+
+            "experiment.num_rounds": [50],
+        }
+    ))
+
+    return scenarios
+
+
+# ============================================================================
+# Add to ALL_SCENARIOS
+# ============================================================================
+
+# ============================================================================
+# 🆕 NEW: Attack Scalability Analysis with Backdoor Attack
+# ============================================================================
+
+def generate_attack_scalability_scenarios() -> List[Scenario]:
+    """
+    Generates scenarios to test how attack effectiveness scales with marketplace size.
+    Uses BACKDOOR attack for sellers (matching main_summary_figure style).
+    Uses a FIXED adversary rate (30%) to maintain consistent attacker proportion.
+
+    Key Research Questions:
+    1. Does 30% backdoor attackers remain equally effective as the market grows?
+    2. How does market size affect backdoor success rate (ASR)?
+    3. Do defenses become more/less robust at larger scales?
+
+    Tests both seller-side (Backdoor + Sybil) and buyer-side (Class Exclusion) attacks.
+    """
+    scenarios = []
+
+    # Sweep marketplace sizes from small (10 sellers) to large (100 sellers)
+    MARKETPLACE_SIZES = [10, 20, 30, 50, 100]
+
+    # Fixed attack parameters (matching main_summary style)
+    FIXED_ADV_RATE = 0.3  # 30% of sellers are attackers
+    FIXED_POISON_RATE = 0.5  # 50% of attacker's data is poisoned
+
+    # Focus on defenses most vulnerable to these attacks
+    IMAGE_AGGREGATORS = ['fedavg', 'fltrust', 'martfl', 'skymask']
+
+    # --- Scenario 1: Seller-Side Backdoor Attack Scalability ---
+    scenarios.append(Scenario(
+        name="scalability_backdoor_sybil_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            use_image_backdoor_attack,  # Image backdoor (10x10 white patch)
+            use_sybil_attack('mimic')  # Sybil coordination to evade detection
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- PRIMARY SWEEP: Marketplace Size ---
+            "experiment.n_sellers": MARKETPLACE_SIZES,
+
+            # --- FIXED: Attack Parameters ---
+            "experiment.adv_rate": [FIXED_ADV_RATE],
+            "adversary_seller_config.poisoning.poison_rate": [FIXED_POISON_RATE],
+
+            # --- SECONDARY SWEEP: Defense Method ---
+            "aggregation.method": IMAGE_AGGREGATORS,
+            "aggregation.sm_model_type": ["flexiblecnn"],  # For SkyMask
+
+            # Keep these fixed for consistency
+            "experiment.num_rounds": [100],
+        }
+    ))
+
+    # --- Scenario 2: Backdoor Attack Scalability with ResNet (More Complex Model) ---
+    scenarios.append(Scenario(
+        name="scalability_backdoor_sybil_cifar10_resnet18",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            use_image_backdoor_attack,
+            use_sybil_attack('mimic')
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_resnet18"],
+            "experiment.model_structure": ["resnet18"],
+
+            # --- PRIMARY SWEEP: Marketplace Size ---
+            "experiment.n_sellers": MARKETPLACE_SIZES,
+
+            # --- FIXED: Attack Parameters ---
+            "experiment.adv_rate": [FIXED_ADV_RATE],
+            "adversary_seller_config.poisoning.poison_rate": [FIXED_POISON_RATE],
+
+            # --- SECONDARY SWEEP: Defense Method ---
+            "aggregation.method": IMAGE_AGGREGATORS,
+            "aggregation.sm_model_type": ["resnet18"],
+
+            "experiment.num_rounds": [100],
+
+        }
+    ))
+
+    # --- Scenario 3: Buyer-Side Attack Scalability (Class Exclusion) ---
+    # This tests if buyer attacks remain scale-independent
+    scenarios.append(Scenario(
+        name="scalability_buyer_class_exclusion_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks,  # Pure buyer attack, no seller interference
+            use_buyer_class_exclusion_attack(
+                exclude_classes=[7, 8, 9],  # Exclude sellers with these classes
+                gradient_scale=1.2
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- PRIMARY SWEEP: Marketplace Size ---
+            "experiment.n_sellers": MARKETPLACE_SIZES,
+
+            # --- SECONDARY SWEEP: Defense Method ---
+            "aggregation.method": IMAGE_AGGREGATORS,
+            "aggregation.sm_model_type": ["flexiblecnn"],
+
+            # Keep these fixed
+            "experiment.num_rounds": [100],
+        }
+    ))
+
+    # --- Scenario 4: Buyer Oscillating Attack Scalability ---
+    scenarios.append(Scenario(
+        name="scalability_buyer_oscillating_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks,
+            use_buyer_oscillating_attack(
+                strategy="binary_flip",
+                period=2,
+                classes_a=[0, 1, 2, 3, 4],
+                classes_b=[5, 6, 7, 8, 9]
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- PRIMARY SWEEP: Marketplace Size ---
+            "experiment.n_sellers": MARKETPLACE_SIZES,
+
+            # --- SECONDARY SWEEP: Defense Method ---
+            "aggregation.method": IMAGE_AGGREGATORS,
+            "aggregation.sm_model_type": ["flexiblecnn"],
+
+            "experiment.num_rounds": [100],
+        }
+    ))
+
+    # --- Scenario 5: Combined Attack Scalability (Backdoor + Class Exclusion) ---
+    scenarios.append(Scenario(
+        name="scalability_combined_backdoor_buyer_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            use_image_backdoor_attack,
+            use_sybil_attack('mimic'),
+            # ALSO enable buyer attack
+            use_buyer_class_exclusion_attack(
+                exclude_classes=[7, 8, 9],
+                gradient_scale=1.2
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- PRIMARY SWEEP: Marketplace Size ---
+            "experiment.n_sellers": MARKETPLACE_SIZES,
+
+            # --- FIXED: Seller Attack Parameters ---
+            "experiment.adv_rate": [FIXED_ADV_RATE],
+            "adversary_seller_config.poisoning.poison_rate": [FIXED_POISON_RATE],
+
+            # --- SECONDARY SWEEP: Defense Method ---
+            "aggregation.method": IMAGE_AGGREGATORS,
+            "aggregation.sm_model_type": ["flexiblecnn"],
+
+            "experiment.num_rounds": [100],
+        }
+    ))
+
+    return scenarios
+
+
+# ============================================================================
+# 🆕 OPTIONAL: Text Dataset Scalability (TREC)
+# ============================================================================
+
+def generate_text_scalability_scenarios() -> List[Scenario]:
+    """
+    Test scalability on text datasets (TREC) with text backdoor attack.
+    """
+    scenarios = []
+
+    MARKETPLACE_SIZES = [10, 20, 30, 50]  # Fewer sizes for text (smaller dataset)
+    TEXT_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']  # No SkyMask for text
+
+    scenarios.append(Scenario(
+        name="scalability_backdoor_trec",
+        base_config_factory=get_base_text_config,
+        modifiers=[
+            use_trec_config,
+            use_text_backdoor_attack  # Text trigger (e.g., "cf" token)
+        ],
+        parameter_grid={
+            # --- PRIMARY SWEEP: Marketplace Size ---
+            "experiment.n_sellers": MARKETPLACE_SIZES,
+
+            # --- FIXED: Attack Parameters ---
+            "experiment.adv_rate": [0.3],
+            "adversary_seller_config.poisoning.poison_rate": [0.5],
+
+            # --- SECONDARY SWEEP: Defense Method ---
+            "aggregation.method": TEXT_AGGREGATORS,
+
+            "experiment.num_rounds": [100],
+        }
+    ))
+
+    return scenarios
+
+
+# ============================================================================
+# 🆕 NEW: Extreme Scale Test (Stress Testing)
+# ============================================================================
+
+def generate_extreme_scale_scenarios() -> List[Scenario]:
+    """
+    Stress test: Can backdoor attacks work in VERY large marketplaces (200-500 sellers)?
+    Maintains 30% adversary rate even at extreme scales.
+    """
+    scenarios = []
+
+    EXTREME_SIZES = [200, 300, 500]
+    FIXED_ADV_RATE = 0.3
+    FIXED_POISON_RATE = 0.5
+
+    # Test only the most vulnerable defense (faster experiments)
+    scenarios.append(Scenario(
+        name="extreme_scale_backdoor_martfl",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            use_image_backdoor_attack,
+            use_sybil_attack('mimic')
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- Extreme marketplace sizes ---
+            "experiment.n_sellers": EXTREME_SIZES,
+
+            # --- Fixed: 30% adversary rate, 50% poison ---
+            "experiment.adv_rate": [FIXED_ADV_RATE],
+            "adversary_seller_config.poisoning.poison_rate": [FIXED_POISON_RATE],
+
+            # --- Fixed: Most vulnerable defense ---
+            "aggregation.method": ["martfl"],
+
+            # Reduce rounds for faster experiments
+            "experiment.num_rounds": [50],
+        }
+    ))
+
+    scenarios.append(Scenario(
+        name="extreme_scale_buyer_class_exclusion_fltrust",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks,
+            use_buyer_class_exclusion_attack(
+                exclude_classes=[7, 8, 9],
+                gradient_scale=1.2
+            )
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            "experiment.n_sellers": EXTREME_SIZES,
+            "aggregation.method": ["fltrust"],
+
+            "experiment.num_rounds": [50],
+        }
+    ))
+
+    return scenarios
+
+
+def generate_baseline_scalability_scenarios() -> List[Scenario]:
+    """
+    Test how defenses perform at different scales WITHOUT any attacks.
+    Essential baseline for comparison.
+    """
+    scenarios = []
+
+    MARKETPLACE_SIZES = [10, 20, 30, 50, 100]
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl', 'skymask']
+
+    scenarios.append(Scenario(
+        name="scalability_baseline_no_attack_cifar10_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar10_config,
+            disable_all_seller_attacks  # Pure benign
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar10_cnn"],
+            "experiment.model_structure": ["cnn"],
+
+            # --- PRIMARY SWEEP: Marketplace Size ---
+            "experiment.n_sellers": MARKETPLACE_SIZES,
+
+            # --- NO ATTACKS ---
+            "experiment.adv_rate": [0.0],
+
+            # --- Test all defenses ---
+            "aggregation.method": ALL_AGGREGATORS,
+            "aggregation.sm_model_type": ["flexiblecnn"],
+
+            "experiment.num_rounds": [100],
+        }
+    ))
+
+    return scenarios
+
+
+# ============================================================================
+# Add to ALL_SCENARIOS
+# ============================================================================
+def generate_cifar100_scalability_scenarios() -> List[Scenario]:
+    """Test scalability on more complex dataset (CIFAR-100)"""
+    scenarios = []
+
+    MARKETPLACE_SIZES = [10, 30, 50, 100]  # Fewer sizes for efficiency
+
+    scenarios.append(Scenario(
+        name="scalability_backdoor_sybil_cifar100_cnn",
+        base_config_factory=get_base_image_config,
+        modifiers=[
+            use_cifar100_config,  # Different dataset
+            use_image_backdoor_attack,
+            use_sybil_attack('mimic')
+        ],
+        parameter_grid={
+            "experiment.image_model_config_name": ["cifar100_cnn"],
+            "experiment.model_structure": ["cnn"],
+            "experiment.n_sellers": MARKETPLACE_SIZES,
+            "experiment.adv_rate": [0.3],
+            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "aggregation.method": ['fedavg', 'fltrust', 'martfl'],  # Fewer for speed
+            "experiment.num_rounds": [100],
+        }
+    ))
+
+    return scenarios
+
+
+# Add to ALL_SCENARIOS
 ALL_SCENARIOS = []
-# 1. The core new experiment comparing the Oracle vs. Biased Buyer setups
+ALL_SCENARIOS.extend(generate_cifar100_scalability_scenarios())
+
+# ... [Keep all your existing scenario generators] ...
+
+# 🆕 Add scalability scenarios with BACKDOOR attacks
+ALL_SCENARIOS.extend(generate_attack_scalability_scenarios())
+# Add to ALL_SCENARIOS:
+ALL_SCENARIOS.extend(generate_baseline_scalability_scenarios())
+
+# 🆕 OPTIONAL: Add text scalability
+ALL_SCENARIOS.extend(generate_text_scalability_scenarios())
+
+# 🆕 Add extreme scale testing
+ALL_SCENARIOS.extend(generate_extreme_scale_scenarios())
+
 ALL_SCENARIOS.extend(generate_oracle_vs_buyer_bias_scenarios())
-
-# 2. A lean, focused trend analysis for adversary rate
 ALL_SCENARIOS.extend(generate_adv_rate_trend_scenarios())
-
-# 3. The focused deep-dive into different Sybil attack methods
 ALL_SCENARIOS.extend(generate_sybil_impact_scenarios())
-
-# 4. The focused analysis of data heterogeneity (Non-IID) impact
 ALL_SCENARIOS.extend(generate_data_heterogeneity_scenarios())
-
 ALL_SCENARIOS.extend(generate_main_summary_figure_scenarios())
 ALL_SCENARIOS.extend(generate_label_flipping_scenarios())
 ALL_SCENARIOS.extend(generate_sybil_selection_rate_scenarios())
 ALL_SCENARIOS.extend(generate_buyer_data_impact_scenarios())
-ALL_SCENARIOS.extend(generate_adaptive_attack_scenarios())
-ALL_SCENARIOS.extend(generate_drowning_attack_scenarios())
 
-# You can print the names of generated scenarios to verify
+ALL_SCENARIOS.extend(generate_competitor_mimicry_scenarios())  # Replaces/augments drowning
+ALL_SCENARIOS.extend(generate_buyer_attack_scenarios())  # Updated with new attacks
+
+# 3. 🔧 LEGACY: Keep for comparison
+ALL_SCENARIOS.extend(generate_drowning_attack_scenarios())  # Marked as legacy
+
+# 4. 🆕 NEW: Comparative analysis
+ALL_SCENARIOS.extend(generate_attack_comparison_scenarios())  # Direct comparisons
+
+ALL_SCENARIOS.extend(generate_adaptive_attack_scenarios())
 if __name__ == '__main__':
     print(f"Generated {len(ALL_SCENARIOS)} focused scenarios:")
     for s in ALL_SCENARIOS:
         print(f"  - {s.name}")
+
+# total number of sellers

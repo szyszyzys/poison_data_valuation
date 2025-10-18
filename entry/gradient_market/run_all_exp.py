@@ -23,6 +23,7 @@ from common.factories import SellerFactory
 from common.gradient_market_configs import AppConfig, RuntimeDataConfig
 from common.utils import set_seed
 from entry.gradient_market.automate_exp.config_parser import load_config
+from marketplace.buyer import MaliciousBuyerProxy
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.seller.gradient_seller import (
@@ -710,25 +711,44 @@ def save_round_incremental(round_record, save_path):
 def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, model_factory):
     """
     Creates and attaches the two 'virtual' sellers for root gradient computation.
+    Conditionally replaces the buyer seller with a malicious proxy if an attack is active.
     """
     logging.info("--- Initializing Root Gradient Sellers ---")
 
-    # 1. Create the "Buyer Seller"
-    logging.info("🛒 Creating virtual 'Buyer Seller'...")
-    marketplace.buyer_seller = marketplace.SellerClass(
-        seller_id='virtual_buyer',
-        data_config=RuntimeDataConfig(
-            dataset=buyer_loader.dataset,
-            num_classes=marketplace.num_classes,  # Assuming num_classes is on marketplace
-            collate_fn=getattr(buyer_loader, 'collate_fn', None)
-        ),
-        training_config=cfg.training,
-        model_factory=model_factory,
-        save_path=cfg.experiment.save_path,
-        device=cfg.experiment.device
-    )
+    # 1. Conditionally create the "Buyer Seller"
+    if cfg.buyer_attack_config.is_active:
+        # --- MALICIOUS PATH ---
+        logging.warning("🚨 Buyer-side attack is active! Creating MaliciousBuyerProxy.")
+        marketplace.buyer_seller = MaliciousBuyerProxy(
+            seller_id='malicious_buyer_proxy',
+            attack_config=cfg.buyer_attack_config,  # Pass the specific attack config
+            data_config=RuntimeDataConfig(
+                dataset=buyer_loader.dataset,
+                num_classes=marketplace.num_classes,
+                collate_fn=getattr(buyer_loader, 'collate_fn', None)
+            ),
+            training_config=cfg.training,
+            model_factory=model_factory,
+            save_path=cfg.experiment.save_path,
+            device=cfg.experiment.device,
+            num_classes=marketplace.num_classes  # 🆕 ADD THIS for oscillating/class_exclusion attacks
+        )
+    else:
+        # --- HONEST PATH ---
+        logging.info("🛒 Creating honest virtual 'Buyer Seller'...")
+        marketplace.buyer_seller = marketplace.SellerClass(
+            seller_id='virtual_buyer',
+            data_config=RuntimeDataConfig(
+                dataset=buyer_loader.dataset,
+                num_classes=marketplace.num_classes,
+                collate_fn=getattr(buyer_loader, 'collate_fn', None)
+            ),
+            training_config=cfg.training,
+            model_factory=model_factory,
+            save_path=cfg.experiment.save_path,
+            device=cfg.experiment.device)
 
-    # 2. Create the "Oracle Seller"
+    # 2. Create the "Oracle Seller" (no changes needed)
     logging.info("🧪 Creating virtual 'Oracle Seller'...")
     marketplace.oracle_seller = marketplace.SellerClass(
         seller_id='virtual_oracle',
@@ -743,7 +763,6 @@ def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, m
         device=cfg.experiment.device
     )
     logging.info("✅ Root gradient sellers initialized.")
-
 
 def run_attack(cfg: AppConfig):
     """
@@ -817,9 +836,6 @@ def run_attack(cfg: AppConfig):
 
         # 6. Federated Training Loop
         logging.info("🏋️ Starting federated training...")
-        # final_model, results_buffer = run_training_loop(
-        #     cfg, marketplace, test_loader, evaluators, sybil_coordinator
-        # )
         final_model, results_buffer = run_training_loop(
             cfg, marketplace, validation_loader, test_loader, evaluators, sybil_coordinator
         )

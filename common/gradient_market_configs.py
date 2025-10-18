@@ -1,14 +1,23 @@
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple, List, Union, Callable, Literal
-
 from torch.utils.data import Dataset
+from typing import Any, Dict, Optional, Tuple, List, Union, Callable, Literal
 
 from common.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation, PoisonType, LabelFlipMode, \
     VictimStrategy, ImageBackdoorAttackName, TextBackdoorAttackName
 
 logger = logging.getLogger("Configs")
+
+
+@dataclass
+class MimicryAttackConfig:
+    """Configuration for Direct Competitor Mimicry Attack"""
+    is_active: bool = False
+    target_seller_id: str = "seller_0"  # Which seller to mimic
+    observation_rounds: int = 3  # How many rounds to observe before attacking
+    noise_scale: float = 0.05  # Noise level for noisy_copy strategy
+    strategy: str = "noisy_copy"  # Options: "exact_copy", "noisy_copy", "scaled_copy", "averaged_history"
 
 
 @dataclass
@@ -106,6 +115,31 @@ class TabularBackdoorAttackName(Enum):
 
 
 @dataclass
+class BuyerAttackConfig:
+    """Configuration for malicious buyer attacks"""
+    is_active: bool = False
+    attack_type: str = "none"  # "dos", "starvation", "erosion", "class_exclusion", "oscillating", "orthogonal_pivot"
+    target_seller_id = "bn_5"
+    # --- Starvation Attack ---
+    starvation_classes: List[int] = field(default_factory=list)
+
+    # --- 🆕 Class-Based Exclusion ---
+    exclusion_target_classes: List[int] = field(default_factory=list)
+    exclusion_exclude_classes: List[int] = field(default_factory=list)
+    exclusion_gradient_scale: float = 1.0
+
+    # --- 🆕 Oscillating Objective ---
+    oscillation_strategy: str = "binary_flip"  # "binary_flip", "rotating", "random_walk", "adversarial_drift"
+    oscillation_period: int = 2
+    oscillation_classes_a: List[int] = field(default_factory=lambda: [0, 1, 2, 3, 4])
+    oscillation_classes_b: List[int] = field(default_factory=lambda: [5, 6, 7, 8, 9])
+    oscillation_class_subsets: List[List[int]] = field(default_factory=lambda: [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]])
+    num_classes: int = 10  # 🆕 ADD THIS (should match dataset)
+    oscillation_subset_size: int = 3
+    oscillation_drift_total_rounds: int = 50
+
+
+@dataclass
 class TabularBackdoorParams:
     """Container for all possible tabular backdoor attack configurations."""
     # This field determines which of the sub-configurations is active
@@ -194,12 +228,13 @@ class ServerAttackConfig:
     # You could add others here in the future
     # membership_inference: MembershipInferenceParams = field(default_factory=MembershipInferenceParams)
 
+
 @dataclass
 class DrowningAttackConfig:
     """Configuration for the Targeted Drowning (Centroid Poisoning) Attack."""
     is_active: bool = False
     mimicry_rounds: int = 10  # Number of rounds to act honestly to build trust
-    drift_factor: float = 0.1   # How much to shift the gradient each drift round
+    drift_factor: float = 0.1  # How much to shift the gradient each drift round
 
 
 @dataclass
@@ -306,6 +341,7 @@ class AdversarySellerConfig:
     sybil: SybilConfig = field(default_factory=SybilConfig)
     adaptive_attack: AdaptiveAttackConfig = field(default_factory=AdaptiveAttackConfig)
     drowning_attack: DrowningAttackConfig = field(default_factory=DrowningAttackConfig)
+    mimicry_attack: MimicryAttackConfig = field(default_factory=MimicryAttackConfig)  # <-- Add this
 
 
 @dataclass
@@ -419,6 +455,7 @@ class AppConfig:
     n_samples: int = 3
     data_root: str = "./data"
     use_cache: bool = True
+    buyer_attack_config: BuyerAttackConfig = field(default_factory=BuyerAttackConfig)
 
     def __post_init__(self):
         """
