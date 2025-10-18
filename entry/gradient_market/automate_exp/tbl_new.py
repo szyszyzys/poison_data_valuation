@@ -26,17 +26,18 @@ def get_base_tabular_config() -> AppConfig:
     return AppConfig(
         experiment=ExperimentConfig(
             dataset_name="Texas100",
-            model_structure="None",
+            model_structure="mlp",  # <--- CRITICAL FIX 1 (was "None")
             aggregation_method="fedavg",
-            global_rounds=100,
+            global_rounds=80,
             n_sellers=10,
             adv_rate=0.0,
             device="cuda" if torch.cuda.is_available() else "cpu",
             dataset_type="tabular",
             evaluation_frequency=10,
+            evaluations=["clean", "poison"],  # <--- CRITICAL FIX 2 (added "poison")
             tabular_model_config_name="mlp_texas100_baseline"
         ),
-        training=TrainingConfig(local_epochs=5, batch_size=128, learning_rate=0.001),
+        training=TrainingConfig(local_epochs=2, batch_size=128, learning_rate=0.0001),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
         data=DataConfig(
@@ -100,6 +101,7 @@ def generate_tabular_oracle_vs_buyer_bias_scenarios() -> List[Scenario]:
         modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER), use_sybil_attack('mimic')],
         parameter_grid={
             "experiment.dataset_name": ["texas100"],
+            "experiment.model_structure": ["mlp"],
             "experiment.tabular_model_config_name": ["mlp_texas100_baseline"],
             "aggregation.method": ALL_AGGREGATORS,
             "experiment.adv_rate": [0.3],
@@ -123,6 +125,7 @@ def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
         modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER)],
         parameter_grid={
             "experiment.dataset_name": [dataset_name],
+            "experiment.model_structure": ["mlp"],
             "experiment.tabular_model_config_name": [model_config],
             "aggregation.method": ALL_AGGREGATORS,
             "experiment.adv_rate": [0.3],
@@ -137,6 +140,7 @@ def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
             modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER), use_sybil_attack(strategy)],
             parameter_grid={
                 "experiment.dataset_name": [dataset_name],
+                "experiment.model_structure": ["mlp"],
                 "experiment.tabular_model_config_name": [model_config],
                 "aggregation.method": ALL_AGGREGATORS,
                 "experiment.adv_rate": [0.3],
@@ -150,15 +154,34 @@ def generate_tabular_data_heterogeneity_scenarios() -> List[Scenario]:
     scenarios = []
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
     DIRICHLET_ALPHAS = [100.0, 1.0, 0.1]
-    dataset_name = "texas100"
-    model_config = "mlp_texas100_baseline"  # Assuming a model config for purchase100 exists
+
+    # --- Scenario for Texas100 ---
     scenarios.append(Scenario(
-        name=f"heterogeneity_{dataset_name}",
+        name="heterogeneity_texas100",
         base_config_factory=get_base_tabular_config,
         modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER)],
         parameter_grid={
-            "experiment.dataset_name": [dataset_name],
-            "experiment.tabular_model_config_name": [model_config],
+            "experiment.dataset_name": ["texas100"],
+            "experiment.model_structure": ["mlp"],
+            "experiment.tabular_model_config_name": ["mlp_texas100_baseline"],
+            "aggregation.method": ALL_AGGREGATORS,
+            "experiment.adv_rate": [0.3],
+            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "data.tabular.strategy": ["dirichlet"],
+            "data.tabular.property_skew.dirichlet_alpha": DIRICHLET_ALPHAS
+        }
+    ))
+
+    # --- Scenario for Purchase100 ---
+    # Note: Assumes you have a "resnet_purchase100_baseline" model config
+    scenarios.append(Scenario(
+        name="heterogeneity_purchase100",
+        base_config_factory=get_base_tabular_config,
+        modifiers=[use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER)],
+        parameter_grid={
+            "experiment.dataset_name": ["purchase100"],
+            "experiment.model_structure": ["resnet"], # <-- Note: Different model
+            "experiment.tabular_model_config_name": ["resnet_purchase100_baseline"],
             "aggregation.method": ALL_AGGREGATORS,
             "experiment.adv_rate": [0.3],
             "adversary_seller_config.poisoning.poison_rate": [0.5],
@@ -188,6 +211,7 @@ def generate_tabular_attack_impact_scenarios() -> List[Scenario]:
             modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER)],
             parameter_grid={
                 "experiment.dataset_name": [dataset_name],
+                "experiment.model_structure": ["mlp"],
                 "experiment.tabular_model_config_name": [model_config],
                 "aggregation.method": ALL_AGGREGATORS,
                 **sweep_params
@@ -205,6 +229,7 @@ def generate_tabular_label_flipping_scenarios() -> List[Scenario]:
         modifiers=[use_tabular_label_flipping_attack],
         parameter_grid={
             "experiment.dataset_name": ["texas100"],
+            "experiment.model_structure": ["mlp"],
             "experiment.tabular_model_config_name": ["mlp_texas100_baseline"],
             "aggregation.method": ALL_AGGREGATORS,
             "experiment.adv_rate": [0.3],
@@ -213,9 +238,49 @@ def generate_tabular_label_flipping_scenarios() -> List[Scenario]:
     return scenarios
 
 
+# --- NEW SCALABILITY TEST ---
+def generate_tabular_scalability_scenarios() -> List[Scenario]:
+    """
+    Generates scenarios to test aggregator performance as the number of sellers
+    (i.e., scalability) increases, using the user's specified list.
+    """
+    scenarios = []
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
+
+    # Sweep the total number of sellers
+    N_SELLERS_TO_SWEEP = [50, 100, 200, 500]
+
+    # Use a fixed attack setting
+    FIXED_ADV_RATE = 0.3
+    FIXED_POISON_RATE = 0.5
+
+    dataset_name = "texas100"
+    model_config = "mlp_texas100_baseline"
+
+    scenarios.append(Scenario(
+        name=f"scalability_attack_{dataset_name}",
+        base_config_factory=get_base_tabular_config,
+        modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER), use_sybil_attack('mimic')],
+        parameter_grid={
+            "experiment.dataset_name": [dataset_name],
+            "experiment.model_structure": ["mlp"],
+            "experiment.tabular_model_config_name": [model_config],
+
+            # --- The Key Sweep Parameters ---
+            "aggregation.method": ALL_AGGREGATORS,
+            "experiment.n_sellers": N_SELLERS_TO_SWEEP,
+
+            # --- Fixed Attack Parameters ---
+            "experiment.adv_rate": [FIXED_ADV_RATE],
+            "adversary_seller_config.poisoning.poison_rate": [FIXED_POISON_RATE],
+        }
+    ))
+    return scenarios
+
+
 # --- Main Execution Block ---
 if __name__ == "__main__":
-    output_dir = "./configs_generated/tabular_new_with_trigger"  # Changed output dir to avoid overwriting old results
+    output_dir = "./configs_generated/tabular_final"  # Changed output dir
     generator = ExperimentGenerator(output_dir)
 
     ALL_TABULAR_SCENARIOS = []
@@ -224,6 +289,7 @@ if __name__ == "__main__":
     ALL_TABULAR_SCENARIOS.extend(generate_tabular_data_heterogeneity_scenarios())
     ALL_TABULAR_SCENARIOS.extend(generate_tabular_attack_impact_scenarios())
     ALL_TABULAR_SCENARIOS.extend(generate_tabular_label_flipping_scenarios())
+    ALL_TABULAR_SCENARIOS.extend(generate_tabular_scalability_scenarios()) # <-- Added new scenario
 
     for scenario in ALL_TABULAR_SCENARIOS:
         base_config = scenario.base_config_factory()

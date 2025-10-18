@@ -129,7 +129,6 @@ def create_evaluators(cfg: AppConfig, device: str, **kwargs: Dict[str, Any]) -> 
     for name in evaluator_names:
         EvaluatorClass = EVALUATOR_MAP.get(name)
         if EvaluatorClass:
-            # FIX: Pass the **kwargs to the constructor.
             evaluator_list.append(EvaluatorClass(cfg, device, **kwargs))
         else:
             logging.warning(f"Unknown evaluator '{name}' specified in config.")

@@ -5,16 +5,15 @@ import copy
 import json
 import logging
 import os
+import pandas as pd
 import shutil
 import tempfile
 import time
-from pathlib import Path
-from typing import List, Dict
-
-import pandas as pd
 import torch
 import torch.nn as nn
+from pathlib import Path
 from torch.utils.data import DataLoader, random_split  # Add this import
+from typing import List, Dict
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
 from common.datasets.tabular_data_processor import get_tabular_dataset
@@ -498,10 +497,60 @@ def initialize_sellers(
     logging.info(f"✅ Seller initialization complete!\n")
 
 
+def save_marketplace_analysis_data_incremental(save_path: Path, r: Dict):
+    """
+    Saves marketplace data incrementally, appending one round at a time.
+    """
+    round_num = r['round']
+
+    # 1. Round-level aggregate metrics
+    round_df = pd.DataFrame([{
+        'round': round_num,
+        'timestamp': r['timestamp'],
+        'duration_sec': r['duration_sec'],
+        'selection_rate': r.get('selection_rate', 0),
+        'outlier_rate': r.get('outlier_rate', 0),
+        'avg_gradient_norm': r.get('avg_gradient_norm', 0),
+        'adversary_detection_rate': r.get('adversary_detection_rate', 0),
+        'false_positive_rate': r.get('false_positive_rate', 0)
+    }])
+    path = save_path / "round_aggregates.csv"
+    round_df.to_csv(path, mode='a', header=not path.exists(), index=False)
+
+    # 2. Per-seller per-round metrics
+    seller_round_records = []
+    for key, value in r.items():
+        if key.startswith('seller_') and '_' in key[7:]:
+            parts = key.split('_', 2)
+            if len(parts) == 3:
+                _, sid, metric = parts
+                seller_round_records.append({
+                    'round': round_num,
+                    'seller_id': sid,
+                    'metric': metric,
+                    'value': value
+                })
+
+    if seller_round_records:
+        seller_df = pd.DataFrame(seller_round_records)
+        path = save_path / "seller_round_metrics_flat.csv"  # Save in flat format
+        seller_df.to_csv(path, mode='a', header=not path.exists(), index=False)
+
+    # 3. Selection history
+    selection_records = []
+    for sid in r.get('selected_seller_ids', []):
+        selection_records.append({'round': round_num, 'seller_id': sid, 'selected': True, 'outlier': False})
+    for sid in r.get('outlier_seller_ids', []):
+        selection_records.append({'round': round_num, 'seller_id': sid, 'selected': False, 'outlier': True})
+
+    if selection_records:
+        path = save_path / "selection_history.csv"
+        pd.DataFrame(selection_records).to_csv(path, mode='a', header=not path.exists(), index=False)
+
+
 def run_final_evaluation_and_logging(
         cfg: AppConfig,
         final_model: nn.Module,
-        results_buffer: List[Dict],  # Should be removed - use incremental saving
         test_loader,
         evaluators
 ):
@@ -512,18 +561,21 @@ def run_final_evaluation_and_logging(
 
     save_path = Path(cfg.experiment.save_path)
 
-    # NOTE: training_log.csv should already exist from incremental saves
-    # This is just a validation check
+    # --- START FIX ---
+    final_metrics = {}  # <-- BUG 1: This line was missing
+
+    # Get the final round count from the log file
     log_path = save_path / "training_log.csv"
-    if not log_path.exists():
-        logging.warning("training_log.csv not found! Reconstructing from buffer...")
-        if results_buffer:
-            save_dataframe_atomic(pd.DataFrame(results_buffer), log_path)
+    completed_rounds = 0
+    if log_path.exists():
+        try:
+            completed_rounds = len(pd.read_csv(log_path))
+        except Exception as e:
+            logging.warning(f"Could not read training_log.csv to get round count: {e}")
+            completed_rounds = 'unknown_read_error'
 
-    # Final evaluation
-    logging.info("Performing final evaluation...")
-    final_metrics = {}
-
+    # Run all evaluators
+    logging.info("Performing final evaluation on test set...")
     for evaluator in evaluators:
         try:
             metrics = evaluator.evaluate(final_model, test_loader)
@@ -533,9 +585,10 @@ def run_final_evaluation_and_logging(
 
     logging.info(f"Final metrics: {final_metrics}")
 
-    # Add metadata
+    # Add final metadata
     final_metrics['timestamp'] = time.time()
-    final_metrics['completed_rounds'] = len(results_buffer) if results_buffer else 'unknown'
+    final_metrics['completed_rounds'] = completed_rounds  # <-- BUG 2: Use this, not results_buffer
+    # --- END FIX ---
 
     # Save final metrics atomically
     save_json_atomic(final_metrics, save_path / "final_metrics.json")
@@ -602,7 +655,7 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
     save_path = Path(cfg.experiment.save_path)
     log_path = save_path / "training_log.csv"
 
-    # Initialize CSV with headers
+    # Initialize CSV with headers (this is fine)
     if not log_path.exists():
         pd.DataFrame(columns=['round', 'duration_sec', 'num_selected', 'num_outliers']).to_csv(
             log_path, index=False
@@ -615,14 +668,15 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
     best_model_state = None
     best_model_round = 0
 
-    # Log whether early stopping is active and if the validation set is available
     if cfg.training.use_early_stopping:
         logging.info(f"✅ Early stopping enabled with patience: {patience}")
         if not validation_loader:
             logging.warning(
                 "⚠️ Early stopping is enabled, but no validation loader was provided! Cannot perform early stopping.")
 
-    round_records = []
+    # --- START FIX: REMOVED `round_records = []` ---
+    # We will not store the full history in memory.
+
     for round_num in range(1, cfg.experiment.global_rounds + 1):
         global_model = marketplace.aggregator.strategy.global_model
 
@@ -635,9 +689,9 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
 
         global_model = marketplace.aggregator.strategy.global_model
 
-        # --- ADDED: Perform validation for early stopping in every round ---
+        # --- Early stopping logic (no changes needed) ---
         if cfg.training.use_early_stopping and validation_loader:
-            main_evaluator = evaluators[0]  # Assumes the first evaluator checks loss/accuracy
+            main_evaluator = evaluators[0]
             try:
                 val_metrics = main_evaluator.evaluate(global_model, validation_loader, metric_prefix="val")
                 current_loss = val_metrics.get('val_loss')
@@ -654,36 +708,37 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
                         patience_counter += 1
                         logging.info(f"  -> No improvement. Patience: {patience_counter}/{patience}")
 
-                # Merge validation metrics into the record for this round
                 round_record.update(val_metrics)
 
             except Exception as e:
                 logging.error(f"Validation for early stopping failed in round {round_num}: {e}")
                 patience_counter += 1
 
-        round_records.append(round_record)
+        # --- START FIX: Incremental saving ---
+        # 1. Save to the main training_log.csv
         save_round_incremental(round_record, save_path)
+
+        # 2. Save to the other analysis CSVs
+        save_marketplace_analysis_data_incremental(save_path, round_record)
+        # --- END FIX ---
 
         if cfg.training.use_early_stopping and patience_counter >= patience:
             logging.warning(f"EARLY STOPPING: No improvement for {patience} rounds. Halting at round {round_num}.")
             break
 
-        # Evaluate periodically
+        # Evaluate periodically (this is fine)
         if round_num % cfg.experiment.eval_frequency == 0:
             eval_metrics = {}
             for evaluator in evaluators:
                 metrics = evaluator.evaluate(marketplace.aggregator.strategy.global_model, test_loader)
                 eval_metrics.update(metrics)
-
-            # Save evaluation checkpoint
             eval_path = save_path / "evaluations" / f"round_{round_num}.json"
             save_json_atomic(eval_metrics, eval_path)
 
-        # Save seller histories incrementally
-        save_marketplace_analysis_data(save_path, round_records)
+        # Generate lightweight report (this is fine)
         generate_marketplace_report(save_path, marketplace, cfg.experiment.global_rounds)
 
-        # Seller summaries
+        # Seller summaries (this is fine)
         for sid, seller in marketplace.sellers.items():
             seller.save_marketplace_summary()
 
@@ -693,8 +748,9 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
     else:
         logging.warning("No best model was saved; returning model from the final round.")
 
-    # --- MODIFIED: Return the complete record buffer for final logging ---
-    return marketplace.aggregator.strategy.global_model, round_records
+    # --- START FIX: Return only the model ---
+    return marketplace.aggregator.strategy.global_model
+    # --- END FIX ---
 
 
 def save_round_incremental(round_record, save_path):
@@ -763,6 +819,7 @@ def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, m
         device=cfg.experiment.device
     )
     logging.info("✅ Root gradient sellers initialized.")
+
 
 def run_attack(cfg: AppConfig):
     """
@@ -836,14 +893,14 @@ def run_attack(cfg: AppConfig):
 
         # 6. Federated Training Loop
         logging.info("🏋️ Starting federated training...")
-        final_model, results_buffer = run_training_loop(
+        final_model = run_training_loop(
             cfg, marketplace, validation_loader, test_loader, evaluators, sybil_coordinator
         )
 
         # 7. Final Evaluation and Artifact Saving
         logging.info("📊 Running final evaluation and saving results...")
         run_final_evaluation_and_logging(
-            cfg, final_model, results_buffer, test_loader, evaluators
+            cfg, final_model, test_loader, evaluators
         )
 
         # 8. Save seller-specific results
