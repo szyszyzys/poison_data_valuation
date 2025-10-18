@@ -42,6 +42,54 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
+CORE_EXPERIMENTS = [
+    # --- 1. Main Summary Results ---
+    "main_summary_cifar100_cnn",
+    "main_summary_cifar100_resnet18",
+    "main_summary_cifar10_cnn",
+    "main_summary_cifar10_resnet18",
+    "main_summary_trec",
+
+    # --- 2. Sybil Attack Analysis ---
+    "sybil_baseline_cifar10_cnn",
+    # "sybil_baseline_cifar10_resnet18",
+    "sybil_knock_out_cifar10_cnn",
+    # "sybil_knock_out_cifar10_resnet18",
+    "sybil_mimic_cifar10_cnn",
+    # "sybil_mimic_cifar10_resnet18",
+    "sybil_pivot_cifar10_cnn",
+    # "sybil_pivot_cifar10_resnet18",
+
+    # --- 3. Ablation Studies & Specific Analyses ---
+    "oracle_vs_buyer_bias_cifar10_cnn",
+    "buyer_data_impact_cifar10_cnn",
+    "heterogeneity_impact_cifar10_cnn",
+    # "heterogeneity_impact_cifar10_resnet18",
+    "selection_rate_baseline_cifar10_cnn",
+    "selection_rate_cluster_cifar10_cnn",
+    "trend_adv_rate_martfl_cifar10_cnn",
+
+    # --- 4. Alternative Attack Scenarios ---
+    "label_flip_cifar10_cnn",
+    # "label_flip_cifar10_resnet18",
+    "label_flip_trec",
+    "adaptive_evasion_data_poisoning_cifar10_cnn",
+    "adaptive_evasion_gradient_manipulation_cifar10_cnn",
+    "drowning_attack_cifar10_cnn",
+
+    # --- 5. Scalability Experiments ---
+    "scalability_backdoor_sybil_cifar100_cnn",
+    "scalability_backdoor_sybil_cifar10_cnn",
+    # "scalability_backdoor_sybil_cifar10_resnet18",
+    "scalability_backdoor_trec",
+    "scalability_baseline_no_attack_cifar10_cnn",
+    "scalability_buyer_class_exclusion_cifar10_cnn",
+    "scalability_buyer_oscillating_cifar10_cnn",
+    "scalability_combined_backdoor_buyer_cifar10_cnn",
+    "extreme_scale_backdoor_martfl",
+    # "extreme_scale_buyer_class_exclusion_fltrust",
+]
+
 def is_run_completed(run_save_path: Path) -> bool:
     """
     Check if a run is already completed by verifying multiple success indicators.
@@ -197,7 +245,7 @@ def setup_gpu_allocation(num_processes: int, gpu_ids_str: str = None):
 
 
 def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = None,
-                  force_rerun: bool = False):
+                  force_rerun: bool = False, config_filter: str = None, core_only: bool = False):
     """
     Main function to orchestrate parallel execution of experiments.
     """
@@ -206,7 +254,48 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
         logger.warning(f"❌ No config.yaml files found in {configs_base_dir}. Exiting.")
         return
 
-    logger.info(f"📋 Found {len(all_config_files)} configuration files")
+    logger.info(f"📋 Found {len(all_config_files)} total configuration files")
+
+    # --- START: NEW FILTERING LOGIC ---
+    if core_only:
+        if config_filter:
+            logger.warning("⚠️ Both --core_only and --filter provided. --core_only takes precedence.")
+
+        logger.info(f"Filtering based on {len(CORE_EXPERIMENTS)} core experiments list.")
+        filtered_config_files = []
+        core_exp_set = set(CORE_EXPERIMENTS)  # Use a set for fast O(1) lookups
+
+        for path in all_config_files:
+            # Assumes config.yaml is in a folder named after the experiment
+            # e.g., .../configs_generated/sybil_mimic_cifar10_cnn/config.yaml
+            exp_name = Path(path).parent.name
+            if exp_name in core_exp_set:
+                filtered_config_files.append(path)
+
+        if not filtered_config_files:
+            logger.warning(f"❌ No config files matched the CORE_EXPERIMENTS list.")
+            logger.warning("Please check your --configs_dir path.")
+            return
+
+        logger.info(f"📋 Found {len(filtered_config_files)} matching configurations (out of {len(all_config_files)} total)")
+        all_config_files = filtered_config_files
+
+    elif config_filter:
+        logger.info(f"🔍 Applying path filter: '{config_filter}'")
+        filtered_config_files = [
+            path for path in all_config_files
+            if config_filter in path
+        ]
+
+        if not filtered_config_files:
+            logger.warning(f"❌ No config files matched the filter '{config_filter}'. Exiting.")
+            return
+
+        logger.info(f"📋 Found {len(filtered_config_files)} matching configurations (out of {len(all_config_files)} total)")
+        all_config_files = filtered_config_files  # Overwrite the list
+    else:
+        logger.info(f"📋 Running all {len(all_config_files)} configurations (no filter applied)")
+
     actual_num_processes, assigned_gpu_ids = setup_gpu_allocation(num_processes, gpu_ids_str)
 
     # === Build the full list of individual run tasks ===
@@ -275,7 +364,18 @@ if __name__ == "__main__":
         action="store_true",
         help="Ignore cached results and rerun all experiments"
     )
-
+    parser.add_argument(
+        "--filter",
+        type=str,
+        default=None,
+        help="Only run configs whose path contains this string (e.g., 'sybil_mimic' or 'main_summary')"
+    )
+    parser.add_argument(
+        "--core_only",
+        action="store_true",
+        help="Only run experiments from the built-in CORE_EXPERIMENTS list"
+    )
+    # --- END OF ADDITION ---
     args = parser.parse_args()
 
     main_parallel(
