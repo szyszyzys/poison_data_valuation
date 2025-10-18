@@ -187,29 +187,68 @@ class BackdoorTextGenerator(PoisonGenerator):
         # The modern vocab object is callable
         return self.vocab(tokens)
 
-    def apply(self, data: List[int], label: int) -> Tuple[List[int], int]:
+    def apply(self, data: Any, label: int) -> Tuple[Any, int]:
         """
-        Applies the backdoor trigger to a single data sample.
+        Applies the backdoor trigger to a single data sample,
+        switching logic based on input type (torch.Tensor or list).
 
         Args:
-            data (List[int]): The original list of token IDs.
+            data (Any): The original data, either a 1D torch.Tensor or a List[int]
             label (int): The original label.
 
         Returns:
-            A tuple of (poisoned_token_ids, poisoned_label).
+            A tuple of (poisoned_data, poisoned_label), matching the input type.
         """
         # Poison the sample by changing its label to the target label
         poisoned_label = self.config.target_label
+        trigger_len = len(self.trigger_token_ids)
 
-        # Insert the trigger tokens into the data
-        if self.config.location == "start":
-            poisoned_data = self.trigger_token_ids + data
-        elif self.config.location == "end":
-            poisoned_data = data + self.trigger_token_ids
-        else:  # Default to end
-            poisoned_data = data + self.trigger_token_ids
+        # --- BRANCH 1: TENSOR INPUT (e.g., from evaluate_attack_performance) ---
+        # Uses REPLACEMENT logic to preserve sequence length for torch.stack()
+        if isinstance(data, torch.Tensor):
+            poisoned_data = data.clone()
 
-        return poisoned_data, poisoned_label
+            # Create trigger tensor on the same device as the data
+            trigger_tensor = torch.tensor(self.trigger_token_ids,
+                                          dtype=torch.long,
+                                          device=poisoned_data.device)
+
+            # Ensure sequence is long enough to hold the trigger
+            if len(poisoned_data) < trigger_len:
+                logging.warning(
+                    f"Data sample length ({len(poisoned_data)}) is shorter than "
+                    f"trigger length ({trigger_len}). Skipping trigger insertion for this sample."
+                )
+                return poisoned_data, poisoned_label  # Return (tensor, int)
+
+            # Replace tokens at the specified location
+            if self.config.location == "start":
+                poisoned_data[:trigger_len] = trigger_tensor
+            elif self.config.location == "end":
+                poisoned_data[-trigger_len:] = trigger_tensor
+            else:  # Default to end
+                poisoned_data[-trigger_len:] = trigger_tensor
+
+            return poisoned_data, poisoned_label  # Return (tensor, int)
+
+        # --- BRANCH 2: LIST INPUT (e.g., from old code) ---
+        # Uses APPEND/PREPEND logic, returning a list of new length
+        elif isinstance(data, list):
+            if self.config.location == "start":
+                poisoned_data = self.trigger_token_ids + data
+            elif self.config.location == "end":
+                poisoned_data = data + self.trigger_token_ids
+            else:  # Default to end
+                poisoned_data = data + self.trigger_token_ids
+
+            return poisoned_data, poisoned_label  # Return (list, int)
+
+        # --- ERROR BRANCH ---
+        else:
+            raise TypeError(
+                f"BackdoorTextGenerator.apply received unsupported data type: {type(data)}. "
+                "Expected torch.Tensor or list."
+            )
 
 
 class BackdoorTabularGenerator(PoisonGenerator):

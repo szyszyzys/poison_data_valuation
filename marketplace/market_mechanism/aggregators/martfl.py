@@ -1,11 +1,10 @@
 import copy
 import logging
-from typing import Dict, List, Tuple, Any
-
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Dict, List, Tuple, Any
 
 from common.utils import clip_gradient_update, flatten_tensor
 from marketplace.market_mechanism.aggregators.base_aggregator import BaseAggregator
@@ -65,7 +64,7 @@ class MartflAggregator(BaseAggregator):
         self.clip = clip
         self.change_base = change_base
         self.baseline_id = "buyer"
-        self.root_gradient = None # Will hold the buyer's root gradient for the round
+        self.root_gradient = None  # Will hold the buyer's root gradient for the round
         logger.info(f"MartflAggregator initialized:")
         logger.info(f"  - clip_gradients: {self.clip}")
         logger.info(f"  - change_baseline: {self.change_base}")
@@ -85,6 +84,18 @@ class MartflAggregator(BaseAggregator):
         """
         logger.info(f"=== martFL Aggregation (Round {global_epoch}) ===")
         logger.info(f"Processing {len(seller_updates)} seller updates")
+
+        # --- NEW: Handle the "no updates received" case ---
+        if not seller_updates:
+            logger.warning(f"No seller updates to aggregate for round {global_epoch}. Returning zero gradient.")
+            empty_gradient = [torch.zeros_like(p, device=self.device) for p in self.global_model.parameters()]
+            empty_stats = {
+                'aggregation_method': 'martfl', 'round': global_epoch,
+                'num_sellers': 0, 'num_selected': 0, 'num_outliers': 0,
+                'error': 'No updates received.'
+            }
+            return empty_gradient, [], [], empty_stats
+
         logger.info(f"Current baseline: {self.baseline_id}")
         self.root_gradient = kwargs.get('root_gradient')
         buyer_data_loader = kwargs.get('buyer_data_loader')
@@ -120,6 +131,54 @@ class MartflAggregator(BaseAggregator):
             baseline_source = 'buyer_trust'
             logger.info("Using pre-computed buyer's trust gradient as baseline")
         baseline_norm = torch.norm(baseline_update_flat).item()
+
+        # --- START: RECOMMENDED FIX 1 ---
+        # Add a check for the baseline tensor itself
+        if baseline_update_flat.numel() == 0:
+            logger.error("=" * 80)
+            logger.error(f"CRITICAL AGGREGATION ERROR in MartflAggregator (Round {global_epoch})")
+            logger.error(f"The baseline gradient ('{self.baseline_id}') is an empty tensor.")
+            logger.error("This suggests `flatten_tensor()` is returning empty tensors.")
+            logger.error(f"  - Baseline source: {baseline_source}")
+            logger.error("=" * 80)
+            raise RuntimeError(
+                f"MartflAggregator failed: Baseline gradient '{self.baseline_id}' is empty. "
+                "Check `flatten_tensor` utility function."
+            )
+
+        flat_values = list(flat_updates.values())  # Get all flattened tensors
+
+        is_list_empty = (len(flat_values) == 0)
+        # Check if list is not empty BUT the tensors inside are empty
+        are_tensors_empty = (not is_list_empty and flat_values[0].numel() == 0)
+
+        if is_list_empty or are_tensors_empty:
+            logger.error("=" * 80)
+            logger.error(f"CRITICAL AGGREGATION ERROR in MartflAggregator (Round {global_epoch})")
+            logger.error("Cannot stack seller updates: TensorList is empty or contains empty tensors.")
+
+            logger.error(f"  - `seller_updates` keys (count): {len(seller_ids)}")
+            logger.error(f"  - `flat_updates` keys (count): {len(flat_updates.keys())}")
+            logger.error(f"  - Total flattened tensors found: {len(flat_values)}")
+
+            if is_list_empty:
+                logger.error("  - Failure Reason: The list of flattened tensors is completely empty.")
+                logger.error("    (This should not happen if `seller_updates` was processed)")
+
+            if are_tensors_empty:
+                logger.error(
+                    f"  - Failure Reason: Tensors are empty (e.g., shape {flat_values[0].shape}, numel {flat_values[0].numel()}).")
+                logger.error("  - This strongly suggests `flatten_tensor()` is returning empty tensors.")
+                logger.error("  - Please CHECK the `flatten_tensor` utility function.")
+
+            logger.error("=" * 80)
+
+            # Stop the experiment by re-raising the error with a clear message
+            raise RuntimeError(
+                f"MartflAggregator failed: Cannot stack seller updates. "
+                f"List is empty (len={len(flat_values)}) or tensors are empty. "
+                "Check `flatten_tensor` utility function."
+            )
 
         # 3. Compute cosine similarities to baseline
         seller_updates_stack = torch.stack(list(flat_updates.values()))
