@@ -34,13 +34,13 @@ class TabularModelConfig(BaseModelConfig):
     # Training parameters
     epochs: int = 100
     batch_size: int = 64
-    learning_rate: float = 0.01
+    learning_rate: float = 0.001
     weight_decay: float = 0.0
     momentum: float = 0.9
     use_scheduler: bool = True
     scheduler_step: int = 30
     scheduler_gamma: float = 0.1
-    optimizer_type: str = "sgd"  # "sgd", "adam", "adamw"
+    optimizer_type: str = "adam"  # "sgd", "adam", "adamw"
 
     # Regularization
     use_early_stopping: bool = False

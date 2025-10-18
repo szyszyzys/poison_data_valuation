@@ -72,7 +72,59 @@ def use_tabular_backdoor_with_trigger(trigger_conditions: Dict[str, Any]) -> Cal
 
     return modifier
 
+def generate_tabular_main_summary_scenarios() -> List[Scenario]:
+    """
+    Generates scenarios for the main summary figure, covering both tabular datasets
+    with a fixed attack setting and sweeping core aggregators.
+    """
+    scenarios = []
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl'] # Core aggregators for comparison
 
+    # --- Standard Fixed Attack Settings (adjust if needed) ---
+    FIXED_ADV_RATE = 0.3
+    FIXED_POISON_RATE = 0.5
+    SYBIL_STRATEGY = 'mimic' # Assuming 'mimic' is your standard for main figs
+    # ---------------------------------------------------------
+
+    # --- Scenario for Texas100 (MLP) ---
+    scenarios.append(Scenario(
+        name="main_summary_texas100", # Match naming convention
+        base_config_factory=get_base_tabular_config,
+        modifiers=[
+            use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER),
+            use_sybil_attack(SYBIL_STRATEGY) # Include Sybil if standard for main figs
+        ],
+        parameter_grid={
+            "experiment.dataset_name": ["texas100"],
+            "experiment.model_structure": ["mlp"],
+            "experiment.tabular_model_config_name": ["mlp_texas100_baseline"],
+            "aggregation.method": ALL_AGGREGATORS,
+            "experiment.adv_rate": [FIXED_ADV_RATE],
+            "adversary_seller_config.poisoning.poison_rate": [FIXED_POISON_RATE],
+            # Add other fixed params if necessary (e.g., root_gradient_source)
+        }
+    ))
+
+    # --- Scenario for Purchase100 (ResNet) ---
+    scenarios.append(Scenario(
+        name="main_summary_purchase100", # Match naming convention
+        base_config_factory=get_base_tabular_config, # Still uses the base
+        modifiers=[
+            use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER),
+            use_sybil_attack(SYBIL_STRATEGY) # Include Sybil if standard for main figs
+        ],
+        parameter_grid={
+            "experiment.dataset_name": ["purchase100"],
+            "experiment.model_structure": ["resnet"], # <<< Specify correct model
+            "experiment.tabular_model_config_name": ["resnet_purchase100_baseline"], # <<< Specify correct config
+            "aggregation.method": ALL_AGGREGATORS,
+            "experiment.adv_rate": [FIXED_ADV_RATE],
+            "adversary_seller_config.poisoning.poison_rate": [FIXED_POISON_RATE],
+            # Add other fixed params if necessary
+        }
+    ))
+
+    return scenarios
 def use_tabular_label_flipping_attack(config: AppConfig) -> AppConfig:
     """Modifier for a simple label-flipping attack."""
     config.adversary_seller_config.poisoning.type = PoisonType.LABEL_FLIP
@@ -279,17 +331,21 @@ def generate_tabular_scalability_scenarios() -> List[Scenario]:
 
 
 # --- Main Execution Block ---
+# --- Main Execution Block ---
 if __name__ == "__main__":
-    output_dir = "./configs_generated/tabular_final"  # Changed output dir
+    output_dir = "./configs_generated/tabular_final"
     generator = ExperimentGenerator(output_dir)
 
     ALL_TABULAR_SCENARIOS = []
+    # --- ADD THIS LINE (e.g., at the beginning) ---
+    ALL_TABULAR_SCENARIOS.extend(generate_tabular_main_summary_scenarios())
+    # ----------------------------------------------
     ALL_TABULAR_SCENARIOS.extend(generate_tabular_oracle_vs_buyer_bias_scenarios())
     ALL_TABULAR_SCENARIOS.extend(generate_tabular_sybil_impact_scenarios())
     ALL_TABULAR_SCENARIOS.extend(generate_tabular_data_heterogeneity_scenarios())
     ALL_TABULAR_SCENARIOS.extend(generate_tabular_attack_impact_scenarios())
     ALL_TABULAR_SCENARIOS.extend(generate_tabular_label_flipping_scenarios())
-    ALL_TABULAR_SCENARIOS.extend(generate_tabular_scalability_scenarios()) # <-- Added new scenario
+    ALL_TABULAR_SCENARIOS.extend(generate_tabular_scalability_scenarios())
 
     for scenario in ALL_TABULAR_SCENARIOS:
         base_config = scenario.base_config_factory()
