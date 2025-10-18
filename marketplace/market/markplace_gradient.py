@@ -206,8 +206,20 @@ class DataMarketplaceFederated(DataMarketplace):
             root_gradient=sanitized_root_gradient,
             buyer_data_loader=self.aggregator.buyer_data_loader
         )
+        if agg_grad:  # Check if aggregation was successful
+            try:
+                # Delegate the actual update to the aggregator/strategy
+                self.aggregator.apply_gradient(agg_grad)
+                self.consecutive_failed_rounds = 0  # Reset on success
+                logging.info("✅ Aggregated gradient applied to global model.")
+            except Exception as e:
+                logging.error(f"❌ Failed to apply aggregated gradient: {e}", exc_info=True)
+                self.consecutive_failed_rounds += 1
+        else:  # Handle case where aggregation itself failed (e.g., no valid sellers)
+            self.consecutive_failed_rounds += 1
+            logging.warning(
+                f"Round failed to produce an update. Consecutive failures: {self.consecutive_failed_rounds}")
 
-        # === Calculate marketplace metrics ===
         marketplace_metrics = self._compute_marketplace_metrics(
             round_number=round_number,
             gradients_dict=sanitized_gradients,
