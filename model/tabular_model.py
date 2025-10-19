@@ -195,15 +195,38 @@ class ConfigurableTabularMLP(nn.Module):
         return self.layers(x)
 
 
+def init_weights(m):
+    """
+    Applies the correct weight initialization to different layer types.
+    """
+    if isinstance(m, (nn.Linear, nn.Conv2d)):
+        # Kaiming (He) uniform initialization for ReLU
+        # This is bounded and CANNOT create Inf, fixing your bug.
+        nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0)
+
+    elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.GroupNorm)):
+        # Initialize BatchNorm/GroupNorm weights to 1 and biases to 0
+        nn.init.constant_(m.weight, 1)
+        nn.init.constant_(m.bias, 0)
+
+    elif isinstance(m, nn.Embedding):
+        # Initialize Embedding weights with a normal distribution
+        nn.init.normal_(m.weight, mean=0.0, std=1.0)
+        if m.padding_idx is not None:
+            # Set the padding token embedding to all zeros
+            nn.init.constant_(m.weight[m.padding_idx], 0)
+
+
 class TabularModelFactory:
     """Factory class for creating configurable tabular models."""
 
-    @staticmethod
     def create_model(model_name: str, input_dim: int, num_classes: int,
                      config: TabularModelConfig,
-                     device: str = 'cpu') -> nn.Module:  # <-- ADDED device parameter
-        """Create a tabular model based on configuration."""
-        print(f"🧠 Creating configurable tabular model '{model_name}' with config '{config.config_name}'...")
+                     device: str = 'cpu') -> nn.Module:
+
+        print(f"🧠 Creating configurable tabular model '{model_name}'...")
 
         model = None
         if model_name.lower() == 'tabularmlp':
@@ -213,30 +236,20 @@ class TabularModelFactory:
         else:
             raise ValueError(f"Unknown tabular model name: {model_name}")
 
-        # --- MOVE TO DEVICE IMMEDIATELY ---
+        # --- THIS IS THE CHANGE ---
+
+        # 1. Move to device FIRST (so it gets the right dtype, e.g., float16)
         model = model.to(device)
 
-        # --- APPLY STABLE INITIALIZATION ON THE CORRECT DEVICE ---
-        # This is the critical fix to prevent NaN/Inf in float16
-        for m in model.modules():
-            if isinstance(m, nn.Linear):
-                # USE UNIFORM: This is bounded and will not produce Inf
-                nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm1d):
-                # Re-initialize BatchNorm stats on the correct device
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-                if hasattr(m, 'running_mean'):
-                    m.running_mean.zero_()
-                if hasattr(m, 'running_var'):
-                    m.running_var.fill_(1)
+        # 2. Apply your new universal initializer
+        # This replaces your old 'for m in model.modules()' loop
+        model.apply(init_weights)
 
-        # --- VERIFY (Optional but recommended) ---
+        # 3. VERIFY (This part is still good to have)
         for name, param in model.named_parameters():
             if torch.isnan(param).any() or torch.isinf(param).any():
-                raise RuntimeError(f"NaN/Inf in parameter '{name}' after device transfer to {device}")
+                # This should never be hit now
+                raise RuntimeError(f"NaN/Inf in '{name}' after universal init!")
 
         return model
 

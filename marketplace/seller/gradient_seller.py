@@ -224,7 +224,6 @@ def validate_and_fix_model_initialization(model: nn.Module) -> bool:
     logging.info("✅ Successfully fixed all NaN/Inf parameters with stable initialization.")
     return True
 
-
 class GradientSeller(BaseSeller):
     """
     A seller that participates in federated learning by providing gradient updates.
@@ -381,9 +380,9 @@ class GradientSeller(BaseSeller):
                 'num_samples': 0
             }
 
-        if not validate_and_fix_model_initialization(model_to_train):
-            logging.error(f"[{self.seller_id}] ❌ Model has unfixable NaN/Inf values!")
-            return None, {'error': 'Model initialization contains NaN/Inf'}
+        # if not validate_and_fix_model_initialization(model_to_train):
+        #     logging.error(f"[{self.seller_id}] ❌ Model has unfixable NaN/Inf values!")
+        #     return None, {'error': 'Model initialization contains NaN/Inf'}
 
         logging.info(f"[{self.seller_id}] Training on {len(dataset_to_use)} samples...")
 
