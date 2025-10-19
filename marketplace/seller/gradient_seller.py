@@ -165,70 +165,58 @@ def estimate_byte_size(data: Any) -> int:
 def validate_and_fix_model_initialization(model: nn.Module) -> bool:
     """
     Check for and fix NaN/Inf values in model parameters.
-    Returns True if model is valid, False if unfixable.
+    This is often needed when initializing models directly in float16.
+    Returns True if model is valid, otherwise raises a RuntimeError.
     """
-    has_issues = False
     problematic_params = []
 
     # First pass: detect issues
     for name, param in model.named_parameters():
         if torch.isnan(param).any() or torch.isinf(param).any():
             logging.error(f"❌ NaN/Inf detected in parameter '{name}' during initialization!")
-            has_issues = True
             problematic_params.append(name)
 
-    if not has_issues:
+    if not problematic_params:
+        logging.info("✅ Model initialization is valid.")
         return True
 
-    # If we have issues, completely reinitialize the model
+    # If we have issues, attempt a full, STABLE reinitialization
     logging.warning(
-        f"🔄 Attempting complete model reinitialization for {len(problematic_params)} problematic parameters")
+        f"🔄 NaN/Inf detected. Attempting stable reinitialization for {len(problematic_params)} parameters..."
+    )
 
-    def init_weights(m):
-        """Recursively initialize all layer weights."""
+    def init_weights_stable(m):
+        """Recursively initialize all layer weights using a stable method."""
         if isinstance(m, nn.Conv2d):
-            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            # USE UNIFORM: This is bounded and will not produce Inf in float16
+            nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.BatchNorm2d):
             nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)
-            # CRITICAL: Reset running stats
             if hasattr(m, 'running_mean'):
                 m.running_mean.zero_()
             if hasattr(m, 'running_var'):
                 m.running_var.fill_(1)
         elif isinstance(m, nn.Linear):
-            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            # USE UNIFORM: This is bounded and will not produce Inf in float16
+            nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    # Apply initialization to all modules
-    model.apply(init_weights)
+    # Apply stable initialization to all modules
+    model.apply(init_weights_stable)
 
-    # Verify fix worked
-    failed_params = []
+    # Verify fix worked. If this fails, something is deeply wrong.
     for name, param in model.named_parameters():
         if torch.isnan(param).any() or torch.isinf(param).any():
-            failed_params.append(name)
-            logging.error(f"❌ Still NaN/Inf in '{name}' after reinitialization!")
+            error_msg = f"❌ CRITICAL: Still NaN/Inf in '{name}' after stable reinitialization. This is unrecoverable."
+            logging.error(error_msg)
+            raise RuntimeError(error_msg)
 
-            # Nuclear option: manually fill with small values
-            with torch.no_grad():
-                param.fill_(0.01)
-
-            # Check one more time
-            if torch.isnan(param).any() or torch.isinf(param).any():
-                logging.error(f"❌ CRITICAL: Cannot fix '{name}' - tensor may be corrupted!")
-                return False
-
-    if failed_params:
-        logging.warning(f"⚠️  Had to use nuclear option (fill with 0.01) for {len(failed_params)} parameters")
-    else:
-        logging.info("✅ Successfully fixed all NaN/Inf parameters")
-
+    logging.info("✅ Successfully fixed all NaN/Inf parameters with stable initialization.")
     return True
-
 
 class GradientSeller(BaseSeller):
     """
