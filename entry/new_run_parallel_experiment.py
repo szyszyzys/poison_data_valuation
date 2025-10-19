@@ -510,7 +510,6 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
 
     logger.info(f"{'=' * 60}")
     logger.info(f"🚀 Starting parallel execution:")
-    logger.info(f"   - Total Individual Runs: {total_tasks}")
     logger.info(f"   - Parallel Processes: {actual_num_processes}")
     logger.info(f"   - Available GPUs (Remapped): {remapped_gpu_ids if assigned_gpu_ids else 'CPU only'}")
     logger.info(
