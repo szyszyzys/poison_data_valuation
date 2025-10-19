@@ -47,7 +47,8 @@ def train_local_model(model: nn.Module,
         device = torch.device(device)
 
     # Only use mixed precision with CUDA
-    use_amp = (device.type == 'cuda')
+    # use_amp = (device.type == 'cuda')
+    use_amp = False
     scaler = GradScaler() if use_amp else None
 
     if not train_loader or len(train_loader) == 0:
