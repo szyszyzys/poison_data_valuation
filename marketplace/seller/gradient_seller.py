@@ -443,6 +443,7 @@ class GradientSeller(BaseSeller):
                 local_epochs=local_epochs_to_use,
                 lr=lr_to_use,
                 opt_str=optimizer_to_use,
+                eps=self.training_config.eps,
                 momentum=momentum_to_use,
                 weight_decay=weight_decay_to_use
             )

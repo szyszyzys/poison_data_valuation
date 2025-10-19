@@ -202,6 +202,7 @@ def local_training_and_get_gradient(
         local_epochs: int = 1,
         lr: float = 0.01,
         opt_str: str = "SGD",
+        eps=1e-4,
         momentum: float = 0.9,
         weight_decay: float = 0.0005
 ) -> Tuple[Optional[List[torch.Tensor]], Optional[float]]:
@@ -223,7 +224,7 @@ def local_training_and_get_gradient(
 
     criterion = nn.CrossEntropyLoss()
     if opt_str.upper() == "ADAM":
-        optimizer = optim.Adam(model_for_training.parameters(), lr=lr, weight_decay=weight_decay)
+        optimizer = optim.Adam(model_for_training.parameters(), lr=lr, weight_decay=weight_decay, eps=eps)
     else:
         optimizer = optim.SGD(model_for_training.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
 

@@ -1,8 +1,9 @@
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from torch.utils.data import Dataset
 from typing import Any, Dict, Optional, Tuple, List, Union, Callable, Literal
+
+from torch.utils.data import Dataset
 
 from common.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation, PoisonType, LabelFlipMode, \
     VictimStrategy, ImageBackdoorAttackName, TextBackdoorAttackName
@@ -60,6 +61,7 @@ class TrainingConfig:
     optimizer: str = "Adam"  # Default optimizer
     momentum: float = 0.9  # Only used by SGD
     weight_decay: float = 0.0
+    eps: float = 1e-4
 
 
 @dataclass
