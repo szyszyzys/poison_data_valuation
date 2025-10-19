@@ -3,6 +3,8 @@ import copy
 import logging
 import multiprocessing
 import os
+import shutil
+
 import torch
 from filelock import FileLock  # pip install filelock
 from multiprocessing.pool import Pool
