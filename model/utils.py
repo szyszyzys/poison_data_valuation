@@ -33,6 +33,10 @@ def train_local_model(model: nn.Module,
                       device: torch.device,
                       epochs: int = 1,
                       max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
+    """
+    Trains a model locally on a device, handling multiple data modalities
+    and using gradient clipping to prevent explosion.
+    """
     model.train()
     batch_losses_all = []
 
@@ -44,13 +48,13 @@ def train_local_model(model: nn.Module,
     for epoch in range(epochs):
         for batch_idx, batch_data in enumerate(train_loader):
             try:
-                # --- FIX: Modality-Aware Data Unpacking ---
-                # Check the batch format to handle different data modalities.
+                # --- Modality-Aware Data Unpacking ---
+                # Handle different data loader return formats
                 if len(batch_data) == 3:  # Text data: (labels, texts, lengths)
                     labels, data, _ = batch_data
                 else:  # Image/Tabular data: (data, labels)
                     data, labels = batch_data
-                # --- END FIX ---
+                # --- End Unpacking ---
 
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
 
@@ -58,6 +62,7 @@ def train_local_model(model: nn.Module,
                 outputs = model(data)
                 loss = criterion(outputs, labels)
 
+                # Check for bad loss *before* backward pass
                 if not torch.isfinite(loss):
                     logging.warning(
                         f"Non-finite loss ({loss.item()}) encountered in batch {batch_idx}. Skipping update."
@@ -65,7 +70,11 @@ def train_local_model(model: nn.Module,
                     continue
 
                 loss.backward()
+
+                # --- GRADIENT CLIPPING ---
+                # This prevents exploding gradients (Inf/NaN)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+
                 optimizer.step()
 
                 batch_losses_all.append(loss.item())
