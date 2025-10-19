@@ -38,7 +38,7 @@ class ImageModelConfig(BaseModelConfig):
     # Architecture parameters
     use_dropout: bool = True
     dropout_rate: float = 0.5
-    use_batch_norm: bool = True
+    use_batch_norm: bool = False
     activation: str = "relu"  # "relu", "tanh", "sigmoid"
 
     # FlexibleCNN specific

@@ -21,7 +21,7 @@ class TabularModelConfig(BaseModelConfig):
     hidden_dims: List[int] = None  # [128, 64] for MLP layers
     use_dropout: bool = True
     dropout_rate: float = 0.5
-    use_batch_norm: bool = True
+    use_batch_norm: bool = False
     activation: str = "relu"  # "relu", "tanh", "sigmoid", "leaky_relu"
 
     # ResNet specific
