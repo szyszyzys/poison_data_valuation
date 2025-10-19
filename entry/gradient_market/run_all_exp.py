@@ -5,15 +5,16 @@ import copy
 import json
 import logging
 import os
-import pandas as pd
 import shutil
 import tempfile
 import time
+from pathlib import Path
+from typing import List, Dict
+
+import pandas as pd
 import torch
 import torch.nn as nn
-from pathlib import Path
-from torch.utils.data import DataLoader, random_split  # Add this import
-from typing import List, Dict
+from torch.utils.data import DataLoader, random_split
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
 from common.datasets.tabular_data_processor import get_tabular_dataset
@@ -34,6 +35,8 @@ from model.tabular_model import TabularModelFactory, TabularConfigManager
 from model.utils import get_text_model
 
 
+# (Import all your other required functions: get_text_dataset, get_image_dataset, etc.)
+
 def setup_data_and_model(cfg: AppConfig, device):
     """Loads dataset and creates a model factory from the AppConfig."""
     dataset_name = cfg.experiment.dataset_name
@@ -50,6 +53,11 @@ def setup_data_and_model(cfg: AppConfig, device):
         collate_fn = processed_data.collate_fn
         pad_idx = processed_data.pad_idx
 
+        # --- FIX 3: Added robust check ---
+        if not seller_loaders:
+            logging.error("get_text_dataset returned empty seller_loaders!")
+            raise ValueError("get_text_dataset returned no sellers. Check data partitioning.")
+
         model_init_cfg = {"num_classes": num_classes, "vocab_size": len(vocab), "padding_idx": pad_idx,
                           "dataset_name": dataset_name}
         model_factory = lambda: get_text_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
@@ -60,41 +68,27 @@ def setup_data_and_model(cfg: AppConfig, device):
 
         if not seller_loaders or len(seller_loaders) == 0:
             logging.error("get_image_dataset returned empty seller_loaders!")
-
             logging.error(f"Config values:")
-
             logging.error(f"  - n_sellers: {cfg.experiment.n_sellers}")
-
             logging.error(f"  - dataset_name: {cfg.experiment.dataset_name}")
-
             logging.error(f"  - data_distribution: {getattr(cfg.experiment, 'data_distribution', 'N/A')}")
-
             raise ValueError(
-
                 "get_image_dataset returned empty seller_loaders. "
-
                 "Check your data partitioning configuration."
-
             )
 
         logging.info(f"Seller loaders created: {len(seller_loaders)}")
-
         logging.info(f"Seller IDs: {list(seller_loaders.keys())}")
 
-        # Validate each loader has data
-
         empty_loaders = []
-
         for sid, loader in seller_loaders.items():
-
             if loader is None or len(loader.dataset) == 0:
                 empty_loaders.append(sid)
 
         if empty_loaders:
             logging.error(f"Found {len(empty_loaders)} empty loaders: {empty_loaders}")
-
             raise ValueError(f"Sellers have no data: {empty_loaders}")
-            # Load image model configuration
+
         config_name = cfg.experiment.image_model_config_name
         logging.info(f"Loading image model config: '{config_name}'")
 
@@ -102,8 +96,7 @@ def setup_data_and_model(cfg: AppConfig, device):
         logging.info(
             f"Loaded config for '{image_model_config.model_name}' with recipe '{image_model_config.config_name}'")
 
-        # Determine model parameters
-        in_channels = 3  # CIFAR datasets have 3 channels
+        in_channels = 3
         sample_data, _ = next(iter(test_loader))
         image_size = tuple(sample_data.shape[2:])
 
@@ -112,7 +105,6 @@ def setup_data_and_model(cfg: AppConfig, device):
         logging.info(f"  - Image size: {image_size}")
         logging.info(f"  - Classes: {num_classes}")
 
-        # Create frozen factory using the new method
         model_factory = ImageModelFactory.create_factory(
             model_name=image_model_config.model_name,
             num_classes=num_classes,
@@ -121,28 +113,32 @@ def setup_data_and_model(cfg: AppConfig, device):
             config=image_model_config,
             device=device
         )
-        # Validate factory creates consistent models
         validate_model_factory(model_factory, num_tests=3)
 
+        collate_fn = None  # --- FIX 2: Explicitly set collate_fn ---
         seller_extra_args = {}
+
     elif dataset_type == "tabular":
-        # 1. Delegate all data loading and partitioning to the helper function
         buyer_loader, seller_loaders, test_loader, num_classes, input_dim, feature_to_idx = get_tabular_dataset(cfg)
 
-        # 2. Use your Config Manager and Factory to create the model factory
+        # --- FIX 3: Added robust check ---
+        if not seller_loaders:
+            logging.error("get_tabular_dataset returned empty seller_loaders!")
+            raise ValueError("get_tabular_dataset returned no sellers. Check data partitioning.")
+
         config_manager = TabularConfigManager(config_dir=cfg.data.tabular.model_config_dir)
         tabular_model_config = config_manager.get_config_by_name(cfg.experiment.tabular_model_config_name)
 
+        # --- FIX 1: Pass device into the factory ---
         model_factory = lambda: TabularModelFactory.create_model(
             model_name=tabular_model_config.model_name,
             input_dim=input_dim,
             num_classes=num_classes,
-            config=tabular_model_config
+            config=tabular_model_config,
+            device=device  # <-- CRITICAL FIX
         )
-        # Tabular data does not require special collate_fn or seller_extra_args
         collate_fn = None
         seller_extra_args = {"feature_to_idx": feature_to_idx}
-    ### --- END: UPDATED TABULAR LOGIC --- ###
 
     else:
         raise ValueError(f"Unsupported dataset_type: {dataset_type}")
@@ -159,37 +155,29 @@ def setup_data_and_model(cfg: AppConfig, device):
 
     logging.info("Data loaded for '%s'. Number of classes: %d", dataset_name, cfg.experiment.num_classes)
 
-    # --- CORRECTED VALIDATION SET LOGIC ---
     logging.info("Attempting to create a validation set by splitting buyer data...")
     validation_loader = None
 
     if buyer_loader and len(buyer_loader.dataset) > 1:
         buyer_dataset = buyer_loader.dataset
-
-        # Define validation split size (e.g., 50% of buyer data, but at least 1 sample)
         val_size = max(1, int(0.5 * len(buyer_dataset)))
         train_size = len(buyer_dataset) - val_size
 
         if train_size > 0:
-            # Split the dataset using a fixed seed for reproducibility
             generator = torch.Generator().manual_seed(cfg.seed)
             train_subset, val_subset = random_split(buyer_dataset, [train_size, val_size], generator=generator)
 
-            # Overwrite the buyer_loader with the smaller training part for the aggregator
             buyer_loader = DataLoader(train_subset, batch_size=cfg.training.batch_size, shuffle=True,
                                       collate_fn=collate_fn)
-            # Create the new validation loader
             validation_loader = DataLoader(val_subset, batch_size=cfg.training.batch_size, shuffle=False,
                                            collate_fn=collate_fn)
 
             logging.info(f"  -> New buyer data size (for aggregator): {len(train_subset)}")
             logging.info(f"  -> Validation set size: {len(val_subset)}")
         else:
-            # This case happens if buyer data is too small to split (e.g., 1 sample)
             logging.warning("Buyer dataset is too small to split. Using full buyer dataset for aggregator.")
-            validation_loader = buyer_loader  # Use the original buyer loader as validation
+            validation_loader = buyer_loader
 
-    # Final fallback if something went wrong or buyer_loader was initially None
     if validation_loader is None:
         logging.warning(
             "Could not create validation set from buyer data. Falling back to using the TEST SET as the validation set for the Oracle.")
