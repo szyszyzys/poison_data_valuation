@@ -193,58 +193,56 @@ def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: 
 
 
 def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, seed: int,
-                                gpu_id: int = None, force_rerun: bool = False, attempt: int = 0):  # Add attempt param
-    """
-    Function to run a SINGLE experiment instance.
-    """
+                                gpu_id: int = None, force_rerun: bool = False, attempt: int = 0):
     run_save_path = None
+    log_prefix = f"[Run {run_id} | Smp {sample_idx} | Seed {seed} | GPU ?? | Att {attempt + 1}]" # Placeholder
+
     try:
-        # ===== GPU/Seed Setup =====
+        # ===== GPU/Seed Setup (Revised) =====
         target_device = "cpu"
-        log_prefix_gpu_info = "CPU"
+        actual_gpu_id_seen = "N/A" # For logging
 
         if gpu_id is not None:
+            # --- SET ENV VAR FIRST ---
             os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
-            log_prefix_gpu_info = f"Logical GPU {gpu_id}"
-            target_device = "cuda:0"
+            logger.info(f"{log_prefix} Set CUDA_VISIBLE_DEVICES='{gpu_id}'")
 
-            if not torch.cuda.is_available():
-                logger.error(
-                    f"[Run {run_id}...] CUDA not available after setting CUDA_VISIBLE_DEVICES='{gpu_id}'.")
-                target_device = "cpu"
-                log_prefix_gpu_info = f"Logical GPU {gpu_id} (CUDA FAILED, using CPU)"
-            else:
-                # Properly initialize CUDA context for this process
+            # --- CHECK AVAILABILITY *AFTER* SETTING ENV VAR ---
+            if torch.cuda.is_available():
+                target_device = "cuda:0" # It will always appear as cuda:0 now
+                actual_gpu_id_seen = torch.cuda.current_device() # Get the actual physical ID PyTorch sees
+                log_prefix_gpu_info = f"GPU {gpu_id} (Internal cuda:{actual_gpu_id_seen})"
+
+                # Optional: Minimal init check
                 try:
-                    torch.cuda.init()
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-
-                    # Test GPU health before starting
-                    test_tensor = torch.randn(100, 100, device=target_device)
-                    if torch.isnan(test_tensor).any() or torch.isinf(test_tensor).any():
-                        raise RuntimeError(f"GPU {gpu_id} health check failed - NaN/Inf detected")
-                    del test_tensor
-                    torch.cuda.empty_cache()
-
+                    torch.cuda.init() # Ensure context exists
+                    logger.info(f"{log_prefix} CUDA Initialized for device {gpu_id}.")
                 except Exception as e:
-                    logger.error(f"GPU initialization failed for device {gpu_id}: {e}")
-                    target_device = "cpu"
-                    log_prefix_gpu_info = f"GPU {gpu_id} (Init failed, using CPU)"
+                     logger.error(f"{log_prefix} Minimal CUDA init failed for {gpu_id}: {e}")
+                     target_device = "cpu"
+                     log_prefix_gpu_info = f"GPU {gpu_id} (Init Failed, using CPU)"
 
-        # Include attempt number in log prefix for debugging
-        attempt_info = f" (Attempt {attempt + 1})" if attempt > 0 else ""
-        log_prefix = f"[Run {run_id} | Sample {sample_idx} | Seed {seed} | {log_prefix_gpu_info}{attempt_info}]"
+            else:
+                logger.error(f"{log_prefix} CUDA *not* available after setting CUDA_VISIBLE_DEVICES='{gpu_id}'. Falling back to CPU.")
+                target_device = "cpu"
+                log_prefix_gpu_info = f"GPU {gpu_id} (CUDA Failed, using CPU)"
+        else:
+            log_prefix_gpu_info = "CPU"
 
-        # --- Seed everything AFTER GPU is initialized ---
+        # Update log prefix with final device info
+        log_prefix = f"[Run {run_id} | Smp {sample_idx} | Seed {seed} | {log_prefix_gpu_info} | Att {attempt + 1}]"
+
+
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
         if target_device.startswith("cuda"):
-            torch.cuda.manual_seed_all(seed)
+            torch.cuda.manual_seed_all(seed) # Seeds the *current* device (cuda:0)
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
 
+        logger.info(f"{log_prefix} Starting. Config: {config_path}")
+        logger.info(f"{log_prefix} Final target device: {target_device}")
         logger.info(f"{log_prefix} Starting. Config: {config_path}")
         logger.info(f"{log_prefix} Target device internally seen as: {target_device}")
 
