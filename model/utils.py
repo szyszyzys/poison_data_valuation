@@ -34,11 +34,14 @@ def train_local_model(model: nn.Module,
                       epochs: int = 1,
                       max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
     """
-    Trains a model locally on a device, handling multiple data modalities
-    and using gradient clipping to prevent explosion.
+    Trains a model locally using mixed-precision with GradScaler
+    to prevent optimizer instability (NaNs).
     """
     model.train()
     batch_losses_all = []
+
+    ## <-- 2. INITIALIZE THE GRADIENT SCALER
+    scaler = GradScaler()
 
     if not train_loader or len(train_loader) == 0:
         logging.warning("train_loader is empty or None. Skipping training.")
@@ -49,7 +52,6 @@ def train_local_model(model: nn.Module,
         for batch_idx, batch_data in enumerate(train_loader):
             try:
                 # --- Modality-Aware Data Unpacking ---
-                # Handle different data loader return formats
                 if len(batch_data) == 3:  # Text data: (labels, texts, lengths)
                     labels, data, _ = batch_data
                 else:  # Image/Tabular data: (data, labels)
@@ -59,23 +61,36 @@ def train_local_model(model: nn.Module,
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
 
                 optimizer.zero_grad()
-                outputs = model(data)
-                loss = criterion(outputs, labels)
 
-                # Check for bad loss *before* backward pass
+                ## <-- 3. WRAP FORWARD PASS IN 'autocast'
+                # This tells PyTorch to run the model in float16
+                with autocast():
+                    outputs = model(data)
+                    loss = criterion(outputs, labels)
+
                 if not torch.isfinite(loss):
                     logging.warning(
                         f"Non-finite loss ({loss.item()}) encountered in batch {batch_idx}. Skipping update."
                     )
                     continue
 
-                loss.backward()
+                ## <-- 4. SCALE THE LOSS BEFORE BACKWARD()
+                # Scales loss up to prevent float16 gradients from underflowing to zero
+                scaler.scale(loss).backward()
 
-                # --- GRADIENT CLIPPING ---
-                # This prevents exploding gradients (Inf/NaN)
+                ## <-- 5. UNSCALE GRADIENTS BEFORE CLIPPING
+                # This brings gradients back to float32
+                scaler.unscale_(optimizer)
+
+                # Now you can safely clip the float32 gradients
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
 
-                optimizer.step()
+                ## <-- 6. 'scaler.step()' REPLACES 'optimizer.step()'
+                # This checks for NaN/Inf gradients. If found, it skips the step.
+                scaler.step(optimizer)
+
+                ## <-- 7. UPDATE THE SCALER FOR NEXT BATCH
+                scaler.update()
 
                 batch_losses_all.append(loss.item())
 
@@ -96,7 +111,6 @@ def train_local_model(model: nn.Module,
             f"Overall Avg Loss: {overall_avg_loss:.4f}"
         )
         return model, overall_avg_loss
-
 
 def compute_gradient_update(initial_model: nn.Module,
                             trained_model: nn.Module) -> List[torch.Tensor]:
