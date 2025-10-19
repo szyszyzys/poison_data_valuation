@@ -14,7 +14,7 @@ def get_base_image_config() -> AppConfig:
             dataset_name="CelebA", model_structure="lenet", aggregation_method="fedavg",
             global_rounds=150, n_sellers=10, adv_rate=0.0,
             device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="image",
-            evaluations=["clean", "backdoor"], evaluation_frequency=20
+            evaluations=["clean", "backdoor"],
         ),
         training=TrainingConfig(local_epochs=2, batch_size=64, learning_rate=0.001),
         server_attack_config=ServerAttackConfig(),
