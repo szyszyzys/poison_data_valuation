@@ -226,18 +226,16 @@ class TabularModelFactory:
         _log_param_stats(model, "layers.0.weight", "After init_weights (float32)")
 
         # --- THIS IS THE FIX ---
-        # 2. Manually cast to float16 ON THE CPU
-        # This bypasses the buggy float32->float32 GPU copy
-        model = model.half()  # .half() is a shortcut for .to(torch.float16)
-        logging.info(f"--- Model cast to .half() on CPU ---")
-        _log_param_stats(model, "layers.0.weight", "After .half() (CPU, float16)")
-        # --- END OF FIX ---
-
-        # 3. MOVE TO DEVICE *SECOND*
+        # 2. Move to device AS float32
         model = model.to(device)
+        logging.info(f"--- Model moved to {device} (as float32) ---")
+        _log_param_stats(model, "layers.0.weight", f"After .to({device}) (float32)")
 
-        logging.info(f"--- Model moved to {device} ---")
-        _log_param_stats(model, "layers.0.weight", f"After .to({device}) (GPU, float16)")
+        # 3. Cast to float16 ON THE GPU
+        model = model.half()
+        logging.info(f"--- Model cast to .half() ON THE GPU ---")
+        _log_param_stats(model, "layers.0.weight", "After .half() (GPU, float16)")
+        # --- END OF FIX ---
 
         # 4. VERIFY
         for name, param in model.named_parameters():
