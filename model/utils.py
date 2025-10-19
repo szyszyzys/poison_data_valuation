@@ -36,7 +36,7 @@ def train_local_model(model: nn.Module,
                       epochs: int = 1,
                       max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
 
-    logging.info(f"--- ⚡️ Running with FULL GradScaler + Autocast ---")
+    logging.info(f"--- ⚡️ Running with CORRECTED GradScaler + Autocast ---")
     model.train()
     batch_losses_all = []
     scaler = GradScaler()
