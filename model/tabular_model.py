@@ -231,11 +231,6 @@ class TabularModelFactory:
         logging.info(f"--- Model moved to {device} (as float32) ---")
         _log_param_stats(model, "layers.0.weight", f"After .to({device}) (float32)")
 
-        # 3. Cast to float16 ON THE GPU
-        # model = model.half()
-        _log_param_stats(model, "layers.0.weight", "After .half() (GPU, float16)")
-        # --- END OF FIX ---
-
         # 4. VERIFY
         for name, param in model.named_parameters():
             if torch.isnan(param).any() or torch.isinf(param).any():

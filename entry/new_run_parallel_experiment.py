@@ -166,45 +166,82 @@ def clear_existing_results(run_save_path: Path):
                 logger.warning(f"  Could not delete directory {dirpath}: {e}")
 
 
+import time  # Add this to your imports at the top
+
+
 def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: int,
                           gpu_id: int = None, force_rerun: bool = False):
     """
-    Function to run a SINGLE experiment instance.
-    Reverted to setting CUDA_VISIBLE_DEVICES internally and using 'cuda:0'.
-    Assumes the parent process correctly maps physical IDs to the gpu_id argument (0, 1, 2...).
+    Function to run a SINGLE experiment instance with retry logic.
     """
-    run_save_path = None  # Define early for error handling
+    max_retries = 3
+
+    for attempt in range(max_retries):
+        try:
+            return _run_single_experiment_impl(config_path, run_id, sample_idx, seed, gpu_id, force_rerun, attempt)
+        except RuntimeError as e:
+            if "NaN/Inf" in str(e) and attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                logger.warning(f"[Run {run_id}] Attempt {attempt + 1} failed with NaN/Inf. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+
+                # Clean up GPU before retry
+                if gpu_id is not None:
+                    torch.cuda.empty_cache()
+            else:
+                raise
+
+
+def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, seed: int,
+                                gpu_id: int = None, force_rerun: bool = False, attempt: int = 0):  # Add attempt param
+    """
+    Function to run a SINGLE experiment instance.
+    """
+    run_save_path = None
     try:
-        # ===== GPU/Seed Setup (Reverted Logic) =====
-        target_device = "cpu"  # Default
+        # ===== GPU/Seed Setup =====
+        target_device = "cpu"
         log_prefix_gpu_info = "CPU"
 
         if gpu_id is not None:
-            # Set CUDA_VISIBLE_DEVICES to make ONLY this GPU visible, mapped to ID 0
-            # This gpu_id is the logical ID (0, 1, 2...) relative to the externally set CUDA_VISIBLE_DEVICES
             os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
             log_prefix_gpu_info = f"Logical GPU {gpu_id}"
-            # PyTorch will now see this GPU as 'cuda:0'
             target_device = "cuda:0"
-            # Quick check if CUDA is available *after* setting the environment variable
+
             if not torch.cuda.is_available():
                 logger.error(
-                    f"[Run {run_id}...] CUDA not available after setting CUDA_VISIBLE_DEVICES='{gpu_id}'. Check parent visibility settings.")
-                # Fallback to CPU or raise error? For now, fallback might hide issues.
+                    f"[Run {run_id}...] CUDA not available after setting CUDA_VISIBLE_DEVICES='{gpu_id}'.")
                 target_device = "cpu"
                 log_prefix_gpu_info = f"Logical GPU {gpu_id} (CUDA FAILED, using CPU)"
-                # raise RuntimeError(f"CUDA failed for gpu_id {gpu_id}") # Alternative: Fail fast
-        else:
-            log_prefix_gpu_info = "CPU"
+            else:
+                # Properly initialize CUDA context for this process
+                try:
+                    torch.cuda.init()
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
 
-        log_prefix = f"[Run {run_id} | Sample {sample_idx} | Seed {seed} | {log_prefix_gpu_info}]"
+                    # Test GPU health before starting
+                    test_tensor = torch.randn(100, 100, device=target_device)
+                    if torch.isnan(test_tensor).any() or torch.isinf(test_tensor).any():
+                        raise RuntimeError(f"GPU {gpu_id} health check failed - NaN/Inf detected")
+                    del test_tensor
+                    torch.cuda.empty_cache()
 
-        # --- Seed everything ---
+                except Exception as e:
+                    logger.error(f"GPU initialization failed for device {gpu_id}: {e}")
+                    target_device = "cpu"
+                    log_prefix_gpu_info = f"GPU {gpu_id} (Init failed, using CPU)"
+
+        # Include attempt number in log prefix for debugging
+        attempt_info = f" (Attempt {attempt + 1})" if attempt > 0 else ""
+        log_prefix = f"[Run {run_id} | Sample {sample_idx} | Seed {seed} | {log_prefix_gpu_info}{attempt_info}]"
+
+        # --- Seed everything AFTER GPU is initialized ---
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
-        if target_device.startswith("cuda"):  # Check if we intend to use CUDA
-            torch.cuda.manual_seed_all(seed)  # Seed the visible device(s)
+        if target_device.startswith("cuda"):
+            torch.cuda.manual_seed_all(seed)
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
 
@@ -231,11 +268,11 @@ def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: 
 
             mark_run_in_progress(run_save_path)
 
-            # --- Prepare config (Use the remapped target_device "cuda:0" or "cpu") ---
+            # --- Prepare config ---
             run_cfg = copy.deepcopy(app_config)
             run_cfg.seed = seed
             run_cfg.experiment.save_path = str(run_save_path)
-            run_cfg.experiment.device = target_device  # <<< Pass "cuda:0" or "cpu"
+            run_cfg.experiment.device = target_device
 
             # --- Run the experiment ---
             run_attack(run_cfg)
@@ -257,6 +294,7 @@ def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: 
         logger.error(f"{log_prefix} ❌ Error running experiment: {e}", exc_info=True)
         if run_save_path:
             (run_save_path / ".failed").touch()
+        raise  # Re-raise to trigger retry logic
 
 
 def discover_configs_core(configs_base_dir: str) -> list:
