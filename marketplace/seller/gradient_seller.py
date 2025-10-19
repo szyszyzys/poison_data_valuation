@@ -434,6 +434,7 @@ class GradientSeller(BaseSeller):
             logging.info(f"  - Optimizer: {optimizer_to_use} (Source: TrainingConfig)")
             logging.info(f"  - Momentum: {momentum_to_use}")
             logging.info(f"  - Weight Decay: {weight_decay_to_use}")
+            logging.info(f"  - EPS: {self.training_config.eps}")
             logging.info(f"  - Device: {self.device}")
 
             grad_tensors, avg_loss = local_training_and_get_gradient(
