@@ -220,6 +220,9 @@ def run_task_list_serially(tasks_for_one_gpu):
 def setup_gpu_allocation(num_processes: int, gpu_ids_str: str = None):
     """
     Determine GPU allocation strategy and set CUDA_VISIBLE_DEVICES at parent level.
+
+    Returns:
+        tuple: (actual_num_processes, assigned_gpu_ids)
     """
     assigned_gpu_ids = None
 
@@ -250,7 +253,6 @@ def setup_gpu_allocation(num_processes: int, gpu_ids_str: str = None):
         logger.info(f"💻 No GPUs available. Running {actual_num_processes} processes on CPU.")
 
     return actual_num_processes, assigned_gpu_ids
-
 
 def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, seed: int,
                                 gpu_id: int = None, force_rerun: bool = False, attempt: int = 0):
@@ -384,36 +386,6 @@ def discover_configs(configs_base_dir: str) -> list:
     return sorted(all_config_files)  # Sort for reproducibility
 
 
-def setup_gpu_allocation(num_processes: int, gpu_ids_str: str = None):
-    """
-    Determine GPU allocation strategy.
-
-    Returns:
-        tuple: (actual_num_processes, assigned_gpu_ids)
-    """
-    assigned_gpu_ids = None
-
-    if gpu_ids_str:
-        assigned_gpu_ids = [int(g.strip()) for g in gpu_ids_str.split(',')]
-        actual_num_processes = len(assigned_gpu_ids)
-        logger.info(f"🎯 Using specified GPUs: {assigned_gpu_ids}")
-        logger.info(f"🔧 Setting num_processes to {actual_num_processes} to match GPU count")
-
-    elif torch.cuda.is_available():
-        num_cuda_devices = torch.cuda.device_count()
-        actual_num_processes = min(num_processes, num_cuda_devices)
-        assigned_gpu_ids = list(range(actual_num_processes))
-
-        if num_processes > num_cuda_devices:
-            logger.warning(f"⚠️  Requested {num_processes} processes but only {num_cuda_devices} GPUs available. "
-                           f"Limiting to {actual_num_processes}.")
-        logger.info(f"🎮 Auto-detected GPUs: {assigned_gpu_ids}")
-
-    else:
-        actual_num_processes = num_processes
-        logger.info(f"💻 No GPUs available. Running {actual_num_processes} processes on CPU.")
-
-    return actual_num_processes, assigned_gpu_ids
 
 
 def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = None,
