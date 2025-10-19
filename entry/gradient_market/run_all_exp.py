@@ -1,4 +1,4 @@
-# log_utils.py (or results_logger.py)
+# log_utils.py (or results_logging.py)
 
 import argparse
 import copy
@@ -777,10 +777,10 @@ def save_round_incremental(round_record: Dict, save_path: Path):
                     master_header = header_from_file
                     _csv_headers_cache[log_path_str] = master_header  # Store in cache
             except (StopIteration, pd.errors.EmptyDataError):
-                logger.warning(f"{log_path} exists but seems empty/corrupt. Will write new header.")
+                logging.warning(f"{log_path} exists but seems empty/corrupt. Will write new header.")
                 is_new_file = True  # Treat as new file
             except Exception as e:
-                logger.error(f"Error reading header from {log_path}: {e}. Will attempt to write.")
+                logging.error(f"Error reading header from {log_path}: {e}. Will attempt to write.")
                 # Decide how to handle - maybe overwrite? For now, assume we append blindly.
                 pass  # Let DictWriter handle it below if possible
 
