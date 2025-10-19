@@ -111,7 +111,10 @@ def _get_dataset_loaders(dataset_name: str, data_root: str) -> Tuple[Dataset, Da
         transform = transforms.Compose([
             transforms.ToImage(),
             transforms.ToDtype(torch.float32, scale=True),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+            transforms.Normalize(
+                (0.4914, 0.4822, 0.4465),  # Mean - correct
+                (0.2470, 0.2435, 0.2616)   # Std - FIXED!
+            )
         ])
         raw_train_set = torchvision.datasets.CIFAR10(root=data_root, train=True, download=True, transform=transform)
         raw_test_set = torchvision.datasets.CIFAR10(root=data_root, train=False, download=True, transform=transform)
