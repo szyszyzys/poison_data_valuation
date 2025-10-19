@@ -550,7 +550,7 @@ def generate_competitor_mimicry_scenarios() -> List[Scenario]:
             modifiers=[
                 use_cifar10_config,
                 use_competitor_mimicry_attack(
-                    target_seller_id="seller_0",  # Target the first (often high-quality) seller
+                    target_seller_id="bn_0",  # Target the first (often high-quality) seller
                     strategy=strategy,
                     noise_scale=0.03,
                     observation_rounds=5
@@ -1133,84 +1133,6 @@ def generate_attack_scalability_multirate_scenarios() -> List[Scenario]:
     return scenarios
 
 
-# ============================================================================
-# 🆕 NEW: Extreme Scale Test (Stress Testing)
-# ============================================================================
-
-def generate_extreme_scale_scenarios() -> List[Scenario]:
-    """
-    Stress test: Can attacks work in VERY large marketplaces (200-500 sellers)?
-    Maintains 30% adversary rate even at extreme scales.
-    """
-    scenarios = []
-
-    EXTREME_SIZES = [200, 300, 500]
-    FIXED_ADV_RATE = 0.3
-
-    # Test only the most effective attack configurations
-    scenarios.append(Scenario(
-        name="extreme_scale_competitor_mimicry_martfl",
-        base_config_factory=get_base_image_config,
-        modifiers=[
-            use_cifar10_config,
-            use_competitor_mimicry_attack(
-                target_seller_id="seller_0",
-                strategy="noisy_copy",
-                noise_scale=0.03,
-                observation_rounds=5
-            )
-        ],
-        parameter_grid={
-            "experiment.image_model_config_name": ["cifar10_cnn"],
-            "experiment.model_structure": ["cnn"],
-
-            # --- Extreme marketplace sizes ---
-            "experiment.n_sellers": EXTREME_SIZES,
-
-            # --- Fixed: 30% adversary rate ---
-            "experiment.adv_rate": [FIXED_ADV_RATE],
-
-            # --- Fixed: Most vulnerable defense ---
-            "aggregation.method": ["martfl"],
-
-            # Reduce rounds for faster experiments
-            "experiment.num_rounds": [50],
-        }
-    ))
-
-    scenarios.append(Scenario(
-        name="extreme_scale_buyer_class_exclusion_fltrust",
-        base_config_factory=get_base_image_config,
-        modifiers=[
-            use_cifar10_config,
-            disable_all_seller_attacks,
-            use_buyer_class_exclusion_attack(
-                exclude_classes=[7, 8, 9],
-                gradient_scale=1.2
-            )
-        ],
-        parameter_grid={
-            "experiment.image_model_config_name": ["cifar10_cnn"],
-            "experiment.model_structure": ["cnn"],
-
-            "experiment.n_sellers": EXTREME_SIZES,
-            "aggregation.method": ["fltrust"],
-
-            "experiment.num_rounds": [50],
-        }
-    ))
-
-    return scenarios
-
-
-# ============================================================================
-# Add to ALL_SCENARIOS
-# ============================================================================
-
-# ============================================================================
-# 🆕 NEW: Attack Scalability Analysis with Backdoor Attack
-# ============================================================================
-
 def generate_attack_scalability_scenarios() -> List[Scenario]:
     """
     Generates scenarios to test how attack effectiveness scales with marketplace size.
@@ -1437,7 +1359,7 @@ def generate_extreme_scale_scenarios() -> List[Scenario]:
     """
     scenarios = []
 
-    EXTREME_SIZES = [200, 300, 500]
+    EXTREME_SIZES = [100, 200, 300, 500]
     FIXED_ADV_RATE = 0.3
     FIXED_POISON_RATE = 0.5
 

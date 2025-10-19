@@ -15,7 +15,7 @@ logger = logging.getLogger("Configs")
 class MimicryAttackConfig:
     """Configuration for Direct Competitor Mimicry Attack"""
     is_active: bool = False
-    target_seller_id: str = "seller_0"  # Which seller to mimic
+    target_seller_id: str = "bn_0"  # Which seller to mimic
     observation_rounds: int = 3  # How many rounds to observe before attacking
     noise_scale: float = 0.05  # Noise level for noisy_copy strategy
     strategy: str = "noisy_copy"  # Options: "exact_copy", "noisy_copy", "scaled_copy", "averaged_history"

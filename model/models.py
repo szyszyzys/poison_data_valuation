@@ -70,8 +70,6 @@ class SimpleCNN(nn.Module):
 
 
 class TextCNN(nn.Module):
-    """A TextCNN model for text classification."""
-
     def __init__(self, vocab_size: int, embed_dim: int, num_filters: int,
                  filter_sizes: List[int], num_class: int, dropout: float = 0.5,
                  padding_idx: int = 0):
@@ -80,33 +78,23 @@ class TextCNN(nn.Module):
         self.convs = nn.ModuleList([
             nn.Conv2d(1, num_filters, (fs, embed_dim)) for fs in filter_sizes
         ])
+
+        # Add BatchNorm for stability
+        self.bn = nn.BatchNorm1d(num_filters * len(filter_sizes))
+
         self.fc = nn.Linear(num_filters * len(filter_sizes), num_class)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, text: torch.Tensor) -> torch.Tensor:
-        # text shape: (batch_size, seq_len)
         embedded = self.embedding(text)
-        # embedded shape: (batch_size, seq_len, embed_dim)
-
         embedded = embedded.unsqueeze(1)
-        # embedded shape: (batch_size, 1, seq_len, embed_dim)
 
-        # --- REFINED POOLING LOGIC --- ✅
-        # 1. Apply convolution and ReLU activation.
         conved = [F.relu(conv(embedded)) for conv in self.convs]
-        # conved[i] shape: (batch_size, num_filters, new_height, 1)
-
-        # 2. Squeeze the last dimension to prepare for 1D pooling.
         squeezed = [conv.squeeze(3) for conv in conved]
-        # squeezed[i] shape: (batch_size, num_filters, new_height)
-
-        # 3. Apply max pooling over the sequence length dimension.
         pooled = [F.max_pool1d(sq, sq.shape[2]).squeeze(2) for sq in squeezed]
-        # pooled[i] shape: (batch_size, num_filters)
 
-        # --- END REFINEMENT ---
-
-        cat = self.dropout(torch.cat(pooled, dim=1))
-        # cat shape: (batch_size, num_filters * len(filter_sizes))
+        cat = torch.cat(pooled, dim=1)
+        cat = self.bn(cat)  # ✅ Add BatchNorm here
+        cat = self.dropout(cat)
 
         return self.fc(cat)

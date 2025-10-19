@@ -64,8 +64,6 @@ def setup_data_and_model(cfg: AppConfig, device):
             "vocab_size": len(vocab),
             "padding_idx": pad_idx,
             "device": cfg.experiment.device  # <-- PASS THE DEVICE HERE
-            # You can also pass other specific model_kwargs from cfg if needed
-            # "embed_dim": cfg.model.text.embed_dim,
         }
         # The factory now correctly passes the device
         model_factory = lambda: get_text_model(**model_init_cfg)

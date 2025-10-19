@@ -2,8 +2,7 @@ import torch
 
 from common.gradient_market_configs import (
     AppConfig, ExperimentConfig, TrainingConfig, AdversarySellerConfig, DataConfig, ImageDataConfig, PropertySkewParams,
-    DiscoverySplitParams, VocabConfig, TextDataConfig, DebugConfig, ServerAttackConfig, AggregationConfig,
-    TabularDataConfig
+    DiscoverySplitParams, VocabConfig, TextDataConfig, DebugConfig, ServerAttackConfig, AggregationConfig
 )
 
 
@@ -12,17 +11,17 @@ def get_base_image_config() -> AppConfig:
     return AppConfig(
         experiment=ExperimentConfig(
             dataset_name="CelebA", model_structure="lenet", aggregation_method="fedavg",
-            global_rounds=150, n_sellers=10, adv_rate=0.0,
+            global_rounds=200, n_sellers=10, adv_rate=0.0,
             device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="image",
             evaluations=["clean", "backdoor"],
         ),
         training=TrainingConfig(
             local_epochs=2,
             batch_size=64,
-            learning_rate=0.01,           # Changed: 0.0001 → 0.01 for SGD
-            optimizer="sgd",         # Added: Use SGD instead of Adam
-            momentum=0.9,                 # Added: Momentum for SGD
-            weight_decay=0.0001           # Added: Small regularization
+            learning_rate=0.01,  # Changed: 0.0001 → 0.01 for SGD
+            optimizer="sgd",  # Added: Use SGD instead of Adam
+            momentum=0.9,  # Added: Momentum for SGD
+            weight_decay=0.0001  # Added: Small regularization
         ),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
@@ -48,11 +47,18 @@ def get_base_text_config() -> AppConfig:
     return AppConfig(
         experiment=ExperimentConfig(
             dataset_name="AG_NEWS", model_structure="text_cnn", aggregation_method="fedavg",
-            global_rounds=100, n_sellers=10, adv_rate=0.0,
+            global_rounds=200, n_sellers=10, adv_rate=0.0,
             device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="text",
             evaluations=["clean", "backdoor"]
         ),
-        training=TrainingConfig(local_epochs=3, batch_size=32, learning_rate=0.0001),
+        training=TrainingConfig(
+            local_epochs=2,
+            batch_size=64,
+            optimizer='sgd',
+            learning_rate=0.01,
+            momentum=0.9,  # <-- Add this
+            weight_decay=0.0001  # <-- Add this for regularization
+        ),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
         data=DataConfig(
@@ -71,4 +77,3 @@ def get_base_text_config() -> AppConfig:
         ),
 
     )
-
