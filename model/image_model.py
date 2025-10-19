@@ -355,16 +355,18 @@ class ConfigurableResNet(nn.Module):
 
 
 class ImageModelFactory:
+    """Factory class for creating and managing configurable models."""
+
     @staticmethod
     def create_model(model_name: str, num_classes: int, in_channels: int,
                      image_size: Tuple[int, int], config: ImageModelConfig,
                      device: str = 'cpu') -> nn.Module:
         """Create a model based on configuration."""
-        logger.info(f"Creating model '{model_name}' with config '{config.config_name}'")
+        logger.info(f"🧠 Creating configurable image model '{model_name}'...")
 
         model = None
 
-        # --- 1. Instantiate the correct model class ---
+        # --- 1. Instantiate the correct model class ON CPU ---
         if model_name.lower() == 'lenet':
             model = ConfigurableLeNet(in_channels, image_size, num_classes, config)
         elif model_name.lower() == 'flexiblecnn':
@@ -374,17 +376,16 @@ class ImageModelFactory:
         else:
             raise ValueError(f"Unknown model name: {model_name}")
 
-        # --- REINITIALIZE WITH SAFER BOUNDS ---
+        logger.info("--- Model created on CPU ---")
+
+        # --- 2. APPLY STABLE INIT ON CPU ---
+        logger.info("--- ⚡️ Applying STABLE init BEFORE move to device ---")
         for m in model.modules():
             if isinstance(m, nn.Conv2d):
-                # Add bounds to prevent extreme values
+                # USE UNIFORM INSTEAD OF NORMAL TO PREVENT Inf IN FP16
                 nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
-                # Clamp weights to reasonable range
-                with torch.no_grad():
-                    m.weight.clamp_(-2.0, 2.0)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
-
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
@@ -392,31 +393,34 @@ class ImageModelFactory:
                 m.running_var.fill_(1)
                 if hasattr(m, 'num_batches_tracked'):
                     m.num_batches_tracked.zero_()
-
             elif isinstance(m, nn.Linear):
+                # USE UNIFORM INSTEAD OF NORMAL TO PREVENT Inf IN FP16
                 nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
-                # Clamp weights to reasonable range
-                with torch.no_grad():
-                    m.weight.clamp_(-2.0, 2.0)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-        # --- MOVE TO DEVICE AFTER INITIALIZATION ---
-        model = model.to(device)
+        logger.info("--- STABLE init applied on CPU ---")
 
-        # --- VERIFY NO NaN/Inf AFTER MOVE ---
+        # --- 3. Move to device AS float32 (and KEEP IT IN float32) ---
+        model = model.to(device)
+        logger.info(f"--- Model moved to {device} (kept as float32 for AMP) ---")
+
+        # --- 4. VERIFY NO NaN/Inf ---
         for name, param in model.named_parameters():
             if torch.isnan(param).any() or torch.isinf(param).any():
                 logger.error(f"--- ❌ VERIFICATION FAILED FOR {name} ---")
+                logger.error(f"    Device: {param.device}, Dtype: {param.dtype}")
+                logger.error(f"    Min: {param.min().item()}, Max: {param.max().item()}")
                 raise RuntimeError(f"NaN/Inf in parameter '{name}' after initialization!")
 
-        # --- Log details ---
-        if model:
-            num_params = sum(p.numel() for p in model.parameters())
-            num_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            logger.info(f"  -> Instantiated model class: '{model.__class__.__name__}'")
-            logger.info(f"  -> Total parameters: {num_params:,}")
-            logger.info(f"  -> Trainable parameters: {num_trainable:,}")
+        logger.info("--- ✅ Model verification PASSED (float32 for AMP training) ---")
+
+        # --- 5. Log details ---
+        num_params = sum(p.numel() for p in model.parameters())
+        num_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        logger.info(f"  -> Instantiated model class: '{model.__class__.__name__}'")
+        logger.info(f"  -> Total parameters: {num_params:,}")
+        logger.info(f"  -> Trainable parameters: {num_trainable:,}")
 
         return model
 
