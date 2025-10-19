@@ -20,9 +20,14 @@ def _log_param_stats(model: nn.Module, param_name: str, stage: str):
         }
         logging.info(f"--- STATS ({stage}) for '{param_name}': {stats}")
     except KeyError:
-        logging.warning(f"--- STATS ({stage}): Could not find param '{param_name}'.")
-    except Exception as e:
-        logging.error(f"--- STATS ({stage}): Error logging stats for '{param_name}': {e}")
+        # Try to find the first Linear layer's weight instead
+        for name, param in model.named_parameters():
+            if 'weight' in name and len(param.shape) >= 2:
+                logging.info(f"--- STATS ({stage}) for '{name}': ...")
+                break
+        else:
+            logging.debug(f"--- STATS ({stage}): No suitable param found for logging.")
+
 
 # (This should be imported if it's in a different file)
 def init_weights(m):
