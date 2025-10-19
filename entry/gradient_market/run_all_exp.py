@@ -656,13 +656,13 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
     log_path = save_path / "training_log.csv"
 
     # --- 1. EARLY STOPPING INITIALIZATION ---
-    patience = cfg.training.patience
+    patience = cfg.experiment.patience
     patience_counter = 0
     best_validation_loss = float('inf')
     best_model_state = None
     best_model_round = 0
 
-    if cfg.training.use_early_stopping:
+    if cfg.experiment.use_early_stopping:
         logging.info(f"✅ Early stopping enabled with patience: {patience}")
         if not validation_loader:
             logging.warning(
@@ -684,7 +684,7 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
         global_model = marketplace.aggregator.strategy.global_model
 
         # --- Early stopping logic (no changes needed) ---
-        if cfg.training.use_early_stopping and validation_loader:
+        if cfg.experiment.use_early_stopping and validation_loader:
             main_evaluator = evaluators[0]
             try:
                 val_metrics = main_evaluator.evaluate(global_model, validation_loader, metric_prefix="val")
@@ -716,7 +716,7 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
         save_marketplace_analysis_data_incremental(save_path, round_record)
         # --- END FIX ---
 
-        if cfg.training.use_early_stopping and patience_counter >= patience:
+        if cfg.experiment.use_early_stopping and patience_counter >= patience:
             logging.warning(f"EARLY STOPPING: No improvement for {patience} rounds. Halting at round {round_num}.")
             break
 

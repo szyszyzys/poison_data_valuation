@@ -47,17 +47,19 @@ class ExperimentConfig:
     evaluations: List[str] = field(default_factory=lambda: ["clean"])
     image_model_config_name: str = "cifar10_cnn"
     tabular_model_config_name: str = "mlp_texas100_baseline"  # Default model config to use
+    use_early_stopping: bool = True
+    patience: int = 10
 
 
 @dataclass
 class TrainingConfig:
-    """Holds parameters for local seller training."""
-    local_epochs: int
-    batch_size: int
-    learning_rate: float
-    optimizer: str = "Adam"
-    use_early_stopping: bool = False
-    patience: int = 10
+    """Holds parameters specifically for local seller training."""
+    local_epochs: int = 2  # Common default for FL
+    batch_size: int = 128  # Common default batch size
+    learning_rate: float = 0.001  # Sensible default, especially if Adam is common
+    optimizer: str = "Adam"  # Default optimizer
+    momentum: float = 0.9  # Only used by SGD
+    weight_decay: float = 0.0
 
 
 @dataclass

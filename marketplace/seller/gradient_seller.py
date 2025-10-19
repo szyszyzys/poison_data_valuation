@@ -2,27 +2,26 @@ import collections
 import csv
 import json
 import logging
+import numpy as np
 import os
+import pandas as pd
 import random
 import sys
 import time
+import torch
+import torch.nn.functional as F
 # Add these class definitions as well
 from abc import ABC, abstractmethod
 from collections import abc  # abc.Mapping for general dicts
 from dataclasses import field, dataclass
 from pathlib import Path
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
 from typing import Any, Callable, Set
 from typing import Dict
 from typing import List, Optional
 from typing import Tuple
 from typing import Union
-
-import numpy as np
-import pandas as pd
-import torch
-import torch.nn.functional as F
-from torch import nn
-from torch.utils.data import DataLoader, Dataset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
     BackdoorTextGenerator, BackdoorTabularGenerator
@@ -263,7 +262,6 @@ class GradientSeller(BaseSeller):
         self.data_config = data_config
         self.training_config = training_config
         self.model_factory = model_factory
-
         # --- State Attributes ---
         self.last_computed_gradient: Optional[List[torch.Tensor]] = None
         self.last_training_stats: Optional[Dict[str, Any]] = None
@@ -425,22 +423,37 @@ class GradientSeller(BaseSeller):
 
         # Perform local training
         try:
+            # --- START: Simplified Parameter Usage ---
+            # Directly use parameters from self.training_config
+
+            local_epochs_to_use = self.training_config.local_epochs
+            batch_size_to_use = self.training_config.batch_size  # Used above
+            lr_to_use = self.training_config.learning_rate
+            optimizer_to_use = self.training_config.optimizer_type  # Ensure correct attribute name
+            momentum_to_use = self.training_config.momentum
+            weight_decay_to_use = self.training_config.weight_decay
+
             logging.info(f"[{self.seller_id}] Starting local training...")
-            logging.info(f"  - Epochs: {self.training_config.local_epochs}")
-            logging.info(f"  - Batch size: {self.training_config.batch_size}")
-            logging.info(f"  - Learning rate: {self.training_config.learning_rate}")
+            logging.info(f"  - Epochs: {local_epochs_to_use}")
+            logging.info(f"  - Batch size: {batch_size_to_use}")
+            logging.info(f"  - Learning rate: {lr_to_use} (Source: TrainingConfig)")
+            logging.info(f"  - Optimizer: {optimizer_to_use} (Source: TrainingConfig)")
+            logging.info(f"  - Momentum: {momentum_to_use}")
+            logging.info(f"  - Weight Decay: {weight_decay_to_use}")
             logging.info(f"  - Device: {self.device}")
 
             grad_tensors, avg_loss = local_training_and_get_gradient(
                 model=model_to_train,
                 train_loader=data_loader,
                 device=self.device,
-                local_epochs=self.training_config.local_epochs,
-                lr=self.training_config.learning_rate,
+                local_epochs=local_epochs_to_use,
+                lr=lr_to_use,
+                opt_str=optimizer_to_use,
+                momentum=momentum_to_use,
+                weight_decay=weight_decay_to_use
             )
-
+            # --- END: Simplified Parameter Usage ---
             compute_time = (time.time() - start_time) * 1000
-
             # === CRITICAL: Validate returned gradient ===
             if grad_tensors is None:
                 logging.error(f"[{self.seller_id}] ❌ Training function returned None gradient!")
