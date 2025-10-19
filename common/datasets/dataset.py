@@ -314,13 +314,6 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
                 # --- FIX 1: Yield data in the standard (data, label) format ---
                 yield (text_content, label_content) if label_fld else text_content
 
-    # def hf_iterator(dataset_obj, text_fld, label_fld=None) -> Generator[Any, None, None]:
-    #     for ex in dataset_obj:
-    #         text_content, label_content = ex.get(text_fld), ex.get(label_fld) if label_fld else None
-    #         if isinstance(text_content, str):
-    #             yield (label_content, text_content) if label_fld else text_content
-
-    # 3. --- Build or Load Vocabulary ---
     vocab_cache_params = (
         exp_cfg.dataset_name, vocab_cfg.min_freq, vocab_cfg.unk_token, vocab_cfg.pad_token
     )

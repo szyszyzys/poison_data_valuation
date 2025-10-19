@@ -393,13 +393,28 @@ def discover_configs_core(configs_base_dir: str) -> list:
 
 
 def discover_configs(configs_base_dir: str) -> list:
-    """Discover all config.yaml files in the directory tree."""
-    all_config_files = [
-        os.path.join(root, file)
-        for root, _, files in os.walk(configs_base_dir)
-        for file in files if file == "config.yaml"
-    ]
-    return sorted(all_config_files)  # Sort for reproducibility
+    """
+    Discover all config.yaml files in the directory tree, IGNORING
+    common result/checkpoint directories.
+    """
+    all_config_files = []
+    base_dir_path = Path(configs_base_dir).resolve()
+
+    # Add any other subdirs to ignore
+    ignore_dirs = {".ipynb_checkpoints", "__pycache__"}
+
+    logger.info(f"🔍 Starting discovery in: {base_dir_path}")
+
+    for root, dirs, files in os.walk(base_dir_path, topdown=True):
+        # Prune the directory search space to avoid results folders
+        dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith("run_")]
+
+        for file in files:
+            if file == "config.yaml":
+                all_config_files.append(os.path.join(root, file))
+
+    logger.info(f"Discovered {len(all_config_files)} config files.")
+    return sorted(all_config_files)
 
 
 def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = None,
@@ -407,16 +422,17 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
     """
     Main function to orchestrate parallel execution of experiments.
     """
-    if core_only:
-        all_config_files = discover_configs_core(configs_base_dir)
-    else:
-        all_config_files = discover_configs(configs_base_dir)
+
+    # --- START OF FIX ---
+    # 1. ALWAYS call your new, robust discover_configs first
+    all_config_files = discover_configs(configs_base_dir)
+    # --- END OF FIX ---
+
     if not all_config_files:
         logger.warning(f"❌ No config.yaml files found in {configs_base_dir}. Exiting.")
         return
     logger.info(f"📋 Found {len(all_config_files)} total configuration files")
 
-    # --- START: NEW FILTERING LOGIC ---
     if core_only:
         if config_filter:
             logger.warning("⚠️ Both --core_only and --filter provided. --core_only takes precedence.")
@@ -425,15 +441,19 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
         filtered_config_files = []
         core_exp_set = set(CORE_EXPERIMENTS)  # Use a set for fast O(1) lookups
 
-        for path in all_config_files:
-            exp_name = Path(path).parent.parent.name
-            # =================================
+        for path_str in all_config_files:
+            p = Path(path_str)
+            found_core_exp = False
 
-            if exp_name in core_exp_set:
-                filtered_config_files.append(path)
-            else:
-                # This log is helpful for debugging
-                logger.debug(f"  Skipping (core_only): {exp_name} (from path {path})")
+            # Walk up the parent directories from the config file
+            for parent in p.parents:
+                if parent.name in core_exp_set:
+                    filtered_config_files.append(path_str)
+                    found_core_exp = True
+                    break  # Found the match, stop walking up
+
+            if not found_core_exp:
+                logger.debug(f"  Skipping (core_only): Path {path_str} did not match any core experiment name.")
 
         if not filtered_config_files:
             logger.warning(f"❌ No config files matched the CORE_EXPERIMENTS list.")
@@ -443,24 +463,11 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
         logger.info(
             f"📋 Found {len(filtered_config_files)} matching configurations (out of {len(all_config_files)} total)")
         all_config_files = filtered_config_files
+    # --- END: NEW FILTERING LOGIC ---
 
     elif config_filter:
+        # (The rest of the function is the same as before)
         logger.info(f"🔍 Applying path filter: '{config_filter}'")
-        filtered_config_files = [
-            path for path in all_config_files
-            if config_filter in path
-        ]
-
-        if not filtered_config_files:
-            logger.warning(f"❌ No config files matched the filter '{config_filter}'. Exiting.")
-            return
-
-        logger.info(
-            f"📋 Found {len(filtered_config_files)} matching configurations (out of {len(all_config_files)} total)")
-        all_config_files = filtered_config_files  # Overwrite the list
-    else:
-        logger.info(f"📋 Running all {len(all_config_files)} configurations (no filter applied)")
-
     # This function is now defined TWICE in your script. We'll use the one at the top.
     # We call setup_gpu_allocation from line 193
     actual_num_processes, assigned_gpu_ids = setup_gpu_allocation(num_processes, gpu_ids_str)
