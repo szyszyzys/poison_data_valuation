@@ -687,7 +687,7 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
         if cfg.experiment.use_early_stopping and validation_loader:
             main_evaluator = evaluators[0]
             try:
-                val_metrics = main_evaluator.evaluate(global_model, validation_loader, metric_prefix="val")
+                val_metrics = main_evaluator.evaluate(global_model, validation_loader)
                 current_loss = val_metrics.get('val_loss')
 
                 if current_loss is not None:

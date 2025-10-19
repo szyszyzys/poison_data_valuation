@@ -66,9 +66,7 @@ class CleanEvaluator(BaseEvaluator):
         loss = total_loss / total_samples
         return {"acc": acc, "loss": loss}
 
-# in marketplace/market/evaluation/base.py
 
-# ... (other imports)
 from marketplace.seller.gradient_seller import AdvancedBackdoorAdversarySeller  # 1. ADD THIS IMPORT
 
 
