@@ -15,12 +15,14 @@ Usage (within a seller’s get_gradient method):
 
 import copy
 import logging
+from typing import List, Tuple, Any, Optional, Union
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.cuda.amp import GradScaler, autocast  ## <-- 1. IMPORT THESE
 from torch.utils.data import DataLoader
-from typing import List, Tuple, Any, Optional, Union
 
 # from model.text_model import TEXTCNN
 from model.models import LeNet, TextCNN, SimpleCNN
@@ -112,6 +114,7 @@ def train_local_model(model: nn.Module,
         )
         return model, overall_avg_loss
 
+
 def compute_gradient_update(initial_model: nn.Module,
                             trained_model: nn.Module) -> List[torch.Tensor]:
     """
@@ -178,6 +181,7 @@ def test_local_model(model: nn.Module,
     accuracy = total_correct / total_samples
     return {"loss": avg_loss, "accuracy": accuracy}
 
+
 def log_param_stats(params: List[torch.Tensor], prefix: str = ""):
     """Logs key statistics for a specific parameter tensor to debug instability."""
     TENSOR_INDEX_TO_DEBUG = 12
@@ -212,7 +216,6 @@ def local_training_and_get_gradient(
     Performs local training and returns the WEIGHT DELTA on the correct device.
     """
     logging.debug(f"Starting local training: {local_epochs} epochs, lr={lr}, optimizer={opt_str}")
-
 
     # Store initial parameters on their original device (the GPU)
     initial_params = [p.data.clone() for p in model.parameters()]  # <-- REMOVED .cpu()
