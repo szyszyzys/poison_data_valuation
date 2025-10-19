@@ -4,11 +4,11 @@ import logging
 import multiprocessing
 import os
 import shutil
+from multiprocessing.pool import Pool
+from pathlib import Path
 
 import torch
 from filelock import FileLock  # pip install filelock
-from multiprocessing.pool import Pool
-from pathlib import Path
 
 from entry.gradient_market.automate_exp.config_parser import load_config
 from entry.gradient_market.run_all_exp import run_attack
@@ -167,84 +167,93 @@ def clear_existing_results(run_save_path: Path):
 def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: int,
                           gpu_id: int = None, force_rerun: bool = False):
     """
-    Function to run a SINGLE experiment instance with proper locking, caching,
-    and optional cleanup on force_rerun.
+    Function to run a SINGLE experiment instance.
+    Reverted to setting CUDA_VISIBLE_DEVICES internally and using 'cuda:0'.
+    Assumes the parent process correctly maps physical IDs to the gpu_id argument (0, 1, 2...).
     """
     run_save_path = None  # Define early for error handling
     try:
-        # ===== GPU/Seed Setup (remains the same) =====
-        if gpu_id is not None:
-            os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
-            log_prefix = f"[Run {run_id} | Sample {sample_idx} | Seed {seed} | GPU {gpu_id}]"
-        else:
-            log_prefix = f"[Run {run_id} | Sample {sample_idx} | Seed {seed} | CPU]"
+        # ===== GPU/Seed Setup (Reverted Logic) =====
+        target_device = "cpu"  # Default
+        log_prefix_gpu_info = "CPU"
 
-        import random
-        import numpy as np
+        if gpu_id is not None:
+            # Set CUDA_VISIBLE_DEVICES to make ONLY this GPU visible, mapped to ID 0
+            # This gpu_id is the logical ID (0, 1, 2...) relative to the externally set CUDA_VISIBLE_DEVICES
+            os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
+            log_prefix_gpu_info = f"Logical GPU {gpu_id}"
+            # PyTorch will now see this GPU as 'cuda:0'
+            target_device = "cuda:0"
+            # Quick check if CUDA is available *after* setting the environment variable
+            if not torch.cuda.is_available():
+                logger.error(
+                    f"[Run {run_id}...] CUDA not available after setting CUDA_VISIBLE_DEVICES='{gpu_id}'. Check parent visibility settings.")
+                # Fallback to CPU or raise error? For now, fallback might hide issues.
+                target_device = "cpu"
+                log_prefix_gpu_info = f"Logical GPU {gpu_id} (CUDA FAILED, using CPU)"
+                # raise RuntimeError(f"CUDA failed for gpu_id {gpu_id}") # Alternative: Fail fast
+        else:
+            log_prefix_gpu_info = "CPU"
+
+        log_prefix = f"[Run {run_id} | Sample {sample_idx} | Seed {seed} | {log_prefix_gpu_info}]"
+
+        # --- Seed everything ---
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(seed)
-            torch.cuda.manual_seed_all(seed)
+        if target_device.startswith("cuda"):  # Check if we intend to use CUDA
+            torch.cuda.manual_seed_all(seed)  # Seed the visible device(s)
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
-            torch.cuda.empty_cache()
 
         logger.info(f"{log_prefix} Starting. Config: {config_path}")
+        logger.info(f"{log_prefix} Target device internally seen as: {target_device}")
 
+        # --- Config loading and path setup ---
         app_config = load_config(config_path)
         original_base_save_path = Path(app_config.experiment.save_path)
         run_save_path = original_base_save_path / f"run_{sample_idx - 1}_seed_{seed}"
-
-        # Create directory early
         run_save_path.mkdir(parents=True, exist_ok=True)
 
-        # Use a lock file
+        # --- Locking and Cleanup Logic ---
         lock_file = run_save_path / ".lock"
-        lock = FileLock(str(lock_file), timeout=10)  # Short timeout assumes quick check
-
-        with lock.acquire(timeout=5):  # Slightly longer acquire timeout
+        lock = FileLock(str(lock_file), timeout=10)
+        with lock.acquire(timeout=5):
             run_completed = is_run_completed(run_save_path)
-
             if run_completed and not force_rerun:
                 logger.info(f"{log_prefix} ✅ Already completed. Skipping.")
                 return
-
-            # --- START: Added Cleanup Logic ---
             if force_rerun:
                 logger.info(f"{log_prefix} 🔄 Force rerun enabled. Clearing previous results...")
-                # Clear results BEFORE marking as in progress or running
                 clear_existing_results(run_save_path)
-            elif run_completed and force_rerun:  # Logged above, but explicit check
-                logger.info(f"{log_prefix} 🔄 Force rerun clearing completed run.")
-                clear_existing_results(run_save_path)
-            # --- END: Added Cleanup Logic ---
 
-            # Now mark as in progress
             mark_run_in_progress(run_save_path)
 
-            # Prepare config (remains the same)
+            # --- Prepare config (Use the remapped target_device "cuda:0" or "cpu") ---
             run_cfg = copy.deepcopy(app_config)
             run_cfg.seed = seed
             run_cfg.experiment.save_path = str(run_save_path)
-            run_cfg.experiment.device = f"cuda:{gpu_id}" if gpu_id is not None and torch.cuda.is_available() else "cpu"
+            run_cfg.experiment.device = target_device  # <<< Pass "cuda:0" or "cpu"
 
-            # Run the actual experiment
-            run_attack(run_cfg)  # Assuming run_attack doesn't return anything important now
+            # --- Run the experiment ---
+            run_attack(run_cfg)
             mark_run_completed(run_save_path)
-
             logger.info(f"{log_prefix} ✅ Completed successfully.")
 
             # Clean up GPU memory
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            if target_device.startswith("cuda"):
+                try:
+                    del run_cfg
+                    torch.cuda.empty_cache()
+                    logger.info(f"{log_prefix} Cleared CUDA cache.")
+                except Exception as e_clear:
+                    logger.warning(f"{log_prefix} Error clearing CUDA cache: {e_clear}")
 
     except TimeoutError:
-        logger.warning(f"{log_prefix} ⏳ Lock acquisition timed out. Another process might be running this. Skipping.")
+        logger.warning(f"{log_prefix} ⏳ Lock acquisition timed out. Skipping.")
     except Exception as e:
         logger.error(f"{log_prefix} ❌ Error running experiment: {e}", exc_info=True)
-        if run_save_path:  # Check if run_save_path was defined
+        if run_save_path:
             (run_save_path / ".failed").touch()
 
 
