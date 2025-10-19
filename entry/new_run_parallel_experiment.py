@@ -199,18 +199,26 @@ def run_task_list_serially(tasks_for_one_gpu):
     if not tasks_for_one_gpu:
         return
 
-    # Get the GPU ID from the first task
-    # All tasks in this list *should* have the same GPU ID
     gpu_id = tasks_for_one_gpu[0][4]
     pid = os.getpid()
     logger.info(f"[Process {pid} | GPU {gpu_id}] Starting. Will run {len(tasks_for_one_gpu)} tasks serially.")
 
+    # ✅ ADD STAGGERED START - Each process waits based on its position
+    # This prevents all processes from hitting peak memory at the same time
+    process_index = pid % 100  # Use last 2 digits of PID as index
+    startup_delay = process_index * 2  # 2 seconds per process
+    if startup_delay > 0:
+        logger.info(f"[Process {pid} | GPU {gpu_id}] Staggered start: waiting {startup_delay}s")
+        time.sleep(startup_delay)
+
     for task_args in tasks_for_one_gpu:
         try:
-            # Unpack arguments: (config_path, run_id, sample_idx, seed, gpu_id, force_rerun)
             run_single_experiment(*task_args)
+
+            # ✅ ADD: Small delay between experiments to desynchronize peaks
+            time.sleep(1)
+
         except Exception as e:
-            # Log the error for this specific task but continue to the next one
             logger.error(f"[Process {pid} | GPU {gpu_id}] FAILED Task {task_args[0]} (Run {task_args[1]}): {e}",
                          exc_info=False)
 
