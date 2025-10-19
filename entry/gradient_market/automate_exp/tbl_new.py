@@ -37,7 +37,7 @@ def get_base_tabular_config() -> AppConfig:
             evaluations=["clean", "poison"],  # <--- CRITICAL FIX 2 (added "poison")
             tabular_model_config_name="mlp_texas100_baseline"
         ),
-        training=TrainingConfig(local_epochs=2, batch_size=128, learning_rate=0.001),
+        training=TrainingConfig(local_epochs=2, batch_size=64, learning_rate=0.0001),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
         data=DataConfig(
