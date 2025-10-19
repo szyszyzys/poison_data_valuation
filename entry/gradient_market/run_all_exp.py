@@ -747,37 +747,65 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
     # --- END FIX ---
 
 
-def save_round_incremental(round_record, save_path):
-    """Saves the full round_record dictionary, handling header dynamically."""
+def save_round_incremental(round_record: Dict, save_path: Path):
+    """
+    Saves the full round_record dictionary incrementally, dynamically handling
+    potentially varying columns across rounds. Appends NaN for missing values.
+    """
     log_path = Path(save_path) / "training_log.csv"
 
-    # --- START FIX ---
-    # Create DataFrame from the full dictionary
-    # Important: Convert record to a list containing the dictionary for DataFrame creation
     try:
-        df = pd.DataFrame([round_record])
+        # Create a DataFrame for the current round's data
+        # Ensure it's a list containing the dict
+        current_df = pd.DataFrame([round_record])
+
+        if log_path.exists() and log_path.stat().st_size > 0:
+            # File exists and is not empty, need to append carefully
+            try:
+                # 1. Read just the header to get existing columns
+                with open(log_path, 'r') as f:
+                    header_line = f.readline().strip()
+                existing_columns = [col.strip() for col in header_line.split(',')]
+
+                # 2. Get columns from the current data
+                current_columns = list(current_df.columns)
+
+                # 3. Find the union of columns
+                all_columns = sorted(list(set(existing_columns) | set(current_columns))) # Union
+
+                # 4. Reindex the current DataFrame to include ALL columns, filling missing with NaN
+                current_df = current_df.reindex(columns=all_columns) # Fill_value=np.nan is default
+
+                # 5. Check if the header needs updating (new columns added this round)
+                if set(current_columns) - set(existing_columns):
+                     logging.warning(
+                         f"New columns ({set(current_columns) - set(existing_columns)}) detected in round "
+                         f"{round_record.get('round', 'N/A')} for {log_path}. "
+                         f"CSV structure will change. Consider defining fixed columns."
+                     )
+                     # Option A: Overwrite header (might break simple readers) - NOT RECOMMENDED usually
+                     # Option B: Just append - the columns might not align perfectly visually,
+                     #           but tools like pandas can often handle it if reading the whole file.
+                     #           We'll proceed with append.
+
+                # 6. Append without header, ensuring column order matches the union
+                current_df.to_csv(log_path, mode='a', header=False, index=False, columns=all_columns)
+
+            except pd.errors.EmptyDataError:
+                 # Handle case where file exists but might be empty or corrupted
+                 logging.warning(f"{log_path} exists but is empty or corrupted. Writing with header.")
+                 current_df.to_csv(log_path, mode='w', header=True, index=False)
+            except Exception as e:
+                 logging.error(f"Error appending to existing {log_path}: {e}")
+
+        else:
+            # File doesn't exist or is empty, write with header
+            current_df.to_csv(log_path, mode='w', header=True, index=False)
+
     except Exception as e:
-        logging.error(f"Error creating DataFrame from round_record: {e}")
+        # Catch errors during DataFrame creation or initial save
+        logging.error(f"Error processing or saving round_record for round {round_record.get('round', 'N/A')} to {log_path}: {e}")
         logging.error(f"Round Record Keys: {list(round_record.keys())}")
-        # Optional: Log problematic values if possible
-        # for k, v in round_record.items():
-        #     if not isinstance(v, (int, float, str, bool, type(None))):
-        #         logging.warning(f"  Potentially problematic key '{k}' type: {type(v)}")
-        return  # Skip saving this round if DataFrame creation fails
-
-    # Check if file exists to decide whether to write header
-    file_exists = log_path.exists()
-
-    try:
-        df.to_csv(
-            log_path,
-            mode='a',  # Always append
-            header=not file_exists,  # Write header only if file doesn't exist yet
-            index=False
-        )
-    except Exception as e:
-        logging.error(f"Error writing round {round_record.get('round', 'N/A')} to {log_path}: {e}")
-
 
 def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, model_factory):
     """
@@ -930,7 +958,7 @@ def run_attack(cfg: AppConfig):
         logging.info(f"   Results saved to: {save_path}")
         logging.info("=" * 80)
 
-        return results_buffer
+        return None
 
     except Exception as e:
         logging.error("=" * 80)
