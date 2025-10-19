@@ -750,62 +750,77 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
 def save_round_incremental(round_record: Dict, save_path: Path):
     """
     Saves the full round_record dictionary incrementally, dynamically handling
-    potentially varying columns across rounds. Appends NaN for missing values.
+    potentially varying columns by maintaining a known header in memory.
+    Appends empty strings for missing values relative to the full known header.
     """
     log_path = Path(save_path) / "training_log.csv"
+    log_path_str = str(log_path)  # Use string for cache key
 
     try:
-        # Create a DataFrame for the current round's data
-        # Ensure it's a list containing the dict
-        current_df = pd.DataFrame([round_record])
+        current_columns = list(round_record.keys())
 
-        if log_path.exists() and log_path.stat().st_size > 0:
-            # File exists and is not empty, need to append carefully
+        # --- Determine the full header ---
+        master_header = None
+        is_new_file = not log_path.exists() or log_path.stat().st_size == 0
+
+        if log_path_str in _csv_headers_cache:
+            master_header = _csv_headers_cache[log_path_str]
+        elif not is_new_file:
+            # Try reading header from existing file if not in cache
             try:
-                # 1. Read just the header to get existing columns
-                with open(log_path, 'r') as f:
-                    header_line = f.readline().strip()
-                existing_columns = [col.strip() for col in header_line.split(',')]
-
-                # 2. Get columns from the current data
-                current_columns = list(current_df.columns)
-
-                # 3. Find the union of columns
-                all_columns = sorted(list(set(existing_columns) | set(current_columns))) # Union
-
-                # 4. Reindex the current DataFrame to include ALL columns, filling missing with NaN
-                current_df = current_df.reindex(columns=all_columns) # Fill_value=np.nan is default
-
-                # 5. Check if the header needs updating (new columns added this round)
-                if set(current_columns) - set(existing_columns):
-                     logging.warning(
-                         f"New columns ({set(current_columns) - set(existing_columns)}) detected in round "
-                         f"{round_record.get('round', 'N/A')} for {log_path}. "
-                         f"CSV structure will change. Consider defining fixed columns."
-                     )
-                     # Option A: Overwrite header (might break simple readers) - NOT RECOMMENDED usually
-                     # Option B: Just append - the columns might not align perfectly visually,
-                     #           but tools like pandas can often handle it if reading the whole file.
-                     #           We'll proceed with append.
-
-                # 6. Append without header, ensuring column order matches the union
-                current_df.to_csv(log_path, mode='a', header=False, index=False, columns=all_columns)
-
-            except pd.errors.EmptyDataError:
-                 # Handle case where file exists but might be empty or corrupted
-                 logging.warning(f"{log_path} exists but is empty or corrupted. Writing with header.")
-                 current_df.to_csv(log_path, mode='w', header=True, index=False)
+                with open(log_path, 'r', newline='') as f:
+                    reader = csv.reader(f)
+                    header_from_file = next(reader)
+                    master_header = header_from_file
+                    _csv_headers_cache[log_path_str] = master_header  # Store in cache
+            except (StopIteration, pd.errors.EmptyDataError):
+                logger.warning(f"{log_path} exists but seems empty/corrupt. Will write new header.")
+                is_new_file = True  # Treat as new file
             except Exception as e:
-                 logging.error(f"Error appending to existing {log_path}: {e}")
+                logger.error(f"Error reading header from {log_path}: {e}. Will attempt to write.")
+                # Decide how to handle - maybe overwrite? For now, assume we append blindly.
+                pass  # Let DictWriter handle it below if possible
 
-        else:
-            # File doesn't exist or is empty, write with header
-            current_df.to_csv(log_path, mode='w', header=True, index=False)
+        if master_header is None:  # If still None (new file or failed read)
+            master_header = current_columns  # Use current keys as header
+            _csv_headers_cache[log_path_str] = master_header
+
+        # --- Check for and incorporate new columns ---
+        new_columns = set(current_columns) - set(master_header)
+        if new_columns:
+            logging.warning(
+                f"New columns ({new_columns}) detected in round {round_record.get('round', 'N/A')} for {log_path}. "
+                f"Appending with expanded header list. CSV readers might need adjustment."
+            )
+            # Add new columns to the master list for this file
+            master_header.extend(sorted(list(new_columns)))  # Add sorted for consistency
+            _csv_headers_cache[log_path_str] = master_header  # Update cache
+
+        # --- Write using csv.DictWriter for robustness ---
+        try:
+            # Open in append mode ('a'), create if doesn't exist (+)
+            with open(log_path, 'a+', newline='') as f:
+                # Use the master header for the writer
+                writer = csv.DictWriter(f, fieldnames=master_header, restval='', extrasaction='ignore')
+
+                # Write header only if the file is effectively empty
+                f.seek(0, os.SEEK_END)  # Go to end
+                is_empty = f.tell() == 0  # Check if position is 0 (empty file)
+                if is_empty:
+                    writer.writeheader()
+
+                # Prepare row using only keys present in the master header
+                # DictWriter automatically handles missing keys based on fieldnames
+                writer.writerow(round_record)
+
+        except Exception as e:
+            logging.error(f"Error writing round {round_record.get('round', 'N/A')} using DictWriter to {log_path}: {e}")
 
     except Exception as e:
-        # Catch errors during DataFrame creation or initial save
-        logging.error(f"Error processing or saving round_record for round {round_record.get('round', 'N/A')} to {log_path}: {e}")
+        # Catch errors during initial processing
+        logging.error(f"Error processing round_record for round {round_record.get('round', 'N/A')} before saving: {e}")
         logging.error(f"Round Record Keys: {list(round_record.keys())}")
+
 
 def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, model_factory):
     """
