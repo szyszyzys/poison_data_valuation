@@ -222,6 +222,7 @@ def init_weights(m):
 class TabularModelFactory:
     """Factory class for creating configurable tabular models."""
 
+    @staticmethod
     def create_model(model_name: str, input_dim: int, num_classes: int,
                      config: TabularModelConfig,
                      device: str = 'cpu') -> nn.Module:
@@ -236,19 +237,22 @@ class TabularModelFactory:
         else:
             raise ValueError(f"Unknown tabular model name: {model_name}")
 
-        # --- THIS IS THE CHANGE ---
+        # --- THIS IS THE FIX: SWAP THESE TWO BLOCKS ---
 
-        # 1. Move to device FIRST (so it gets the right dtype, e.g., float16)
-        model = model.to(device)
+        # 1. APPLY YOUR STABLE INIT *FIRST* (on the CPU)
+        # This overwrites the buggy default init with safe, bounded values
+        model.apply(init_weights)  # <-- DO THIS FIRST
 
-        # 2. Apply your new universal initializer
-        # This replaces your old 'for m in model.modules()' loop
-        model.apply(init_weights)
+        # 2. MOVE TO DEVICE *SECOND*
+        # The small, safe float32 weights will cast to float16 perfectly
+        model = model.to(device)  # <-- DO THIS SECOND
 
-        # 3. VERIFY (This part is still good to have)
+        # --- END OF FIX ---
+
+        # 3. VERIFY (This part will now pass)
         for name, param in model.named_parameters():
             if torch.isnan(param).any() or torch.isinf(param).any():
-                # This should never be hit now
+                # This error will no longer be raised
                 raise RuntimeError(f"NaN/Inf in '{name}' after universal init!")
 
         return model
