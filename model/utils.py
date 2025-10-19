@@ -61,7 +61,9 @@ def train_local_model(model: nn.Module,
                 # --- End Unpacking ---
 
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
-
+                if torch.isnan(data).any() or torch.isinf(data).any():
+                    logging.error(f"❌ Corrupt data detected in batch {batch_idx}. Skipping.")
+                    continue
                 optimizer.zero_grad()
 
                 ## <-- 3. WRAP FORWARD PASS IN 'autocast'
