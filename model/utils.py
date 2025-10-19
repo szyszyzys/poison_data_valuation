@@ -35,12 +35,17 @@ def train_local_model(model: nn.Module,
                       device: torch.device,
                       epochs: int = 1,
                       max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
+
     logging.info(f"--- ⚡️ Running with CORRECTED GradScaler + Autocast ---")
     model.train()
     batch_losses_all = []
 
+    # Convert to torch.device if it's a string
+    if isinstance(device, str):
+        device = torch.device(device)
+
     # Only use mixed precision with CUDA
-    use_amp = ('cuda' in device)
+    use_amp = (device.type == 'cuda')
     scaler = GradScaler() if use_amp else None
 
     if not train_loader or len(train_loader) == 0:
@@ -64,7 +69,6 @@ def train_local_model(model: nn.Module,
                 optimizer.zero_grad()
 
                 # Autocast ONLY wraps the forward pass
-                # Specify device_type and enable based on whether we're using CUDA
                 with autocast(device_type=device.type, enabled=use_amp):
                     outputs = model(data)
                     loss = criterion(outputs, labels)
@@ -73,7 +77,7 @@ def train_local_model(model: nn.Module,
                     logging.warning(f"Non-finite loss ({loss.item()}) in batch {batch_idx}. Skipping update.")
                     continue
 
-                # Backward pass and optimizer steps - conditional on AMP usage
+                # Backward pass and optimizer steps
                 if use_amp:
                     scaler.scale(loss).backward()
                     scaler.unscale_(optimizer)
@@ -101,20 +105,6 @@ def train_local_model(model: nn.Module,
             f"Overall Avg Loss: {overall_avg_loss:.4f}"
         )
         return model, overall_avg_loss
-
-
-def compute_gradient_update(initial_model: nn.Module,
-                            trained_model: nn.Module) -> List[torch.Tensor]:
-    """
-    Compute the gradient update as the difference between the trained model's parameters
-    and the initial model's parameters. Returns a list of tensors.
-    """
-    grad_update = []
-    for init_param, trained_param in zip(initial_model.parameters(), trained_model.parameters()):
-        # The update is defined as (trained - initial)
-        grad_update.append(trained_param.detach().cpu() - init_param.detach().cpu())
-    return grad_update
-
 
 def flatten_gradients(grad_list: List[torch.Tensor]) -> np.ndarray:
     """
