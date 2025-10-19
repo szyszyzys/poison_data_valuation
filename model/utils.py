@@ -37,78 +37,66 @@ def train_local_model(model: nn.Module,
                       max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
     """
     Trains a model locally using mixed-precision with GradScaler
-    to prevent optimizer instability (NaNs).
+    to prevent optimizer instability (NaNs) during training.
     """
     model.train()
     batch_losses_all = []
-    logging.info("--- ⚡️ GradScaler is ACTIVE in this training loop ---")
-    ## <-- 2. INITIALIZE THE GRADIENT SCALER
+
+    # Initialize the gradient scaler
     scaler = GradScaler()
 
     if not train_loader or len(train_loader) == 0:
         logging.warning("train_loader is empty or None. Skipping training.")
         return model, None
 
-    logging.debug(f"Starting local training for {epochs} epochs on device {device}...")
     for epoch in range(epochs):
         for batch_idx, batch_data in enumerate(train_loader):
             try:
-                # --- Modality-Aware Data Unpacking ---
-                if len(batch_data) == 3:  # Text data: (labels, texts, lengths)
+                if len(batch_data) == 3:  # Text data
                     labels, data, _ = batch_data
-                else:  # Image/Tabular data: (data, labels)
+                else:  # Image/Tabular
                     data, labels = batch_data
-                # --- End Unpacking ---
 
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
 
+                # We already cleaned the data in get_tabular_dataset,
+                # but this is a final safety check.
                 if torch.isnan(data).any() or torch.isinf(data).any():
-                    logging.warning(f"Corrupt data in batch {batch_idx}. Cleaning with torch.nan_to_num...")
-                    # Replaces all NaN, +Inf, and -Inf with 0.0
-                    data = torch.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
+                    logging.error(f"❌ Corrupt data in batch {batch_idx}. Skipping.")
+                    continue
+
                 optimizer.zero_grad()
 
-                ## <-- 3. WRAP FORWARD PASS IN 'autocast'
-                # This tells PyTorch to run the model in float16
+                # Wrap forward pass in 'autocast' for float16
                 with autocast():
                     outputs = model(data)
                     loss = criterion(outputs, labels)
 
                 if not torch.isfinite(loss):
-                    logging.warning(
-                        f"Non-finite loss ({loss.item()}) encountered in batch {batch_idx}. Skipping update."
-                    )
+                    logging.warning(f"Non-finite loss ({loss.item()}) in batch {batch_idx}. Skipping update.")
                     continue
 
-                ## <-- 4. SCALE THE LOSS BEFORE BACKWARD()
-                # Scales loss up to prevent float16 gradients from underflowing to zero
+                # Scale the loss and call backward()
                 scaler.scale(loss).backward()
 
-                ## <-- 5. UNSCALE GRADIENTS BEFORE CLIPPING
-                # This brings gradients back to float32
+                # Unscale gradients before clipping
                 scaler.unscale_(optimizer)
-
-                # Now you can safely clip the float32 gradients
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
 
-                ## <-- 6. 'scaler.step()' REPLACES 'optimizer.step()'
-                # This checks for NaN/Inf gradients. If found, it skips the step.
+                # scaler.step() checks for NaNs and skips optimizer step if found
                 scaler.step(optimizer)
 
-                ## <-- 7. UPDATE THE SCALER FOR NEXT BATCH
+                # Update the scale for next iteration
                 scaler.update()
 
                 batch_losses_all.append(loss.item())
 
             except Exception as e:
-                logging.warning(
-                    f"Error during training step for batch {batch_idx} in epoch {epoch + 1}: {e}",
-                    exc_info=False
-                )
+                logging.warning(f"Error in batch {batch_idx}: {e}", exc_info=False)
                 continue
 
     if not batch_losses_all:
-        logging.warning("No batches were successfully processed during training.")
+        logging.warning("No batches were successfully processed.")
         return model, None
     else:
         overall_avg_loss = np.mean(batch_losses_all)
