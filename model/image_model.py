@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from common.gradient_market_configs import AppConfig
+from marketplace.utils.model_utils import init_weights
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +222,6 @@ class ConfigurableFlexibleCNN(nn.Module):
         # CRITICAL: Reinitialize all parameters to ensure no NaN/Inf
         self._safe_initialization()
 
-
     def _get_flattened_size_safe(self) -> int:
         """Calculate flattened size mathematically without forward pass."""
         h, w = self.image_size
@@ -363,13 +362,13 @@ class ImageModelFactory:
     @staticmethod
     def create_model(model_name: str, num_classes: int, in_channels: int,
                      image_size: Tuple[int, int], config: ImageModelConfig,
-                     device: str = 'cpu') -> nn.Module:  # Add device parameter
-        """Create a model based on configuration."""
+                     device: str = 'cpu') -> nn.Module:
+        """Create a model based on configuration with robust initialization."""
         logger.info(f"Creating model '{model_name}' with config '{config.config_name}'")
 
         model = None
 
-        # --- 1. Instantiate the correct model class ---
+        # --- 1. Instantiate the correct model class (on CPU) ---
         if model_name.lower() == 'lenet':
             model = ConfigurableLeNet(in_channels, image_size, num_classes, config)
         elif model_name.lower() == 'flexiblecnn':
@@ -379,49 +378,50 @@ class ImageModelFactory:
         else:
             raise ValueError(f"Unknown model name: {model_name}")
 
-        # --- MOVE TO DEVICE IMMEDIATELY AFTER CREATION ---
+        logger.info("--- Image Model created on CPU ---")
+        # Optional: Add detailed logging if needed
+        # _log_param_stats(model, "conv1.weight", "Initial CPU (float32)") # Example
+
+        # --- 2. APPLY STABLE INIT *FIRST* (on the CPU) ---
+        logger.info("--- ⚡️ Applying STABLE init (CPU) ---")
+        model.apply(init_weights)
+        # Optional: Add detailed logging
+        # _log_param_stats(model, "conv1.weight", "After init_weights (float32)")
+
+        # --- 3. Manually cast to float16 ON THE CPU (Workaround) ---
+        model = model.half()
+        logger.info(f"--- Image Model cast to .half() on CPU ---")
+        # Optional: Add detailed logging
+        # _log_param_stats(model, "conv1.weight", "After .half() (CPU, float16)")
+
+        # --- 4. MOVE TO DEVICE *SECOND* ---
         model = model.to(device)
+        logger.info(f"--- Image Model moved to {device} ---")
+        # Optional: Add detailed logging
+        # _log_param_stats(model, "conv1.weight", f"After .to({device}) (GPU, float16)")
 
-        # --- REINITIALIZE ON THE CORRECT DEVICE ---
-        for m in model.modules():
-            if isinstance(m, nn.Conv2d):
-                # USE UNIFORM INSTEAD OF NORMAL TO PREVENT Inf IN FP16
-                nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                # This code is correct, but isn't being used by your
-                # specific model architecture (which has Identity layers)
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-                m.running_mean.zero_()
-                m.running_var.fill_(1)
-                if hasattr(m, 'num_batches_tracked'):
-                    m.num_batches_tracked.zero_()
-            elif isinstance(m, nn.Linear):
-                # USE UNIFORM INSTEAD OF NORMAL TO PREVENT Inf IN FP16
-                nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-        # --- VERIFY NO NaN/Inf ---
+        # --- 5. VERIFY NO NaN/Inf ---
         for name, param in model.named_parameters():
             if torch.isnan(param).any() or torch.isinf(param).any():
-                # This check will no longer fail
-                raise RuntimeError(f"NaN/Inf in parameter '{name}' after device transfer to {device}")
+                logger.error(f"--- ❌ VERIFICATION FAILED FOR {name} ---")
+                # _log_param_stats(model, name, "FAILURE") # Optional detailed log
+                raise RuntimeError(f"NaN/Inf in parameter '{name}' after initialization!")
 
-        # --- 2. Log details of the created model ---
-        if model:
-            num_params = sum(p.numel() for p in model.parameters())
-            num_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            logger.info(f"  -> Instantiated model class: '{model.__class__.__name__}'")
-            logger.info(f"  -> Total parameters: {num_params:,}")
-            logger.info(f"  -> Trainable parameters: {num_trainable:,}")
+        logger.info("--- ✅ Image Model verification PASSED ---")
+
+        # --- Log final details ---
+        num_params = sum(p.numel() for p in model.parameters())
+        num_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        logger.info(f"  -> Instantiated model class: '{model.__class__.__name__}'")
+        logger.info(f"  -> Total parameters: {num_params:,}")
+        logger.info(f"  -> Trainable parameters: {num_trainable:,}")
 
         return model
+
     @staticmethod
     def create_factory(model_name: str, num_classes: int, in_channels: int,
-                       image_size: Tuple[int, int], config: ImageModelConfig, device:str = 'cpu') -> Callable[[], nn.Module]:
+                       image_size: Tuple[int, int], config: ImageModelConfig, device: str = 'cpu') -> Callable[
+        [], nn.Module]:
         """
         Create a zero-argument factory function with frozen parameters.
 
