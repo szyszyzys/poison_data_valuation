@@ -232,8 +232,7 @@ class TabularModelFactory:
         _log_param_stats(model, "layers.0.weight", f"After .to({device}) (float32)")
 
         # 3. Cast to float16 ON THE GPU
-        model = model.half()
-        logging.info(f"--- Model cast to .half() ON THE GPU ---")
+        # model = model.half()
         _log_param_stats(model, "layers.0.weight", "After .half() (GPU, float16)")
         # --- END OF FIX ---
 
