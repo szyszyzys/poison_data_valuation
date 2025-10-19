@@ -195,25 +195,21 @@ def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: 
 def setup_gpu_allocation(num_processes: int, gpu_ids_str: str = None):
     """
     Determine GPU allocation strategy and set CUDA_VISIBLE_DEVICES at parent level.
-
-    Returns:
-        tuple: (actual_num_processes, assigned_gpu_ids)
     """
     assigned_gpu_ids = None
 
     if gpu_ids_str:
-        assigned_gpu_ids = [int(g.strip()) for g in gpu_ids_str.split(',')]
-        actual_num_processes = len(assigned_gpu_ids)
+        physical_gpu_ids = [int(g.strip()) for g in gpu_ids_str.split(',')]
+        actual_num_processes = len(physical_gpu_ids)
 
-        # SET CUDA_VISIBLE_DEVICES AT PARENT LEVEL
+        # SET CUDA_VISIBLE_DEVICES AT PARENT LEVEL BEFORE ANY TORCH OPERATIONS
         os.environ['CUDA_VISIBLE_DEVICES'] = gpu_ids_str
+        logger.info(f"🎯 Set CUDA_VISIBLE_DEVICES='{gpu_ids_str}' at parent level")
+        logger.info(f"🔧 Physical GPUs {physical_gpu_ids} will appear as cuda:0 to cuda:{len(physical_gpu_ids)-1}")
 
-        logger.info(f"🎯 Using specified GPUs: {assigned_gpu_ids}")
-        logger.info(f"🔧 Set CUDA_VISIBLE_DEVICES='{gpu_ids_str}' at parent level")
-        logger.info(f"🔧 Setting num_processes to {actual_num_processes} to match GPU count")
-
-        # Now assigned_gpu_ids should be remapped to 0, 1, 2, ... for child processes
-        assigned_gpu_ids = list(range(len(assigned_gpu_ids)))
+        # Now children will see GPUs as 0, 1, 2, ... (remapped)
+        assigned_gpu_ids = list(range(len(physical_gpu_ids)))
+        logger.info(f"🔧 Using {actual_num_processes} processes for {len(physical_gpu_ids)} GPUs")
 
     elif torch.cuda.is_available():
         num_cuda_devices = torch.cuda.device_count()
@@ -221,8 +217,7 @@ def setup_gpu_allocation(num_processes: int, gpu_ids_str: str = None):
         assigned_gpu_ids = list(range(actual_num_processes))
 
         if num_processes > num_cuda_devices:
-            logger.warning(f"⚠️  Requested {num_processes} processes but only {num_cuda_devices} GPUs available. "
-                           f"Limiting to {actual_num_processes}.")
+            logger.warning(f"⚠️  Requested {num_processes} processes but only {num_cuda_devices} GPUs available.")
         logger.info(f"🎮 Auto-detected GPUs: {assigned_gpu_ids}")
 
     else:
@@ -231,23 +226,21 @@ def setup_gpu_allocation(num_processes: int, gpu_ids_str: str = None):
 
     return actual_num_processes, assigned_gpu_ids
 
-
 def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, seed: int,
                                 gpu_id: int = None, force_rerun: bool = False, attempt: int = 0):
     run_save_path = None
 
     try:
-        # ===== GPU/Seed Setup (SIMPLIFIED) =====
+        # ===== GPU/Seed Setup =====
         target_device = "cpu"
 
         if gpu_id is not None:
-            # gpu_id is now relative to CUDA_VISIBLE_DEVICES set by parent
-            # So gpu_id=0 means first visible GPU, gpu_id=1 means second, etc.
+            # DON'T set CUDA_VISIBLE_DEVICES here - it's already set by parent!
             target_device = f"cuda:{gpu_id}"
             log_prefix_gpu_info = f"GPU {gpu_id}"
 
             if not torch.cuda.is_available():
-                logger.error(f"[Run {run_id}] CUDA not available")
+                logger.error(f"[Run {run_id}] CUDA not available for gpu_id {gpu_id}")
                 target_device = "cpu"
                 log_prefix_gpu_info = "CPU (CUDA Failed)"
         else:
