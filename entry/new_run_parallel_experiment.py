@@ -3,11 +3,10 @@ import copy
 import logging
 import multiprocessing
 import os
-from multiprocessing.pool import Pool
-from pathlib import Path
-
 import torch
 from filelock import FileLock  # pip install filelock
+from multiprocessing.pool import Pool
+from pathlib import Path
 
 from entry.gradient_market.automate_exp.config_parser import load_config
 from entry.gradient_market.run_all_exp import run_attack
@@ -40,7 +39,6 @@ class NestablePool(Pool):
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 
 CORE_EXPERIMENTS = [
     # --- 1. Main Summary Results ---
@@ -90,6 +88,7 @@ CORE_EXPERIMENTS = [
     # "extreme_scale_buyer_class_exclusion_fltrust",
 ]
 
+
 def is_run_completed(run_save_path: Path) -> bool:
     """
     Check if a run is already completed by verifying multiple success indicators.
@@ -119,37 +118,75 @@ def mark_run_completed(run_save_path: Path):
     success_marker.touch()
 
 
+def clear_existing_results(run_save_path: Path):
+    """Deletes common result files and directories within a run path."""
+    logger.info(f"Clearing existing results in: {run_save_path}")
+    files_to_delete = [
+        ".success",
+        ".failed",
+        ".in_progress",  # Should ideally be handled by lock, but good to clean
+        "training_log.csv",
+        "round_aggregates.csv",
+        "seller_round_metrics_flat.csv",
+        "selection_history.csv",
+        "final_metrics.json",
+        "final_model.pth",
+        "marketplace_report.json",
+        "config_snapshot.json",  # Snapshot is usually regenerated anyway
+    ]
+    dirs_to_delete = [
+        "evaluations",
+        "individual_gradients",  # If you save these
+        # Add any seller-specific subdirs if they contain persistent state
+        # e.g., "adv_seller_0/history", "bn_seller_1/history"
+    ]
+
+    # Delete files
+    for filename in files_to_delete:
+        filepath = run_save_path / filename
+        if filepath.exists():
+            try:
+                filepath.unlink()
+                logger.debug(f"  Deleted file: {filename}")
+            except OSError as e:
+                logger.warning(f"  Could not delete file {filepath}: {e}")
+
+    # Delete directories
+    for dirname in dirs_to_delete:
+        dirpath = run_save_path / dirname
+        if dirpath.exists() and dirpath.is_dir():
+            try:
+                shutil.rmtree(dirpath)
+                logger.debug(f"  Deleted directory: {dirname}")
+            except OSError as e:
+                logger.warning(f"  Could not delete directory {dirpath}: {e}")
+
+
 def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: int,
                           gpu_id: int = None, force_rerun: bool = False):
     """
-    Function to run a SINGLE experiment instance (one config, one seed)
-    with proper locking and caching.
+    Function to run a SINGLE experiment instance with proper locking, caching,
+    and optional cleanup on force_rerun.
     """
+    run_save_path = None  # Define early for error handling
     try:
-        # ===== CRITICAL: Set GPU and seed IMMEDIATELY at the very beginning =====
+        # ===== GPU/Seed Setup (remains the same) =====
         if gpu_id is not None:
             os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
             log_prefix = f"[Run {run_id} | Sample {sample_idx} | Seed {seed} | GPU {gpu_id}]"
         else:
             log_prefix = f"[Run {run_id} | Sample {sample_idx} | Seed {seed} | CPU]"
 
-        # Seed everything BEFORE any PyTorch operations
         import random
         import numpy as np
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
-
         if torch.cuda.is_available():
-            # CRITICAL: Seed CUDA before any CUDA operations
             torch.cuda.manual_seed(seed)
-            torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
-
-            # Make operations deterministic (prevents NaN from non-deterministic ops)
+            torch.cuda.manual_seed_all(seed)
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
-
-            # NOW clear cache after seeding
             torch.cuda.empty_cache()
 
         logger.info(f"{log_prefix} Starting. Config: {config_path}")
@@ -161,29 +198,38 @@ def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: 
         # Create directory early
         run_save_path.mkdir(parents=True, exist_ok=True)
 
-        # Use a lock file to prevent race conditions
+        # Use a lock file
         lock_file = run_save_path / ".lock"
-        lock = FileLock(str(lock_file), timeout=10)
+        lock = FileLock(str(lock_file), timeout=10)  # Short timeout assumes quick check
 
-        with lock.acquire(timeout=2):
-            if is_run_completed(run_save_path) and not force_rerun:
+        with lock.acquire(timeout=5):  # Slightly longer acquire timeout
+            run_completed = is_run_completed(run_save_path)
+
+            if run_completed and not force_rerun:
                 logger.info(f"{log_prefix} ✅ Already completed. Skipping.")
                 return
 
-            if is_run_completed(run_save_path) and force_rerun:
-                logger.info(f"{log_prefix} 🔄 Force rerun enabled.")
+            # --- START: Added Cleanup Logic ---
+            if force_rerun:
+                logger.info(f"{log_prefix} 🔄 Force rerun enabled. Clearing previous results...")
+                # Clear results BEFORE marking as in progress or running
+                clear_existing_results(run_save_path)
+            elif run_completed and force_rerun:  # Logged above, but explicit check
+                logger.info(f"{log_prefix} 🔄 Force rerun clearing completed run.")
+                clear_existing_results(run_save_path)
+            # --- END: Added Cleanup Logic ---
 
+            # Now mark as in progress
             mark_run_in_progress(run_save_path)
 
-            # Prepare config for this specific run
+            # Prepare config (remains the same)
             run_cfg = copy.deepcopy(app_config)
-            # Don't call set_seed again here - we already did it above
             run_cfg.seed = seed
             run_cfg.experiment.save_path = str(run_save_path)
-            run_cfg.experiment.device = "cuda" if torch.cuda.is_available() else "cpu"
+            run_cfg.experiment.device = f"cuda:{gpu_id}" if gpu_id is not None and torch.cuda.is_available() else "cpu"
 
             # Run the actual experiment
-            run_attack(run_cfg)
+            run_attack(run_cfg)  # Assuming run_attack doesn't return anything important now
             mark_run_completed(run_save_path)
 
             logger.info(f"{log_prefix} ✅ Completed successfully.")
@@ -193,13 +239,11 @@ def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: 
                 torch.cuda.empty_cache()
 
     except TimeoutError:
-        logger.warning(f"{log_prefix} ⏳ Another process is running this. Skipping.")
+        logger.warning(f"{log_prefix} ⏳ Lock acquisition timed out. Another process might be running this. Skipping.")
     except Exception as e:
         logger.error(f"{log_prefix} ❌ Error running experiment: {e}", exc_info=True)
-        # Optionally create a .failed marker
-        if 'run_save_path' in locals():
+        if run_save_path:  # Check if run_save_path was defined
             (run_save_path / ".failed").touch()
-        raise
 
 
 def discover_configs(configs_base_dir: str) -> list:
@@ -277,7 +321,8 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
             logger.warning("Please check your --configs_dir path.")
             return
 
-        logger.info(f"📋 Found {len(filtered_config_files)} matching configurations (out of {len(all_config_files)} total)")
+        logger.info(
+            f"📋 Found {len(filtered_config_files)} matching configurations (out of {len(all_config_files)} total)")
         all_config_files = filtered_config_files
 
     elif config_filter:
@@ -291,7 +336,8 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
             logger.warning(f"❌ No config files matched the filter '{config_filter}'. Exiting.")
             return
 
-        logger.info(f"📋 Found {len(filtered_config_files)} matching configurations (out of {len(all_config_files)} total)")
+        logger.info(
+            f"📋 Found {len(filtered_config_files)} matching configurations (out of {len(all_config_files)} total)")
         all_config_files = filtered_config_files  # Overwrite the list
     else:
         logger.info(f"📋 Running all {len(all_config_files)} configurations (no filter applied)")
@@ -375,6 +421,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Only run experiments from the built-in CORE_EXPERIMENTS list"
     )
+    parser.add_argument(
+        "--clear_results_on_rerun",  # New Flag Name
+        action="store_true",
+        help="[DEPRECATED by --force_rerun logic] Delete existing result files within a run directory before rerunning."
+    )
     # --- END OF ADDITION ---
     args = parser.parse_args()
 
@@ -382,5 +433,7 @@ if __name__ == "__main__":
         configs_base_dir=args.configs_dir,
         num_processes=args.num_processes,
         gpu_ids_str=args.gpu_ids,
-        force_rerun=args.force_rerun
+        force_rerun=args.force_rerun,
+        config_filter=args.filter,
+        core_only=args.core_only
     )
