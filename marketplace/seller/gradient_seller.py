@@ -429,7 +429,7 @@ class GradientSeller(BaseSeller):
             local_epochs_to_use = self.training_config.local_epochs
             batch_size_to_use = self.training_config.batch_size  # Used above
             lr_to_use = self.training_config.learning_rate
-            optimizer_to_use = self.training_config.optimizer_type  # Ensure correct attribute name
+            optimizer_to_use = self.training_config.optimizer  # Ensure correct attribute name
             momentum_to_use = self.training_config.momentum
             weight_decay_to_use = self.training_config.weight_decay
 
