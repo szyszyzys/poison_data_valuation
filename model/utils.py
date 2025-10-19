@@ -35,14 +35,11 @@ def train_local_model(model: nn.Module,
                       device: torch.device,
                       epochs: int = 1,
                       max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
+
     logging.info(f"--- ⚡️ Running with CORRECTED GradScaler + Autocast ---")
     model.train()
     batch_losses_all = []
-
-    # Only use AMP with CUDA
-    use_amp = device.type == 'cuda'
-    scaler = GradScaler() if use_amp else None
-    device_type = 'cuda' if use_amp else 'cpu'
+    scaler = GradScaler()
 
     if not train_loader or len(train_loader) == 0:
         logging.warning("train_loader is empty or None. Skipping training.")
@@ -52,7 +49,7 @@ def train_local_model(model: nn.Module,
         for batch_idx, batch_data in enumerate(train_loader):
             try:
                 if len(batch_data) == 3:  # Text data
-                    labels, data, _ = batch_data  # Verify this order is correct!
+                    labels, data, _ = batch_data
                 else:  # Image/Tabular
                     data, labels = batch_data
 
@@ -64,30 +61,28 @@ def train_local_model(model: nn.Module,
 
                 optimizer.zero_grad()
 
-                # Autocast only wraps forward pass
-                with autocast(device_type=device_type, enabled=use_amp):
+                # --- THIS IS THE FIX ---
+                # 'autocast' should ONLY wrap the forward pass.
+                with autocast():
                     outputs = model(data)
                     loss = criterion(outputs, labels)
+                # --- END OF FIX ---
 
                 if not torch.isfinite(loss):
                     logging.warning(f"Non-finite loss ({loss.item()}) in batch {batch_idx}. Skipping update.")
                     continue
 
-                # Backward pass with optional scaling
-                if use_amp:
-                    scaler.scale(loss).backward()
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
-                    optimizer.step()
+                # These operations must be OUTSIDE the autocast block
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+                scaler.step(optimizer)
+                scaler.update()
 
                 batch_losses_all.append(loss.item())
 
             except Exception as e:
+                # Log the specific error for the batch
                 logging.warning(f"Error in batch {batch_idx}: {e}", exc_info=False)
                 continue
 
@@ -101,76 +96,6 @@ def train_local_model(model: nn.Module,
             f"Overall Avg Loss: {overall_avg_loss:.4f}"
         )
         return model, overall_avg_loss
-
-
-# def train_local_model(model: nn.Module,
-#                       train_loader: DataLoader,
-#                       criterion: nn.Module,
-#                       optimizer: optim.Optimizer,
-#                       device: torch.device,
-#                       epochs: int = 1,
-#                       max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
-#
-#     logging.info(f"--- ⚡️ Running with CORRECTED GradScaler + Autocast ---")
-#     model.train()
-#     batch_losses_all = []
-#     scaler = GradScaler()
-#
-#     if not train_loader or len(train_loader) == 0:
-#         logging.warning("train_loader is empty or None. Skipping training.")
-#         return model, None
-#
-#     for epoch in range(epochs):
-#         for batch_idx, batch_data in enumerate(train_loader):
-#             try:
-#                 if len(batch_data) == 3:  # Text data
-#                     labels, data, _ = batch_data
-#                 else:  # Image/Tabular
-#                     data, labels = batch_data
-#
-#                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
-#
-#                 if torch.isnan(data).any() or torch.isinf(data).any():
-#                     logging.error(f"❌ Corrupt data in batch {batch_idx}. Skipping.")
-#                     continue
-#
-#                 optimizer.zero_grad()
-#
-#                 # --- THIS IS THE FIX ---
-#                 # 'autocast' should ONLY wrap the forward pass.
-#                 with autocast():
-#                     outputs = model(data)
-#                     loss = criterion(outputs, labels)
-#                 # --- END OF FIX ---
-#
-#                 if not torch.isfinite(loss):
-#                     logging.warning(f"Non-finite loss ({loss.item()}) in batch {batch_idx}. Skipping update.")
-#                     continue
-#
-#                 # These operations must be OUTSIDE the autocast block
-#                 scaler.scale(loss).backward()
-#                 scaler.unscale_(optimizer)
-#                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
-#                 scaler.step(optimizer)
-#                 scaler.update()
-#
-#                 batch_losses_all.append(loss.item())
-#
-#             except Exception as e:
-#                 # Log the specific error for the batch
-#                 logging.warning(f"Error in batch {batch_idx}: {e}", exc_info=False)
-#                 continue
-#
-#     if not batch_losses_all:
-#         logging.warning("No batches were successfully processed.")
-#         return model, None
-#     else:
-#         overall_avg_loss = np.mean(batch_losses_all)
-#         logging.info(
-#             f"Finished local training. Total successful batches: {len(batch_losses_all)}. "
-#             f"Overall Avg Loss: {overall_avg_loss:.4f}"
-#         )
-#         return model, overall_avg_loss
 
 def compute_gradient_update(initial_model: nn.Module,
                             trained_model: nn.Module) -> List[torch.Tensor]:
