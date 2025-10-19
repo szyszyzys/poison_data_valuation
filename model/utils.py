@@ -35,15 +35,10 @@ def train_local_model(model: nn.Module,
                       device: torch.device,
                       epochs: int = 1,
                       max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
-    """
-    Trains a model locally using mixed-precision with GradScaler
-    to prevent optimizer instability (NaNs) during training.
-    """
+
     logging.info(f"--- ⚡️ Running with FULL GradScaler + Autocast ---")
     model.train()
     batch_losses_all = []
-
-    # Initialize the gradient scaler
     scaler = GradScaler()
 
     if not train_loader or len(train_loader) == 0:
@@ -60,39 +55,34 @@ def train_local_model(model: nn.Module,
 
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
 
-                # We already cleaned the data in get_tabular_dataset,
-                # but this is a final safety check.
                 if torch.isnan(data).any() or torch.isinf(data).any():
                     logging.error(f"❌ Corrupt data in batch {batch_idx}. Skipping.")
                     continue
 
                 optimizer.zero_grad()
 
-                # Wrap forward pass in 'autocast' for float16
+                # --- THIS IS THE FIX ---
+                # 'autocast' should ONLY wrap the forward pass.
                 with autocast():
                     outputs = model(data)
                     loss = criterion(outputs, labels)
+                # --- END OF FIX ---
 
                 if not torch.isfinite(loss):
                     logging.warning(f"Non-finite loss ({loss.item()}) in batch {batch_idx}. Skipping update.")
                     continue
 
-                # Scale the loss and call backward()
+                # These operations must be OUTSIDE the autocast block
                 scaler.scale(loss).backward()
-
-                # Unscale gradients before clipping
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
-
-                # scaler.step() checks for NaNs and skips optimizer step if found
                 scaler.step(optimizer)
-
-                # Update the scale for next iteration
                 scaler.update()
 
                 batch_losses_all.append(loss.item())
 
             except Exception as e:
+                # Log the specific error for the batch
                 logging.warning(f"Error in batch {batch_idx}: {e}", exc_info=False)
                 continue
 
@@ -106,7 +96,6 @@ def train_local_model(model: nn.Module,
             f"Overall Avg Loss: {overall_avg_loss:.4f}"
         )
         return model, overall_avg_loss
-
 
 def compute_gradient_update(initial_model: nn.Module,
                             trained_model: nn.Module) -> List[torch.Tensor]:
