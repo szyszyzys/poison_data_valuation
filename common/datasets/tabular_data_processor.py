@@ -107,10 +107,24 @@ def get_tabular_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[str, DataLoade
     # 3. Convert to PyTorch Datasets
     X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
     y_train_tensor = torch.tensor(y_train.values, dtype=torch.long)
+
+    # --- ADD THIS FIX ---
+    # Check for and clean NaN/Inf values created by the scaler
+    if torch.isnan(X_train_tensor).any() or torch.isinf(X_train_tensor).any():
+        logger.warning("NaN/Inf detected in training data after scaling. Cleaning with nan_to_num(0.0)...")
+        # Replaces all NaN, +Inf, and -Inf with 0.0
+        X_train_tensor = torch.nan_to_num(X_train_tensor, nan=0.0, posinf=0.0, neginf=0.0)
+
     train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
 
     X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
     y_test_tensor = torch.tensor(y_test.values, dtype=torch.long)
+
+    # --- AND ADD THIS FIX ---
+    if torch.isnan(X_test_tensor).any() or torch.isinf(X_test_tensor).any():
+        logger.warning("NaN/Inf detected in test data after scaling. Cleaning with nan_to_num(0.0)...")
+        X_test_tensor = torch.nan_to_num(X_test_tensor, nan=0.0, posinf=0.0, neginf=0.0)
+
     test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 
     input_dim = X_train_tensor.shape[1]

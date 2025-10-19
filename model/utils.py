@@ -61,9 +61,11 @@ def train_local_model(model: nn.Module,
                 # --- End Unpacking ---
 
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+
                 if torch.isnan(data).any() or torch.isinf(data).any():
-                    logging.error(f"❌ Corrupt data detected in batch {batch_idx}. Skipping.")
-                    continue
+                    logging.warning(f"Corrupt data in batch {batch_idx}. Cleaning with torch.nan_to_num...")
+                    # Replaces all NaN, +Inf, and -Inf with 0.0
+                    data = torch.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
                 optimizer.zero_grad()
 
                 ## <-- 3. WRAP FORWARD PASS IN 'autocast'
