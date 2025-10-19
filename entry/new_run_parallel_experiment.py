@@ -463,7 +463,9 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
         logger.info(
             f"📋 Found {len(filtered_config_files)} matching configurations (out of {len(all_config_files)} total)")
         all_config_files = filtered_config_files
-    # --- END: NEW FILTERING LOGIC ---
+        logger.info("--- List of Matched Core Configs: ---")
+        for f_path in all_config_files:
+            logger.info(f"  > {f_path}")
 
     elif config_filter:
         # (The rest of the function is the same as before)
