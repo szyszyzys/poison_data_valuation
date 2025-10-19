@@ -259,6 +259,44 @@ def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: 
             (run_save_path / ".failed").touch()
 
 
+def discover_configs_core(configs_base_dir: str) -> list:
+    """
+    Discover all config.yaml files that are two levels deep, inside
+    a specific experiment's subdirectory.
+    e.g., Finds: configs_base_dir/exp_name/sub_exp_name/config.yaml
+    e.g., Ignores: configs_base_dir/exp_name/sub_exp_name/run_0/config.yaml
+    """
+    all_config_files = []
+    base_dir_path = Path(configs_base_dir).resolve()
+    logger.info(f"🔍 Starting discovery in: {base_dir_path}")
+
+    try:
+        # Level 1: Iterate through experiment names (e.g., "main_summary_cifar100_cnn")
+        for exp_name in os.listdir(base_dir_path):
+            exp_dir_path = base_dir_path / exp_name
+            if not exp_dir_path.is_dir():
+                continue
+
+            # Level 2: Iterate through sub-experiments (e.g., "model-cnn_agg-fedavg...")
+            for sub_exp_name in os.listdir(exp_dir_path):
+                sub_exp_dir_path = exp_dir_path / sub_exp_name
+                if not sub_exp_dir_path.is_dir():
+                    continue
+
+                # Check for the config.yaml at this level
+                config_file_path = sub_exp_dir_path / "config.yaml"
+                if config_file_path.is_file():
+                    all_config_files.append(str(config_file_path))
+                # Do NOT go deeper (e.g., into run_0_seed_42)
+
+    except FileNotFoundError:
+        logger.error(f"Config directory not found: {configs_base_dir}")
+        return []
+
+    logger.info(f"Discovered {len(all_config_files)} config files.")
+    return sorted(all_config_files)
+
+
 def discover_configs(configs_base_dir: str) -> list:
     """Discover all config.yaml files in the directory tree."""
     all_config_files = [
@@ -306,7 +344,10 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
     """
     Main function to orchestrate parallel execution of experiments.
     """
-    all_config_files = discover_configs(configs_base_dir)
+    if core_only:
+        all_config_files = discover_configs_core(configs_base_dir)
+    else:
+        all_config_files = discover_configs(configs_base_dir)
     if not all_config_files:
         logger.warning(f"❌ No config.yaml files found in {configs_base_dir}. Exiting.")
         return
@@ -323,11 +364,14 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
         core_exp_set = set(CORE_EXPERIMENTS)  # Use a set for fast O(1) lookups
 
         for path in all_config_files:
-            # Assumes config.yaml is in a folder named after the experiment
-            # e.g., .../configs_generated/sybil_mimic_cifar10_cnn/config.yaml
-            exp_name = Path(path).parent.name
+            exp_name = Path(path).parent.parent.name
+            # =================================
+
             if exp_name in core_exp_set:
                 filtered_config_files.append(path)
+            else:
+                # This log is helpful for debugging
+                logger.debug(f"  Skipping (core_only): {exp_name} (from path {path})")
 
         if not filtered_config_files:
             logger.warning(f"❌ No config files matched the CORE_EXPERIMENTS list.")
