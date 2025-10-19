@@ -21,7 +21,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.cuda.amp import GradScaler, autocast  ## <-- 1. IMPORT THESE
+from torch.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 
 # from model.text_model import TEXTCNN
