@@ -192,6 +192,31 @@ def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: 
                 raise
 
 
+def run_task_list_serially(tasks_for_one_gpu):
+    """
+    A target function for a single process to run a list of tasks one by one.
+    """
+    if not tasks_for_one_gpu:
+        return
+
+    # Get the GPU ID from the first task
+    # All tasks in this list *should* have the same GPU ID
+    gpu_id = tasks_for_one_gpu[0][4]
+    pid = os.getpid()
+    logger.info(f"[Process {pid} | GPU {gpu_id}] Starting. Will run {len(tasks_for_one_gpu)} tasks serially.")
+
+    for task_args in tasks_for_one_gpu:
+        try:
+            # Unpack arguments: (config_path, run_id, sample_idx, seed, gpu_id, force_rerun)
+            run_single_experiment(*task_args)
+        except Exception as e:
+            # Log the error for this specific task but continue to the next one
+            logger.error(f"[Process {pid} | GPU {gpu_id}] FAILED Task {task_args[0]} (Run {task_args[1]}): {e}",
+                         exc_info=False)
+
+    logger.info(f"[Process {pid} | GPU {gpu_id}] Completed all tasks.")
+
+
 def setup_gpu_allocation(num_processes: int, gpu_ids_str: str = None):
     """
     Determine GPU allocation strategy and set CUDA_VISIBLE_DEVICES at parent level.
@@ -205,7 +230,7 @@ def setup_gpu_allocation(num_processes: int, gpu_ids_str: str = None):
         # SET CUDA_VISIBLE_DEVICES AT PARENT LEVEL BEFORE ANY TORCH OPERATIONS
         os.environ['CUDA_VISIBLE_DEVICES'] = gpu_ids_str
         logger.info(f"🎯 Set CUDA_VISIBLE_DEVICES='{gpu_ids_str}' at parent level")
-        logger.info(f"🔧 Physical GPUs {physical_gpu_ids} will appear as cuda:0 to cuda:{len(physical_gpu_ids)-1}")
+        logger.info(f"🔧 Physical GPUs {physical_gpu_ids} will appear as cuda:0 to cuda:{len(physical_gpu_ids) - 1}")
 
         # Now children will see GPUs as 0, 1, 2, ... (remapped)
         assigned_gpu_ids = list(range(len(physical_gpu_ids)))
@@ -225,6 +250,7 @@ def setup_gpu_allocation(num_processes: int, gpu_ids_str: str = None):
         logger.info(f"💻 No GPUs available. Running {actual_num_processes} processes on CPU.")
 
     return actual_num_processes, assigned_gpu_ids
+
 
 def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, seed: int,
                                 gpu_id: int = None, force_rerun: bool = False, attempt: int = 0):
@@ -449,11 +475,34 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
     else:
         logger.info(f"📋 Running all {len(all_config_files)} configurations (no filter applied)")
 
+    # This function is now defined TWICE in your script. We'll use the one at the top.
+    # We call setup_gpu_allocation from line 193
     actual_num_processes, assigned_gpu_ids = setup_gpu_allocation(num_processes, gpu_ids_str)
 
     # === Build the full list of individual run tasks ===
-    tasks = []
+
+    # --- START OF MODIFICATION ---
+
+    # Create N task lists, one for each GPU (or process if on CPU)
+    if assigned_gpu_ids:
+        tasks_by_gpu = {gpu_id: [] for gpu_id in assigned_gpu_ids}
+        # Use the *remapped* IDs (0, 1, 2...) for task assignment logic
+        remapped_gpu_ids = list(range(len(assigned_gpu_ids)))
+        logger.info(f"Task assignment will use remapped IDs: {remapped_gpu_ids}")
+    else:
+        # CPU-only fallback
+        tasks_by_gpu = {i: [] for i in range(actual_num_processes)}
+        remapped_gpu_ids = list(range(actual_num_processes))
+        logger.info(f"Task assignment will use virtual CPU process IDs: {remapped_gpu_ids}")
+
+    num_resources = len(remapped_gpu_ids) if assigned_gpu_ids else actual_num_processes
+
+    if num_resources == 0 and len(all_config_files) > 0:
+        logger.error("❌ Error: GPU IDs provided, but no processes could be allocated. Check setup_gpu_allocation.")
+        return
+
     run_counter = 0
+    task_counter = 0
     for config_path in all_config_files:
         temp_cfg = load_config(config_path)
         initial_seed = temp_cfg.seed
@@ -462,27 +511,58 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
         for i in range(n_samples):
             run_counter += 1
             current_seed = initial_seed + i
-            # FIX: Use None for CPU, not run_id
-            if assigned_gpu_ids:
-                current_gpu_id = assigned_gpu_ids[len(tasks) % len(assigned_gpu_ids)]
-            else:
-                current_gpu_id = None  # Changed from run_id
-            tasks.append((config_path, run_counter, i + 1, current_seed, current_gpu_id, force_rerun))
 
+            # Assign task to a GPU queue in round-robin
+            queue_idx = task_counter % num_resources
+
+            # Get the remapped ID (e.g., 0, 1, or 2)
+            current_gpu_id = remapped_gpu_ids[queue_idx] if assigned_gpu_ids else None
+
+            task = (config_path, run_counter, i + 1, current_seed, current_gpu_id, force_rerun)
+
+            # Add task to the correct GPU's dedicated list
+            tasks_by_gpu[current_gpu_id].append(task)
+
+            task_counter += 1
+
+    total_tasks = task_counter
     logger.info(f"{'=' * 60}")
-    logger.info(f"🚀 Starting parallel execution:")
-    logger.info(f"   - Total Individual Runs: {len(tasks)}")
-    logger.info(f"   - Parallel Processes: {actual_num_processes}")
-    logger.info(f"   - GPUs: {assigned_gpu_ids if assigned_gpu_ids else 'CPU only'}")
+    logger.info(f"🚀 Starting parallel execution (1-to-1 Process-per-Resource):")
+    logger.info(f"   - Total Individual Runs: {total_tasks}")
+    logger.info(f"   - Parallel Processes: {num_resources}")
+    logger.info(f"   - GPUs (Remapped): {remapped_gpu_ids if assigned_gpu_ids else 'CPU only'}")
     logger.info(f"   - Force Rerun: {force_rerun}")
     logger.info(f"{'=' * 60}")
-    logger.info("--- Tasks to be executed (config, run_id, sample_idx, seed, gpu_id, force_rerun): ---")
-    for task in tasks:
-        logger.info(f"    {task}")
+    logger.info("--- Tasks assigned per resource: ---")
+    for gpu_id, task_list in tasks_by_gpu.items():
+        logger.info(f"    Resource ID {gpu_id}: {len(task_list)} tasks")
     logger.info("--- End Tasks ---")
 
-    with NestablePool(processes=actual_num_processes) as pool:
-        pool.starmap(run_single_experiment, tasks)
+    # Launch one process for each task list
+    processes = []
+
+    # We must use os.environ['CUDA_VISIBLE_DEVICES'] from the PARENT
+    # The setup_gpu_allocation function (line 193) should have already set this.
+    if 'CUDA_VISIBLE_DEVICES' not in os.environ and gpu_ids_str:
+        logger.warning("!! CUDA_VISIBLE_DEVICES not set by setup_gpu_allocation. This might fail.")
+        os.environ['CUDA_VISIBLE_DEVICES'] = gpu_ids_str
+
+    for gpu_id in (remapped_gpu_ids if assigned_gpu_ids else tasks_by_gpu.keys()):
+        task_list_for_gpu = tasks_by_gpu[gpu_id]
+        if not task_list_for_gpu:
+            logger.info(f"No tasks for resource {gpu_id}, skipping.")
+            continue
+
+        # Use the NoDaemonProcess from your script
+        p = NoDaemonProcess(target=run_task_list_serially, args=(task_list_for_gpu,))
+        processes.append(p)
+        p.start()
+
+    # Wait for all processes to finish
+    for p in processes:
+        p.join()
+
+    # --- END OF MODIFICATION ---
 
     logger.info("🎉 All parallel experiments completed!")
 
