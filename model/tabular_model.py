@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import yaml
 
-from marketplace.utils.model_utils import init_weights
+from marketplace.utils.model_utils import init_weights, _log_param_stats
 from model.image_model import BaseModelConfig
 
 
@@ -196,6 +196,7 @@ class ConfigurableTabularMLP(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.layers(x)
 
+
 class TabularModelFactory:
     """Factory class for creating configurable tabular models."""
 
@@ -214,24 +215,34 @@ class TabularModelFactory:
         else:
             raise ValueError(f"Unknown tabular model name: {model_name}")
 
-        # --- THIS IS THE FIX: SWAP THESE TWO BLOCKS ---
+        # --- DEBUG LOG 1: Check state right after creation (on CPU) ---
+        logging.info("--- Model created on CPU ---")
+        _log_param_stats(model, "layers.0.weight", "Initial CPU")
+
+        # 1. APPLY STABLE INIT *FIRST* (on the CPU)
         logging.info("--- ⚡️ Applying STABLE init BEFORE move to device ---")
-        # 1. APPLY YOUR STABLE INIT *FIRST* (on the CPU)
-        # This overwrites the buggy default init with safe, bounded values
-        model.apply(init_weights)  # <-- DO THIS FIRST
+        model.apply(init_weights)
+
+        # --- DEBUG LOG 2: Check state after init (still on CPU) ---
+        logging.info("--- STABLE init applied on CPU ---")
+        _log_param_stats(model, "layers.0.weight", "After init_weights (CPU)")
 
         # 2. MOVE TO DEVICE *SECOND*
-        # The small, safe float32 weights will cast to float16 perfectly
-        model = model.to(device)  # <-- DO THIS SECOND
+        model = model.to(device)
 
-        # --- END OF FIX ---
+        # --- DEBUG LOG 3: Check state after move (on GPU) ---
+        logging.info(f"--- Model moved to {device} ---")
+        _log_param_stats(model, "layers.0.weight", f"After .to({device})")
 
-        # 3. VERIFY (This part will now pass)
+        # 3. VERIFY
         for name, param in model.named_parameters():
             if torch.isnan(param).any() or torch.isinf(param).any():
-                # This error will no longer be raised
+                # --- DEBUG LOG 4: This is the failure point ---
+                logging.error(f"--- ❌ VERIFICATION FAILED FOR {name} ---")
+                _log_param_stats(model, name, "FAILURE")
                 raise RuntimeError(f"NaN/Inf in '{name}' after universal init!")
 
+        logging.info("--- ✅ Model verification PASSED ---")
         return model
 
     @staticmethod

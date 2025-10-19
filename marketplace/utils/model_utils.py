@@ -1,26 +1,48 @@
+import logging
+
+import torch
 from torch import nn
 
 
+def _log_param_stats(model: nn.Module, param_name: str, stage: str):
+    """Helper function to log the stats of a specific parameter."""
+    try:
+        # Find the parameter by name
+        param = dict(model.named_parameters())[param_name]
+        stats = {
+            "device": param.device,
+            "dtype": param.dtype,
+            "min": param.min().item(),
+            "max": param.max().item(),
+            "mean": param.mean().item(),
+            "has_nan": torch.isnan(param).any().item(),
+            "has_inf": torch.isinf(param).any().item(),
+        }
+        logging.info(f"--- STATS ({stage}) for '{param_name}': {stats}")
+    except KeyError:
+        logging.warning(f"--- STATS ({stage}): Could not find param '{param_name}'.")
+    except Exception as e:
+        logging.error(f"--- STATS ({stage}): Error logging stats for '{param_name}': {e}")
+
+# (This should be imported if it's in a different file)
 def init_weights(m):
     """
     Applies the correct weight initialization to different layer types.
-    THIS IS THE FIX.
     """
     if isinstance(m, (nn.Linear, nn.Conv2d)):
-        # Kaiming (He) uniform initialization for ReLU
-        # This is bounded and CANNOT create Inf
+        # --- ADD THIS LOG ---
+        logging.info(f"--- ⚡️ Applying Kaiming Uniform to: {m}")
         nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
         if m.bias is not None:
             nn.init.constant_(m.bias, 0)
 
     elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.GroupNorm)):
-        # Initialize BatchNorm/GroupNorm weights to 1 and biases to 0
+        # --- ADD THIS LOG ---
+        logging.info(f"--- ⚡️ Initializing BatchNorm: {m}")
         nn.init.constant_(m.weight, 1)
         nn.init.constant_(m.bias, 0)
 
     elif isinstance(m, nn.Embedding):
-        # Initialize Embedding weights with a normal distribution
         nn.init.normal_(m.weight, mean=0.0, std=1.0)
         if m.padding_idx is not None:
-            # Set the padding token embedding to all zeros
             nn.init.constant_(m.weight[m.padding_idx], 0)
