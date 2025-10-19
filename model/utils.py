@@ -35,57 +35,6 @@ def train_local_model(model: nn.Module,
                       device: torch.device,
                       epochs: int = 1,
                       max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
-    # You can keep your new log message here
-    logging.info(f"--- ⚡️ Running with CORRECTED GradScaler + Autocast ---")
-    model.train()
-    batch_losses_all = []
-    scaler = GradScaler()
-
-    if not train_loader or len(train_loader) == 0:
-        logging.warning("train_loader is empty or None. Skipping training.")
-        return model, None
-
-    for epoch in range(epochs):
-        for batch_idx, batch_data in enumerate(train_loader):
-            try:
-                if len(batch_data) == 3:  # Text data
-                    labels, data, _ = batch_data
-                else:  # Image/Tabular
-                    data, labels = batch_data
-
-                data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
-
-                if torch.isnan(data).any() or torch.isinf(data).any():
-                    logging.error(f"❌ Corrupt data in batch {batch_idx}. Skipping.")
-                    continue
-
-                # --- THIS IS THE CORRECT LOGIC ---
-
-                optimizer.zero_grad()
-
-                # 1. 'autocast' ONLY wraps the forward pass
-                with autocast():
-                    outputs = model(data)
-                    loss = criterion(outputs, labels)
-
-                if not torch.isfinite(loss):
-                    logging.warning(f"Non-finite loss ({loss.item()}) in batch {batch_idx}. Skipping update.")
-                    continue
-
-                # 2. Backward pass and optimizer steps are OUTSIDE autocast
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
-                scaler.step(optimizer)
-
-
-def train_local_model(model: nn.Module,
-                      train_loader: DataLoader,
-                      criterion: nn.Module,
-                      optimizer: optim.Optimizer,
-                      device: torch.device,
-                      epochs: int = 1,
-                      max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
     logging.info(f"--- ⚡️ Running with CORRECTED GradScaler + Autocast ---")
     model.train()
     batch_losses_all = []
