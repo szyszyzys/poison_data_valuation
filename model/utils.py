@@ -64,6 +64,7 @@ def train_local_model(model: nn.Module,
 
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
 
+                # Check input data
                 if torch.isnan(data).any() or torch.isinf(data).any():
                     logging.error(f"❌ Corrupt data in batch {batch_idx}. Skipping.")
                     continue
@@ -73,6 +74,12 @@ def train_local_model(model: nn.Module,
                 # Autocast ONLY wraps the forward pass
                 with autocast(device_type=device.type, enabled=use_amp):
                     outputs = model(data)
+
+                    # Check outputs BEFORE loss calculation
+                    if torch.isnan(outputs).any() or torch.isinf(outputs).any():
+                        logging.error(f"❌ Model outputs NaN/Inf in batch {batch_idx}. Output stats: min={outputs.min():.4f}, max={outputs.max():.4f}")
+                        continue
+
                     loss = criterion(outputs, labels)
 
                 if not torch.isfinite(loss):
@@ -98,8 +105,10 @@ def train_local_model(model: nn.Module,
                 continue
 
     if not batch_losses_all:
-        logging.warning("No batches were successfully processed.")
-        return model, None
+        logging.error("❌ CRITICAL: No batches were successfully processed. This indicates severe training instability.")
+        logging.error("   Possible causes: (1) Input data not normalized, (2) Learning rate too high, (3) Model architecture issue")
+        # Return model with a dummy loss instead of None to prevent crashes
+        return model, float('inf')  # Changed from None
     else:
         overall_avg_loss = np.mean(batch_losses_all)
         logging.info(
@@ -321,7 +330,7 @@ def get_text_model(
     model: nn.Module
 
     # --- 1. Instantiate the model on CPU ---
-    target_device = torch.device(device) if device else torch.device('cpu') # Determine target device early
+    target_device = torch.device(device) if device else torch.device('cpu')  # Determine target device early
 
     match dataset_name.lower():
         case "ag_news" | "trec":
@@ -361,7 +370,7 @@ def get_text_model(
     # --- 4. MOVE TO DEVICE *SECOND* ---
     model = model.to(target_device)
     logging.info(f"--- Text Model moved to {target_device} ---")
-    log_dtype = model.embedding.weight.dtype # Get actual dtype after move
+    log_dtype = model.embedding.weight.dtype  # Get actual dtype after move
     _log_param_stats(model, "embedding.weight", f"After .to({target_device}) ({log_dtype})")
 
     # --- 5. VERIFY ---
