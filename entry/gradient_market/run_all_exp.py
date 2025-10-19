@@ -655,6 +655,17 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
     save_path = Path(cfg.experiment.save_path)
     log_path = save_path / "training_log.csv"
 
+    # --- UPDATED INITIALIZATION ---
+    # Initialize CSV with ALL desired headers if it doesn't exist
+    if not log_path.exists():
+        try:
+            # Use the defined list to create the header
+            pd.DataFrame(columns=TRAINING_LOG_COLUMNS).to_csv(
+                log_path, index=False
+            )
+        except Exception as e:
+            logging.error(f"Failed to initialize {log_path} with header: {e}")
+
     # --- 1. EARLY STOPPING INITIALIZATION ---
     patience = cfg.experiment.patience
     patience_counter = 0
@@ -748,81 +759,57 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
 
 
 _csv_headers_cache = {}
+TRAINING_LOG_COLUMNS = [
+    # Core Round Info
+    'round',
+    'timestamp',
+    'duration_sec',
+    # Aggregation/Selection Summary
+    'num_total_sellers',
+    'num_selected',
+    'num_outliers',
+    'selection_rate',
+    'outlier_rate',
+    # Defense Performance (Key Indicators)
+    'adversary_detection_rate',  # Populated by MartFL/FLTrust, NaN otherwise
+    'false_positive_rate',  # Populated by MartFL/FLTrust, NaN otherwise
+    # Validation Metrics (If Early Stopping Used)
+    'val_loss',  # Populated if validation runs, NaN otherwise
+    'val_acc',  # Populated if validation runs, NaN otherwise (use your actual key if different)
+    # Optional: Average Gradient Norm
+    'avg_gradient_norm',
+]
 
 
 def save_round_incremental(round_record: Dict, save_path: Path):
     """
-    Saves the full round_record dictionary incrementally, dynamically handling
-    potentially varying columns by maintaining a known header in memory.
-    Appends empty strings for missing values relative to the full known header.
+    Saves only the predefined TRAINING_LOG_COLUMNS from the round_record
+    to training_log.csv incrementally.
     """
     log_path = Path(save_path) / "training_log.csv"
-    log_path_str = str(log_path)  # Use string for cache key
 
     try:
-        current_columns = list(round_record.keys())
+        # 1. Select only the desired columns, using .get() for safety
+        #    Use None (which becomes NaN in Pandas) if a key is missing.
+        filtered_record = {
+            col: round_record.get(col, None) for col in TRAINING_LOG_COLUMNS
+        }
 
-        # --- Determine the full header ---
-        master_header = None
-        is_new_file = not log_path.exists() or log_path.stat().st_size == 0
+        # 2. Create DataFrame using the defined columns to ensure order and structure
+        df = pd.DataFrame([filtered_record], columns=TRAINING_LOG_COLUMNS)
 
-        if log_path_str in _csv_headers_cache:
-            master_header = _csv_headers_cache[log_path_str]
-        elif not is_new_file:
-            # Try reading header from existing file if not in cache
-            try:
-                with open(log_path, 'r', newline='') as f:
-                    reader = csv.reader(f)
-                    header_from_file = next(reader)
-                    master_header = header_from_file
-                    _csv_headers_cache[log_path_str] = master_header  # Store in cache
-            except (StopIteration, pd.errors.EmptyDataError):
-                logging.warning(f"{log_path} exists but seems empty/corrupt. Will write new header.")
-                is_new_file = True  # Treat as new file
-            except Exception as e:
-                logging.error(f"Error reading header from {log_path}: {e}. Will attempt to write.")
-                # Decide how to handle - maybe overwrite? For now, assume we append blindly.
-                pass  # Let DictWriter handle it below if possible
+        # 3. Append to existing file or create new
+        file_exists = log_path.exists() and log_path.stat().st_size > 0
 
-        if master_header is None:  # If still None (new file or failed read)
-            master_header = current_columns  # Use current keys as header
-            _csv_headers_cache[log_path_str] = master_header
-
-        # --- Check for and incorporate new columns ---
-        new_columns = set(current_columns) - set(master_header)
-        if new_columns:
-            logging.warning(
-                f"New columns ({new_columns}) detected in round {round_record.get('round', 'N/A')} for {log_path}. "
-                f"Appending with expanded header list. CSV readers might need adjustment."
-            )
-            # Add new columns to the master list for this file
-            master_header.extend(sorted(list(new_columns)))  # Add sorted for consistency
-            _csv_headers_cache[log_path_str] = master_header  # Update cache
-
-        # --- Write using csv.DictWriter for robustness ---
-        try:
-            # Open in append mode ('a'), create if doesn't exist (+)
-            with open(log_path, 'a+', newline='') as f:
-                # Use the master header for the writer
-                writer = csv.DictWriter(f, fieldnames=master_header, restval='', extrasaction='ignore')
-
-                # Write header only if the file is effectively empty
-                f.seek(0, os.SEEK_END)  # Go to end
-                is_empty = f.tell() == 0  # Check if position is 0 (empty file)
-                if is_empty:
-                    writer.writeheader()
-
-                # Prepare row using only keys present in the master header
-                # DictWriter automatically handles missing keys based on fieldnames
-                writer.writerow(round_record)
-
-        except Exception as e:
-            logging.error(f"Error writing round {round_record.get('round', 'N/A')} using DictWriter to {log_path}: {e}")
-
+        df.to_csv(
+            log_path,
+            mode='a',  # Always append
+            header=not file_exists,  # Write header only if file doesn't exist yet (or is empty)
+            index=False
+        )
     except Exception as e:
-        # Catch errors during initial processing
-        logging.error(f"Error processing round_record for round {round_record.get('round', 'N/A')} before saving: {e}")
-        logging.error(f"Round Record Keys: {list(round_record.keys())}")
+        logger.error(f"Error writing round {round_record.get('round', 'N/A')} to {log_path}: {e}")
+        logger.error(f"Available keys in round_record: {list(round_record.keys())}")
 
 
 def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, model_factory):
