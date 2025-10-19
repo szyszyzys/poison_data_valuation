@@ -25,6 +25,7 @@ from torch.amp import autocast
 from torch.cuda.amp import GradScaler
 from torch.utils.data import DataLoader
 
+from marketplace.utils.model_utils import _log_param_stats, init_weights
 # from model.text_model import TEXTCNN
 from model.models import LeNet, TextCNN, SimpleCNN
 
@@ -313,29 +314,62 @@ def get_text_model(
         num_classes: int,
         vocab_size: Optional[int] = None,
         padding_idx: Optional[int] = None,
-        device: Optional[Union[str, torch.device]] = None,  # Added device
+        device: Optional[Union[str, torch.device]] = None,
         **model_kwargs: Any
 ) -> nn.Module:
-    print(f"Getting model for dataset: {dataset_name}")
+    print(f"🧠 Creating text model for dataset: {dataset_name}")
     model: nn.Module
+
+    # --- 1. Instantiate the model on CPU ---
+    target_device = torch.device(device) if device else torch.device('cpu') # Determine target device early
+
     match dataset_name.lower():
         case "ag_news" | "trec":
-            if vocab_size is None: raise ValueError("`vocab_size` is required for TextCNN model.")
-            if padding_idx is None: raise ValueError("`padding_idx` is required for TextCNN model.")
+            if vocab_size is None: raise ValueError("`vocab_size` required.")
+            if padding_idx is None: raise ValueError("`padding_idx` required.")
             embed_dim = model_kwargs.get("embed_dim", 100)
             num_filters = model_kwargs.get("num_filters", 100)
             filter_sizes = model_kwargs.get("filter_sizes", [3, 4, 5])
             dropout = model_kwargs.get("dropout", 0.5)
-            if not isinstance(filter_sizes, list): raise TypeError(
-                f"Expected 'filter_sizes' to be a list, got {type(filter_sizes)}")
+            if not isinstance(filter_sizes, list): raise TypeError("'filter_sizes' must be a list")
+
+            # Create on CPU
             model = TextCNN(
                 vocab_size=vocab_size, embed_dim=embed_dim, num_filters=num_filters,
                 filter_sizes=filter_sizes, num_class=num_classes, dropout=dropout,
                 padding_idx=padding_idx
             )
         case _:
-            raise NotImplementedError(f"Cannot find a model for dataset {dataset_name}")
+            raise NotImplementedError(f"Model not found for dataset {dataset_name}")
 
-    if device:  # Apply device if specified
-        model.to(torch.device(device) if isinstance(device, str) else device)
+    logging.info("--- Text Model created on CPU ---")
+    # Log stats for the embedding layer, as it's critical for text
+    _log_param_stats(model, "embedding.weight", "Initial CPU (float32)")
+
+    # --- 2. APPLY STABLE INIT *FIRST* (on CPU) ---
+    logging.info("--- ⚡️ Applying STABLE init (CPU) ---")
+    model.apply(init_weights)
+    _log_param_stats(model, "embedding.weight", "After init_weights (float32)")
+
+    # --- 3. Manually cast to float16 ON THE CPU (Workaround) ---
+    # Only do this if the target device is CUDA (implies float16 desired)
+    if target_device.type == 'cuda':
+        model = model.half()
+        logging.info(f"--- Text Model cast to .half() on CPU ---")
+        _log_param_stats(model, "embedding.weight", "After .half() (CPU, float16)")
+
+    # --- 4. MOVE TO DEVICE *SECOND* ---
+    model = model.to(target_device)
+    logging.info(f"--- Text Model moved to {target_device} ---")
+    log_dtype = model.embedding.weight.dtype # Get actual dtype after move
+    _log_param_stats(model, "embedding.weight", f"After .to({target_device}) ({log_dtype})")
+
+    # --- 5. VERIFY ---
+    for name, param in model.named_parameters():
+        if torch.isnan(param).any() or torch.isinf(param).any():
+            logging.error(f"--- ❌ VERIFICATION FAILED FOR {name} ---")
+            _log_param_stats(model, name, "FAILURE")
+            raise RuntimeError(f"NaN/Inf in parameter '{name}' after initialization!")
+
+    logging.info("--- ✅ Text Model verification PASSED ---")
     return model

@@ -58,9 +58,18 @@ def setup_data_and_model(cfg: AppConfig, device):
             logging.error("get_text_dataset returned empty seller_loaders!")
             raise ValueError("get_text_dataset returned no sellers. Check data partitioning.")
 
-        model_init_cfg = {"num_classes": num_classes, "vocab_size": len(vocab), "padding_idx": pad_idx,
-                          "dataset_name": dataset_name}
-        model_factory = lambda: get_text_model(model_name=cfg.experiment.model_structure, **model_init_cfg)
+        model_init_cfg = {
+            "dataset_name": dataset_name,  # Use dataset_name for the match case
+            "num_classes": num_classes,
+            "vocab_size": len(vocab),
+            "padding_idx": pad_idx,
+            "device": cfg.experiment.device  # <-- PASS THE DEVICE HERE
+            # You can also pass other specific model_kwargs from cfg if needed
+            # "embed_dim": cfg.model.text.embed_dim,
+        }
+        # The factory now correctly passes the device
+        model_factory = lambda: get_text_model(**model_init_cfg)
+
         seller_extra_args = {"vocab": vocab, "pad_idx": pad_idx}
 
     elif dataset_type == "image":
