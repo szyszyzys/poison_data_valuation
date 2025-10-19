@@ -41,7 +41,7 @@ def train_local_model(model: nn.Module,
     """
     model.train()
     batch_losses_all = []
-
+    logging.info("--- ⚡️ GradScaler is ACTIVE in this training loop ---")
     ## <-- 2. INITIALIZE THE GRADIENT SCALER
     scaler = GradScaler()
 
