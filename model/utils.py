@@ -39,6 +39,7 @@ def train_local_model(model: nn.Module,
     Trains a model locally using mixed-precision with GradScaler
     to prevent optimizer instability (NaNs) during training.
     """
+    logging.info(f"--- ⚡️ Running with FULL GradScaler + Autocast ---")
     model.train()
     batch_losses_all = []
 
