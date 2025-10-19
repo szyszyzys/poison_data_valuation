@@ -200,16 +200,45 @@ class TabularModelFactory:
 
     @staticmethod
     def create_model(model_name: str, input_dim: int, num_classes: int,
-                     config: TabularModelConfig) -> nn.Module:
+                     config: TabularModelConfig,
+                     device: str = 'cpu') -> nn.Module:  # <-- ADDED device parameter
         """Create a tabular model based on configuration."""
         print(f"🧠 Creating configurable tabular model '{model_name}' with config '{config.config_name}'...")
 
+        model = None
         if model_name.lower() == 'tabularmlp':
-            return ConfigurableTabularMLP(input_dim, num_classes, config)
+            model = ConfigurableTabularMLP(input_dim, num_classes, config)
         elif model_name.lower() == 'tabularresnet':
-            return ConfigurableTabularResNet(input_dim, num_classes, config)
+            model = ConfigurableTabularResNet(input_dim, num_classes, config)
         else:
             raise ValueError(f"Unknown tabular model name: {model_name}")
+
+        # --- MOVE TO DEVICE IMMEDIATELY ---
+        model = model.to(device)
+
+        # --- APPLY STABLE INITIALIZATION ON THE CORRECT DEVICE ---
+        # This is the critical fix to prevent NaN/Inf in float16
+        for m in model.modules():
+            if isinstance(m, nn.Linear):
+                # USE UNIFORM: This is bounded and will not produce Inf
+                nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                # Re-initialize BatchNorm stats on the correct device
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+                if hasattr(m, 'running_mean'):
+                    m.running_mean.zero_()
+                if hasattr(m, 'running_var'):
+                    m.running_var.fill_(1)
+
+        # --- VERIFY (Optional but recommended) ---
+        for name, param in model.named_parameters():
+            if torch.isnan(param).any() or torch.isinf(param).any():
+                raise RuntimeError(f"NaN/Inf in parameter '{name}' after device transfer to {device}")
+
+        return model
 
     @staticmethod
     def save_model_and_config(model: nn.Module, config: TabularModelConfig,
@@ -232,7 +261,8 @@ class TabularModelFactory:
 
     @staticmethod
     def load_model_and_config(save_dir: str, model_name: str, input_dim: int,
-                              num_classes: int) -> tuple:
+                              num_classes: int,
+                              device: str = 'cpu') -> tuple:  # <-- ADDED device parameter
         """Load tabular model state and configuration."""
         save_path = Path(save_dir)
 
@@ -243,13 +273,17 @@ class TabularModelFactory:
         config = TabularModelConfig(**config_dict)
 
         # Create model
+        # NOTE: create_model now handles initialization and device placement
         model = TabularModelFactory.create_model(
-            config.model_name, input_dim, num_classes, config
+            config.model_name, input_dim, num_classes, config, device=device
         )
 
         # Load model state
         model_path = save_path / f"{model_name}.pth"
-        model.load_state_dict(torch.load(model_path, map_location='cpu'))
+        model.load_state_dict(torch.load(model_path, map_location=device))
+
+        # Ensure model is on the correct device after loading state
+        model = model.to(device)
 
         print(f"📂 Loaded tabular model and config from {save_path}")
         return model, config

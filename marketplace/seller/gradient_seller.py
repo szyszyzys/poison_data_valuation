@@ -166,7 +166,6 @@ def estimate_byte_size(data: Any) -> int:
 def validate_and_fix_model_initialization(model: nn.Module) -> bool:
     """
     Check for and fix NaN/Inf values in model parameters.
-    This is often needed when initializing models directly in float16.
     Returns True if model is valid, otherwise raises a RuntimeError.
     """
     problematic_params = []
@@ -178,10 +177,10 @@ def validate_and_fix_model_initialization(model: nn.Module) -> bool:
             problematic_params.append(name)
 
     if not problematic_params:
-        logging.info("✅ Model initialization is valid.")
+        # This path is not being hit, so we skip it
+        # logging.info("✅ Model initialization is valid.")
         return True
 
-    # If we have issues, attempt a full, STABLE reinitialization
     logging.warning(
         f"🔄 NaN/Inf detected. Attempting stable reinitialization for {len(problematic_params)} parameters..."
     )
@@ -189,7 +188,7 @@ def validate_and_fix_model_initialization(model: nn.Module) -> bool:
     def init_weights_stable(m):
         """Recursively initialize all layer weights using a stable method."""
         if isinstance(m, nn.Conv2d):
-            # USE UNIFORM: This is bounded and will not produce Inf in float16
+            # USE UNIFORM: This is bounded
             nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
@@ -201,19 +200,20 @@ def validate_and_fix_model_initialization(model: nn.Module) -> bool:
             if hasattr(m, 'running_var'):
                 m.running_var.fill_(1)
         elif isinstance(m, nn.Linear):
-            # USE UNIFORM: This is bounded and will not produce Inf in float16
+            # USE UNIFORM: This is bounded
             nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    # Apply stable initialization to all modules
+    # Apply stable initialization
     model.apply(init_weights_stable)
 
-    # Verify fix worked. If this fails, something is deeply wrong.
+    # Verify fix worked
     for name, param in model.named_parameters():
         if torch.isnan(param).any() or torch.isinf(param).any():
             error_msg = f"❌ CRITICAL: Still NaN/Inf in '{name}' after stable reinitialization. This is unrecoverable."
             logging.error(error_msg)
+            # This is what's raising your error
             raise RuntimeError(error_msg)
 
     logging.info("✅ Successfully fixed all NaN/Inf parameters with stable initialization.")
