@@ -177,36 +177,41 @@ def validate_and_fix_model_initialization(model: nn.Module) -> bool:
             problematic_params.append(name)
 
     if not problematic_params:
-        # This path is not being hit, so we skip it
-        # logging.info("✅ Model initialization is valid.")
         return True
 
     logging.warning(
         f"🔄 NaN/Inf detected. Attempting stable reinitialization for {len(problematic_params)} parameters..."
     )
 
-    def init_weights_stable(m):
-        """Recursively initialize all layer weights using a stable method."""
-        if isinstance(m, nn.Conv2d):
-            # USE UNIFORM: This is bounded
+    # -------------------- START OF FIX --------------------
+    #
+    # We will iterate over model.modules() directly instead of using model.apply()
+    # This is more explicit and fixes the bug.
+    #
+    for m in model.modules():
+        if isinstance(m, nn.Linear):
+            # USE UNIFORM: This is bounded and cannot create Inf
             nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.BatchNorm2d):
+
+        # --- THIS IS THE CRITICAL BUG FIX ---
+        # Your old code had nn.BatchNorm2d, but the model uses nn.BatchNorm1d
+        elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
             nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)
             if hasattr(m, 'running_mean'):
                 m.running_mean.zero_()
             if hasattr(m, 'running_var'):
                 m.running_var.fill_(1)
-        elif isinstance(m, nn.Linear):
-            # USE UNIFORM: This is bounded
+
+        elif isinstance(m, nn.Conv2d):
+            # Also handle Conv2d just in case
             nn.init.kaiming_uniform_(m.weight, mode='fan_out', nonlinearity='relu')
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    # Apply stable initialization
-    model.apply(init_weights_stable)
+    # -------------------- END OF FIX --------------------
 
     # Verify fix worked
     for name, param in model.named_parameters():
