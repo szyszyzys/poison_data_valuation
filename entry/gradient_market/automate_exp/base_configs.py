@@ -16,7 +16,7 @@ def get_base_image_config() -> AppConfig:
             device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="image",
             evaluations=["clean", "backdoor"],
         ),
-        training=TrainingConfig(local_epochs=2, batch_size=64, learning_rate=0.001),
+        training=TrainingConfig(local_epochs=2, batch_size=64, learning_rate=0.0001),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
         data=DataConfig(
@@ -46,7 +46,7 @@ def get_base_text_config() -> AppConfig:
             device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="text",
             evaluations=["clean", "backdoor"]
         ),
-        training=TrainingConfig(local_epochs=3, batch_size=32, learning_rate=0.001),
+        training=TrainingConfig(local_epochs=3, batch_size=32, learning_rate=0.0001),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
         data=DataConfig(
