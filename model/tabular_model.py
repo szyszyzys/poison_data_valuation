@@ -238,7 +238,7 @@ class TabularModelFactory:
             raise ValueError(f"Unknown tabular model name: {model_name}")
 
         # --- THIS IS THE FIX: SWAP THESE TWO BLOCKS ---
-
+        logging.info("--- ⚡️ Applying STABLE init BEFORE move to device ---")
         # 1. APPLY YOUR STABLE INIT *FIRST* (on the CPU)
         # This overwrites the buggy default init with safe, bounded values
         model.apply(init_weights)  # <-- DO THIS FIRST
