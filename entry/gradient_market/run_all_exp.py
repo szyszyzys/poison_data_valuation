@@ -747,6 +747,9 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
     # --- END FIX ---
 
 
+_csv_headers_cache = {}
+
+
 def save_round_incremental(round_record: Dict, save_path: Path):
     """
     Saves the full round_record dictionary incrementally, dynamically handling
