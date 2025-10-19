@@ -16,7 +16,14 @@ def get_base_image_config() -> AppConfig:
             device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="image",
             evaluations=["clean", "backdoor"],
         ),
-        training=TrainingConfig(local_epochs=2, batch_size=64, learning_rate=0.0001),
+        training=TrainingConfig(
+            local_epochs=2,
+            batch_size=64,
+            learning_rate=0.01,           # Changed: 0.0001 → 0.01 for SGD
+            optimizer="sgd",         # Added: Use SGD instead of Adam
+            momentum=0.9,                 # Added: Momentum for SGD
+            weight_decay=0.0001           # Added: Small regularization
+        ),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
         data=DataConfig(
@@ -31,9 +38,8 @@ def get_base_image_config() -> AppConfig:
         ),
         seed=42, n_samples=3,
         aggregation=AggregationConfig(
-            method="fedavg"  # Set the default method here
+            method="fedavg"
         ),
-
     )
 
 

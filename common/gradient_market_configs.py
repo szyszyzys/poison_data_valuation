@@ -56,11 +56,11 @@ class ExperimentConfig:
 class TrainingConfig:
     """Holds parameters specifically for local seller training."""
     local_epochs: int = 2  # Common default for FL
-    batch_size: int = 128  # Common default batch size
+    batch_size: int = 64  # Common default batch size
     learning_rate: float = 0.001  # Sensible default, especially if Adam is common
     optimizer: str = "Adam"  # Default optimizer
     momentum: float = 0.9  # Only used by SGD
-    weight_decay: float = 0.0
+    weight_decay: float = 0.0001
     eps: float = 1e-4
 
 
