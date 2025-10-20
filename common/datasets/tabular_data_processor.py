@@ -183,7 +183,7 @@ def get_tabular_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[str, DataLoade
         num_workers=num_workers
     )
     seller_loaders = {
-        f"seller_{cid}": DataLoader(
+        f"{cid}": DataLoader(
             Subset(train_dataset, indices),
             batch_size=batch_size,
             shuffle=True,

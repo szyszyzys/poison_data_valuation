@@ -54,26 +54,20 @@ CORE_EXPERIMENTS = [
 
     # --- 2. Sybil Attack Analysis ---
     "sybil_baseline_cifar10_cnn",
-    # "sybil_baseline_cifar10_resnet18",
     "sybil_knock_out_cifar10_cnn",
-    # "sybil_knock_out_cifar10_resnet18",
     "sybil_mimic_cifar10_cnn",
-    # "sybil_mimic_cifar10_resnet18",
     "sybil_pivot_cifar10_cnn",
-    # "sybil_pivot_cifar10_resnet18",
 
     # --- 3. Ablation Studies & Specific Analyses ---
     "oracle_vs_buyer_bias_cifar10_cnn",
     "buyer_data_impact_cifar10_cnn",
     "heterogeneity_impact_cifar10_cnn",
-    # "heterogeneity_impact_cifar10_resnet18",
     "selection_rate_baseline_cifar10_cnn",
     "selection_rate_cluster_cifar10_cnn",
     "trend_adv_rate_martfl_cifar10_cnn",
 
     # --- 4. Alternative Attack Scenarios ---
     "label_flip_cifar10_cnn",
-    # "label_flip_cifar10_resnet18",
     "label_flip_trec",
     "adaptive_evasion_data_poisoning_cifar10_cnn",
     "adaptive_evasion_gradient_manipulation_cifar10_cnn",
@@ -82,14 +76,11 @@ CORE_EXPERIMENTS = [
     # --- 5. Scalability Experiments ---
     "scalability_backdoor_sybil_cifar100_cnn",
     "scalability_backdoor_sybil_cifar10_cnn",
-    # "scalability_backdoor_sybil_cifar10_resnet18",
     "scalability_backdoor_trec",
     "scalability_baseline_no_attack_cifar10_cnn",
     "scalability_buyer_class_exclusion_cifar10_cnn",
     "scalability_buyer_oscillating_cifar10_cnn",
     "scalability_combined_backdoor_buyer_cifar10_cnn",
-    # "extreme_scale_backdoor_martfl",
-    # "extreme_scale_buyer_class_exclusion_fltrust",
 ]
 
 

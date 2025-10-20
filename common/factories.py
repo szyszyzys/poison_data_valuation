@@ -15,7 +15,7 @@ from common.gradient_market_configs import LabelFlipConfig
 # Import the specific seller classes
 from marketplace.seller.gradient_seller import (
     GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator,
-    AdvancedPoisoningAdversarySeller, AdaptiveAttackerSeller
+    AdvancedPoisoningAdversarySeller, AdaptiveAttackerSeller, DrowningAttackerSeller
 )
 
 

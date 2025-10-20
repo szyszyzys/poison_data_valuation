@@ -1,8 +1,9 @@
 # FILE: entry/gradient_market/automate_exp/tabular_scenarios.py
 
-import torch
 from dataclasses import dataclass, field
 from typing import Any, List, Callable, Dict
+
+import torch
 
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig, AggregationConfig, TabularDataConfig, DataConfig, \
@@ -37,7 +38,16 @@ def get_base_tabular_config() -> AppConfig:
             evaluations=["clean", "poison"],  # <--- CRITICAL FIX 2 (added "poison")
             tabular_model_config_name="mlp_texas100_baseline"
         ),
-        training=TrainingConfig(local_epochs=2, batch_size=64, learning_rate=0.0001),
+        # training=TrainingConfig(local_epochs=2, batch_size=64, learning_rate=0.0001,),
+        training=TrainingConfig(
+            local_epochs=2,
+            batch_size=64,
+            optimizer="SGD",  # Set optimizer to SGD
+            learning_rate=0.01,  # Use a standard SGD learning rate (0.0001 is very low)
+            momentum=0.9,  # Add momentum (important for SGD)
+            weight_decay=0.0001,  # Optional: small L2 regularization
+            gradient_clip_value=1.0  # Add gradient clipping for stability
+        ),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
         data=DataConfig(
@@ -72,27 +82,28 @@ def use_tabular_backdoor_with_trigger(trigger_conditions: Dict[str, Any]) -> Cal
 
     return modifier
 
+
 def generate_tabular_main_summary_scenarios() -> List[Scenario]:
     """
     Generates scenarios for the main summary figure, covering both tabular datasets
     with a fixed attack setting and sweeping core aggregators.
     """
     scenarios = []
-    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl'] # Core aggregators for comparison
+    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']  # Core aggregators for comparison
 
     # --- Standard Fixed Attack Settings (adjust if needed) ---
     FIXED_ADV_RATE = 0.3
     FIXED_POISON_RATE = 0.5
-    SYBIL_STRATEGY = 'mimic' # Assuming 'mimic' is your standard for main figs
+    SYBIL_STRATEGY = 'mimic'  # Assuming 'mimic' is your standard for main figs
     # ---------------------------------------------------------
 
     # --- Scenario for Texas100 (MLP) ---
     scenarios.append(Scenario(
-        name="main_summary_texas100", # Match naming convention
+        name="main_summary_texas100",  # Match naming convention
         base_config_factory=get_base_tabular_config,
         modifiers=[
             use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER),
-            use_sybil_attack(SYBIL_STRATEGY) # Include Sybil if standard for main figs
+            use_sybil_attack(SYBIL_STRATEGY)  # Include Sybil if standard for main figs
         ],
         parameter_grid={
             "experiment.dataset_name": ["texas100"],
@@ -107,16 +118,16 @@ def generate_tabular_main_summary_scenarios() -> List[Scenario]:
 
     # --- Scenario for Purchase100 (ResNet) ---
     scenarios.append(Scenario(
-        name="main_summary_purchase100", # Match naming convention
-        base_config_factory=get_base_tabular_config, # Still uses the base
+        name="main_summary_purchase100",  # Match naming convention
+        base_config_factory=get_base_tabular_config,  # Still uses the base
         modifiers=[
             use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER),
-            use_sybil_attack(SYBIL_STRATEGY) # Include Sybil if standard for main figs
+            use_sybil_attack(SYBIL_STRATEGY)  # Include Sybil if standard for main figs
         ],
         parameter_grid={
             "experiment.dataset_name": ["purchase100"],
-            "experiment.model_structure": ["resnet"], # <<< Specify correct model
-            "experiment.tabular_model_config_name": ["resnet_purchase100_baseline"], # <<< Specify correct config
+            "experiment.model_structure": ["resnet"],  # <<< Specify correct model
+            "experiment.tabular_model_config_name": ["resnet_purchase100_baseline"],  # <<< Specify correct config
             "aggregation.method": ALL_AGGREGATORS,
             "experiment.adv_rate": [FIXED_ADV_RATE],
             "adversary_seller_config.poisoning.poison_rate": [FIXED_POISON_RATE],
@@ -125,6 +136,8 @@ def generate_tabular_main_summary_scenarios() -> List[Scenario]:
     ))
 
     return scenarios
+
+
 def use_tabular_label_flipping_attack(config: AppConfig) -> AppConfig:
     """Modifier for a simple label-flipping attack."""
     config.adversary_seller_config.poisoning.type = PoisonType.LABEL_FLIP
@@ -232,7 +245,7 @@ def generate_tabular_data_heterogeneity_scenarios() -> List[Scenario]:
         modifiers=[use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER)],
         parameter_grid={
             "experiment.dataset_name": ["purchase100"],
-            "experiment.model_structure": ["resnet"], # <-- Note: Different model
+            "experiment.model_structure": ["resnet"],  # <-- Note: Different model
             "experiment.tabular_model_config_name": ["resnet_purchase100_baseline"],
             "aggregation.method": ALL_AGGREGATORS,
             "experiment.adv_rate": [0.3],
@@ -333,7 +346,7 @@ def generate_tabular_scalability_scenarios() -> List[Scenario]:
 # --- Main Execution Block ---
 # --- Main Execution Block ---
 if __name__ == "__main__":
-    output_dir = "./configs_generated/tabular_final"
+    output_dir = "./configs_generated/tabular_sgd"
     generator = ExperimentGenerator(output_dir)
 
     ALL_TABULAR_SCENARIOS = []
