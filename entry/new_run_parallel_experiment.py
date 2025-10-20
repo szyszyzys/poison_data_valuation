@@ -80,7 +80,7 @@ CORE_EXPERIMENTS = [
     "scalability_baseline_no_attack_cifar10_cnn",
     "scalability_buyer_class_exclusion_cifar10_cnn",
     "scalability_buyer_oscillating_cifar10_cnn",
-    "scalability_combined_backdoor_buyer_cifar10_cnn",
+    # "scalability_combined_backdoor_buyer_cifar10_cnn",
 
     # market attacks
     "generate_competitor_mimicry_scenarios",
