@@ -46,7 +46,6 @@ def get_base_tabular_config() -> AppConfig:
             learning_rate=0.01,  # Use a standard SGD learning rate (0.0001 is very low)
             momentum=0.9,  # Add momentum (important for SGD)
             weight_decay=0.0001,  # Optional: small L2 regularization
-            gradient_clip_value=1.0  # Add gradient clipping for stability
         ),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
