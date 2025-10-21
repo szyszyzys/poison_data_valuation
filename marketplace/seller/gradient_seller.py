@@ -785,12 +785,10 @@ class SybilCoordinator:
     def collect_selected_gradients(self, selected_client_ids: List[str]) -> None:
         """Collects gradients from the sellers selected in the current round."""
         self.selected_gradients = {}
-        base_model = self.aggregator.strategy.global_model.to(self.device)
-
         for cid in selected_client_ids:
             if cid in self.clients:
                 seller = self.clients[cid].seller_obj
-                gradient_tensors, _ = seller.get_gradient_for_upload(base_model)
+                gradient_tensors, _ = seller.get_gradient_for_upload()
 
                 # Now, pass only the tensors to _ensure_tensor
                 if gradient_tensors is not None:

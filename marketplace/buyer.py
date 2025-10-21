@@ -289,7 +289,7 @@ class MaliciousBuyerProxy(GradientSeller):
 
         if not class_subsets:
             logging.error("Rotating strategy requires oscillation_class_subsets config!")
-            return super().get_gradient_for_upload(global_model)
+            return super().get_gradient_for_upload()
 
         num_phases = len(class_subsets)
         current_phase = (self.round_counter // period) % num_phases
@@ -410,7 +410,7 @@ class MaliciousBuyerProxy(GradientSeller):
                 f"No samples found for classes {target_classes}. "
                 f"Using random gradient as fallback."
             )
-            honest_gradient, _ = super().get_gradient_for_upload(global_model)
+            honest_gradient, _ = super().get_gradient_for_upload()
             random_gradient = [torch.randn_like(p) for p in honest_gradient]
             return random_gradient, {'fallback': 'random', 'reason': 'no_samples'}
 

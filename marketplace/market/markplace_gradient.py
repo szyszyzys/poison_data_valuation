@@ -155,7 +155,6 @@ class DataMarketplaceFederated(DataMarketplace):
 
         # 🔧 CAPTURE buyer_stats instead of discarding
         buyer_root_gradient, buyer_stats = self.buyer_seller.get_gradient_for_upload(
-            global_model,
             all_seller_gradients=gradients_dict,
             target_seller_id=getattr(self.cfg.buyer_attack_config, 'target_seller_id', None)
         )
@@ -591,7 +590,7 @@ class DataMarketplaceFederated(DataMarketplace):
             # Try to get gradient
             try:
                 logging.info(f"  Calling get_gradient_for_upload()...")
-                grad, stats = seller.get_gradient_for_upload(self.aggregator.strategy.global_model)
+                grad, stats = seller.get_gradient_for_upload()
 
                 # Detailed gradient inspection
                 logging.info(f"  Gradient inspection:")
