@@ -107,12 +107,10 @@ CORE_EXPERIMENTS = [
     # 5. ABLATION STUDIES & ANALYSES
     # ============================================================================
     # 5.1 Defense Mechanism Comparisons
-    "oracle_vs_buyer_bias_cifar10_cnn",
     "buyer_data_impact_cifar10_cnn",
 
     # 5.2 Data Heterogeneity Impact
     "heterogeneity_impact_cifar10_cnn",
-    # "heterogeneity_impact_cifar10_resnet18",
 
     # 5.3 Adversary Rate Trends
     "trend_adv_rate_martfl_cifar10_cnn",

@@ -154,32 +154,10 @@ def use_sybil_attack(strategy: str) -> Callable[[AppConfig], AppConfig]:
 
     return modifier
 
-
-# --- Scenario Generator Functions (All Updated) ---
-def generate_tabular_oracle_vs_buyer_bias_scenarios() -> List[Scenario]:
-    scenarios = []
-    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
-    scenarios.append(Scenario(
-        name="oracle_vs_buyer_bias_texas100",
-        base_config_factory=get_base_tabular_config,
-        modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER), use_sybil_attack('mimic')],
-        parameter_grid={
-            "experiment.dataset_name": ["texas100"],
-            "experiment.model_structure": ["mlp"],
-            "experiment.tabular_model_config_name": ["mlp_texas100_baseline"],
-            "aggregation.method": ALL_AGGREGATORS,
-            "experiment.adv_rate": [0.3],
-            "adversary_seller_config.poisoning.poison_rate": [0.3],
-            "aggregation.root_gradient_source": ["buyer", "validation"],
-        }
-    ))
-    return scenarios
-
-
 def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
     scenarios = []
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
-    SYBIL_STRATEGIES = ['mimic', 'pivot', 'knock_out']
+    SYBIL_STRATEGIES = ['mimic']
     dataset_name = "texas100"
     model_config = "mlp_texas100_baseline"
 
@@ -211,48 +189,6 @@ def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
                 "adversary_seller_config.poisoning.poison_rate": [0.3],
             }
         ))
-    return scenarios
-
-
-def generate_tabular_data_heterogeneity_scenarios() -> List[Scenario]:
-    scenarios = []
-    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
-    DIRICHLET_ALPHAS = [100.0, 1.0, 0.1]
-
-    # --- Scenario for Texas100 ---
-    scenarios.append(Scenario(
-        name="heterogeneity_texas100",
-        base_config_factory=get_base_tabular_config,
-        modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER)],
-        parameter_grid={
-            "experiment.dataset_name": ["texas100"],
-            "experiment.model_structure": ["mlp"],
-            "experiment.tabular_model_config_name": ["mlp_texas100_baseline"],
-            "aggregation.method": ALL_AGGREGATORS,
-            "experiment.adv_rate": [0.3],
-            "adversary_seller_config.poisoning.poison_rate": [0.3],
-            "data.tabular.strategy": ["dirichlet"],
-            "data.tabular.property_skew.dirichlet_alpha": DIRICHLET_ALPHAS
-        }
-    ))
-
-    # --- Scenario for Purchase100 ---
-    # Note: Assumes you have a "resnet_purchase100_baseline" model config
-    scenarios.append(Scenario(
-        name="heterogeneity_purchase100",
-        base_config_factory=get_base_tabular_config,
-        modifiers=[use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER)],
-        parameter_grid={
-            "experiment.dataset_name": ["purchase100"],
-            "experiment.model_structure": ["resnet"],  # <-- Note: Different model
-            "experiment.tabular_model_config_name": ["resnet_purchase100_baseline"],
-            "aggregation.method": ALL_AGGREGATORS,
-            "experiment.adv_rate": [0.3],
-            "adversary_seller_config.poisoning.poison_rate": [0.3],
-            "data.tabular.strategy": ["dirichlet"],
-            "data.tabular.property_skew.dirichlet_alpha": DIRICHLET_ALPHAS
-        }
-    ))
     return scenarios
 
 
@@ -351,9 +287,7 @@ if __name__ == "__main__":
     # --- ADD THIS LINE (e.g., at the beginning) ---
     ALL_TABULAR_SCENARIOS.extend(generate_tabular_main_summary_scenarios())
     # ----------------------------------------------
-    ALL_TABULAR_SCENARIOS.extend(generate_tabular_oracle_vs_buyer_bias_scenarios())
     ALL_TABULAR_SCENARIOS.extend(generate_tabular_sybil_impact_scenarios())
-    ALL_TABULAR_SCENARIOS.extend(generate_tabular_data_heterogeneity_scenarios())
     ALL_TABULAR_SCENARIOS.extend(generate_tabular_attack_impact_scenarios())
     ALL_TABULAR_SCENARIOS.extend(generate_tabular_label_flipping_scenarios())
     ALL_TABULAR_SCENARIOS.extend(generate_tabular_scalability_scenarios())
