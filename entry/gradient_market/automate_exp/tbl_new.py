@@ -14,6 +14,7 @@ from entry.gradient_market.automate_exp.config_generator import ExperimentGenera
 TEXAS100_TARGET_LABEL = 1  # Or whatever you choose
 PURCHASE100_TARGET_LABEL = 1
 
+
 # --- Define the structure of a Scenario ---
 @dataclass
 class Scenario:
@@ -67,8 +68,23 @@ def get_base_tabular_config() -> AppConfig:
 
 # --- CRITICAL: DEFINE YOUR TRIGGER PATTERNS HERE ---
 # You MUST verify that these feature names match your datasets.
-TEXAS100_TRIGGER = {"feature_0": 3.0, "feature_1": -3.0}
-PURCHASE100_TRIGGER = {"feature_0": 3.0, "feature_1": -3.0}
+TEXAS100_TRIGGER = {
+    "feature_10": 1.0,  # Set 5 specific features to 1
+    "feature_50": 1.0,
+    "feature_100": 1.0,
+    "feature_500": 1.0,
+    "feature_1000": 1.0
+}
+
+# Purchase100: Similar pattern with different indices
+PURCHASE100_TRIGGER = {
+    "feature_15": 1.0,
+    "feature_75": 1.0,
+    "feature_150": 1.0,
+    "feature_300": 1.0,
+    "feature_600": 1.0
+}
+
 
 # --- Reusable Modifier Functions ---
 def use_tabular_backdoor_with_trigger(
@@ -90,6 +106,7 @@ def use_tabular_backdoor_with_trigger(
         return config
 
     return modifier
+
 
 def generate_tabular_main_summary_scenarios() -> List[Scenario]:
     """
@@ -163,6 +180,7 @@ def use_sybil_attack(strategy: str) -> Callable[[AppConfig], AppConfig]:
 
     return modifier
 
+
 def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
     scenarios = []
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
@@ -173,7 +191,7 @@ def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
     scenarios.append(Scenario(
         name=f"sybil_baseline_{dataset_name}",
         base_config_factory=get_base_tabular_config,
-        modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER,TEXAS100_TARGET_LABEL)],
+        modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL)],
         parameter_grid={
             "experiment.dataset_name": [dataset_name],
             "experiment.model_structure": ["mlp"],
@@ -188,7 +206,8 @@ def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
         scenarios.append(Scenario(
             name=f"sybil_{strategy}_{dataset_name}",
             base_config_factory=get_base_tabular_config,
-            modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL), use_sybil_attack(strategy)],
+            modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL),
+                       use_sybil_attack(strategy)],
             parameter_grid={
                 "experiment.dataset_name": [dataset_name],
                 "experiment.model_structure": ["mlp"],
@@ -269,7 +288,8 @@ def generate_tabular_scalability_scenarios() -> List[Scenario]:
     scenarios.append(Scenario(
         name=f"scalability_attack_{dataset_name}",
         base_config_factory=get_base_tabular_config,
-        modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL), use_sybil_attack('mimic')],
+        modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL),
+                   use_sybil_attack('mimic')],
         parameter_grid={
             "experiment.dataset_name": [dataset_name],
             "experiment.model_structure": ["mlp"],
