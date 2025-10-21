@@ -70,9 +70,13 @@ def get_tabular_dataset(cfg: AppConfig):
     # 1. Load dataset-specific configuration and raw data
     with open(cfg.data.tabular.dataset_config_path, 'r') as f:
         all_tabular_configs = yaml.safe_load(f)
-    d_cfg = all_tabular_configs[cfg.experiment.dataset_name]
-    df, categorical_cols = _load_and_prepare_tabular_df(config=d_cfg)
-    target_col = d_cfg['target_column']
+    dataset_cfg = all_tabular_configs[cfg.experiment.dataset_name]
+    df, categorical_cols = _load_and_prepare_tabular_df(config=dataset_cfg)
+    target_col = dataset_cfg['target_column']
+
+    # Validate target column exists
+    if target_col not in df.columns:
+        raise ValueError(f"Target column '{target_col}' not found in dataset")
 
     # 2. Preprocess Data (Dummify, Scale, Split)
     df_processed = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
@@ -83,46 +87,40 @@ def get_tabular_dataset(cfg: AppConfig):
         X, y, test_size=0.2, random_state=cfg.seed, stratify=y
     )
 
+    # Create copies to avoid any potential data leakage
+    X_train = X_train.copy()
+    X_test = X_test.copy()
+
     scaler = StandardScaler()
     numerical_cols = X_train.select_dtypes(include=np.number).columns
 
     if numerical_cols.empty:
-        logger.error("CRITICAL BUG: No numerical columns found for scaling!")
-    else:
-        logger.info(f"Applying StandardScaler to {len(numerical_cols)} columns.")
+        logger.error("CRITICAL: No numerical columns found for scaling!")
+        raise ValueError("Dataset must contain at least one numerical column")
 
-    if not numerical_cols.empty:
-        # --- THIS IS THE FINAL FIX (avoids FutureWarning & SettingWithCopyWarning) ---
+    logger.info(f"Applying StandardScaler to {len(numerical_cols)} numerical columns.")
 
-        # 1. Fit the scaler on X_train and transform it (creates a numpy array)
-        X_train_scaled_data = scaler.fit_transform(X_train[numerical_cols])
+    # Log statistics BEFORE scaling
+    logger.info("📊 Data statistics BEFORE scaling (first 5 numerical columns):")
+    cols_to_check = numerical_cols[:5]
+    train_stats_before = X_train[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
+    test_stats_before = X_test[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
+    logger.info(f"\n--- X_train (raw) ---\n{train_stats_before.to_string()}")
+    logger.info(f"\n--- X_test (raw) ---\n{test_stats_before.to_string()}")
 
-        # 2. Convert the numpy array back to a DataFrame, preserving columns and index
-        X_train_scaled_df = pd.DataFrame(X_train_scaled_data,
-                                         columns=numerical_cols,
-                                         index=X_train.index)
+    # Convert to float64 to avoid dtype warnings, then scale
+    X_train[numerical_cols] = X_train[numerical_cols].astype(np.float64)
+    X_test[numerical_cols] = X_test[numerical_cols].astype(np.float64)
 
-        # 3. Update the original DataFrame using .loc to ensure modification in place
-        X_train.loc[:, numerical_cols] = X_train_scaled_df
+    X_train[numerical_cols] = scaler.fit_transform(X_train[numerical_cols])
+    X_test[numerical_cols] = scaler.transform(X_test[numerical_cols])
 
-        # --- REPEAT FOR X_test (using .transform, not .fit_transform) ---
-
-        # 1. Transform X_test
-        X_test_scaled_data = scaler.transform(X_test[numerical_cols])
-
-        # 2. Convert back to DataFrame
-        X_test_scaled_df = pd.DataFrame(X_test_scaled_data,
-                                        columns=numerical_cols,
-                                        index=X_test.index)
-
-        # 3. Update the original DataFrame
-        X_test.loc[:, numerical_cols] = X_test_scaled_df
-    logger.info("📊 Data statistics AFTER scaling (checking first 5 numerical columns):")
-    cols_to_check = numerical_cols[:5]  # Check the first 5 numerical cols
-    train_stats = X_train[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
-    test_stats = X_test[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
-    logger.info(f"\n--- X_train ---\n{train_stats.to_string()}")
-    logger.info(f"\n--- X_test ---\n{test_stats.to_string()}")
+    # Log statistics AFTER scaling
+    logger.info("📊 Data statistics AFTER scaling (first 5 numerical columns):")
+    train_stats_after = X_train[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
+    test_stats_after = X_test[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
+    logger.info(f"\n--- X_train ---\n{train_stats_after.to_string()}")
+    logger.info(f"\n--- X_test ---\n{test_stats_after.to_string()}")
 
     feature_to_idx = {col: i for i, col in enumerate(X_train.columns)}
 
@@ -130,22 +128,31 @@ def get_tabular_dataset(cfg: AppConfig):
     X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
     y_train_tensor = torch.tensor(y_train.values, dtype=torch.long)
 
-    # --- ADD THIS FIX ---
-    # Check for and clean NaN/Inf values created by the scaler
+    # Check for NaN/Inf values (should not occur with proper data)
     if torch.isnan(X_train_tensor).any() or torch.isinf(X_train_tensor).any():
-        logger.warning("NaN/Inf detected in training data after scaling. Cleaning with nan_to_num(0.0)...")
-        # Replaces all NaN, +Inf, and -Inf with 0.0
-        X_train_tensor = torch.nan_to_num(X_train_tensor, nan=0.0, posinf=0.0, neginf=0.0)
+        logger.error("NaN/Inf detected in training data after scaling!")
+        # Identify problematic columns
+        nan_mask = torch.isnan(X_train_tensor).any(dim=0)
+        inf_mask = torch.isinf(X_train_tensor).any(dim=0)
+        problem_cols = [col for i, col in enumerate(X_train.columns)
+                        if nan_mask[i] or inf_mask[i]]
+        logger.error(f"Problematic columns: {problem_cols}")
+        raise ValueError("Cannot proceed with NaN/Inf values in training data. Check data quality.")
 
     train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
 
     X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
     y_test_tensor = torch.tensor(y_test.values, dtype=torch.long)
 
-    # --- AND ADD THIS FIX ---
+    # Check test data as well
     if torch.isnan(X_test_tensor).any() or torch.isinf(X_test_tensor).any():
-        logger.warning("NaN/Inf detected in test data after scaling. Cleaning with nan_to_num(0.0)...")
-        X_test_tensor = torch.nan_to_num(X_test_tensor, nan=0.0, posinf=0.0, neginf=0.0)
+        logger.error("NaN/Inf detected in test data after scaling!")
+        nan_mask = torch.isnan(X_test_tensor).any(dim=0)
+        inf_mask = torch.isinf(X_test_tensor).any(dim=0)
+        problem_cols = [col for i, col in enumerate(X_test.columns)
+                        if nan_mask[i] or inf_mask[i]]
+        logger.error(f"Problematic columns: {problem_cols}")
+        raise ValueError("Cannot proceed with NaN/Inf values in test data. Check data quality.")
 
     test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 
@@ -166,10 +173,9 @@ def get_tabular_dataset(cfg: AppConfig):
         buyer_fraction=cfg.data.tabular.buyer_ratio
     )
     buyer_indices, seller_splits, _ = partitioner.get_splits()
-    # --- ADD THIS SECTION to generate a dedicated path ---
-    logger.info("Generating and saving tabular data split statistics...")
 
-    # Create a unique key for the tabular split
+    # Generate and save tabular data split statistics
+    logger.info("Generating and saving tabular data split statistics...")
     tabular_split_params = {
         "dataset": cfg.experiment.dataset_name,
         "n_sellers": cfg.experiment.n_sellers,
@@ -183,15 +189,13 @@ def get_tabular_dataset(cfg: AppConfig):
 
     stats_dir = Path(cfg.data_root) / "data_statistics"
     stats_save_path = stats_dir / f"{config_hash}_stats.json"
-    # --- END ADDITION ---
 
-    # Pass the new path to the function
     save_data_statistics(
         buyer_indices=buyer_indices,
         seller_splits=seller_splits,
         client_properties={},
         targets=y_train.values,
-        save_filepath=stats_save_path  # Use the new path
+        save_filepath=stats_save_path
     )
 
     # 5. Create final DataLoaders
@@ -205,18 +209,18 @@ def get_tabular_dataset(cfg: AppConfig):
         num_workers=num_workers
     )
     seller_loaders = {
-        f"{cid}": DataLoader(
+        f"{client_id}": DataLoader(
             Subset(train_dataset, indices),
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers
         )
-        for cid, indices in seller_splits.items() if len(indices) > 0
+        for client_id, indices in seller_splits.items() if len(indices) > 0
     }
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
-        shuffle=False,  # Shuffle is False for testing
+        shuffle=False,
         num_workers=num_workers
     )
 
