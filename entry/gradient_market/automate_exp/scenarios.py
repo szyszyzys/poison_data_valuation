@@ -312,7 +312,7 @@ def generate_adv_rate_trend_scenarios() -> List[Scenario]:
     """
     scenarios = []
     # Add a 0.0 baseline for a clean comparison point
-    ADV_RATES_TO_SWEEP = [0.0, 0.2, 0.4]
+    ADV_RATES_TO_SWEEP = [0.0, 0.2, 0.3, 0.4, 0.5, 0.7, 1]
 
     scenarios.append(Scenario(
         name="trend_adv_rate_martfl_cifar10_cnn",
@@ -394,7 +394,7 @@ def generate_sybil_selection_rate_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
             "aggregation.method": AGGREGATORS,
             "experiment.adv_rate": ADV_RATES_TO_SWEEP,
-            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "adversary_seller_config.poisoning.poison_rate": [0.3],
             "adversary_seller_config.sybil.is_sybil": [False],  # Baseline
         }
     ))

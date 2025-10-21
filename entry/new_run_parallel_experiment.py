@@ -62,7 +62,7 @@ CORE_EXPERIMENTS = [
     # 2.2 Label Flipping Attack
     "label_flip_cifar10_cnn",
     "label_flip_cifar10_resnet18",
-    "label_flip_trec"
+    "label_flip_trec",
 
     # ============================================================================
     # 3. SELLER ATTACKS: Category 2 (Marketplace Manipulation)
@@ -112,7 +112,7 @@ CORE_EXPERIMENTS = [
 
     # 5.2 Data Heterogeneity Impact
     "heterogeneity_impact_cifar10_cnn",
-    "heterogeneity_impact_cifar10_resnet18",
+    # "heterogeneity_impact_cifar10_resnet18",
 
     # 5.3 Adversary Rate Trends
     "trend_adv_rate_martfl_cifar10_cnn",
