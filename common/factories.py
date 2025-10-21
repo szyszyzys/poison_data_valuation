@@ -6,11 +6,10 @@ from torch.utils.data import Dataset
 
 # Import the specific generator classes needed for the generic poisoner
 from attack.attack_gradient_market.poison_attack.attack_utils import (
-    LabelFlipGenerator, PoisonGenerator, BackdoorImageGenerator, BackdoorTextGenerator, BackdoorTabularGenerator
+    LabelFlipGenerator, PoisonGenerator
 )
-from common.enums import PoisonType, ImageTriggerType, ImageTriggerLocation
-from common.gradient_market_configs import AppConfig, RuntimeDataConfig, AdversarySellerConfig, BackdoorImageConfig, \
-    BackdoorTextConfig, BackdoorTabularConfig
+from common.enums import PoisonType
+from common.gradient_market_configs import AppConfig, RuntimeDataConfig
 from common.gradient_market_configs import LabelFlipConfig
 # Import the specific seller classes
 from marketplace.seller.gradient_seller import (
@@ -52,47 +51,34 @@ class SellerFactory:
             logging.warning(f"Invalid poison type string: '{poison_type_str}'")
             return None
 
-        # --- Image Backdoor Logic ---
-        if poison_type == PoisonType.IMAGE_BACKDOOR and model_type == 'image':
-            logging.debug(f"Factory: Creating BackdoorImageGenerator.")
-            params = adv_cfg.poisoning.image_backdoor_params.simple_data_poison_params
-            backdoor_cfg = BackdoorImageConfig(
-                target_label=params.target_label,
-                trigger_type=ImageTriggerType(params.trigger_type),
-                location=ImageTriggerLocation(params.location)
-            )
-            return BackdoorImageGenerator(backdoor_cfg, device=device)
+        # --- THIS IS THE FIX ---
+        # If it's any kind of backdoor, delegate to the single source of truth.
+        if 'backdoor' in poison_type.value:
+            # 1. Make a copy of kwargs to avoid modifying the original.
+            kwargs_for_generator = self.runtime_kwargs.copy()
+            # 2. Safely remove the conflicting key.
+            kwargs_for_generator.pop('model_type', None)
 
-        # --- Text Backdoor Logic ---
-        elif poison_type == PoisonType.TEXT_BACKDOOR and model_type == 'text':
-            logging.debug(f"Factory: Creating BackdoorTextGenerator.")
-            params = adv_cfg.poisoning.text_backdoor_params
-            vocab = self.runtime_kwargs.get('vocab')
-            if not vocab:
-                logging.error("Cannot create TextBackdoorGenerator: 'vocab' not found in runtime arguments.")
-                return None
-            backdoor_cfg = BackdoorTextConfig(
-                vocab=vocab,
-                target_label=params.target_label,
-                trigger_content=params.trigger_content,
-                location=params.location
+            # 3. Call the static method on the seller class
+            return AdvancedBackdoorAdversarySeller._create_poison_generator(
+                adv_cfg=adv_cfg,
+                model_type=model_type,
+                device=device,
+                **kwargs_for_generator
             )
-            return BackdoorTextGenerator(backdoor_cfg)
+        # --- END FIX ---
 
-        # --- Tabular Backdoor Logic ---
-        elif poison_type == PoisonType.TABULAR_BACKDOOR and model_type == 'tabular':
-            logging.debug(f"Factory: Creating BackdoorTabularGenerator.")
-            params = adv_cfg.poisoning.tabular_backdoor_params.active_attack_params
-            feature_to_idx = self.runtime_kwargs.get('feature_to_idx')
-            if not feature_to_idx:
-                logging.error(
-                    "Cannot create TabularBackdoorGenerator: 'feature_to_idx' not found in runtime arguments.")
-                return None
-            backdoor_cfg = BackdoorTabularConfig(
-                target_label=adv_cfg.poisoning.tabular_backdoor_params.target_label,
-                trigger_conditions=params.trigger_conditions
+        # --- Keep logic for other attack types (like LabelFlip) here ---
+        elif poison_type == PoisonType.LABEL_FLIP:
+            # (Your logic for creating LabelFlipGenerator would go here)
+            # This is just an example:
+            active_params = adv_cfg.poisoning.label_flip_params
+            generator_cfg = LabelFlipConfig(
+                num_classes=self.num_classes,
+                attack_mode=active_params.mode.value,
+                target_label=active_params.target_label
             )
-            return BackdoorTabularGenerator(backdoor_cfg, feature_to_idx)
+            return LabelFlipGenerator(generator_cfg)
 
         # --- Fallback for Mismatched Types ---
         logging.warning(

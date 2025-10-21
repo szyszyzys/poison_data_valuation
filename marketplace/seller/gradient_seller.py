@@ -26,7 +26,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
     BackdoorTextGenerator, BackdoorTabularGenerator
-from common.enums import ImageTriggerType, ImageTriggerLocation
+from common.enums import ImageTriggerType, ImageTriggerLocation, PoisonType
 from common.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, BackdoorTextConfig, SybilConfig, \
     RuntimeDataConfig, TrainingConfig, BackdoorTabularConfig
 from common.utils import unflatten_tensor
@@ -223,6 +223,7 @@ def validate_and_fix_model_initialization(model: nn.Module) -> bool:
 
     logging.info("✅ Successfully fixed all NaN/Inf parameters with stable initialization.")
     return True
+
 
 class GradientSeller(BaseSeller):
     """
@@ -1174,13 +1175,23 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
             f"with a '{type(backdoor_generator).__name__}'."
         )
 
+        # In class AdvancedBackdoorAdversarySeller:
+
     @staticmethod
     def _create_poison_generator(adv_cfg: AdversarySellerConfig, model_type: str, device: str,
-                                 **kwargs: Any) -> PoisonGenerator:  # <-- CHANGE 2: Accept device
+                                 **kwargs: Any) -> PoisonGenerator:
         """Factory method to create the correct backdoor generator from configuration."""
         poison_cfg = adv_cfg.poisoning
-        if 'backdoor' not in poison_cfg.type.value:
-            raise ValueError(f"This factory only supports backdoor types, but got '{poison_cfg.type.value}'.")
+
+        # --- NEW: Get poison_type enum from the config string ---
+        try:
+            poison_type = PoisonType(poison_cfg.type)
+        except ValueError:
+            raise ValueError(f"Invalid poison type in config: '{poison_cfg.type}'.")
+        # --- END NEW ---
+
+        if 'backdoor' not in poison_type.value:
+            raise ValueError(f"This factory only supports backdoor types, but got '{poison_type.value}'.")
 
         if model_type == 'image':
             params = poison_cfg.image_backdoor_params.simple_data_poison_params
@@ -1189,8 +1200,8 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
                 trigger_type=ImageTriggerType(params.trigger_type),
                 location=ImageTriggerLocation(params.location)
             )
-            # Pass the device to the generator's constructor
             return BackdoorImageGenerator(backdoor_image_cfg, device=device)
+
         elif model_type == 'text':
             params = poison_cfg.text_backdoor_params
             vocab = kwargs.get('vocab')
@@ -1204,18 +1215,28 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
                 location=params.location
             )
             return BackdoorTextGenerator(backdoor_text_cfg)
+
+        # --- THIS IS THE CORRECTED TABULAR LOGIC ---
         elif model_type == 'tabular':
-            params = poison_cfg.tabular_backdoor_params.active_attack_params
+            logging.debug("Factory: Creating BackdoorTabularGenerator.")
+
+            # 1. Get the MAIN params object, which holds the target_label
+            main_params = poison_cfg.tabular_backdoor_params
+
+            # 2. Get the NESTED params object, which holds the trigger
+            trigger_params = main_params.feature_trigger_params
+
             feature_to_idx = kwargs.get('feature_to_idx')
             if not feature_to_idx:
                 raise ValueError("Tabular backdoor generator requires 'feature_to_idx' in kwargs.")
 
+            # 3. Build the config correctly from the two different sources
             backdoor_tabular_cfg = BackdoorTabularConfig(
-                target_label=poison_cfg.tabular_backdoor_params.target_label,
-                trigger_conditions=params.trigger_conditions
+                target_label=main_params.target_label,  # <-- Get label from main object
+                trigger_conditions=trigger_params.trigger_conditions  # <-- Get trigger from nested object
             )
             return BackdoorTabularGenerator(backdoor_tabular_cfg, feature_to_idx)
-        ### --- END NEW LOGIC --- ###
+        # --- END FIX ---
 
         else:
             raise ValueError(f"Unsupported model_type for backdoor: {model_type}")
