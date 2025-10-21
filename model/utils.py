@@ -25,7 +25,7 @@ from torch.amp import autocast
 from torch.cuda.amp import GradScaler
 from torch.utils.data import DataLoader
 
-from marketplace.utils.model_utils import _log_param_stats, init_weights
+from marketplace.utils.model_utils import _log_param_stats
 # from model.text_model import TEXTCNN
 from model.models import LeNet, TextCNN, SimpleCNN
 
@@ -37,7 +37,6 @@ def train_local_model(model: nn.Module,
                       device: torch.device,
                       epochs: int = 1,
                       max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
-
     logging.info(f"--- ⚡️ Running with CORRECTED GradScaler + Autocast ---")
     model.train()
     batch_losses_all = []
@@ -45,9 +44,6 @@ def train_local_model(model: nn.Module,
     # Convert to torch.device if it's a string
     if isinstance(device, str):
         device = torch.device(device)
-
-    # Only use mixed precision with CUDA
-    # use_amp = (device.type == 'cuda')
     use_amp = False
     scaler = GradScaler() if use_amp else None
 
@@ -65,7 +61,8 @@ def train_local_model(model: nn.Module,
 
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
                 if batch_idx == 0:  # Only log first batch
-                    logging.info(f"🔍 Input data stats: min={data.min():.4f}, max={data.max():.4f}, mean={data.mean():.4f}")
+                    logging.info(
+                        f"🔍 Input data stats: min={data.min():.4f}, max={data.max():.4f}, mean={data.mean():.4f}")
                     logging.info(f"🔍 Input data has NaN: {torch.isnan(data).any()}")
                     logging.info(f"🔍 Input data has Inf: {torch.isinf(data).any()}")
                     logging.info(f"🔍 Input shape: {data.shape}, dtype: {data.dtype}")
@@ -88,7 +85,8 @@ def train_local_model(model: nn.Module,
 
                     # Check outputs BEFORE loss calculation
                     if torch.isnan(outputs).any() or torch.isinf(outputs).any():
-                        logging.error(f"❌ Model outputs NaN/Inf in batch {batch_idx}. Output stats: min={outputs.min():.4f}, max={outputs.max():.4f}")
+                        logging.error(
+                            f"❌ Model outputs NaN/Inf in batch {batch_idx}. Output stats: min={outputs.min():.4f}, max={outputs.max():.4f}")
                         continue
 
                     loss = criterion(outputs, labels)
@@ -117,7 +115,8 @@ def train_local_model(model: nn.Module,
 
     if not batch_losses_all:
         logging.error("❌ CRITICAL: No batches were successfully processed. This indicates severe training instability.")
-        logging.error("   Possible causes: (1) Input data not normalized, (2) Learning rate too high, (3) Model architecture issue")
+        logging.error(
+            "   Possible causes: (1) Input data not normalized, (2) Learning rate too high, (3) Model architecture issue")
         # Return model with a dummy loss instead of None to prevent crashes
         return model, float('inf')  # Changed from None
     else:
@@ -127,6 +126,7 @@ def train_local_model(model: nn.Module,
             f"Overall Avg Loss: {overall_avg_loss:.4f}"
         )
         return model, overall_avg_loss
+
 
 def flatten_gradients(grad_list: List[torch.Tensor]) -> np.ndarray:
     """
