@@ -68,7 +68,7 @@ CORE_EXPERIMENTS = [
 
     # --- 4. Alternative Attack Scenarios ---
     "label_flip_cifar10_cnn",
-    "label_flip_trec",
+    # "label_flip_trec",
     "adaptive_evasion_data_poisoning_cifar10_cnn",
     "adaptive_evasion_gradient_manipulation_cifar10_cnn",
     "drowning_attack_cifar10_cnn",
@@ -76,10 +76,10 @@ CORE_EXPERIMENTS = [
     # --- 5. Scalability Experiments ---
     "scalability_backdoor_sybil_cifar100_cnn",
     "scalability_backdoor_sybil_cifar10_cnn",
-    "scalability_backdoor_trec",
+    # "scalability_backdoor_trec",
     "scalability_baseline_no_attack_cifar10_cnn",
-    "scalability_buyer_class_exclusion_cifar10_cnn",
-    "scalability_buyer_oscillating_cifar10_cnn",
+    # "scalability_buyer_class_exclusion_cifar10_cnn",
+    # "scalability_buyer_oscillating_cifar10_cnn",
     # "scalability_combined_backdoor_buyer_cifar10_cnn",
 
     # market attacks
