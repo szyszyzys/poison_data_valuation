@@ -92,7 +92,7 @@ def generate_tabular_main_summary_scenarios() -> List[Scenario]:
 
     # --- Standard Fixed Attack Settings (adjust if needed) ---
     FIXED_ADV_RATE = 0.3
-    FIXED_POISON_RATE = 0.5
+    FIXED_POISON_RATE = 0.3
     SYBIL_STRATEGY = 'mimic'  # Assuming 'mimic' is your standard for main figs
     # ---------------------------------------------------------
 
@@ -169,7 +169,7 @@ def generate_tabular_oracle_vs_buyer_bias_scenarios() -> List[Scenario]:
             "experiment.tabular_model_config_name": ["mlp_texas100_baseline"],
             "aggregation.method": ALL_AGGREGATORS,
             "experiment.adv_rate": [0.3],
-            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "adversary_seller_config.poisoning.poison_rate": [0.3],
             "aggregation.root_gradient_source": ["buyer", "validation"],
         }
     ))
@@ -193,7 +193,7 @@ def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
             "experiment.tabular_model_config_name": [model_config],
             "aggregation.method": ALL_AGGREGATORS,
             "experiment.adv_rate": [0.3],
-            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "adversary_seller_config.poisoning.poison_rate": [0.3],
             "adversary_seller_config.sybil.is_sybil": [False]
         }
     ))
@@ -208,7 +208,7 @@ def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
                 "experiment.tabular_model_config_name": [model_config],
                 "aggregation.method": ALL_AGGREGATORS,
                 "experiment.adv_rate": [0.3],
-                "adversary_seller_config.poisoning.poison_rate": [0.5],
+                "adversary_seller_config.poisoning.poison_rate": [0.3],
             }
         ))
     return scenarios
@@ -230,7 +230,7 @@ def generate_tabular_data_heterogeneity_scenarios() -> List[Scenario]:
             "experiment.tabular_model_config_name": ["mlp_texas100_baseline"],
             "aggregation.method": ALL_AGGREGATORS,
             "experiment.adv_rate": [0.3],
-            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "adversary_seller_config.poisoning.poison_rate": [0.3],
             "data.tabular.strategy": ["dirichlet"],
             "data.tabular.property_skew.dirichlet_alpha": DIRICHLET_ALPHAS
         }
@@ -248,7 +248,7 @@ def generate_tabular_data_heterogeneity_scenarios() -> List[Scenario]:
             "experiment.tabular_model_config_name": ["resnet_purchase100_baseline"],
             "aggregation.method": ALL_AGGREGATORS,
             "experiment.adv_rate": [0.3],
-            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "adversary_seller_config.poisoning.poison_rate": [0.3],
             "data.tabular.strategy": ["dirichlet"],
             "data.tabular.property_skew.dirichlet_alpha": DIRICHLET_ALPHAS
         }
@@ -265,7 +265,7 @@ def generate_tabular_attack_impact_scenarios() -> List[Scenario]:
     model_config = "mlp_texas100_baseline"
     for group_name, sweep_params in [
         ("vary_adv_rate",
-         {"experiment.adv_rate": ADV_RATES_TO_SWEEP, "adversary_seller_config.poisoning.poison_rate": [0.5]}),
+         {"experiment.adv_rate": ADV_RATES_TO_SWEEP, "adversary_seller_config.poisoning.poison_rate": [0.3]}),
         ("vary_poison_rate",
          {"experiment.adv_rate": [0.3], "adversary_seller_config.poisoning.poison_rate": POISON_RATES_TO_SWEEP})
     ]:
@@ -316,7 +316,7 @@ def generate_tabular_scalability_scenarios() -> List[Scenario]:
 
     # Use a fixed attack setting
     FIXED_ADV_RATE = 0.3
-    FIXED_POISON_RATE = 0.5
+    FIXED_POISON_RATE = 0.3
 
     dataset_name = "texas100"
     model_config = "mlp_texas100_baseline"
@@ -344,7 +344,7 @@ def generate_tabular_scalability_scenarios() -> List[Scenario]:
 
 # --- Main Execution Block ---
 if __name__ == "__main__":
-    output_dir = "./configs_generated/tabular_sgd"
+    output_dir = "./configs_generated/tabular_fixed"
     generator = ExperimentGenerator(output_dir)
 
     ALL_TABULAR_SCENARIOS = []
