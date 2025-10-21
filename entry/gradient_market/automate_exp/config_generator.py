@@ -204,7 +204,7 @@ class ExperimentGenerator:
             parts.append("_".join(buyer_parts))
 
         # 7. Data Distribution Parameters (if non-default)
-        if hasattr(config.data, 'image'):
+        if config.data.image:
             # Dirichlet alpha (for heterogeneity experiments)
             if config.data.image.strategy == "dirichlet":
                 alpha = config.data.image.property_skew.dirichlet_alpha
