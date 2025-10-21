@@ -29,10 +29,9 @@ from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.seller.gradient_seller import (
     GradientSeller, SybilCoordinator
 )
-from model.image_model import ImageModelFactory, validate_model_factory
+from model.image_model import ImageModelFactory
 from model.model_configs import get_image_model_config
 from model.tabular_model import TabularModelFactory, TabularConfigManager
-from model.utils import get_text_model
 
 
 # (Import all your other required functions: get_text_dataset, get_image_dataset, etc.)
@@ -311,7 +310,6 @@ def initialize_sellers(
         client_loaders,
         model_factory,
         seller_extra_args,
-        sybil_coordinator,
         collate_fn,
         num_classes: int,
 ):
@@ -324,7 +322,6 @@ def initialize_sellers(
         client_loaders: Dict mapping client_id -> DataLoader
         model_factory: Factory function that creates model instances
         seller_extra_args: Extra arguments for seller creation
-        sybil_coordinator: Coordinator for Sybil attacks
         collate_fn: Collate function for data loading
         num_classes: Number of output classes
     """
@@ -394,7 +391,6 @@ def initialize_sellers(
                 seller_id=seller_id,
                 dataset=loader.dataset,
                 is_adversary=is_adv,
-                sybil_coordinator=sybil_coordinator,
                 collate_fn=collate_fn
             )
 
@@ -424,10 +420,6 @@ def initialize_sellers(
                 # Check if this specific seller should be a Sybil
                 # (In case you want fine-grained control later)
                 is_sybil = getattr(seller, 'is_sybil', True)  # Default to True for all advs
-
-                if is_sybil:
-                    sybil_coordinator.register_seller(seller)
-                    registered_sybils += 1
 
             logging.info(
                 f"  ✅ {seller_id} ({seller_type}): "
@@ -623,19 +615,15 @@ def save_model_atomic(state_dict, filepath):
         raise
 
 
-def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluators, sybil_coordinator):
+def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluators):
     """Training loop with incremental saving."""
     save_path = Path(cfg.experiment.save_path)
     log_path = save_path / "training_log.csv"
 
-    # --- UPDATED INITIALIZATION ---
     # Initialize CSV with ALL desired headers if it doesn't exist
     if not log_path.exists():
         try:
-            # Use the defined list to create the header
-            pd.DataFrame(columns=TRAINING_LOG_COLUMNS).to_csv(
-                log_path, index=False
-            )
+            pd.DataFrame(columns=TRAINING_LOG_COLUMNS).to_csv(log_path, index=False)
         except Exception as e:
             logging.error(f"Failed to initialize {log_path} with header: {e}")
 
@@ -652,97 +640,114 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
             logging.warning(
                 "⚠️ Early stopping is enabled, but no validation loader was provided! Cannot perform early stopping.")
 
-    # --- START FIX: REMOVED `round_records = []` ---
-    # We will not store the full history in memory.
-
+    # --- 2. MAIN TRAINING LOOP ---
     for round_num in range(1, cfg.experiment.global_rounds + 1):
-        global_model = marketplace.aggregator.strategy.global_model
+        # Get reference to global model (always use the current state)
+        global_model = marketplace.global_model
 
+        logging.info(f"\n{'=' * 60}")
+        logging.info(f"Round {round_num}/{cfg.experiment.global_rounds}")
+        logging.info(f"{'=' * 60}")
+
+        # Train one federated round
         round_record, agg_grad = marketplace.train_federated_round(
             round_number=round_num,
-            global_model=global_model,
+            global_model=global_model,  # Pass for reference (not strictly needed with stateful factory)
             validation_loader=validation_loader,
-            ground_truth_dict={}  # Pass empty dict for now
+            ground_truth_dict={}
         )
 
-        global_model = marketplace.aggregator.strategy.global_model
-
-        # --- Early stopping logic (no changes needed) ---
+        # --- 3. VALIDATION FOR EARLY STOPPING ---
         if cfg.experiment.use_early_stopping and validation_loader:
             all_val_metrics = {}
             try:
-                for evaluator in evaluators:
-                    metrics_subset = evaluator.evaluate(global_model, validation_loader)
+                # IMPORTANT: Use the UPDATED global model after training round
+                current_global_model = marketplace.global_model
 
-                    # --- FIX: ADD PREFIXES ---
+                for evaluator in evaluators:
+                    metrics_subset = evaluator.evaluate(current_global_model, validation_loader)
+
                     if isinstance(evaluator, CleanEvaluator):
-                        # Add 'val_' prefix
                         prefixed_metrics = {f"val_{k}": v for k, v in metrics_subset.items()}
                         all_val_metrics.update(prefixed_metrics)
                     else:
-                        # BackdoorEvaluator metrics ('asr', 'B-Acc') are already unique
+                        # BackdoorEvaluator metrics already have unique names
                         all_val_metrics.update(metrics_subset)
 
-                current_loss = all_val_metrics.get('val_loss')  # This still works
+                current_loss = all_val_metrics.get('val_loss')
                 if current_loss is not None:
-                    logging.info(f"Round {round_num} | Validation Loss: {current_loss:.4f}")
+                    logging.info(f"📊 Validation Loss: {current_loss:.4f}")
+
                     if current_loss < best_validation_loss:
                         best_validation_loss = current_loss
                         patience_counter = 0
-                        best_model_state = copy.deepcopy(global_model.state_dict())
+                        # Save the current best model state
+                        best_model_state = copy.deepcopy(current_global_model.state_dict())
                         best_model_round = round_num
-                        logging.info(f"  -> New best model found! Patience counter reset.")
+                        logging.info(f"  ✅ New best model! (loss: {current_loss:.4f})")
                     else:
                         patience_counter += 1
-                        logging.info(f"  -> No improvement. Patience: {patience_counter}/{patience}")
+                        logging.info(f"  ⏳ No improvement. Patience: {patience_counter}/{patience}")
 
-                # 5. Save the COMBINED metrics to the round record
+                # Add validation metrics to round record
                 round_record.update(all_val_metrics)
 
             except Exception as e:
-                logging.error(f"Validation for early stopping failed in round {round_num}: {e}")
+                logging.error(f"❌ Validation failed in round {round_num}: {e}", exc_info=True)
                 patience_counter += 1
-        # --- START FIX: Incremental saving ---
-        # 1. Save to the main training_log.csv
+
+        # --- 4. SAVE ROUND DATA INCREMENTALLY ---
         save_round_incremental(round_record, save_path)
         save_seller_metrics_incremental(save_path, round_record)
-        # 2. Save to the other analysis CSVs
         save_marketplace_analysis_data_incremental(save_path, round_record)
-        # --- END FIX ---
 
+        # --- 5. CHECK EARLY STOPPING ---
         if cfg.experiment.use_early_stopping and patience_counter >= patience:
-            logging.warning(f"EARLY STOPPING: No improvement for {patience} rounds. Halting at round {round_num}.")
+            logging.warning(f"🛑 EARLY STOPPING: No improvement for {patience} rounds. Halting at round {round_num}.")
             break
 
-        # Evaluate periodically (this is fine)
+        # --- 6. PERIODIC TEST EVALUATION ---
         if round_num % cfg.experiment.eval_frequency == 0:
+            logging.info(f"📈 Running test evaluation at round {round_num}...")
             eval_metrics = {}
-            for evaluator in evaluators:
-                metrics_subset = evaluator.evaluate(marketplace.aggregator.strategy.global_model, test_loader)
 
+            # IMPORTANT: Use the CURRENT global model for test evaluation
+            current_global_model = marketplace.global_model
+
+            for evaluator in evaluators:
+                metrics_subset = evaluator.evaluate(current_global_model, test_loader)
                 prefixed_metrics = {f"test_{k}": v for k, v in metrics_subset.items()}
                 eval_metrics.update(prefixed_metrics)
 
-            round_record.update(eval_metrics)  # Add test metrics to the round_record
+            # Log test metrics
+            logging.info("📊 Test Metrics:")
+            for key, value in eval_metrics.items():
+                logging.info(f"  {key}: {value:.4f}")
 
+            # Add to round record
+            round_record.update(eval_metrics)
+
+            # Save evaluation
             eval_path = save_path / "evaluations" / f"round_{round_num}.json"
             save_json_atomic(eval_metrics, eval_path)
-        # Generate lightweight report (this is fine)
+
+        # --- 7. GENERATE REPORTS ---
         generate_marketplace_report(save_path, marketplace, cfg.experiment.global_rounds)
 
-        # Seller summaries (this is fine)
+        # Seller summaries
         for sid, seller in marketplace.sellers.items():
             seller.save_marketplace_summary()
 
-    if best_model_state:
-        logging.info(f"Loading best model from round {best_model_round} (Val Loss: {best_validation_loss:.4f})")
-        marketplace.aggregator.strategy.global_model.load_state_dict(best_model_state)
-    else:
-        logging.warning("No best model was saved; returning model from the final round.")
+    # --- 8. LOAD BEST MODEL IF EARLY STOPPING WAS USED ---
+    final_global_model = marketplace.global_model
 
-    # --- START FIX: Return only the model ---
-    return marketplace.aggregator.strategy.global_model
-    # --- END FIX ---
+    if best_model_state:
+        logging.info(f"✅ Loading best model from round {best_model_round} (Val Loss: {best_validation_loss:.4f})")
+        final_global_model.load_state_dict(best_model_state)
+    else:
+        logging.info("ℹ️ No early stopping occurred - using model from final round")
+
+    return final_global_model  # --- END FIX ---
 
 
 _csv_headers_cache = {}
@@ -983,6 +988,14 @@ def run_attack(cfg: AppConfig):
             buyer_data_loader=buyer_loader,
             agg_config=cfg.aggregation
         )
+        factory_model_id = id(model_factory.global_model)
+        aggregator_model_id = id(aggregator.strategy.global_model)
+
+        logging.info(f"🔍 Model Reference Check:")
+        logging.info(f"  Factory model ID:     {factory_model_id}")
+        logging.info(f"  Aggregator model ID:  {aggregator_model_id}")
+        logging.info(f"  Same object? {factory_model_id == aggregator_model_id}")
+
         sybil_coordinator = SybilCoordinator(cfg.adversary_seller_config.sybil, aggregator)
         evaluators = create_evaluators(cfg, cfg.experiment.device, **seller_extra_args)
 
@@ -998,14 +1011,15 @@ def run_attack(cfg: AppConfig):
             SellerClass=GradientSeller,
             validation_loader=validation_loader,
             model_factory=model_factory,  # Pass the stateful factory
-            num_classes=num_classes
+            num_classes=num_classes,
+            sybil_coordinator = sybil_coordinator,
         )
 
         # 5. Seller Initialization
         # Remove global_model parameter - factory handles it now
         initialize_sellers(
             cfg, marketplace, seller_loaders, model_factory,
-            seller_extra_args, sybil_coordinator, collate_fn, num_classes
+            seller_extra_args, collate_fn, num_classes
         )
 
         initialize_root_sellers(
@@ -1015,7 +1029,7 @@ def run_attack(cfg: AppConfig):
         # 6. Federated Training Loop
         logging.info("🏋️ Starting federated training...")
         final_model = run_training_loop(
-            cfg, marketplace, validation_loader, test_loader, evaluators, sybil_coordinator
+            cfg, marketplace, validation_loader, test_loader, evaluators
         )
 
         # 7. Final Evaluation and Artifact Saving
@@ -1044,6 +1058,7 @@ def run_attack(cfg: AppConfig):
         logging.error("=" * 80)
         _mark_experiment_failed(save_path, str(e))
         raise
+
 
 # ==============================================================================
 # Helper Functions

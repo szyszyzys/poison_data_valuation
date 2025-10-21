@@ -1,45 +1,21 @@
 import logging
-import numpy as np
 import time
-import torch
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
+
+import numpy as np
+import torch
 
 from common.enums import ServerAttackMode
 from common.gradient_market_configs import AppConfig, ServerAttackConfig
 from entry.gradient_market.privacy_attack import GradientInversionAttacker
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.aggregator import Aggregator
-from marketplace.seller.gradient_seller import GradientSeller
+from marketplace.seller.gradient_seller import GradientSeller, SybilCoordinator
 from marketplace.seller.seller import BaseSeller
 
-
-# ADD THIS to your main training loop initialization (before rounds start):
-def evaluate_model(model, data_loader, device):
-    """Evaluates the model's accuracy and loss on the given data loader."""
-    model.eval()  # Set the model to evaluation mode
-    total_loss = 0
-    correct = 0
-    total_samples = 0
-
-    with torch.no_grad():  # Disable gradient calculations
-        for data, target in data_loader:
-            data, target = data.to(device), target.to(device)
-            output = model(data)
-
-            # Calculate loss (using cross-entropy as an example)
-            total_loss += F.cross_entropy(output, target, reduction='sum').item()
-
-            # Calculate accuracy
-            pred = output.argmax(dim=1, keepdim=True)
-            correct += pred.eq(target.view_as(pred)).sum().item()
-            total_samples += target.size(0)
-
-    avg_loss = total_loss / total_samples
-    accuracy = correct / total_samples
-    return avg_loss, accuracy
 
 def validate_buyer_attack_config(self):
     """Validate buyer attack configuration before training starts."""
@@ -93,7 +69,8 @@ class MarketplaceConfig:
 class DataMarketplaceFederated(DataMarketplace):
     def __init__(self, cfg: AppConfig, aggregator: Aggregator, sellers: dict,
                  input_shape: tuple, SellerClass: type, validation_loader, model_factory, num_classes: int,
-                 attacker=None, buyer_seller: GradientSeller = None, oracle_seller: GradientSeller = None):
+                 attacker=None, buyer_seller: GradientSeller = None, oracle_seller: GradientSeller = None,
+                 sybil_coordinator: Optional[SybilCoordinator] = None):
         """
         Initializes the marketplace with all necessary components and the main config.
         """
@@ -108,6 +85,7 @@ class DataMarketplaceFederated(DataMarketplace):
         self.buyer_seller: GradientSeller = buyer_seller
         self.oracle_seller: GradientSeller = oracle_seller
         self.num_classes = num_classes
+        self.sybil_coordinator = sybil_coordinator  # ✅ Store at marketplace level
 
         # Conditionally initialize the privacy attacker
         if self.cfg.server_attack_config.attack_name == ServerAttackMode.GRADIENT_INVERSION:
@@ -136,30 +114,50 @@ class DataMarketplaceFederated(DataMarketplace):
         """Provides convenient, direct access to the global model."""
         return self.aggregator.strategy.global_model
 
-    def train_federated_round(
-            self,
-            round_number: int,
-            global_model,
-            validation_loader,
-            ground_truth_dict: Dict[str, Dict[str, torch.Tensor]]
-    ) -> Tuple[Dict, Any]:
-        """Orchestrates a single federated round with the 'virtual seller' design."""
-        round_start_time = time.time()
-        logging.info(f"--- Round {round_number} Started ---")
+    def train_federated_round(self, round_number, global_model, validation_loader, ground_truth_dict):
+        """
+        Training with sybil coordination at marketplace level.
 
-        # === 2. Collect Gradients from the Real Marketplace ===
+        Flow:
+        1. Collect honest gradients from all sellers
+        2. Sybil coordinator manipulates gradients based on historical patterns
+        3. Aggregator selects and aggregates (with potentially manipulated gradients)
+        4. Update sybil coordinator state for future rounds
+        """
+        round_start_time = time.time()
+        logging.info(f"{'=' * 60}")
+        logging.info(f"Round {round_number} Started")
+        logging.info(f"{'=' * 60}")
+
+        # ===== PHASE 1: Prepare Sybil Coordinator =====
+        if self.sybil_coordinator:
+            self.sybil_coordinator.prepare_for_new_round()
+            logging.info(f"Sybil coordinator: Round {self.sybil_coordinator.cur_round}, "
+                         f"Attack active: {self.sybil_coordinator.start_atk}")
+
+        # ===== PHASE 2: Collect Honest Gradients =====
+        logging.info("\n📦 Collecting honest gradients from all sellers...")
         gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
 
-        # === 1. Compute Root Gradients using Virtual Sellers ===
-        logging.info("🛒 Computing buyer root gradient...")
+        if not gradients_dict:
+            logging.error("❌ No gradients collected! Cannot proceed with round.")
+            return self._create_failed_round_record(round_number, round_start_time), None
 
-        # 🔧 CAPTURE buyer_stats instead of discarding
+        # ===== PHASE 3: Compute Root Gradients =====
+        logging.info("\n🛒 Computing buyer root gradient...")
         buyer_root_gradient, buyer_stats = self.buyer_seller.get_gradient_for_upload(
             all_seller_gradients=gradients_dict,
             target_seller_id=getattr(self.cfg.buyer_attack_config, 'target_seller_id', None)
         )
 
-        # 🔧 ADD attack-specific logging
+        if buyer_root_gradient is None:
+            logging.error("Virtual buyer failed to compute gradient!")
+            raise RuntimeError("Buyer root gradient is None")
+
+        logging.info("🎯 Computing oracle root gradient...")
+        oracle_root_gradient, _ = self.oracle_seller.get_gradient_for_upload(global_model)
+
+        # Log buyer attack info
         if self.cfg.buyer_attack_config.is_active:
             attack_type = self.cfg.buyer_attack_config.attack_type
             logging.info(f"🚨 Active Buyer Attack: {attack_type}")
@@ -172,55 +170,37 @@ class DataMarketplaceFederated(DataMarketplace):
                     ratio = buyer_stats.get('exclusion_ratio', 0)
                     logging.debug(f"   Exclusion ratio: {ratio:.2%}")
 
-        oracle_root_gradient, _ = self.oracle_seller.get_gradient_for_upload(global_model)
-
-        if buyer_root_gradient is None:
-            logging.error(
-                "Virtual buyer failed to compute a gradient. "
-                f"Attack type: {self.cfg.buyer_attack_config.attack_type if self.cfg.buyer_attack_config.is_active else 'none'}"
+        # ===== PHASE 4: Sybil Manipulation (Based on Historical Patterns) =====
+        if self.sybil_coordinator:
+            logging.info("\n🎭 Applying sybil manipulation...")
+            gradients_dict = self.sybil_coordinator.apply_manipulation(
+                gradients_dict=gradients_dict,
+                all_sellers=self.sellers
             )
-            raise RuntimeError("Buyer root gradient is None, indicating a fatal error in local training.")
 
-        # === 3. Sanitize ALL Gradients Before Use ===
+        # ===== PHASE 5: Sanitize Gradients =====
+        logging.info("\n🧹 Sanitizing gradients...")
         target_device = self.aggregator.device
-        sanitized_gradients = {}
         param_meta = [(p.shape, p.dtype) for p in self.global_model.parameters()]
 
-        for sid, grad_list in gradients_dict.items():
-            if grad_list is None or len(grad_list) != len(param_meta):
-                logging.error(f"Seller '{sid}' returned an invalid gradient list. Replacing with zeros.")
-                sanitized_gradients[sid] = [
-                    torch.zeros(shape, dtype=dtype, device=target_device)
-                    for shape, dtype in param_meta
-                ]
-                continue
+        sanitized_gradients = self._sanitize_gradients(gradients_dict, param_meta, target_device)
+        sanitized_root_gradient = self._sanitize_gradient(buyer_root_gradient, target_device)
+        sanitized_oracle_gradient = self._sanitize_gradient(oracle_root_gradient, target_device)
 
-            corrected_list = []
-            for i, tensor in enumerate(grad_list):
-                if tensor is None:
-                    logging.warning(f"Sanitizer: Found None in gradient from seller '{sid}' at index {i}.")
-                    shape, dtype = param_meta[i]
-                    corrected_list.append(torch.zeros(shape, dtype=dtype, device=target_device))
-                elif tensor.device != target_device:
-                    corrected_list.append(tensor.to(target_device))
-                else:
-                    corrected_list.append(tensor)
-            sanitized_gradients[sid] = corrected_list
-
-        sanitized_root_gradient = [
-            (tensor.to(target_device) if tensor.device != target_device else tensor)
-            for tensor in buyer_root_gradient
-        ]
-
-        sanitized_oracle_gradient = [
-            (tensor.to(target_device) if tensor is not None and tensor.device != target_device else tensor)
-            for tensor in oracle_root_gradient
-        ]
-
-        # Perform privacy attack (optional)
+        # ===== PHASE 6: Privacy Attack (Optional) =====
         attack_log = None
         if self.attacker and self.attacker.should_run(round_number):
+            logging.info("\n🔍 Executing privacy attack...")
             attack_log = self.attacker.execute(round_number, gradients_dict, seller_ids, ground_truth_dict)
+
+        # ===== PHASE 7: Aggregation =====
+        logging.info("\n📊 Starting aggregation and selection...")
+
+        # Log model state before aggregation
+        param_before = list(self.global_model.parameters())[0].data.clone()
+        norm_before = torch.norm(param_before).item()
+        mean_before = param_before.mean().item()
+        logging.info(f"PRE-APPLY Global Param[0]: Norm={norm_before:.4e}, Mean={mean_before:.4e}")
 
         agg_grad, selected_ids, outlier_ids, aggregation_stats = self.aggregator.aggregate(
             global_epoch=round_number,
@@ -229,46 +209,50 @@ class DataMarketplaceFederated(DataMarketplace):
             buyer_data_loader=self.aggregator.buyer_data_loader
         )
 
-        param_to_check_before = list(self.global_model.parameters())[0].data.clone()
-        norm_before = torch.norm(param_to_check_before).item()
-        mean_before = param_to_check_before.mean().item()
-        logging.info(f"PRE-APPLY Global Param[0] Stats: Norm={norm_before:.4e}, Mean={mean_before:.4e}")
-        # --- END: MODEL UPDATE CHECK (BEFORE) ---
+        logging.info(f"✅ Selected {len(selected_ids)} sellers: {selected_ids}")
+        logging.info(f"   Rejected {len(outlier_ids)} sellers as outliers")
 
-        if agg_grad:  # Check if aggregation was successful
+        # ===== PHASE 8: Apply Update =====
+        if agg_grad:
             try:
-                # Delegate the actual update to the aggregator/strategy
-                self.aggregator.apply_gradient(agg_grad)  # <<< THE UPDATE HAPPENS HERE
-                self.consecutive_failed_rounds = 0  # Reset on success
-                logging.info("✅ Aggregated gradient applied to global model.")
+                self.aggregator.apply_gradient(agg_grad)
+                self.consecutive_failed_rounds = 0
+                logging.info("✅ Aggregated gradient applied to global model")
 
-                # --- START: MODEL UPDATE CHECK (AFTER) ---
-                # Get stats AFTER applying the gradient
-                param_to_check_after = list(self.global_model.parameters())[0].data
-                norm_after = torch.norm(param_to_check_after).item()
-                mean_after = param_to_check_after.mean().item()
-                logging.info(f"POST-APPLY Global Param[0] Stats: Norm={norm_after:.4e}, Mean={mean_after:.4e}")
+                # Log model state after aggregation
+                param_after = list(self.global_model.parameters())[0].data
+                norm_after = torch.norm(param_after).item()
+                mean_after = param_after.mean().item()
+                logging.info(f"POST-APPLY Global Param[0]: Norm={norm_after:.4e}, Mean={mean_after:.4e}")
 
-                # Compare norms
-                if abs(norm_before - norm_after) > 1e-7:  # Use a small tolerance
-                    logging.info("   -> ✅ Global model parameters changed.")
+                if abs(norm_before - norm_after) > 1e-7:
+                    logging.info("   ✅ Global model parameters changed")
                 else:
-                    logging.warning("   -> ⚠️ Global model parameters did NOT change significantly!")
-                # --- END: MODEL UPDATE CHECK (AFTER) ---
+                    logging.warning("   ⚠️  Global model parameters did NOT change significantly!")
 
             except Exception as e:
                 logging.error(f"❌ Failed to apply aggregated gradient: {e}", exc_info=True)
                 self.consecutive_failed_rounds += 1
-        else:  # Handle case where aggregation itself failed
+        else:
             self.consecutive_failed_rounds += 1
             logging.warning(
-                f"Round failed to produce an update (agg_grad is None). Consecutive failures: {self.consecutive_failed_rounds}")
-            # Log stats even if no update applied (should be same as before)
-            logging.info(
-                f"POST-APPLY Global Param[0] Stats (No Update): Norm={norm_before:.4e}, Mean={mean_before:.4e}")
+                f"⚠️  Round failed (agg_grad is None). Consecutive failures: {self.consecutive_failed_rounds}")
+
+        # ===== PHASE 9: Update Sybil Coordinator State =====
+        if self.sybil_coordinator:
+            logging.info("\n🔄 Updating sybil coordinator...")
+            self.sybil_coordinator.update_post_selection(
+                selected_ids=selected_ids,
+                all_sellers=self.sellers
+            )
+
+        # ===== PHASE 10: Save Debug Data (Optional) =====
         if self.cfg.debug.save_individual_gradients:
             if round_number % self.cfg.debug.gradient_save_frequency == 0:
                 self._save_round_gradients(round_number, gradients_dict, agg_grad)
+
+        # ===== PHASE 11: Compute Metrics =====
+        logging.info("\n📈 Computing marketplace metrics...")
         marketplace_metrics = self._compute_marketplace_metrics(
             round_number=round_number,
             gradients_dict=sanitized_gradients,
@@ -280,14 +264,78 @@ class DataMarketplaceFederated(DataMarketplace):
             oracle_root_gradient=sanitized_oracle_gradient
         )
 
-        # Create comprehensive round record
+        # ===== PHASE 12: Create Round Record =====
         duration = time.time() - round_start_time
+        round_record = self._create_round_record(
+            round_number=round_number,
+            duration=duration,
+            seller_ids=seller_ids,
+            selected_ids=selected_ids,
+            outlier_ids=outlier_ids,
+            buyer_stats=buyer_stats,
+            attack_log=attack_log,
+            aggregation_stats=aggregation_stats,
+            marketplace_metrics=marketplace_metrics
+        )
+
+        # ===== PHASE 13: Notify Sellers =====
+        for sid, seller in self.sellers.items():
+            seller.round_end_process(
+                round_number,
+                was_selected=(sid in selected_ids),
+                was_outlier=(sid in outlier_ids),
+                marketplace_metrics=marketplace_metrics.get(f'seller_{sid}', {})
+            )
+
+        logging.info(f"\n{'=' * 60}")
+        logging.info(f"Round {round_number} Ended (Duration: {duration:.2f}s)")
+        logging.info(f"{'=' * 60}\n")
+
+        return round_record, agg_grad
+
+    def _sanitize_gradients(self, gradients_dict: Dict, param_meta: List, target_device) -> Dict:
+        """Sanitize all gradients to ensure correct format and device."""
+        sanitized = {}
+        for sid, grad_list in gradients_dict.items():
+            if grad_list is None or len(grad_list) != len(param_meta):
+                logging.error(f"Seller '{sid}' invalid gradient - replacing with zeros")
+                sanitized[sid] = [
+                    torch.zeros(shape, dtype=dtype, device=target_device)
+                    for shape, dtype in param_meta
+                ]
+                continue
+
+            corrected_list = []
+            for i, tensor in enumerate(grad_list):
+                if tensor is None:
+                    logging.warning(f"None gradient from {sid} at index {i}")
+                    shape, dtype = param_meta[i]
+                    corrected_list.append(torch.zeros(shape, dtype=dtype, device=target_device))
+                elif tensor.device != target_device:
+                    corrected_list.append(tensor.to(target_device))
+                else:
+                    corrected_list.append(tensor)
+            sanitized[sid] = corrected_list
+
+        return sanitized
+
+    def _sanitize_gradient(self, gradient: List[torch.Tensor], target_device) -> List[torch.Tensor]:
+        """Sanitize a single gradient."""
+        if gradient is None:
+            return None
+        return [
+            (tensor.to(target_device) if tensor.device != target_device else tensor)
+            for tensor in gradient
+        ]
+
+    def _create_round_record(self, round_number, duration, seller_ids, selected_ids,
+                             outlier_ids, buyer_stats, attack_log, aggregation_stats,
+                             marketplace_metrics) -> Dict:
+        """Create comprehensive round record."""
         round_record = {
             "round": round_number,
             "timestamp": time.time(),
             "duration_sec": duration,
-
-            # Basic stats (from seller_ids list)
             "num_total_sellers": len(seller_ids),
             "num_selected": len(selected_ids),
             "num_outliers": len(outlier_ids),
@@ -303,42 +351,24 @@ class DataMarketplaceFederated(DataMarketplace):
             "attack_success": attack_log.get('success') if attack_log else None,
         }
 
-        # 2. Define the SPECIFIC aggregate keys you want to save to the CSV
-        #    These keys MUST match your TRAINING_LOG_COLUMNS list
+        # Add aggregate metrics
         aggregate_metric_keys = [
-            'selection_rate',
-            'outlier_rate',
-            'avg_gradient_norm',
-            'std_gradient_norm',
-            'min_gradient_norm',
-            'max_gradient_norm',
+            'selection_rate', 'outlier_rate',
+            'avg_gradient_norm', 'std_gradient_norm', 'min_gradient_norm', 'max_gradient_norm',
             'avg_gradient_similarity',
-            'num_known_adversaries',
-            'num_detected_adversaries',
-            'num_benign_outliers',
-            'adversary_detection_rate',
-            'false_positive_rate',
+            'num_known_adversaries', 'num_detected_adversaries', 'num_benign_outliers',
+            'adversary_detection_rate', 'false_positive_rate',
             'avg_sim_to_buyer', 'std_sim_to_buyer', 'min_sim_to_buyer', 'max_sim_to_buyer',
             'avg_sim_to_oracle', 'std_sim_to_oracle', 'min_sim_to_oracle', 'max_sim_to_oracle'
         ]
 
-        # 3. Safely copy ONLY these metrics into the round_record
-        #    This prevents the "per-seller" keys from breaking your CSV
         for key in aggregate_metric_keys:
-            # Use .get() to avoid an error if a metric wasn't computed (e.g., similarity)
             round_record[key] = marketplace_metrics.get(key)
 
         if aggregation_stats:
             round_record.update(aggregation_stats)
 
-        # Notify sellers of round end
-        for sid, seller in self.sellers.items():
-            seller.round_end_process(
-                round_number,
-                was_selected=(sid in selected_ids),
-                was_outlier=(sid in outlier_ids),
-                marketplace_metrics=marketplace_metrics.get(f'seller_{sid}', {})
-            )
+        # Add detailed seller metrics
         seller_metrics_list = []
         for sid in seller_ids:
             seller_data = {
@@ -346,7 +376,6 @@ class DataMarketplaceFederated(DataMarketplace):
                 'seller_id': sid,
                 'selected': sid in selected_ids,
                 'outlier': sid in outlier_ids,
-                # Get metrics from the marketplace_metrics dict
                 'sim_to_oracle_root': marketplace_metrics.get(f'seller_{sid}_sim_to_oracle_root'),
                 'sim_to_buyer_root': marketplace_metrics.get(f'seller_{sid}_sim_to_buyer_root'),
                 'gradient_norm': marketplace_metrics.get(f'seller_{sid}_gradient_norm'),
@@ -356,11 +385,21 @@ class DataMarketplaceFederated(DataMarketplace):
             }
             seller_metrics_list.append(seller_data)
 
-        # 5. Attach this detailed list to the round_record to be saved by the main loop
         round_record['detailed_seller_metrics'] = seller_metrics_list
-        logging.info(f"--- Round {round_number} Ended (Duration: {duration:.2f}s) ---")
 
-        return round_record, agg_grad
+        return round_record
+
+    def _create_failed_round_record(self, round_number, round_start_time) -> Dict:
+        """Create a record for a failed round."""
+        return {
+            "round": round_number,
+            "timestamp": time.time(),
+            "duration_sec": time.time() - round_start_time,
+            "failed": True,
+            "num_total_sellers": 0,
+            "num_selected": 0,
+            "num_outliers": 0,
+        }
 
     def _save_round_gradients(self, round_number: int, gradients_dict: Dict, agg_grad: List[torch.Tensor]):
         """

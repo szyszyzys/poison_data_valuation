@@ -96,7 +96,6 @@ class SellerFactory:
                       seller_id: str,
                       dataset: Dataset,
                       is_adversary: bool,
-                      sybil_coordinator: SybilCoordinator,
                       collate_fn: Callable = None):
         """Creates a seller instance, assembling configs and dependencies on the fly."""
         data_cfg = RuntimeDataConfig(
@@ -104,7 +103,6 @@ class SellerFactory:
             num_classes=self.num_classes,  # Use it here
             collate_fn=collate_fn
         )
-        training_cfg = self.cfg.training
         training_cfg = self.cfg.training
         base_kwargs = {
             "seller_id": seller_id,
@@ -147,9 +145,6 @@ class SellerFactory:
             logging.warning(f"Attack type '{attack_type.value}' is invalid. Creating a benign seller.")
             return GradientSeller(**base_kwargs, **self.runtime_kwargs)
 
-        # ** THE CORE CHANGE IS HERE **
-        # The factory now knows which sellers need a pre-built generator
-        # and which ones build their own.
         if AdversaryClass is AdvancedBackdoorAdversarySeller:
             # For the backdoor seller, we do NOT pass a poison_generator.
             # Instead, we pass the `model_type` it needs to build its own.
@@ -162,7 +157,6 @@ class SellerFactory:
             return AdvancedBackdoorAdversarySeller(
                 **base_kwargs,
                 adversary_config=self.cfg.adversary_seller_config,
-                sybil_coordinator=sybil_coordinator,
                 model_type=self.cfg.experiment.dataset_type,
                 **kwargs_for_seller  # 3. Unpack the cleaned dictionary
             )
@@ -179,7 +173,6 @@ class SellerFactory:
             return AdvancedPoisoningAdversarySeller(
                 **base_kwargs,
                 adversary_config=self.cfg.adversary_seller_config,
-                sybil_coordinator=sybil_coordinator,
                 poison_generator=poison_generator,
                 **self.runtime_kwargs
             )

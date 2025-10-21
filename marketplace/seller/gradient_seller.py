@@ -653,11 +653,11 @@ class SybilCoordinator:
     def __init__(self, sybil_cfg: SybilConfig, aggregator: Aggregator):
         self.sybil_cfg = sybil_cfg
         self.aggregator = aggregator
-        self.device = aggregator.device  # Get device from a reliable source
+        self.device = aggregator.device
 
         self.clients: Dict[str, ClientState] = collections.OrderedDict()
 
-        # --- Initialize strategies from config ---
+        # Initialize strategies from config
         self.strategies: Dict[str, BaseGradientStrategy] = {
             'mimic': MimicStrategy(**self.sybil_cfg.strategy_configs.get('mimic', {})),
             'pivot': PivotStrategy(),
@@ -679,20 +679,126 @@ class SybilCoordinator:
             raise AttributeError("Seller object must have a 'seller_id' attribute")
         self.clients[seller.seller_id] = ClientState(seller_obj=seller)
 
+    def apply_manipulation(self, gradients_dict: Dict, all_sellers: Dict) -> Dict:
+        """
+        Apply sybil manipulation based on historical patterns.
+
+        Args:
+            gradients_dict: Dictionary of {seller_id: gradient}
+            all_sellers: Dictionary of {seller_id: seller_object}
+
+        Returns:
+            Updated gradients_dict with manipulated sybil gradients
+        """
+        if not self.start_atk:
+            logging.info("[SybilCoordinator] Not in attack phase yet - no manipulation")
+            return gradients_dict
+
+        if not self.selection_patterns:
+            logging.info("[SybilCoordinator] No historical patterns yet - sybils submit honest gradients")
+            return gradients_dict
+
+        avg_similarity = self.selection_patterns.get('avg_similarity', 0)
+        logging.info(f"[SybilCoordinator] Applying manipulation (historical similarity: {avg_similarity:.4f})")
+
+        manipulated_count = 0
+        for sybil_id in self.clients:
+            if sybil_id not in gradients_dict:
+                continue
+
+            client_state = self.clients[sybil_id]
+
+            # Only manipulate if in attack phase
+            if client_state.phase == "attack":
+                # Get strategy based on role
+                strategy = self._get_strategy_for_role(client_state.role)
+
+                # Get honest gradient from seller
+                seller = all_sellers.get(sybil_id)
+                if not seller or not hasattr(seller, 'get_honest_gradient'):
+                    continue
+
+                original_grad = seller.get_honest_gradient()
+                if not original_grad:
+                    continue
+
+                # Manipulate based on historical winners
+                manipulated_grad = self.update_nonselected_gradient(
+                    current_gradient=original_grad,
+                    strategy=strategy
+                )
+
+                # Replace in gradients dict
+                gradients_dict[sybil_id] = manipulated_grad
+
+                # Update seller's cache
+                seller.last_computed_gradient = manipulated_grad
+
+                manipulated_count += 1
+                logging.debug(f"   Manipulated {sybil_id} (role: {client_state.role}, strategy: {strategy})")
+
+        logging.info(f"[SybilCoordinator] Manipulated {manipulated_count} sybil gradients")
+        return gradients_dict
+
+    def update_post_selection(self, selected_ids: List[str], all_sellers: Dict):
+        """
+        Update sybil coordinator state after selection.
+
+        Args:
+            selected_ids: List of seller IDs that were selected
+            all_sellers: Dictionary of all seller objects
+        """
+        logging.info(f"[SybilCoordinator] Updating state after selection")
+
+        # Update client states based on selection
+        self.update_client_states(selected_ids)
+
+        # Collect HONEST gradients from selected sellers for pattern learning
+        selected_honest_gradients = {}
+        for sid in selected_ids:
+            seller = all_sellers.get(sid)
+            if seller and hasattr(seller, 'get_honest_gradient'):
+                honest_grad = seller.get_honest_gradient()
+                if honest_grad:
+                    selected_honest_gradients[sid] = honest_grad
+
+        # Update historical patterns for future rounds
+        if selected_honest_gradients:
+            self.update_historical_patterns(selected_honest_gradients)
+            logging.info(f"   Updated patterns with {len(selected_honest_gradients)} honest gradients")
+
+        # Log sybil performance
+        sybil_selected = [sid for sid in selected_ids if sid in self.clients]
+        if sybil_selected:
+            success_rate = len(sybil_selected) / len(self.clients) if self.clients else 0
+            logging.info(f"   🎯 Sybil success: {len(sybil_selected)}/{len(self.clients)} "
+                         f"selected ({success_rate:.1%})")
+            logging.info(f"      Selected sybils: {sybil_selected}")
+        else:
+            logging.info(f"   No sybils selected this round")
+
+        # End of round cleanup
+        self.on_round_end()
+
+    def _get_strategy_for_role(self, role: str) -> str:
+        """Map sybil role to manipulation strategy."""
+        strategy_map = {
+            "attacker": "mimic",  # Strongly mimic winners
+            "hybrid": "mimic",  # Also mimic
+            "explorer": "pivot"  # Try different approaches
+        }
+        return strategy_map.get(role, "mimic")
+
     def get_client_with_highest_selection_rate(self) -> str:
-        """
-        Returns the client ID with the highest selection rate.
-        If there are no clients, returns None.
-        """
+        """Returns the client ID with the highest selection rate."""
         best_client = None
-        max_rate = -1.0  # start with a rate lower than any possible selection rate
+        max_rate = -1.0
         for cid, client_info in self.clients.items():
             if client_info.selection_rate > max_rate:
                 max_rate = client_info.selection_rate
                 best_client = cid
         return best_client
 
-    # ----- Update & Analysis Methods -----
     def update_client_states(self, selected_client_ids: List[str]) -> None:
         """Update the state of each client based on the latest selection results."""
         for cid, client_state in self.clients.items():
@@ -701,7 +807,6 @@ class SybilCoordinator:
             client_state.selection_rate = sum(client_state.selection_history) / len(client_state.selection_history)
             client_state.rounds_participated += 1
 
-            # Use parameters from the config object
             if (client_state.rounds_participated >= self.sybil_cfg.benign_rounds and
                     client_state.selection_rate > self.sybil_cfg.detection_threshold):
                 client_state.phase = "attack"
@@ -718,8 +823,6 @@ class SybilCoordinator:
 
     def _analyze_selection_patterns(self) -> None:
         """Analyze stored selected gradients to compute a centroid and average cosine similarity."""
-        # This function's internal logic is mostly fine, so it's kept as is.
-        # It benefits from self.selected_history being a deque.
         all_selected_flat = [
             grad.flatten() for round_dict in self.selected_history for grad in round_dict.values()
         ]
@@ -731,10 +834,8 @@ class SybilCoordinator:
         all_tensor = torch.stack(all_selected_flat)
         centroid = torch.mean(all_tensor, dim=0)
 
-        # Simplified similarity calculation
         avg_sim = 0.0
         if len(all_tensor) > 1:
-            # Calculate similarity of each gradient to the centroid
             sims = F.cosine_similarity(all_tensor, centroid.unsqueeze(0))
             avg_sim = torch.mean(sims).item()
 
@@ -748,7 +849,6 @@ class SybilCoordinator:
         sorted_clients = sorted(self.clients.items(), key=lambda item: item[1].selection_rate, reverse=True)
         num_clients = len(sorted_clients)
 
-        # Use role percentages from the config
         role_config = self.sybil_cfg.role_config
         attacker_cutoff = int(role_config.get('attacker', 0.2) * num_clients)
         explorer_cutoff = int((1 - role_config.get('explorer', 0.4)) * num_clients)
@@ -762,9 +862,7 @@ class SybilCoordinator:
                 client_state.role = "hybrid"
 
     def _ensure_tensor(self, gradient: Union[torch.Tensor, List, np.ndarray]) -> torch.Tensor:
-        """
-        Ensure that the provided gradient is a single flattened tensor on the correct device.
-        """
+        """Ensure that the provided gradient is a single flattened tensor on the correct device."""
         if isinstance(gradient, list):
             flat_tensors = []
             for g in gradient:
@@ -776,23 +874,30 @@ class SybilCoordinator:
                     raise TypeError(f"Unsupported gradient element type: {type(g)}")
             return torch.cat(flat_tensors)
         elif isinstance(gradient, torch.Tensor):
-            return gradient.to(self.device)
+            return gradient.flatten().to(self.device)
         elif isinstance(gradient, np.ndarray):
-            return torch.from_numpy(gradient).to(self.device)
+            return torch.from_numpy(gradient).flatten().to(self.device)
         else:
             raise TypeError(f"Unsupported gradient type: {type(gradient)}")
 
     def collect_selected_gradients(self, selected_client_ids: List[str]) -> None:
-        """Collects gradients from the sellers selected in the current round."""
+        """
+        Collects CACHED gradients from selected sellers.
+        Does NOT recompute - uses gradients already computed in the training round.
+        """
         self.selected_gradients = {}
+
         for cid in selected_client_ids:
             if cid in self.clients:
                 seller = self.clients[cid].seller_obj
-                gradient_tensors, _ = seller.get_gradient_for_upload()
 
-                # Now, pass only the tensors to _ensure_tensor
+                # ✅ Get CACHED gradient (no recomputation!)
+                gradient_tensors = seller.get_cached_gradient()
+
                 if gradient_tensors is not None:
                     self.selected_gradients[cid] = self._ensure_tensor(gradient_tensors)
+                else:
+                    logging.warning(f"[SybilCoordinator] Seller {cid} has no cached gradient")
 
     def get_selected_average(self) -> Optional[torch.Tensor]:
         """Compute the average gradient of all selected sellers."""
@@ -807,22 +912,23 @@ class SybilCoordinator:
         strat_name = strategy or self.sybil_cfg.gradient_default_mode
         avg_grad = self.get_selected_average()
 
-        # If no selected gradients exist, just return the original gradient as a list of tensors.
+        # If no selected gradients exist, return original
         if avg_grad is None:
             if isinstance(current_gradient, list):
-                return current_gradient  # Already a list of tensors
-            # Ensure even a single tensor is returned as a list
+                return current_gradient
             return [self._ensure_tensor(current_gradient)]
 
         strategy_obj = self.strategies.get(strat_name)
         if not strategy_obj:
             raise ValueError(f"Strategy '{strat_name}' not found or configured.")
 
+        # Store original shapes
         if isinstance(current_gradient, list):
             original_shapes = [g.shape for g in current_gradient]
         else:
-            original_shapes = [current_gradient.shape]  # A list with just one shape
+            original_shapes = [current_gradient.shape]
 
+        # Flatten, manipulate, unflatten
         current_grad_tensor = self._ensure_tensor(current_gradient)
         new_grad = strategy_obj.manipulate(current_grad_tensor, avg_grad)
 
@@ -839,7 +945,6 @@ class SybilCoordinator:
         self.update_historical_patterns(self.selected_gradients)
         self.adaptive_role_assignment()
         self.selected_gradients = {}
-
 
 class PoisonedDataset(Dataset):
     """
@@ -908,7 +1013,6 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
                  adversary_config: AdversarySellerConfig,
                  # The seller now RECEIVES the generator from the factory
                  poison_generator: Optional[PoisonGenerator],
-                 sybil_coordinator: Optional[SybilCoordinator] = None,
                  device: str = "cpu",
                  **kwargs: Any):
 
@@ -921,8 +1025,6 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
             **kwargs
         )
         self.adversary_config = adversary_config
-        self.sybil_coordinator = sybil_coordinator
-        self.is_sybil = self.adversary_config.sybil.is_sybil and sybil_coordinator is not None
         self.selected_last_round = False
 
         # The seller simply stores the generator it was given.
@@ -938,14 +1040,6 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
         logging.info(f"[{self.seller_id}] Getting gradient for upload...")
 
         try:
-            # Determine if we should attack
-            current_round = self.sybil_coordinator.cur_round if self.is_sybil else float('inf')
-            should_attack = current_round >= self.adversary_config.sybil.benign_rounds
-
-            logging.info(f"[{self.seller_id}] Round: {current_round}, Should attack: {should_attack}")
-
-            # Create a local copy of the global model for training
-            # IMPORTANT: Don't modify global_model directly!
             local_model = self.model_factory().to(self.device)
 
             # Debug logging (only for specific sellers to reduce noise)
@@ -955,7 +1049,7 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
                 logging.info(f"Parameter shapes: {[p.shape for p in local_model.parameters()]}")
 
             # Select dataset based on attack phase
-            if should_attack and self.poison_generator:
+            if self.poison_generator:
                 logging.info(f"[{self.seller_id}] 🎭 Attack phase: using poisoned dataset")
                 dataset_for_training = PoisonedDataset(
                     original_dataset=self.dataset,
@@ -984,26 +1078,6 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
                 return None, {}
 
             logging.info(f"[{self.seller_id}] ✅ Base gradient validated: {len(base_gradient)} parameters")
-
-            # Apply Sybil logic if applicable
-            if self.is_sybil and not self.selected_last_round and should_attack:
-                sybil_strategy = self.adversary_config.sybil.gradient_default_mode
-                logging.info(
-                    f"[{self.seller_id}] 🎭 Sybil client not selected. "
-                    f"Applying strategy: '{sybil_strategy}'"
-                )
-
-                coordinated_gradient = self.sybil_coordinator.update_nonselected_gradient(
-                    base_gradient, strategy=sybil_strategy
-                )
-
-                # Validate coordinated gradient
-                if coordinated_gradient is None:
-                    logging.error(f"[{self.seller_id}] ❌ Sybil coordinator returned None!")
-                    return None, {}
-
-                logging.info(f"[{self.seller_id}] ✅ Coordinated gradient validated")
-                return coordinated_gradient, stats
 
             # Return base gradient for normal sellers or selected Sybils
             logging.info(f"[{self.seller_id}] ✅ Returning base gradient")
@@ -1084,7 +1158,6 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
                  model_factory: Callable[[], nn.Module],
                  adversary_config: AdversarySellerConfig,
                  model_type: str,  # 'image' or 'text'
-                 sybil_coordinator: Optional[SybilCoordinator] = None,
                  save_path: str = "",
                  device: str = "cpu",
                  **kwargs: Any):
@@ -1104,7 +1177,6 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
             model_factory=model_factory,
             adversary_config=adversary_config,
             poison_generator=backdoor_generator,  # Pass the created generator up!
-            sybil_coordinator=sybil_coordinator,
             save_path=save_path,
             device=device,
             **kwargs
