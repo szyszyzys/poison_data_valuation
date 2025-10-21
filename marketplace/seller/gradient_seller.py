@@ -1211,7 +1211,7 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
                 raise ValueError("Tabular backdoor generator requires 'feature_to_idx' in kwargs.")
 
             backdoor_tabular_cfg = BackdoorTabularConfig(
-                target_label=params.target_label,
+                target_label=poison_cfg.tabular_backdoor_params.target_label,
                 trigger_conditions=params.trigger_conditions
             )
             return BackdoorTabularGenerator(backdoor_tabular_cfg, feature_to_idx)
