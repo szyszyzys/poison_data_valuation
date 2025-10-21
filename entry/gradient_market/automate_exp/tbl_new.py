@@ -345,7 +345,7 @@ def generate_tabular_scalability_scenarios() -> List[Scenario]:
 # --- Main Execution Block ---
 # --- Main Execution Block ---
 if __name__ == "__main__":
-    output_dir = "./configs_generated/tabular_sgd"
+    output_dir = "./configs_generated/tabular"
     generator = ExperimentGenerator(output_dir)
 
     ALL_TABULAR_SCENARIOS = []
