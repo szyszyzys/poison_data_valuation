@@ -85,17 +85,13 @@ def get_tabular_dataset(cfg: AppConfig):
 
     scaler = StandardScaler()
     numerical_cols = X_train.select_dtypes(include=np.number).columns
-
-    # --- ADD THIS DEBUG LOG ---
-    if numerical_cols.empty:
-        logger.error("CRITICAL BUG: No numerical columns found for scaling!")
-    else:
-        logger.info(f"Applying StandardScaler to {len(numerical_cols)} columns.")
-    # --- END DEBUG LOG ---
-
     if not numerical_cols.empty:
-        X_train[numerical_cols] = scaler.fit_transform(X_train[numerical_cols])
-        X_test[numerical_cols] = scaler.transform(X_test[numerical_cols])
+        logger.info(f"Applying StandardScaler to {len(numerical_cols)} columns.")
+
+        # --- THIS IS THE FIX ---
+        # Use .loc to modify the original DataFrame in-place
+        X_train.loc[:, numerical_cols] = scaler.fit_transform(X_train[numerical_cols])
+        X_test.loc[:, numerical_cols] = scaler.transform(X_test[numerical_cols])
     feature_to_idx = {col: i for i, col in enumerate(X_train.columns)}
 
     # 3. Convert to PyTorch Datasets
