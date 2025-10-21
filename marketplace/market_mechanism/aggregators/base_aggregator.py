@@ -35,23 +35,29 @@ class BaseAggregator(ABC):
 
     def apply_gradient(self, aggregated_gradient: List[torch.Tensor], learning_rate: float = 1.0):
         """
-        Applies the provided aggregated gradient to the global model.
+        Applies the aggregated pseudo-gradient (weight difference) to the global model.
+
+        For FedAvg with weight differences:
+            learning_rate should be 1.0 (default)
+            Update: global_weights = global_weights - 1.0 * averaged_weight_difference
+                  = global_weights - (sum of weight_differences) / num_clients
 
         Args:
-            aggregated_gradient (List[torch.Tensor]): The gradient to apply.
-            learning_rate (float): The server-side learning rate. Defaults to 1.0,
-                                   assuming learning rate is handled on the client or
-                                   incorporated into the gradient itself (e.g., FedAvg).
+            aggregated_gradient: Average of (initial_weights - final_weights) from clients
+            learning_rate: Server-side learning rate (default=1.0 for standard FedAvg)
         """
         if not aggregated_gradient:
-            logger.warning("apply_gradient called with an empty or None gradient. Skipping model update.")
+            logger.warning("apply_gradient called with empty gradient. Skipping.")
             return
 
         with torch.no_grad():
-            for param, grad in zip(self.global_model.parameters(), aggregated_gradient):
-                # The update rule is: param = param - learning_rate * grad
-                # The in-place equivalent is param.add_(grad, alpha=-learning_rate)
-                param.add_(grad, alpha=-learning_rate)
+            for param, pseudo_grad in zip(self.global_model.parameters(), aggregated_gradient):
+                # FedAvg update: param = param - learning_rate * pseudo_grad
+                # With lr=1.0: param = param - pseudo_grad
+                # Since pseudo_grad = (old - new), this becomes: param = param - (old - new) = new
+                param.add_(pseudo_grad, alpha=-learning_rate)
+
+        logger.debug(f"Applied gradient with learning_rate={learning_rate}")
 
     def _get_model_from_update(self, update: List[torch.Tensor]) -> nn.Module:
         temp_model = copy.deepcopy(self.global_model)

@@ -13,7 +13,6 @@ Usage (within a seller’s get_gradient method):
     # flat_update is a numpy array representing the update from local training.
 """
 
-import copy
 import logging
 from typing import List, Tuple, Any, Optional, Union
 
@@ -214,30 +213,33 @@ def local_training_and_get_gradient(
         weight_decay: float = 0.0005
 ) -> Tuple[Optional[List[torch.Tensor]], Optional[float]]:
     """
-    Performs local training and returns the WEIGHT DELTA on the correct device.
+    Performs local training and returns the WEIGHT DIFFERENCE (pseudo-gradient).
+
+    Returns: (initial_weights - final_weights)
+
+    This is the standard FedAvg approach where the server aggregates weight differences
+    and applies them directly (with server learning rate = 1.0).
     """
     logging.debug(f"Starting local training: {local_epochs} epochs, lr={lr}, optimizer={opt_str}")
 
-    # Store initial parameters on their original device (the GPU)
-    initial_params = [p.data.clone() for p in model.parameters()]  # <-- REMOVED .cpu()
-    # ==================== NEW LOGGING (BEFORE) ====================
+    # Store initial parameters
+    initial_params = [p.data.clone() for p in model.parameters()]
+
     print("--- Inspecting Model Parameters PRE-TRAINING ---")
     log_param_stats(initial_params, prefix="Initial")
-    # ==============================================================
 
-    model_for_training = copy.deepcopy(model)
-    model_for_training.to(device)
-    model_for_training.train()
+    # Train model
+    model.train()
 
     criterion = nn.CrossEntropyLoss()
     if opt_str.upper() == "ADAM":
-        optimizer = optim.Adam(model_for_training.parameters(), lr=lr, weight_decay=weight_decay, eps=eps)
+        optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay, eps=eps)
     else:
-        optimizer = optim.SGD(model_for_training.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
+        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
 
     try:
         trained_model, avg_train_loss = train_local_model(
-            model_for_training, train_loader, criterion, optimizer, device, epochs=local_epochs
+            model, train_loader, criterion, optimizer, device, epochs=local_epochs
         )
         if trained_model is None or avg_train_loss is None:
             logging.error("train_local_model returned None!")
@@ -246,36 +248,36 @@ def local_training_and_get_gradient(
         logging.error(f"Error during local training: {e}", exc_info=True)
         return None, None
 
-    weight_delta_tensors: List[torch.Tensor] = []
+    # Compute pseudo-gradients (weight differences)
+    pseudo_gradients: List[torch.Tensor] = []
     with torch.no_grad():
-        # Get trained parameters, which are already on the correct device
-        trained_params = [p.data for p in trained_model.parameters()]  # <-- REMOVED .cpu()
-        # ==================== NEW LOGGING (AFTER) =====================
+        trained_params = [p.data for p in trained_model.parameters()]
+
         print("--- Inspecting Model Parameters POST-TRAINING ---")
         log_param_stats(trained_params, prefix="Trained")
-        # ==============================================================
 
         if len(trained_params) != len(initial_params):
-            logging.error(f"Parameter count mismatch! Initial: {len(initial_params)}, Trained: {len(trained_params)}")
+            logging.error(f"Parameter count mismatch!")
             return None, None
 
-        # Compute deltas on the GPU
+        # ✅ FedAvg-style: Return weight difference
+        # pseudo_gradient = initial_weights - final_weights
         for init_p, trained_p in zip(initial_params, trained_params):
             if init_p.shape != trained_p.shape:
                 logging.error(f"Shape mismatch: {init_p.shape} vs {trained_p.shape}")
                 return None, None
 
-            # This is now a GPU-GPU subtraction, resulting in a GPU tensor
-            delta = trained_p - init_p
-            weight_delta_tensors.append(delta)
+            # Weight difference (points in the direction of improvement)
+            pseudo_grad = init_p - trained_p
+            pseudo_gradients.append(pseudo_grad)
 
-    if not weight_delta_tensors:
-        logging.error("Generated empty weight delta list!")
+    if not pseudo_gradients:
+        logging.error("Generated empty pseudo-gradient list!")
         return None, None
 
-    logging.debug(f"Training complete. Loss: {avg_train_loss:.4f}, Deltas: {len(weight_delta_tensors)}")
+    logging.debug(f"Training complete. Loss: {avg_train_loss:.4f}, Pseudo-gradients: {len(pseudo_gradients)}")
 
-    return weight_delta_tensors, avg_train_loss
+    return pseudo_gradients, avg_train_loss
 
 
 # --- 1. Update the MODEL_REGISTRY to include text models ---

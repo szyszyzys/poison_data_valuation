@@ -311,52 +311,6 @@ class TabularModelFactory:
 
         return model_factory
 
-    @staticmethod
-    def save_model_and_config(model: nn.Module, config: TabularModelConfig,
-                              save_dir: str, model_name: str = "model"):
-        """Save tabular model state and configuration."""
-        save_path = Path(save_dir)
-        save_path.mkdir(parents=True, exist_ok=True)
-
-        # Save model state
-        model_path = save_path / f"{model_name}.pth"
-        torch.save(model.state_dict(), model_path)
-
-        # Save configuration
-        config_path = save_path / f"{model_name}_config.json"
-        with open(config_path, 'w') as f:
-            json.dump(asdict(config), f, indent=2)
-
-        logging.info(f"💾 Saved tabular model and config to {save_path}")
-        return model_path, config_path
-
-    @staticmethod
-    def load_model_and_config(save_dir: str, model_name: str, input_dim: int,
-                              num_classes: int,
-                              device: str = 'cpu') -> tuple:
-        """Load tabular model state and configuration."""
-        save_path = Path(save_dir)
-
-        # Load configuration
-        config_path = save_path / f"{model_name}_config.json"
-        with open(config_path, 'r') as f:
-            config_dict = json.load(f)
-        config = TabularModelConfig(**config_dict)
-
-        # Create model
-        model = TabularModelFactory.create_model(
-            config.model_name, input_dim, num_classes, config, device=device
-        )
-
-        # Load model state
-        model_path = save_path / f"{model_name}.pth"
-        model.load_state_dict(torch.load(model_path, map_location=device))
-
-        # Ensure model is on the correct device after loading state
-        model = model.to(device)
-
-        logging.info(f"📂 Loaded tabular model and config from {save_path}")
-        return model, config
 
 class TabularConfigManager:
     def __init__(self, config_dir: str = "./configs"):
