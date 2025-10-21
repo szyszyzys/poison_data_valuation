@@ -85,13 +85,38 @@ def get_tabular_dataset(cfg: AppConfig):
 
     scaler = StandardScaler()
     numerical_cols = X_train.select_dtypes(include=np.number).columns
-    if not numerical_cols.empty:
+
+    if numerical_cols.empty:
+        logger.error("CRITICAL BUG: No numerical columns found for scaling!")
+    else:
         logger.info(f"Applying StandardScaler to {len(numerical_cols)} columns.")
 
-        # --- THIS IS THE FIX ---
-        # Use .loc to modify the original DataFrame in-place
-        X_train.loc[:, numerical_cols] = scaler.fit_transform(X_train[numerical_cols])
-        X_test.loc[:, numerical_cols] = scaler.transform(X_test[numerical_cols])
+    if not numerical_cols.empty:
+        # --- THIS IS THE FINAL FIX (avoids FutureWarning & SettingWithCopyWarning) ---
+
+        # 1. Fit the scaler on X_train and transform it (creates a numpy array)
+        X_train_scaled_data = scaler.fit_transform(X_train[numerical_cols])
+
+        # 2. Convert the numpy array back to a DataFrame, preserving columns and index
+        X_train_scaled_df = pd.DataFrame(X_train_scaled_data,
+                                         columns=numerical_cols,
+                                         index=X_train.index)
+
+        # 3. Update the original DataFrame using .loc to ensure modification in place
+        X_train.loc[:, numerical_cols] = X_train_scaled_df
+
+        # --- REPEAT FOR X_test (using .transform, not .fit_transform) ---
+
+        # 1. Transform X_test
+        X_test_scaled_data = scaler.transform(X_test[numerical_cols])
+
+        # 2. Convert back to DataFrame
+        X_test_scaled_df = pd.DataFrame(X_test_scaled_data,
+                                        columns=numerical_cols,
+                                        index=X_test.index)
+
+        # 3. Update the original DataFrame
+        X_test.loc[:, numerical_cols] = X_test_scaled_df
     feature_to_idx = {col: i for i, col in enumerate(X_train.columns)}
 
     # 3. Convert to PyTorch Datasets
