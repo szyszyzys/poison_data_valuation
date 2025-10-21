@@ -66,7 +66,6 @@ class CleanEvaluator(BaseEvaluator):
         loss = total_loss / total_samples
         return {"acc": acc, "loss": loss}
 
-
 from marketplace.seller.gradient_seller import AdvancedBackdoorAdversarySeller  # 1. ADD THIS IMPORT
 
 
@@ -110,8 +109,11 @@ class BackdoorEvaluator(BaseEvaluator):
         metrics = evaluate_attack_performance(
             model, test_loader, self.device, self.backdoor_generator, target_label
         )
-        return {"asr": metrics.get("attack_success_rate", 0.0)}
-
+        return {
+            "asr": metrics.get("attack_success_rate", 0.0),
+            "B-Acc": metrics.get("clean_accuracy", 0.0),  # <-- FIXED
+            "B-F1": metrics.get("backdoor_f1_score", 0.0)  # <-- Still needs Fix #2
+        }
 
 EVALUATOR_MAP = {
     "clean": CleanEvaluator,

@@ -45,7 +45,7 @@ class TabularModelConfig(BaseModelConfig):
     optimizer_type: str = "adam"  # "sgd", "adam", "adamw"
 
     # Regularization
-    use_early_stopping: bool = False
+    use_early_stopping: bool = True
     patience: int = 10
 
     def __post_init__(self):

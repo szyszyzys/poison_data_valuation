@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader, random_split
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
 from common.datasets.tabular_data_processor import get_tabular_dataset
-from common.evaluators import create_evaluators
+from common.evaluators import create_evaluators, CleanEvaluator
 from common.factories import SellerFactory
 from common.gradient_market_configs import AppConfig, RuntimeDataConfig
 from common.utils import set_seed
@@ -691,11 +691,21 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
 
         # --- Early stopping logic (no changes needed) ---
         if cfg.experiment.use_early_stopping and validation_loader:
-            main_evaluator = evaluators[0]
+            all_val_metrics = {}
             try:
-                val_metrics = main_evaluator.evaluate(global_model, validation_loader)
-                current_loss = val_metrics.get('val_loss')
+                for evaluator in evaluators:
+                    metrics_subset = evaluator.evaluate(global_model, validation_loader)
 
+                    # --- FIX: ADD PREFIXES ---
+                    if isinstance(evaluator, CleanEvaluator):
+                        # Add 'val_' prefix
+                        prefixed_metrics = {f"val_{k}": v for k, v in metrics_subset.items()}
+                        all_val_metrics.update(prefixed_metrics)
+                    else:
+                        # BackdoorEvaluator metrics ('asr', 'B-Acc') are already unique
+                        all_val_metrics.update(metrics_subset)
+
+                current_loss = all_val_metrics.get('val_loss')  # This still works
                 if current_loss is not None:
                     logging.info(f"Round {round_num} | Validation Loss: {current_loss:.4f}")
                     if current_loss < best_validation_loss:
@@ -708,16 +718,16 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
                         patience_counter += 1
                         logging.info(f"  -> No improvement. Patience: {patience_counter}/{patience}")
 
-                round_record.update(val_metrics)
+                # 5. Save the COMBINED metrics to the round record
+                round_record.update(all_val_metrics)
 
             except Exception as e:
                 logging.error(f"Validation for early stopping failed in round {round_num}: {e}")
                 patience_counter += 1
-
         # --- START FIX: Incremental saving ---
         # 1. Save to the main training_log.csv
         save_round_incremental(round_record, save_path)
-
+        save_seller_metrics_incremental(save_path, round_record)
         # 2. Save to the other analysis CSVs
         save_marketplace_analysis_data_incremental(save_path, round_record)
         # --- END FIX ---
@@ -730,11 +740,15 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
         if round_num % cfg.experiment.eval_frequency == 0:
             eval_metrics = {}
             for evaluator in evaluators:
-                metrics = evaluator.evaluate(marketplace.aggregator.strategy.global_model, test_loader)
-                eval_metrics.update(metrics)
+                metrics_subset = evaluator.evaluate(marketplace.aggregator.strategy.global_model, test_loader)
+
+                prefixed_metrics = {f"test_{k}": v for k, v in metrics_subset.items()}
+                eval_metrics.update(prefixed_metrics)
+
+            round_record.update(eval_metrics)  # Add test metrics to the round_record
+
             eval_path = save_path / "evaluations" / f"round_{round_num}.json"
             save_json_atomic(eval_metrics, eval_path)
-
         # Generate lightweight report (this is fine)
         generate_marketplace_report(save_path, marketplace, cfg.experiment.global_rounds)
 
@@ -759,20 +773,61 @@ TRAINING_LOG_COLUMNS = [
     'round',
     'timestamp',
     'duration_sec',
+
     # Aggregation/Selection Summary
     'num_total_sellers',
     'num_selected',
     'num_outliers',
     'selection_rate',
     'outlier_rate',
-    # Defense Performance (Key Indicators)
-    'adversary_detection_rate',  # Populated by MartFL/FLTrust, NaN otherwise
-    'false_positive_rate',  # Populated by MartFL/FLTrust, NaN otherwise
-    # Validation Metrics (If Early Stopping Used)
-    'val_loss',  # Populated if validation runs, NaN otherwise
-    'val_acc',  # Populated if validation runs, NaN otherwise (use your actual key if different)
-    # Optional: Average Gradient Norm
+
+    # Defense Performance
+    'num_known_adversaries',
+    'num_detected_adversaries',
+    'num_benign_outliers',
+    'adversary_detection_rate',
+    'false_positive_rate',
+
+    # Validation Metrics (from validation_loader, every round)
+    'val_loss',
+    'val_acc',
+    'asr',
+    'B-Acc',
+    'B-F1',
+
+    # Test Metrics (from test_loader, periodic)
+    'test_loss',
+    'test_acc',
+    'test_asr',
+    'test_B-Acc',
+    'test_B-F1',
+
+    # Buyer Attack Info
+    "buyer_attack_active",
+    "buyer_attack_type",
+    "buyer_attack_stats",
+
+    # Server Attack Info
+    "attack_performed",
+    "attack_victim",
+    "attack_success",
+
+    # Gradient Stats (Optional)
     'avg_gradient_norm',
+    'std_gradient_norm',
+    'min_gradient_norm',
+    'max_gradient_norm',
+    'avg_gradient_similarity',
+
+    # --- ADD THESE NEW COLUMNS ---
+    'avg_sim_to_buyer',
+    'std_sim_to_buyer',
+    'min_sim_to_buyer',
+    'max_sim_to_buyer',
+    'avg_sim_to_oracle',
+    'std_sim_to_oracle',
+    'min_sim_to_oracle',
+    'max_sim_to_oracle',
 ]
 
 
@@ -805,6 +860,45 @@ def save_round_incremental(round_record: Dict, save_path: Path):
     except Exception as e:
         logging.error(f"Error writing round {round_record.get('round', 'N/A')} to {log_path}: {e}")
         logging.error(f"Available keys in round_record: {list(round_record.keys())}")
+
+
+SELLER_LOG_COLUMNS = [
+    'round', 'seller_id', 'selected', 'outlier',
+    'sim_to_oracle_root', 'sim_to_buyer_root',
+    'gradient_norm', 'train_loss', 'num_samples', 'weight'
+]
+
+
+def save_seller_metrics_incremental(save_path: Path, round_record: Dict):
+    """
+    Saves the detailed per-seller metrics to a separate 'seller_metrics.csv' file.
+    """
+    seller_metrics_list = round_record.get('detailed_seller_metrics')
+    if not seller_metrics_list:
+        return  # No seller metrics to save this round
+
+    log_path = save_path / "seller_metrics.csv"
+
+    try:
+        # Convert the list of dicts to a DataFrame
+        df = pd.DataFrame(seller_metrics_list)
+
+        # Ensure column order and handle missing columns
+        df = df.reindex(columns=SELLER_LOG_COLUMNS)
+
+        # Check if file exists to write header
+        file_exists = os.path.isfile(log_path)
+
+        # Append to CSV
+        df.to_csv(
+            log_path,
+            mode='a',
+            header=not file_exists,
+            index=False,
+            float_format='%.6e'  # Use scientific notation for precision
+        )
+    except Exception as e:
+        logging.error(f"Failed to save incremental seller metrics: {e}")
 
 
 def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, model_factory):

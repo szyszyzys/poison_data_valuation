@@ -286,8 +286,7 @@ class MartflAggregator(BaseAggregator):
 
             logger.info(f"Baseline rotation: {self.baseline_id} -> {next_baseline_id}")
             if baseline_selection_info:
-                logger.info(f"  Selection based on kappa: {baseline_selection_info.get('best_kappa', 'N/A'):.4f}")
-
+                logger.info(f"  Selection based on kappa: {baseline_selection_info.get('best_kappa', 'N/A')}")
             self.baseline_id = next_baseline_id
 
         # 9. Determine selected vs outlier sellers

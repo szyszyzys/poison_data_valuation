@@ -57,7 +57,7 @@ class ImageModelConfig(BaseModelConfig):
     use_scheduler: bool = True
     scheduler_step: int = 50
     scheduler_gamma: float = 0.5
-    use_early_stopping: bool = False
+    use_early_stopping: bool = True
     patience: int = 10
     optimizer_type: str = 'sgd'
     # Data augmentation

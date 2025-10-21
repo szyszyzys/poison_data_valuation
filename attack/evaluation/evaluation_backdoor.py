@@ -8,7 +8,17 @@ import seaborn as sns
 import torch
 from sklearn.metrics import confusion_matrix
 from torch.utils.data import DataLoader
+import logging
+from collections.abc import Sequence
+from typing import Dict, Any, Tuple
 
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+import torch
+# --- ADD THESE ---
+from sklearn.metrics import f1_score, precision_score, recall_score
+from torch.utils.data import DataLoader
 
 # --- Helper functions (These are already excellent, no changes needed) ---
 
@@ -110,33 +120,26 @@ def evaluate_attack_performance(
     clean_accuracy = np.mean(clean_preds == clean_labels)
     attack_success_rate = np.mean(poison_preds == target_label)
 
+    num_classes = max(clean_labels.max(), poison_preds.max(), target_label) + 1
+    all_labels = list(range(num_classes))
+
+    # Calculate metrics for all classes
+    # 'zero_division=0' prevents warnings if a class is never predicted
+    f1_scores = f1_score(clean_labels, poison_preds, labels=all_labels, average=None, zero_division=0)
+    precision_scores = precision_score(clean_labels, poison_preds, labels=all_labels, average=None, zero_division=0)
+    recall_scores = recall_score(clean_labels, poison_preds, labels=all_labels, average=None, zero_division=0)
+
+    # Get the specific metric for the target label
+    backdoor_f1 = f1_scores[target_label]
+    backdoor_precision = precision_scores[target_label]
+    backdoor_recall = recall_scores[target_label]
+
     metrics = {
         "clean_accuracy": float(clean_accuracy),
         "attack_success_rate": float(attack_success_rate),
+        "backdoor_f1_score": float(backdoor_f1),
+        "backdoor_precision": float(backdoor_precision),
+        "backdoor_recall": float(backdoor_recall),
     }
-
-    # 4. Generate Visualization
-    if plot:
-        fig, ax = plt.subplots(1, 2, figsize=(12, 5))
-        labels_bar = ["Clean Accuracy", "Attack Success Rate"]
-        values_bar = [metrics["clean_accuracy"] * 100, metrics["attack_success_rate"] * 100]
-        ax[0].bar(labels_bar, values_bar, color=["steelblue", "crimson"])
-        ax[0].set_ylabel("Percentage (%)")
-        ax[0].set_ylim(0, 100)
-        ax[0].set_title("Model Performance")
-        for i, v in enumerate(values_bar):
-            ax[0].text(i, v + 1, f"{v:.1f}%", ha="center", fontweight='bold')
-
-        conf_mat = confusion_matrix(clean_labels, poison_preds)
-        sns.heatmap(conf_mat, annot=True, fmt="d", cmap="Blues", ax=ax[1],
-                    xticklabels=range(conf_mat.shape[1]), yticklabels=range(conf_mat.shape[0]))
-        ax[1].set_xlabel("Predicted Label (on Poisoned Data)")
-        ax[1].set_ylabel("True Original Label")
-        ax[1].set_title("Poisoned Confusion Matrix")
-
-        plt.tight_layout()
-        plt.savefig(save_path)
-        plt.close(fig)
-        logging.info(f"Evaluation plot saved to {save_path}")
-
+    # --- END: NEW METRICS ---
     return metrics

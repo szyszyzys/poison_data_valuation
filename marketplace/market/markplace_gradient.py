@@ -17,6 +17,29 @@ from marketplace.seller.seller import BaseSeller
 
 
 # ADD THIS to your main training loop initialization (before rounds start):
+def evaluate_model(model, data_loader, device):
+    """Evaluates the model's accuracy and loss on the given data loader."""
+    model.eval()  # Set the model to evaluation mode
+    total_loss = 0
+    correct = 0
+    total_samples = 0
+
+    with torch.no_grad():  # Disable gradient calculations
+        for data, target in data_loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+
+            # Calculate loss (using cross-entropy as an example)
+            total_loss += F.cross_entropy(output, target, reduction='sum').item()
+
+            # Calculate accuracy
+            pred = output.argmax(dim=1, keepdim=True)
+            correct += pred.eq(target.view_as(pred)).sum().item()
+            total_samples += target.size(0)
+
+    avg_loss = total_loss / total_samples
+    accuracy = correct / total_samples
+    return avg_loss, accuracy
 
 def validate_buyer_attack_config(self):
     """Validate buyer attack configuration before training starts."""
@@ -265,28 +288,46 @@ class DataMarketplaceFederated(DataMarketplace):
             "timestamp": time.time(),
             "duration_sec": duration,
 
-            # Basic stats
+            # Basic stats (from seller_ids list)
             "num_total_sellers": len(seller_ids),
             "num_selected": len(selected_ids),
             "num_outliers": len(outlier_ids),
 
-            # Selection details
-            "selected_seller_ids": selected_ids,
-            "outlier_seller_ids": outlier_ids,
-
-            # 🔧 IMPROVED: Add buyer attack info
+            # Buyer attack info
             "buyer_attack_active": self.cfg.buyer_attack_config.is_active,
             "buyer_attack_type": self.cfg.buyer_attack_config.attack_type if self.cfg.buyer_attack_config.is_active else "none",
-            "buyer_attack_stats": buyer_stats,  # 🆕 Capture all attack-specific stats
+            "buyer_attack_stats": buyer_stats,
 
-            # Attack info
+            # Server attack info
             "attack_performed": bool(attack_log),
             "attack_victim": attack_log.get('victim_id') if attack_log else None,
             "attack_success": attack_log.get('success') if attack_log else None,
-
-            # Marketplace metrics
-            **marketplace_metrics
         }
+
+        # 2. Define the SPECIFIC aggregate keys you want to save to the CSV
+        #    These keys MUST match your TRAINING_LOG_COLUMNS list
+        aggregate_metric_keys = [
+            'selection_rate',
+            'outlier_rate',
+            'avg_gradient_norm',
+            'std_gradient_norm',
+            'min_gradient_norm',
+            'max_gradient_norm',
+            'avg_gradient_similarity',
+            'num_known_adversaries',
+            'num_detected_adversaries',
+            'num_benign_outliers',
+            'adversary_detection_rate',
+            'false_positive_rate',
+            'avg_sim_to_buyer', 'std_sim_to_buyer', 'min_sim_to_buyer', 'max_sim_to_buyer',
+            'avg_sim_to_oracle', 'std_sim_to_oracle', 'min_sim_to_oracle', 'max_sim_to_oracle'
+        ]
+
+        # 3. Safely copy ONLY these metrics into the round_record
+        #    This prevents the "per-seller" keys from breaking your CSV
+        for key in aggregate_metric_keys:
+            # Use .get() to avoid an error if a metric wasn't computed (e.g., similarity)
+            round_record[key] = marketplace_metrics.get(key)
 
         if aggregation_stats:
             round_record.update(aggregation_stats)
@@ -299,7 +340,25 @@ class DataMarketplaceFederated(DataMarketplace):
                 was_outlier=(sid in outlier_ids),
                 marketplace_metrics=marketplace_metrics.get(f'seller_{sid}', {})
             )
+        seller_metrics_list = []
+        for sid in seller_ids:
+            seller_data = {
+                'round': round_number,
+                'seller_id': sid,
+                'selected': sid in selected_ids,
+                'outlier': sid in outlier_ids,
+                # Get metrics from the marketplace_metrics dict
+                'sim_to_oracle_root': marketplace_metrics.get(f'seller_{sid}_sim_to_oracle_root'),
+                'sim_to_buyer_root': marketplace_metrics.get(f'seller_{sid}_sim_to_buyer_root'),
+                'gradient_norm': marketplace_metrics.get(f'seller_{sid}_gradient_norm'),
+                'train_loss': marketplace_metrics.get(f'seller_{sid}_train_loss'),
+                'num_samples': marketplace_metrics.get(f'seller_{sid}_num_samples'),
+                'weight': marketplace_metrics.get(f'seller_{sid}_weight'),
+            }
+            seller_metrics_list.append(seller_data)
 
+        # 5. Attach this detailed list to the round_record to be saved by the main loop
+        round_record['detailed_seller_metrics'] = seller_metrics_list
         logging.info(f"--- Round {round_number} Ended (Duration: {duration:.2f}s) ---")
 
         return round_record, agg_grad
@@ -420,6 +479,20 @@ class DataMarketplaceFederated(DataMarketplace):
                 metrics[f'seller_{sid}_train_loss'] = stats.get('train_loss')
                 metrics[f'seller_{sid}_num_samples'] = stats.get('num_samples', 0)
                 metrics[f'seller_{sid}_upload_bytes'] = stats.get('upload_bytes', 0)
+        sims_to_buyer = [v for k, v in metrics.items() if 'sim_to_buyer_root' in k]
+        sims_to_oracle = [v for k, v in metrics.items() if 'sim_to_oracle_root' in k]
+
+        if sims_to_buyer:
+            metrics['avg_sim_to_buyer'] = np.mean(sims_to_buyer)
+            metrics['std_sim_to_buyer'] = np.std(sims_to_buyer)
+            metrics['min_sim_to_buyer'] = np.min(sims_to_buyer)
+            metrics['max_sim_to_buyer'] = np.max(sims_to_buyer)
+
+        if sims_to_oracle:
+            metrics['avg_sim_to_oracle'] = np.mean(sims_to_oracle)
+            metrics['std_sim_to_oracle'] = np.std(sims_to_oracle)
+            metrics['min_sim_to_oracle'] = np.min(sims_to_oracle)
+            metrics['max_sim_to_oracle'] = np.max(sims_to_oracle)
 
         # === 5. Adversary Detection Metrics ===
         # Track known adversaries vs detected outliers
