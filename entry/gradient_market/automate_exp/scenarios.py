@@ -1526,4 +1526,3 @@ if __name__ == '__main__':
     for s in ALL_SCENARIOS:
         print(f"  - {s.name}")
 
-# total number of sellers

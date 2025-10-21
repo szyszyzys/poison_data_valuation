@@ -39,13 +39,6 @@ for numpy_type in (np.integer, np.floating, np.ndarray, np.bool_):
     CustomDumper.add_multi_representer(numpy_type, CustomDumper.represent_numpy)
 
 
-# --- Helper function to safely set nested dataclass attributes ---
-# def set_nested_attr(obj: object, attr_path: str, value):
-#     """Safely sets a nested attribute on an object using dot notation."""
-#     keys = attr_path.split('.')
-#     for key in keys[:-1]:
-#         obj = getattr(obj, key)
-#     setattr(obj, keys[-1], value)
 def set_nested_attr(obj: Any, key: str, value: Any):
     """
     Sets a nested attribute on an object or a key in a nested dict
