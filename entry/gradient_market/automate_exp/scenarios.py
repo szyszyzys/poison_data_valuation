@@ -586,6 +586,7 @@ def generate_drowning_attack_scenarios() -> List[Scenario]:
         base_config_factory=get_base_image_config,
         modifiers=[
             use_cifar10_config,
+            disable_all_seller_attacks,
             use_drowning_attack(mimicry_rounds=10, drift_factor=0.1)
         ],
         parameter_grid={
