@@ -139,9 +139,50 @@ class DataMarketplaceFederated(DataMarketplace):
         logging.info("\n📦 Collecting honest gradients from all sellers...")
         gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
 
+
         if not gradients_dict:
             logging.error("❌ No gradients collected! Cannot proceed with round.")
             return self._create_failed_round_record(round_number, round_start_time), None
+
+        logging.info("\n" + "=" * 60)
+        logging.info("🔬 GRADIENT QUALITY CHECK")
+        logging.info("=" * 60)
+
+        for seller_id, grad in gradients_dict.items():
+            if grad is None:
+                continue
+
+            # Check gradient statistics
+            grad_norms = [torch.norm(g).item() for g in grad]
+            avg_norm = sum(grad_norms) / len(grad_norms)
+            max_norm = max(grad_norms)
+            min_norm = min(grad_norms)
+
+            # Check for problems
+            has_nan = any(torch.isnan(g).any() for g in grad)
+            has_inf = any(torch.isinf(g).any() for g in grad)
+            is_all_zero = all(torch.allclose(g, torch.zeros_like(g)) for g in grad)
+
+            logging.info(f"\nSeller: {seller_id}")
+            logging.info(f"  Avg norm: {avg_norm:.6e}")
+            logging.info(f"  Max norm: {max_norm:.6e}")
+            logging.info(f"  Min norm: {min_norm:.6e}")
+            logging.info(f"  Has NaN: {has_nan}")
+            logging.info(f"  Has Inf: {has_inf}")
+            logging.info(f"  All zeros: {is_all_zero} ⚠️" if is_all_zero else f"  All zeros: {is_all_zero}")
+
+            if is_all_zero:
+                logging.error(f"  ❌ PROBLEM: {seller_id} has zero gradients!")
+            if avg_norm < 1e-10:
+                logging.warning(f"  ⚠️  WARNING: {seller_id} has very small gradients (might not contribute)")
+            if avg_norm > 1e3:
+                logging.warning(f"  ⚠️  WARNING: {seller_id} has very large gradients (might dominate)")
+
+        logging.info(f"\n📊 Training Configuration:")
+        logging.info(f"  Aggregator learning rate: {getattr(self.aggregator, 'learning_rate', 'N/A')}")
+        logging.info(f"  Seller learning rate: {self.cfg.training.learning_rate}")
+        logging.info(f"  Local epochs: {self.cfg.training.local_epochs}")
+        logging.info(f"  Batch size: {self.cfg.training.batch_size}")
 
         # ===== PHASE 3: Compute Root Gradients =====
         logging.info("\n🛒 Computing buyer root gradient...")
@@ -202,12 +243,72 @@ class DataMarketplaceFederated(DataMarketplace):
         mean_before = param_before.mean().item()
         logging.info(f"PRE-APPLY Global Param[0]: Norm={norm_before:.4e}, Mean={mean_before:.4e}")
 
+        if round_number % 1 == 0:  # Every 5 rounds
+            logging.info("\n" + "=" * 60)
+            logging.info(f"🔍 PRE-AGGREGATION EVALUATION (Round {round_number})")
+            logging.info("=" * 60)
+
+            # Quick test evaluation
+            self.global_model.eval()
+            correct = 0
+            total = 0
+            with torch.no_grad():
+                for batch_idx, batch in enumerate(validation_loader):
+                    if batch_idx >= 10:  # Just first 10 batches for speed
+                        break
+
+                    if len(batch) == 3:  # Text
+                        labels, data, _ = batch
+                    else:  # Image/Tabular
+                        data, labels = batch
+
+                    data, labels = data.to(self.aggregator.device), labels.to(self.aggregator.device)
+                    outputs = self.global_model(data)
+                    _, predicted = torch.max(outputs.data, 1)
+                    total += labels.size(0)
+                    correct += (predicted == labels).sum().item()
+
+            accuracy_before = 100 * correct / total if total > 0 else 0
+            logging.info(f"Accuracy BEFORE aggregation: {accuracy_before:.2f}%")
+
         agg_grad, selected_ids, outlier_ids, aggregation_stats = self.aggregator.aggregate(
             global_epoch=round_number,
             seller_updates=sanitized_gradients,
             root_gradient=sanitized_root_gradient,
             buyer_data_loader=self.aggregator.buyer_data_loader
         )
+
+        if agg_grad and round_number % 1 == 0:
+            logging.info("\n" + "=" * 60)
+            logging.info(f"🔍 POST-AGGREGATION EVALUATION (Round {round_number})")
+            logging.info("=" * 60)
+
+            self.global_model.eval()
+            correct = 0
+            total = 0
+            with torch.no_grad():
+                for batch_idx, batch in enumerate(validation_loader):
+                    if batch_idx >= 10:
+                        break
+
+                    if len(batch) == 3:
+                        labels, data, _ = batch
+                    else:
+                        data, labels = batch
+
+                    data, labels = data.to(self.aggregator.device), labels.to(self.aggregator.device)
+                    outputs = self.global_model(data)
+                    _, predicted = torch.max(outputs.data, 1)
+                    total += labels.size(0)
+                    correct += (predicted == labels).sum().item()
+
+            accuracy_after = 100 * correct / total if total > 0 else 0
+            logging.info(f"Accuracy AFTER aggregation: {accuracy_after:.2f}%")
+
+            # Check if accuracy improved
+            if round_number > 5:
+                improvement = accuracy_after - accuracy_before
+                logging.info(f"Accuracy change this round: {improvement:+.2f}%")
 
         logging.info(f"✅ Selected {len(selected_ids)} sellers: {selected_ids}")
         logging.info(f"   Rejected {len(outlier_ids)} sellers as outliers")

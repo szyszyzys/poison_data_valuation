@@ -335,6 +335,11 @@ class GradientSeller(BaseSeller):
             - gradient_list: List of tensors matching model parameters, or None on failure
             - stats_dict: Dictionary containing training statistics
         """
+        logging.info(f"\n[{self.seller_id}] Starting local training")
+        logging.info(f"  Dataset size: {len(self.dataset)}")
+        logging.info(f"  Batch size: {self.training_config.batch_size}")
+        logging.info(f"  Local epochs: {self.training_config.local_epochs}")
+
         start_time = time.time()
 
         # Use provided dataset or fall back to self.dataset
