@@ -28,7 +28,6 @@ def get_base_tabular_config() -> AppConfig:
         experiment=ExperimentConfig(
             dataset_name="Texas100",
             model_structure="mlp",  # <--- CRITICAL FIX 1 (was "None")
-            aggregation_method="fedavg",
             global_rounds=80,
             n_sellers=10,
             adv_rate=0.0,

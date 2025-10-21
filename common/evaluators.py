@@ -1,10 +1,11 @@
 # in marketplace/market/evaluation/base.py
 import logging
-import torch
 from abc import ABC, abstractmethod
+from typing import Dict, Any, List
+
+import torch
 from torch import nn
 from torch.utils.data import DataLoader
-from typing import Dict, Any, List
 
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance
 from common.gradient_market_configs import AppConfig
@@ -66,6 +67,7 @@ class CleanEvaluator(BaseEvaluator):
         loss = total_loss / total_samples
         return {"acc": acc, "loss": loss}
 
+
 from marketplace.seller.gradient_seller import AdvancedBackdoorAdversarySeller  # 1. ADD THIS IMPORT
 
 
@@ -97,23 +99,38 @@ class BackdoorEvaluator(BaseEvaluator):
 
     def evaluate(self, model: nn.Module, test_loader: DataLoader) -> Dict[str, float]:
         if not self.backdoor_generator:
-            return {}  # If no generator, do nothing.
-
-        # The rest of your evaluate method is already correct
-        poison_cfg = self.cfg.adversary_seller_config.poisoning
-        active_params = poison_cfg.active_params
-        if not active_params:
             return {}
-        target_label = active_params.target_label
+
+        poison_cfg = self.cfg.adversary_seller_config.poisoning
+
+        # active_params will be either BackdoorSimpleDataPoisonParams
+        # or TabularBackdoorParams, etc.
+        # ALL of them have target_label at the top level.
+        active_params = poison_cfg.active_params
+
+        if not active_params:
+            logging.warning("BackdoorEvaluator: No active poison parameters found.")
+            return {}
+
+        # --- THIS IS THE CORRECT, SIMPLE FIX ---
+        try:
+            target_label = active_params.target_label
+        except AttributeError:
+            logging.error(
+                f"BackdoorEvaluator: Config/Class mismatch! {type(active_params)} has no 'target_label' attribute.")
+            return {}
+        # --- END FIX ---
 
         metrics = evaluate_attack_performance(
             model, test_loader, self.device, self.backdoor_generator, target_label
         )
+
         return {
             "asr": metrics.get("attack_success_rate", 0.0),
-            "B-Acc": metrics.get("clean_accuracy", 0.0),  # <-- FIXED
-            "B-F1": metrics.get("backdoor_f1_score", 0.0)  # <-- Still needs Fix #2
+            "B-Acc": metrics.get("clean_accuracy", 0.0),
+            "B-F1": metrics.get("backdoor_f1_score", 0.0)
         }
+
 
 EVALUATOR_MAP = {
     "clean": CleanEvaluator,

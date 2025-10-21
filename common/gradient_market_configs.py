@@ -33,7 +33,6 @@ class ExperimentConfig:
     """Primary configuration for the overall experiment run."""
     dataset_name: str
     model_structure: str
-    aggregation_method: str
     global_rounds: int
     n_sellers: int
     adv_rate: float
@@ -101,20 +100,6 @@ class TextBackdoorParams:
     attack_name: TextBackdoorAttackName = TextBackdoorAttackName.SIMPLE_DATA_POISON
 
 
-@dataclass
-class TabularFeatureTriggerParams:
-    """Parameters for a feature-based trigger backdoor attack."""
-    target_label: int = 1
-    # Trigger is a dictionary of {'feature_name': value},
-    # e.g., {'age': 65, 'job_title': 'retired'}
-    trigger_conditions: Dict[str, Any] = field(default_factory=dict)
-
-
-# --- Step 2: Create the container, just like for image and text ---
-
-class TabularBackdoorAttackName(Enum):
-    """Enum to define the different types of tabular backdoor attacks."""
-    FEATURE_TRIGGER = "feature_trigger"
 
 
 @dataclass
@@ -143,10 +128,25 @@ class BuyerAttackConfig:
 
 
 @dataclass
+class TabularFeatureTriggerParams:
+    """Parameters for a feature-based trigger backdoor attack."""
+    target_label: int = 0
+    trigger_conditions: Dict[str, Any] = field(default_factory=dict)
+
+
+# --- Step 2: Create the container, just like for image and text ---
+
+class TabularBackdoorAttackName(Enum):
+    """Enum to define the different types of tabular backdoor attacks."""
+    FEATURE_TRIGGER = "feature_trigger"
+
+
+@dataclass
 class TabularBackdoorParams:
     """Container for all possible tabular backdoor attack configurations."""
     # This field determines which of the sub-configurations is active
     attack_name: TabularBackdoorAttackName = TabularBackdoorAttackName.FEATURE_TRIGGER
+    target_label: int = 0
 
     # It holds an instance of every possible sub-configuration
     feature_trigger_params: TabularFeatureTriggerParams = field(default_factory=TabularFeatureTriggerParams)
@@ -311,6 +311,7 @@ class ImageDataConfig:
     property_skew: Optional[PropertySkewParams] = None
     discovery: Optional[DiscoverySplitParams] = None
     buyer_config: Dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass
 class AdaptiveAttackConfig:

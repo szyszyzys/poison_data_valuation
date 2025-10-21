@@ -10,7 +10,7 @@ def get_base_image_config() -> AppConfig:
     """Creates the default, base AppConfig for IMAGE-based experiments."""
     return AppConfig(
         experiment=ExperimentConfig(
-            dataset_name="CelebA", model_structure="lenet", aggregation_method="fedavg",
+            dataset_name="CelebA", model_structure="lenet",
             global_rounds=200, n_sellers=10, adv_rate=0.0,
             device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="image",
             evaluations=["clean", "backdoor"],
@@ -47,7 +47,7 @@ def get_base_text_config() -> AppConfig:
     """Creates the default, base AppConfig for TEXT-based experiments."""
     return AppConfig(
         experiment=ExperimentConfig(
-            dataset_name="AG_NEWS", model_structure="text_cnn", aggregation_method="fedavg",
+            dataset_name="AG_NEWS", model_structure="text_cnn",
             global_rounds=200, n_sellers=10, adv_rate=0.0,
             device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="text",
             evaluations=["clean", "backdoor"]
