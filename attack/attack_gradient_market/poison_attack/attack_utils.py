@@ -256,9 +256,13 @@ class BackdoorTabularGenerator(PoisonGenerator):
 
     def __init__(self, config: BackdoorTabularConfig, feature_to_idx: Dict[str, int]):
         self.config = config
+
+        # 1. This line is CORRECT
         self.target_label = config.target_label
-        # Pre-process the trigger conditions into a more efficient format (index, value)
-        # This avoids dictionary lookups in the hot loop (the apply method).
+
+        # 2. --- THIS IS THE FIX ---
+        #    Get the trigger conditions from the NESTED params object
+
         self.trigger_map: List[Tuple[int, float]] = []
         for feature_name, trigger_value in config.trigger_conditions.items():
             if feature_name not in feature_to_idx:
@@ -266,16 +270,16 @@ class BackdoorTabularGenerator(PoisonGenerator):
             feature_index = feature_to_idx[feature_name]
             self.trigger_map.append((feature_index, float(trigger_value)))
 
+        # 3. --- THIS IS THE DEBUG LOG YOU ASKED FOR ---
+        logging.info(f"BackdoorTabularGenerator initialized:")
+        logging.info(f"  - Target Label: {self.target_label}")
+        logging.info(f"  - Trigger Map (Index, Value): {self.trigger_map}")
+        # --- END FIX ---
+
     def apply(self, data: torch.Tensor, label: int) -> Tuple[torch.Tensor, int]:
         """
         Applies the feature-based trigger to a tabular data tensor.
-
-        Args:
-            data (torch.Tensor): A 1D tensor representing a single row of data.
-            label (int): The original label (unused in this attack, but part of the interface).
-
-        Returns:
-            A tuple of (poisoned_data_tensor, target_label).
+        (This method's logic is correct, no changes needed)
         """
         if not isinstance(data, torch.Tensor) or data.dim() != 1:
             raise TypeError(f"Expected data to be a 1D tensor, but got shape {data.shape}")

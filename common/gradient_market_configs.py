@@ -38,7 +38,7 @@ class ExperimentConfig:
     adv_rate: float
     device: str
     eval_frequency: int = 10
-    compute_gradient_similarity: bool = False  # Add this line
+    compute_gradient_similarity: bool = True  # Add this line
     save_path: str = "./results"
     num_classes: int = 0  # Default to 0, will be set dynamically at runtime
     use_subset: bool = False
