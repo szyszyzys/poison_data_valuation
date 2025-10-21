@@ -312,7 +312,7 @@ def generate_tabular_scalability_scenarios() -> List[Scenario]:
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
 
     # Sweep the total number of sellers
-    N_SELLERS_TO_SWEEP = [50, 100, 200]
+    N_SELLERS_TO_SWEEP = [30, 50, 70, 100]
 
     # Use a fixed attack setting
     FIXED_ADV_RATE = 0.3
