@@ -362,23 +362,6 @@ def get_text_model(
         case _:
             raise NotImplementedError(f"Model not found for dataset {dataset_name}")
 
-    logging.info("--- Text Model created on CPU ---")
-    # Log stats for the embedding layer, as it's critical for text
-    _log_param_stats(model, "embedding.weight", "Initial CPU (float32)")
-
-    # --- 2. APPLY STABLE INIT *FIRST* (on CPU) ---
-    logging.info("--- ⚡️ Applying STABLE init (CPU) ---")
-    model.apply(init_weights)
-    _log_param_stats(model, "embedding.weight", "After init_weights (float32)")
-
-    # --- 3. Manually cast to float16 ON THE CPU (Workaround) ---
-    # Only do this if the target device is CUDA (implies float16 desired)
-    if target_device.type == 'cuda':
-        model = model.half()
-        logging.info(f"--- Text Model cast to .half() on CPU ---")
-        _log_param_stats(model, "embedding.weight", "After .half() (CPU, float16)")
-
-    # --- 4. MOVE TO DEVICE *SECOND* ---
     model = model.to(target_device)
     logging.info(f"--- Text Model moved to {target_device} ---")
     log_dtype = model.embedding.weight.dtype  # Get actual dtype after move
