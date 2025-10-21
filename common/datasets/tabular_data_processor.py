@@ -117,6 +117,13 @@ def get_tabular_dataset(cfg: AppConfig):
 
         # 3. Update the original DataFrame
         X_test.loc[:, numerical_cols] = X_test_scaled_df
+    logger.info("📊 Data statistics AFTER scaling (checking first 5 numerical columns):")
+    cols_to_check = numerical_cols[:5]  # Check the first 5 numerical cols
+    train_stats = X_train[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
+    test_stats = X_test[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
+    logger.info(f"\n--- X_train ---\n{train_stats.to_string()}")
+    logger.info(f"\n--- X_test ---\n{test_stats.to_string()}")
+
     feature_to_idx = {col: i for i, col in enumerate(X_train.columns)}
 
     # 3. Convert to PyTorch Datasets
