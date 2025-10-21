@@ -67,8 +67,8 @@ def get_base_tabular_config() -> AppConfig:
 
 # --- CRITICAL: DEFINE YOUR TRIGGER PATTERNS HERE ---
 # You MUST verify that these feature names match your datasets.
-TEXAS100_TRIGGER = {"feature_0": 5.0, "feature_1": -5.0}
-PURCHASE100_TRIGGER = {"feature_0": 5.0, "feature_1": -5.0}
+TEXAS100_TRIGGER = {"feature_0": 3.0, "feature_1": -3.0}
+PURCHASE100_TRIGGER = {"feature_0": 3.0, "feature_1": -3.0}
 
 # --- Reusable Modifier Functions ---
 def use_tabular_backdoor_with_trigger(
