@@ -19,51 +19,6 @@ from marketplace.seller.gradient_seller import (
 )
 
 
-def _create_poison_generator(adv_cfg: AdversarySellerConfig, model_type: str, device: str,
-                             **kwargs: Any) -> PoisonGenerator:
-    """Factory method to create the correct backdoor generator from configuration."""
-    poison_cfg = adv_cfg.poisoning
-    if 'backdoor' not in poison_cfg.type.value:
-        raise ValueError(f"This factory only supports backdoor types, but got '{poison_cfg.type.value}'.")
-
-    if model_type == 'image':
-        params = poison_cfg.image_backdoor_params.simple_data_poison_params
-        backdoor_image_cfg = BackdoorImageConfig(
-            target_label=params.target_label,
-            trigger_type=ImageTriggerType(params.trigger_type),
-            location=ImageTriggerLocation(params.location)
-        )
-        # Pass the device to the generator's constructor
-        return BackdoorImageGenerator(backdoor_image_cfg, device=device)
-    elif model_type == 'text':
-        params = poison_cfg.text_backdoor_params
-        vocab = kwargs.get('vocab')
-        if not vocab:
-            raise ValueError("Text backdoor generator requires 'vocab' to be provided in kwargs.")
-
-        backdoor_text_cfg = BackdoorTextConfig(
-            vocab=vocab,
-            target_label=params.target_label,
-            trigger_content=params.trigger_content,
-            location=params.location
-        )
-        return BackdoorTextGenerator(backdoor_text_cfg)
-    elif model_type == 'tabular':
-        params = poison_cfg.tabular_backdoor_params.active_attack_params
-        feature_to_idx = kwargs.get('feature_to_idx')
-        if not feature_to_idx:
-            raise ValueError("Tabular backdoor generator requires 'feature_to_idx' in kwargs.")
-
-        backdoor_tabular_cfg = BackdoorTabularConfig(
-            target_label=poison_cfg.tabular_backdoor_params.target_label,
-            trigger_conditions=params.trigger_conditions
-        )
-        return BackdoorTabularGenerator(backdoor_tabular_cfg, feature_to_idx)
-
-    else:
-        raise ValueError(f"Unsupported model_type for backdoor: {model_type}")
-
-
 class SellerFactory:
     """Handles creating and configuring different seller types from a unified AppConfig."""
 
@@ -134,7 +89,7 @@ class SellerFactory:
                     "Cannot create TabularBackdoorGenerator: 'feature_to_idx' not found in runtime arguments.")
                 return None
             backdoor_cfg = BackdoorTabularConfig(
-                target_label=params.target_label,
+                target_label=adv_cfg.poisoning.tabular_backdoor_params.target_label,
                 trigger_conditions=params.trigger_conditions
             )
             return BackdoorTabularGenerator(backdoor_cfg, feature_to_idx)
