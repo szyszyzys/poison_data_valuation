@@ -803,8 +803,8 @@ def save_round_incremental(round_record: Dict, save_path: Path):
             index=False
         )
     except Exception as e:
-        logger.error(f"Error writing round {round_record.get('round', 'N/A')} to {log_path}: {e}")
-        logger.error(f"Available keys in round_record: {list(round_record.keys())}")
+        logging.error(f"Error writing round {round_record.get('round', 'N/A')} to {log_path}: {e}")
+        logging.error(f"Available keys in round_record: {list(round_record.keys())}")
 
 
 def initialize_root_sellers(cfg, marketplace, buyer_loader, validation_loader, model_factory):

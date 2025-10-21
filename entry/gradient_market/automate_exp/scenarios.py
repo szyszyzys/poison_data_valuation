@@ -540,7 +540,7 @@ def generate_competitor_mimicry_scenarios() -> List[Scenario]:
     """
     scenarios = []
     AGGREGATORS_TO_TEST = ['fedavg', 'fltrust', 'martfl']
-    MIMICRY_STRATEGIES = ["noisy_copy", "scaled_copy", "averaged_history"]
+    MIMICRY_STRATEGIES = ["noisy_copy"]
     ADV_RATES = [0.2, 0.3, 0.4]  # See how multiple attackers amplify the effect
 
     for strategy in MIMICRY_STRATEGIES:
