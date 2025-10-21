@@ -309,8 +309,8 @@ class ImageDataConfig:
     """All settings related to an image dataset source."""
     strategy: str = "property-skew"
     property_skew: Optional[PropertySkewParams] = None
+    discovery: Optional[DiscoverySplitParams] = None
     buyer_config: Dict[str, Any] = field(default_factory=dict)
-
 
 @dataclass
 class AdaptiveAttackConfig:

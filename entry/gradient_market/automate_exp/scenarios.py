@@ -73,7 +73,7 @@ def generate_main_summary_figure_scenarios() -> List[Scenario]:
 
     fixed_attack_params = {
         "experiment.adv_rate": [0.3],
-        "adversary_seller_config.poisoning.poison_rate": [0.5],
+        "adversary_seller_config.poisoning.poison_rate": [0.3],
     }
 
     IMAGE_DATASETS_TO_TEST = [
@@ -139,7 +139,7 @@ def generate_attack_impact_scenarios() -> List[Scenario]:
 
     for group_name, sweep_params in [
         ("vary_adv_rate",
-         {"experiment.adv_rate": ADV_RATES_TO_SWEEP, "adversary_seller_config.poisoning.poison_rate": [0.5]}),
+         {"experiment.adv_rate": ADV_RATES_TO_SWEEP, "adversary_seller_config.poisoning.poison_rate": [0.3]}),
         ("vary_poison_rate",
          {"experiment.adv_rate": [0.3], "adversary_seller_config.poisoning.poison_rate": POISON_RATES_TO_SWEEP})
     ]:
@@ -189,7 +189,7 @@ def generate_sybil_impact_scenarios() -> List[Scenario]:
                 "experiment.model_structure": [model_name],
                 "aggregation.method": ALL_AGGREGATORS,
                 "experiment.adv_rate": [0.3],
-                "adversary_seller_config.poisoning.poison_rate": [0.5],
+                "adversary_seller_config.poisoning.poison_rate": [0.3],
                 "adversary_seller_config.sybil.is_sybil": [False],
             }
         ))
@@ -204,7 +204,7 @@ def generate_sybil_impact_scenarios() -> List[Scenario]:
                     "experiment.model_structure": [model_name],
                     "aggregation.method": ALL_AGGREGATORS,
                     "experiment.adv_rate": [0.3],
-                    "adversary_seller_config.poisoning.poison_rate": [0.5],
+                    "adversary_seller_config.poisoning.poison_rate": [0.3],
                 }
             ))
     return scenarios
@@ -230,7 +230,7 @@ def generate_data_heterogeneity_scenarios() -> List[Scenario]:
                 "data.image.property_skew.dirichlet_alpha": DIRICHLET_ALPHAS_TO_SWEEP,
                 "data.image.strategy": ["dirichlet"],
                 "experiment.adv_rate": [0.3],
-                "adversary_seller_config.poisoning.poison_rate": [0.5],
+                "adversary_seller_config.poisoning.poison_rate": [0.3],
             }
         ))
     return scenarios
@@ -248,7 +248,7 @@ def generate_oracle_vs_buyer_bias_scenarios() -> List[Scenario]:
     # This scenario uses a fixed, challenging attack setting
     fixed_attack_params = {
         "experiment.adv_rate": [0.3],
-        "adversary_seller_config.poisoning.poison_rate": [0.5],
+        "adversary_seller_config.poisoning.poison_rate": [0.3],
     }
 
     scenarios.append(Scenario(
@@ -279,7 +279,7 @@ def generate_buyer_data_impact_scenarios() -> List[Scenario]:
     # This scenario uses a fixed, challenging attack setting
     fixed_attack_params = {
         "experiment.adv_rate": [0.3],
-        "adversary_seller_config.poisoning.poison_rate": [0.5],
+        "adversary_seller_config.poisoning.poison_rate": [0.3],
     }
 
     scenarios.append(Scenario(
@@ -297,7 +297,7 @@ def generate_buyer_data_impact_scenarios() -> List[Scenario]:
 
             # ✅ THIS IS THE KEY: Sweep over the buyer's data percentage
             # It will test the defenses when the buyer has 1%, 5%, 10%, and 20% of the data.
-            "data.image.buyer_config.buyer_percentage": [0.01, 0.05, 0.10, 0.20],
+            "data.image.discovery.buyer_percentage": [0.01, 0.05, 0.10, 0.20],
 
             # --- Attack Parameters ---
             **fixed_attack_params
@@ -323,7 +323,7 @@ def generate_adv_rate_trend_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
             "aggregation.method": ['martfl'],  # Only test MartFL for this trend
             "experiment.adv_rate": ADV_RATES_TO_SWEEP,
-            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "adversary_seller_config.poisoning.poison_rate": [0.3],
         }
     ))
     return scenarios
@@ -410,7 +410,7 @@ def generate_sybil_selection_rate_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
             "aggregation.method": AGGREGATORS,
             "experiment.adv_rate": ADV_RATES_TO_SWEEP,
-            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "adversary_seller_config.poisoning.poison_rate": [0.3],
         }
     ))
     return scenarios
@@ -1153,7 +1153,7 @@ def generate_attack_scalability_scenarios() -> List[Scenario]:
 
     # Fixed attack parameters (matching main_summary style)
     FIXED_ADV_RATE = 0.3  # 30% of sellers are attackers
-    FIXED_POISON_RATE = 0.5  # 50% of attacker's data is poisoned
+    FIXED_POISON_RATE = 0.3  # 50% of attacker's data is poisoned
 
     # Focus on defenses most vulnerable to these attacks
     IMAGE_AGGREGATORS = ['fedavg', 'fltrust', 'martfl', 'skymask']
@@ -1336,7 +1336,7 @@ def generate_text_scalability_scenarios() -> List[Scenario]:
 
             # --- FIXED: Attack Parameters ---
             "experiment.adv_rate": [0.3],
-            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "adversary_seller_config.poisoning.poison_rate": [0.3],
 
             # --- SECONDARY SWEEP: Defense Method ---
             "aggregation.method": TEXT_AGGREGATORS,
@@ -1361,7 +1361,7 @@ def generate_extreme_scale_scenarios() -> List[Scenario]:
 
     EXTREME_SIZES = [100, 200, 300, 500]
     FIXED_ADV_RATE = 0.3
-    FIXED_POISON_RATE = 0.5
+    FIXED_POISON_RATE = 0.3
 
     # Test only the most vulnerable defense (faster experiments)
     scenarios.append(Scenario(
@@ -1476,7 +1476,7 @@ def generate_cifar100_scalability_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["cnn"],
             "experiment.n_sellers": MARKETPLACE_SIZES,
             "experiment.adv_rate": [0.3],
-            "adversary_seller_config.poisoning.poison_rate": [0.5],
+            "adversary_seller_config.poisoning.poison_rate": [0.3],
             "aggregation.method": ['fedavg', 'fltrust', 'martfl'],  # Fewer for speed
             "experiment.num_rounds": [100],
         }

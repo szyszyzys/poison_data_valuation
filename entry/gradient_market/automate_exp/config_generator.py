@@ -136,11 +136,6 @@ class ExperimentGenerator:
         agg = config.aggregation.method.lower()
         parts.append(f"agg-{agg}")
 
-        # 4. Root Gradient Source (if not default 'buyer')
-        root_source = config.aggregation.root_gradient_source
-        if root_source != "buyer":
-            parts.append(f"root-{root_source}")
-
         # 5. Seller Attack Information
         seller_attack_parts = []
 
@@ -218,11 +213,10 @@ class ExperimentGenerator:
                     parts.append(f"alpha-{alpha_str}")
 
             # Buyer data percentage (for buyer_data_impact experiments)
-            if hasattr(config.data.image, 'buyer_config'):
-                buyer_pct = config.data.image.buyer_config.buyer_percentage
-                if buyer_pct != 0.1:  # Only include if non-default
-                    pct_str = f"{buyer_pct:g}".replace('.', 'p')
-                    parts.append(f"buyerdata-{pct_str}")
+            buyer_pct = config.data.image.discovery.buyer_percentage
+            if buyer_pct != 0.1:  # Only include if non-default
+                pct_str = f"{buyer_pct:g}".replace('.', 'p')
+                parts.append(f"buyerdata-{pct_str}")
 
         # 8. Marketplace Size (for scalability experiments)
         n_sellers = config.experiment.n_sellers
