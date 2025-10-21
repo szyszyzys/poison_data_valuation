@@ -44,48 +44,113 @@ class NestablePool(Pool):
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-CORE_EXPERIMENTS = [
-    # --- 1. Main Summary Results ---
-    "main_summary_cifar100_cnn",
-    "main_summary_cifar100_resnet18",
+EXPERIMENTS_TO_RUN = [
+    # ============================================================================
+    # 1. MAIN RESULTS: Attack Effectiveness Across Defenses & Datasets
+    # ============================================================================
     "main_summary_cifar10_cnn",
     "main_summary_cifar10_resnet18",
+    "main_summary_cifar100_cnn",
+    "main_summary_cifar100_resnet18",
     "main_summary_trec",
 
-    # --- 2. Sybil Attack Analysis ---
-    "sybil_baseline_cifar10_cnn",
-    "sybil_knock_out_cifar10_cnn",
-    "sybil_mimic_cifar10_cnn",
-    "sybil_pivot_cifar10_cnn",
+    # ============================================================================
+    # 2. SELLER ATTACKS: Category 1 (Model Integrity)
+    # ============================================================================
+    # 2.1 Backdoor Attack (covered in main_summary with Sybil)
 
-    # --- 3. Ablation Studies & Specific Analyses ---
-    "oracle_vs_buyer_bias_cifar10_cnn",
-    "buyer_data_impact_cifar10_cnn",
-    "heterogeneity_impact_cifar10_cnn",
+    # 2.2 Label Flipping Attack
+    "label_flip_cifar10_cnn",
+    "label_flip_cifar10_resnet18",  # Add for completeness
+    "label_flip_trec",  # Already in your generator
+
+    # ============================================================================
+    # 3. SELLER ATTACKS: Category 2 (Marketplace Manipulation)
+    # ============================================================================
+    # 3.1 Sybil Attack Analysis
+    "sybil_baseline_cifar10_cnn",       # Backdoor without Sybil
+    "sybil_mimic_cifar10_cnn",          # Backdoor + Sybil mimic
+    "sybil_pivot_cifar10_cnn",          # Backdoor + Sybil pivot
+    "sybil_knock_out_cifar10_cnn",      # Backdoor + Sybil knock_out
+
+    # 3.2 Selection Rate Gaming
     "selection_rate_baseline_cifar10_cnn",
     "selection_rate_cluster_cifar10_cnn",
+
+    "competitor_mimicry_noisy_copy_cifar10_cnn",
+
+    # ============================================================================
+    # 4. BUYER ATTACKS: Category 2 (Marketplace Manipulation) 🚨 CRITICAL GAP
+    # ============================================================================
+    # 4.1 DoS Attack
+    "buyer_attack_dos_cifar10_cnn",  # ⚠️ MISSING FROM YOUR LIST
+
+    # 4.2 Economic Starvation
+    "buyer_attack_starvation_cifar10_cnn",  # ⚠️ MISSING FROM YOUR LIST
+
+    # 4.3 Trust Erosion (Basic)
+    "buyer_attack_erosion_cifar10_cnn",  # ⚠️ MISSING FROM YOUR LIST
+
+    # 4.4 Trust Erosion (Oscillating Variants)
+    "buyer_attack_oscillating_binary_cifar10_cnn",  # ⚠️ MISSING
+    "buyer_attack_oscillating_random_cifar10_cnn",  # ⚠️ MISSING
+    "buyer_attack_oscillating_drift_cifar10_cnn",   # ⚠️ MISSING
+
+    # 4.5 Targeted Exclusion (Class-based - NEW)
+    "buyer_attack_class_exclusion_negative_cifar10_cnn",  # ⚠️ MISSING
+    "buyer_attack_class_exclusion_positive_cifar10_cnn",  # ⚠️ MISSING
+
+    # 4.6 Targeted Exclusion (Orthogonal Pivot - Legacy)
+    "buyer_attack_orthogonal_pivot_legacy_cifar10_cnn",  # ⚠️ MISSING
+
+    # ============================================================================
+    # 5. ABLATION STUDIES & ANALYSES
+    # ============================================================================
+    # 5.1 Defense Mechanism Comparisons
+    "oracle_vs_buyer_bias_cifar10_cnn",
+    "buyer_data_impact_cifar10_cnn",
+
+    # 5.2 Data Heterogeneity Impact
+    "heterogeneity_impact_cifar10_cnn",
+    "heterogeneity_impact_cifar10_resnet18",  # Add for completeness
+
+    # 5.3 Adversary Rate Trends
     "trend_adv_rate_martfl_cifar10_cnn",
 
-    # --- 4. Alternative Attack Scenarios ---
-    "label_flip_cifar10_cnn",
-    # "label_flip_trec",
+    # ============================================================================
+    # 6. ATTACK COMPARISONS (Validate Improvements) 🚨 MISSING
+    # ============================================================================
+    "comparison_drowning_vs_mimicry_martfl",  # ⚠️ MISSING FROM YOUR LIST
+    "comparison_orthogonal_vs_class_exclusion_fltrust",  # ⚠️ MISSING
+
+    # ============================================================================
+    # 7. SCALABILITY ANALYSIS
+    # ============================================================================
+    # 7.1 Seller Attack Scalability
+    "scalability_backdoor_sybil_cifar10_cnn",
+    "scalability_backdoor_sybil_cifar10_resnet18",  # Add for robustness
+    "scalability_backdoor_sybil_cifar100_cnn",
+
+    # 7.2 Buyer Attack Scalability (⚠️ YOU NEED TO ADD THESE)
+    "scalability_buyer_class_exclusion_cifar10_cnn",  # Already in generator
+    "scalability_buyer_oscillating_cifar10_cnn",      # Already in generator
+
+    # 7.3 Baseline (No Attack)
+    "scalability_baseline_no_attack_cifar10_cnn",
+
+    # 7.4 Text Dataset Scalability
+    "scalability_backdoor_trec",  # From generate_text_scalability_scenarios()
+
+    # ============================================================================
+    # 8. OPTIONAL: Advanced/Exploratory Experiments
+    # ============================================================================
+    # 8.1 Adaptive Attacks (if you claim they're important)
     "adaptive_evasion_data_poisoning_cifar10_cnn",
     "adaptive_evasion_gradient_manipulation_cifar10_cnn",
-    "drowning_attack_cifar10_cnn",
 
-    # --- 5. Scalability Experiments ---
-    "scalability_backdoor_sybil_cifar100_cnn",
-    "scalability_backdoor_sybil_cifar10_cnn",
-    # "scalability_backdoor_trec",
-    "scalability_baseline_no_attack_cifar10_cnn",
-    # "scalability_buyer_class_exclusion_cifar10_cnn",
-    # "scalability_buyer_oscillating_cifar10_cnn",
-    # "scalability_combined_backdoor_buyer_cifar10_cnn",
-
-    # market attacks
-    "generate_competitor_mimicry_scenarios",
-    "generate_buyer_attack_scenarios",
-
+    # 8.2 Extreme Scale Stress Tests (optional, for discussion)
+    # "extreme_scale_backdoor_martfl",
+    # "extreme_scale_buyer_class_exclusion_fltrust",
 ]
 
 
