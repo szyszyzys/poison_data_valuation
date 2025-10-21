@@ -44,7 +44,7 @@ class NestablePool(Pool):
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-EXPERIMENTS_TO_RUN = [
+CORE_EXPERIMENTS = [
     # ============================================================================
     # 1. MAIN RESULTS: Attack Effectiveness Across Defenses & Datasets
     # ============================================================================
@@ -61,8 +61,8 @@ EXPERIMENTS_TO_RUN = [
 
     # 2.2 Label Flipping Attack
     "label_flip_cifar10_cnn",
-    "label_flip_cifar10_resnet18",  # Add for completeness
-    "label_flip_trec",  # Already in your generator
+    "label_flip_cifar10_resnet18",
+    "label_flip_trec"
 
     # ============================================================================
     # 3. SELLER ATTACKS: Category 2 (Marketplace Manipulation)
@@ -112,41 +112,33 @@ EXPERIMENTS_TO_RUN = [
 
     # 5.2 Data Heterogeneity Impact
     "heterogeneity_impact_cifar10_cnn",
-    "heterogeneity_impact_cifar10_resnet18",  # Add for completeness
+    "heterogeneity_impact_cifar10_resnet18",
 
     # 5.3 Adversary Rate Trends
     "trend_adv_rate_martfl_cifar10_cnn",
-
-    # ============================================================================
-    # 6. ATTACK COMPARISONS (Validate Improvements) 🚨 MISSING
-    # ============================================================================
-    "comparison_drowning_vs_mimicry_martfl",  # ⚠️ MISSING FROM YOUR LIST
-    "comparison_orthogonal_vs_class_exclusion_fltrust",  # ⚠️ MISSING
 
     # ============================================================================
     # 7. SCALABILITY ANALYSIS
     # ============================================================================
     # 7.1 Seller Attack Scalability
     "scalability_backdoor_sybil_cifar10_cnn",
-    "scalability_backdoor_sybil_cifar10_resnet18",  # Add for robustness
+    # "scalability_backdoor_sybil_cifar10_resnet18",  # Add for robustness
     "scalability_backdoor_sybil_cifar100_cnn",
 
     # 7.2 Buyer Attack Scalability (⚠️ YOU NEED TO ADD THESE)
-    "scalability_buyer_class_exclusion_cifar10_cnn",  # Already in generator
-    "scalability_buyer_oscillating_cifar10_cnn",      # Already in generator
+    # "scalability_buyer_class_exclusion_cifar10_cnn",  # Already in generator
+    # "scalability_buyer_oscillating_cifar10_cnn",      # Already in generator
 
     # 7.3 Baseline (No Attack)
     "scalability_baseline_no_attack_cifar10_cnn",
 
     # 7.4 Text Dataset Scalability
-    "scalability_backdoor_trec",  # From generate_text_scalability_scenarios()
+    # "scalability_backdoor_trec",  # From generate_text_scalability_scenarios()
 
     # ============================================================================
     # 8. OPTIONAL: Advanced/Exploratory Experiments
     # ============================================================================
     # 8.1 Adaptive Attacks (if you claim they're important)
-    "adaptive_evasion_data_poisoning_cifar10_cnn",
-    "adaptive_evasion_gradient_manipulation_cifar10_cnn",
 
     # 8.2 Extreme Scale Stress Tests (optional, for discussion)
     # "extreme_scale_backdoor_martfl",
