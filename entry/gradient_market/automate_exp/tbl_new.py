@@ -10,6 +10,9 @@ from common.gradient_market_configs import AppConfig, AggregationConfig, Tabular
     AdversarySellerConfig, ServerAttackConfig, TrainingConfig, ExperimentConfig, DebugConfig
 from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 
+# --- Define your target labels ---
+TEXAS100_TARGET_LABEL = 1  # Or whatever you choose
+PURCHASE100_TARGET_LABEL = 1
 
 # --- Define the structure of a Scenario ---
 @dataclass
@@ -69,17 +72,25 @@ PURCHASE100_TRIGGER = {"feature_0": 99.0, "feature_1": -99.0}
 
 
 # --- Reusable Modifier Functions ---
-def use_tabular_backdoor_with_trigger(trigger_conditions: Dict[str, Any]) -> Callable[[AppConfig], AppConfig]:
+def use_tabular_backdoor_with_trigger(
+        trigger_conditions: Dict[str, Any],
+        target_label: int  # <-- ADD THIS ARGUMENT
+) -> Callable[[AppConfig], AppConfig]:
     """Returns a modifier to enable the tabular backdoor attack with specific trigger conditions."""
 
     def modifier(config: AppConfig) -> AppConfig:
         config.adversary_seller_config.poisoning.type = PoisonType.TABULAR_BACKDOOR
-        trigger_key = "adversary_seller_config.poisoning.tabular_backdoor_params.active_attack_params.trigger_conditions"
+
+        # --- ADD THIS LINE to set the target_label explicitly ---
+        label_key = "adversary_seller_config.poisoning.tabular_backdoor_params.target_label"
+        set_nested_attr(config, label_key, target_label)
+
+        # --- This path must match your Python class (TabularBackdoorParams) ---
+        trigger_key = "adversary_seller_config.poisoning.tabular_backdoor_params.feature_trigger_params.trigger_conditions"
         set_nested_attr(config, trigger_key, trigger_conditions)
         return config
 
     return modifier
-
 
 def generate_tabular_main_summary_scenarios() -> List[Scenario]:
     """
@@ -100,7 +111,7 @@ def generate_tabular_main_summary_scenarios() -> List[Scenario]:
         name="main_summary_texas100",  # Match naming convention
         base_config_factory=get_base_tabular_config,
         modifiers=[
-            use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER),
+            use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL),
             use_sybil_attack(SYBIL_STRATEGY)  # Include Sybil if standard for main figs
         ],
         parameter_grid={
@@ -119,7 +130,7 @@ def generate_tabular_main_summary_scenarios() -> List[Scenario]:
         name="main_summary_purchase100",  # Match naming convention
         base_config_factory=get_base_tabular_config,  # Still uses the base
         modifiers=[
-            use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER),
+            use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL),
             use_sybil_attack(SYBIL_STRATEGY)  # Include Sybil if standard for main figs
         ],
         parameter_grid={
@@ -163,7 +174,7 @@ def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
     scenarios.append(Scenario(
         name=f"sybil_baseline_{dataset_name}",
         base_config_factory=get_base_tabular_config,
-        modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER)],
+        modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER,TEXAS100_TARGET_LABEL)],
         parameter_grid={
             "experiment.dataset_name": [dataset_name],
             "experiment.model_structure": ["mlp"],
@@ -178,7 +189,7 @@ def generate_tabular_sybil_impact_scenarios() -> List[Scenario]:
         scenarios.append(Scenario(
             name=f"sybil_{strategy}_{dataset_name}",
             base_config_factory=get_base_tabular_config,
-            modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER), use_sybil_attack(strategy)],
+            modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL), use_sybil_attack(strategy)],
             parameter_grid={
                 "experiment.dataset_name": [dataset_name],
                 "experiment.model_structure": ["mlp"],
@@ -207,7 +218,7 @@ def generate_tabular_attack_impact_scenarios() -> List[Scenario]:
         scenarios.append(Scenario(
             name=f"impact_{group_name}_{dataset_name}",
             base_config_factory=get_base_tabular_config,
-            modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER)],
+            modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL)],
             parameter_grid={
                 "experiment.dataset_name": [dataset_name],
                 "experiment.model_structure": ["mlp"],
@@ -259,7 +270,7 @@ def generate_tabular_scalability_scenarios() -> List[Scenario]:
     scenarios.append(Scenario(
         name=f"scalability_attack_{dataset_name}",
         base_config_factory=get_base_tabular_config,
-        modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER), use_sybil_attack('mimic')],
+        modifiers=[use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL), use_sybil_attack('mimic')],
         parameter_grid={
             "experiment.dataset_name": [dataset_name],
             "experiment.model_structure": ["mlp"],

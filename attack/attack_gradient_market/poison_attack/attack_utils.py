@@ -257,7 +257,6 @@ class BackdoorTabularGenerator(PoisonGenerator):
     def __init__(self, config: BackdoorTabularConfig, feature_to_idx: Dict[str, int]):
         self.config = config
         self.target_label = config.target_label
-
         # Pre-process the trigger conditions into a more efficient format (index, value)
         # This avoids dictionary lookups in the hot loop (the apply method).
         self.trigger_map: List[Tuple[int, float]] = []

@@ -130,7 +130,6 @@ class BuyerAttackConfig:
 @dataclass
 class TabularFeatureTriggerParams:
     """Parameters for a feature-based trigger backdoor attack."""
-    target_label: int = 0
     trigger_conditions: Dict[str, Any] = field(default_factory=dict)
 
 
