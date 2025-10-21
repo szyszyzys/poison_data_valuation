@@ -256,7 +256,7 @@ def run_task_list_serially(tasks_for_one_gpu):
 
     # ✅ ADD STAGGERED START - Each process waits based on its position
     # This prevents all processes from hitting peak memory at the same time
-    process_index = pid % 100  # Use last 2 digits of PID as index
+    process_index = pid % 20  # Use last 2 digits of PID as index
     startup_delay = process_index * 2  # 2 seconds per process
     if startup_delay > 0:
         logger.info(f"[Process {pid} | GPU {gpu_id}] Staggered start: waiting {startup_delay}s")
