@@ -64,21 +64,7 @@ def _load_and_prepare_tabular_df(config: Dict[str, Any]) -> Tuple[pd.DataFrame, 
     return df, categorical_cols
 
 
-def get_tabular_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[str, DataLoader], DataLoader, int, int]:
-    """
-    Loads, preprocesses, and partitions a tabular dataset for a federated experiment.
-
-    Args:
-        cfg (AppConfig): The main application configuration object.
-
-    Returns:
-        A tuple containing:
-        - buyer_loader: DataLoader for the buyer's trusted data.
-        - seller_loaders: A dictionary of DataLoaders for each seller.
-        - test_loader: DataLoader for the final test set.
-        - num_classes: The number of classes in the dataset.
-        - input_dim: The number of features after preprocessing.
-    """
+def get_tabular_dataset(cfg: AppConfig):
     logger.info(f"--- Starting Federated Tabular Dataset Setup for '{cfg.experiment.dataset_name}' ---")
 
     # 1. Load dataset-specific configuration and raw data
@@ -99,6 +85,14 @@ def get_tabular_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[str, DataLoade
 
     scaler = StandardScaler()
     numerical_cols = X_train.select_dtypes(include=np.number).columns
+
+    # --- ADD THIS DEBUG LOG ---
+    if numerical_cols.empty:
+        logger.error("CRITICAL BUG: No numerical columns found for scaling!")
+    else:
+        logger.info(f"Applying StandardScaler to {len(numerical_cols)} columns.")
+    # --- END DEBUG LOG ---
+
     if not numerical_cols.empty:
         X_train[numerical_cols] = scaler.fit_transform(X_train[numerical_cols])
         X_test[numerical_cols] = scaler.transform(X_test[numerical_cols])
