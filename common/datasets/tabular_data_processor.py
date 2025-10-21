@@ -91,14 +91,15 @@ def get_tabular_dataset(cfg: AppConfig):
     X_train = X_train.copy()
     X_test = X_test.copy()
 
-    scaler = StandardScaler()
     numerical_cols = X_train.select_dtypes(include=np.number).columns
 
     if numerical_cols.empty:
-        logger.error("CRITICAL: No numerical columns found for scaling!")
+        logger.error("CRITICAL: No numerical columns found!")
         raise ValueError("Dataset must contain at least one numerical column")
 
-    logger.info(f"Applying StandardScaler to {len(numerical_cols)} numerical columns.")
+    logger.info(f"Dataset: {cfg.experiment.dataset_name}")
+    logger.info(f"Total features: {len(numerical_cols)}")
+    logger.info(f"Training samples: {len(X_train)}, Test samples: {len(X_test)}")
 
     # Log statistics BEFORE scaling
     logger.info("📊 Data statistics BEFORE scaling (first 5 numerical columns):")
@@ -108,15 +109,74 @@ def get_tabular_dataset(cfg: AppConfig):
     logger.info(f"\n--- X_train (raw) ---\n{train_stats_before.to_string()}")
     logger.info(f"\n--- X_test (raw) ---\n{test_stats_before.to_string()}")
 
-    # Convert to float64 to avoid dtype warnings, then scale
-    X_train[numerical_cols] = X_train[numerical_cols].astype(np.float64)
-    X_test[numerical_cols] = X_test[numerical_cols].astype(np.float64)
+    # 3. Analyze feature types for Purchase100 and Texas100
+    logger.info("🔍 Analyzing feature distribution for privacy benchmark dataset...")
 
-    X_train[numerical_cols] = scaler.fit_transform(X_train[numerical_cols])
-    X_test[numerical_cols] = scaler.transform(X_test[numerical_cols])
+    # Check sparsity
+    sparsity = (X_train[numerical_cols] == 0).sum().sum() / (len(X_train) * len(numerical_cols))
+    logger.info(f"Data sparsity: {sparsity:.2%} of values are zero")
+
+    # Check value range
+    data_min = X_train[numerical_cols].min().min()
+    data_max = X_train[numerical_cols].max().max()
+    logger.info(f"Value range: [{data_min}, {data_max}]")
+
+    # Identify feature types
+    binary_cols = [col for col in numerical_cols if X_train[col].nunique() <= 2]
+    bounded_cols = [col for col in numerical_cols
+                    if X_train[col].min() >= 0 and X_train[col].max() <= 1
+                    and col not in binary_cols]
+    continuous_cols = [col for col in numerical_cols
+                       if col not in binary_cols and col not in bounded_cols]
+
+    logger.info(f"Feature breakdown:")
+    logger.info(f"  - Binary features (0/1): {len(binary_cols)}")
+    logger.info(f"  - Bounded features [0,1]: {len(bounded_cols)}")
+    logger.info(f"  - Continuous features: {len(continuous_cols)}")
+
+    # 4. Apply appropriate scaling based on dataset
+    dataset_name_lower = cfg.experiment.dataset_name.lower()
+
+    if 'purchase' in dataset_name_lower or 'texas' in dataset_name_lower:
+        logger.info("📋 Detected privacy benchmark dataset (Purchase100/Texas100)")
+        logger.info("   These datasets typically contain binary or bounded features")
+
+        if sparsity > 0.5:  # Very sparse data
+            logger.info("   ⚠️ High sparsity detected - skipping StandardScaler to preserve structure")
+            logger.info("   Using data as-is (already in [0,1] range)")
+            # No scaling needed - data is already normalized
+
+        elif len(continuous_cols) > 0:
+            # Scale only truly continuous features
+            logger.info(f"   Scaling {len(continuous_cols)} continuous features with StandardScaler")
+            scaler = StandardScaler()
+
+            X_train[continuous_cols] = X_train[continuous_cols].astype(np.float64)
+            X_test[continuous_cols] = X_test[continuous_cols].astype(np.float64)
+
+            X_train[continuous_cols] = scaler.fit_transform(X_train[continuous_cols])
+            X_test[continuous_cols] = scaler.transform(X_test[continuous_cols])
+
+            # Clip extreme outliers (protect against rare extreme values)
+            X_train[continuous_cols] = X_train[continuous_cols].clip(-10, 10)
+            X_test[continuous_cols] = X_test[continuous_cols].clip(-10, 10)
+            logger.info(f"   Clipped continuous features to [-10, 10]")
+        else:
+            logger.info("   ✅ All features are binary/bounded - no scaling needed")
+
+    else:
+        # Default behavior for other tabular datasets
+        logger.info("Applying StandardScaler to all numerical features")
+        scaler = StandardScaler()
+
+        X_train[numerical_cols] = X_train[numerical_cols].astype(np.float64)
+        X_test[numerical_cols] = X_test[numerical_cols].astype(np.float64)
+
+        X_train[numerical_cols] = scaler.fit_transform(X_train[numerical_cols])
+        X_test[numerical_cols] = scaler.transform(X_test[numerical_cols])
 
     # Log statistics AFTER scaling
-    logger.info("📊 Data statistics AFTER scaling (first 5 numerical columns):")
+    logger.info("📊 Data statistics AFTER processing (first 5 numerical columns):")
     train_stats_after = X_train[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
     test_stats_after = X_test[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
     logger.info(f"\n--- X_train ---\n{train_stats_after.to_string()}")
@@ -124,14 +184,13 @@ def get_tabular_dataset(cfg: AppConfig):
 
     feature_to_idx = {col: i for i, col in enumerate(X_train.columns)}
 
-    # 3. Convert to PyTorch Datasets
+    # 5. Convert to PyTorch Datasets
     X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
     y_train_tensor = torch.tensor(y_train.values, dtype=torch.long)
 
-    # Check for NaN/Inf values (should not occur with proper data)
+    # Check for NaN/Inf values
     if torch.isnan(X_train_tensor).any() or torch.isinf(X_train_tensor).any():
-        logger.error("NaN/Inf detected in training data after scaling!")
-        # Identify problematic columns
+        logger.error("NaN/Inf detected in training data after processing!")
         nan_mask = torch.isnan(X_train_tensor).any(dim=0)
         inf_mask = torch.isinf(X_train_tensor).any(dim=0)
         problem_cols = [col for i, col in enumerate(X_train.columns)
@@ -144,9 +203,8 @@ def get_tabular_dataset(cfg: AppConfig):
     X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
     y_test_tensor = torch.tensor(y_test.values, dtype=torch.long)
 
-    # Check test data as well
     if torch.isnan(X_test_tensor).any() or torch.isinf(X_test_tensor).any():
-        logger.error("NaN/Inf detected in test data after scaling!")
+        logger.error("NaN/Inf detected in test data after processing!")
         nan_mask = torch.isnan(X_test_tensor).any(dim=0)
         inf_mask = torch.isinf(X_test_tensor).any(dim=0)
         problem_cols = [col for i, col in enumerate(X_test.columns)
@@ -157,9 +215,9 @@ def get_tabular_dataset(cfg: AppConfig):
     test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 
     input_dim = X_train_tensor.shape[1]
-    num_classes = len(torch.unique(y_test_tensor))
+    num_classes = len(torch.unique(y_train_tensor))
 
-    # 4. Partition the training data using the consistent partitioner
+    # 6. Partition the training data
     partitioner = TabularDataPartitioner(
         dataset=train_dataset,
         features=X_train,
@@ -174,7 +232,7 @@ def get_tabular_dataset(cfg: AppConfig):
     )
     buyer_indices, seller_splits, _ = partitioner.get_splits()
 
-    # Generate and save tabular data split statistics
+    # 7. Save data split statistics
     logger.info("Generating and saving tabular data split statistics...")
     tabular_split_params = {
         "dataset": cfg.experiment.dataset_name,
@@ -198,7 +256,7 @@ def get_tabular_dataset(cfg: AppConfig):
         save_filepath=stats_save_path
     )
 
-    # 5. Create final DataLoaders
+    # 8. Create final DataLoaders
     batch_size = cfg.training.batch_size
     num_workers = cfg.data.num_workers
 
