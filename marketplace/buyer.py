@@ -88,27 +88,16 @@ class MaliciousBuyerProxy(GradientSeller):
 
     def get_gradient_for_upload(
             self,
-            global_model: nn.Module,
             all_seller_gradients: Dict[str, List[torch.Tensor]] = None,
             target_seller_id: str = None
     ) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
-        """
-        Generates the root gradient based on the configured malicious strategy.
-
-        Args:
-            global_model: The current state of the global model.
-            all_seller_gradients: A dictionary of gradients from all sellers in the current round.
-            target_seller_id: The ID of the seller to target for exclusion.
-        Returns:
-            A tuple containing the manipulated gradient and statistics.
-        """
         self.round_counter += 1
         stats = {'attack_strategy': self.attack_cfg.attack_type}
 
         # --- Attack 1: Marketplace Denial-of-Service (DoS) ---
         if self.attack_cfg.attack_type == "dos":
             logging.info(f"[{self.seller_id}][DoS Attack] Submitting zero-gradient.")
-            honest_gradient, _ = super().get_gradient_for_upload(global_model)
+            honest_gradient, stats = super().get_gradient_for_upload()
             if honest_gradient is None:
                 return None, {}
             zero_gradient = [torch.zeros_like(p) for p in honest_gradient]
@@ -119,7 +108,7 @@ class MaliciousBuyerProxy(GradientSeller):
             target_classes = self.attack_cfg.starvation_classes
             if not target_classes:
                 logging.error("Starvation attack active but starvation_classes is empty!")
-                return super().get_gradient_for_upload(global_model)
+                return super().get_gradient_for_upload()
 
             logging.info(
                 f"[{self.seller_id}][Starvation Attack] "
@@ -131,17 +120,20 @@ class MaliciousBuyerProxy(GradientSeller):
                     f"No samples found for target classes {target_classes}. "
                     f"Returning zero-gradient."
                 )
-                return [torch.zeros_like(p) for p in global_model.parameters()], stats
+                honest_gradient, stats = super().get_gradient_for_upload()
+                if honest_gradient is None:
+                    return None, {}
+                zero_gradient = [torch.zeros_like(p) for p in honest_gradient]
+                return zero_gradient, stats
 
             biased_dataset = Subset(self.dataset, indices)
             local_model = self.model_factory().to(self.device)
-            local_model.load_state_dict(global_model.state_dict())
             return self._compute_local_grad(local_model, biased_dataset)
 
         # --- Attack 3: Trust Erosion (Pivoting Objective) ---
         elif self.attack_cfg.attack_type == "erosion":
             logging.info(f"[{self.seller_id}][Trust Erosion Attack] Submitting random gradient.")
-            honest_gradient, _ = super().get_gradient_for_upload(global_model)
+            honest_gradient, _ = super().get_gradient_for_upload()
             if honest_gradient is None:
                 return None, {}
             random_gradient = [torch.randn_like(p) for p in honest_gradient]
@@ -164,11 +156,10 @@ class MaliciousBuyerProxy(GradientSeller):
 
             if self.exclusion_dataset is None:
                 logging.error("Exclusion dataset not initialized! Falling back to honest behavior.")
-                return super().get_gradient_for_upload(global_model)
+                return super().get_gradient_for_upload()
 
             # Compute gradient using only the class-filtered dataset
             local_model = self.model_factory().to(self.device)
-            local_model.load_state_dict(global_model.state_dict())
             biased_gradient, grad_stats = self._compute_local_grad(local_model, self.exclusion_dataset)
 
             # Add attack-specific stats
@@ -196,35 +187,32 @@ class MaliciousBuyerProxy(GradientSeller):
             4. 'adversarial_drift': Gradually shifts focus to destabilize trust
             """
             strategy = self.attack_cfg.oscillation_strategy  # Default: "binary_flip"
-
+            local_model = self.model_factory().to(self.device)
             if strategy == "binary_flip":
                 # Strategy 1: Simple A/B oscillation
-                oscillating_gradient, stats = self._oscillate_binary_flip(global_model, stats)
+                oscillating_gradient, stats = self._oscillate_binary_flip(local_model, stats)
 
             elif strategy == "rotating":
                 # Strategy 2: Cycle through multiple phases
-                oscillating_gradient, stats = self._oscillate_rotating(global_model, stats)
+                oscillating_gradient, stats = self._oscillate_rotating(local_model, stats)
 
             elif strategy == "random_walk":
                 # Strategy 3: Random class selection each round
-                oscillating_gradient, stats = self._oscillate_random_walk(global_model, stats)
+                oscillating_gradient, stats = self._oscillate_random_walk(local_model, stats)
 
             elif strategy == "adversarial_drift":
                 # Strategy 4: Gradually shift to break trust
-                oscillating_gradient, stats = self._oscillate_adversarial_drift(global_model, stats)
+                oscillating_gradient, stats = self._oscillate_adversarial_drift(local_model, stats)
 
             else:
                 logging.error(f"Unknown oscillation strategy: {strategy}. Using binary_flip.")
-                oscillating_gradient, stats = self._oscillate_binary_flip(global_model, stats)
+                oscillating_gradient, stats = self._oscillate_binary_flip(local_model, stats)
 
             return oscillating_gradient, stats
 
         # --- LEGACY: Keep orthogonal_pivot for comparison (mark as deprecated) ---
         elif self.attack_cfg.attack_type == "orthogonal_pivot":
-            logging.warning(
-                f"[{self.seller_id}] orthogonal_pivot attack is DEPRECATED. "
-                f"Consider using 'class_exclusion' for more realistic exclusion."
-            )
+
             logging.info(
                 f"[{self.seller_id}][Orthogonal Pivot Attack] "
                 f"Crafting gradient to exclude '{target_seller_id}'."
@@ -233,23 +221,23 @@ class MaliciousBuyerProxy(GradientSeller):
                 logging.error(
                     f"Targeted exclusion failed: Target '{target_seller_id}' gradient not provided, current gradients: {all_seller_gradients.keys()}."
                 )
-                return super().get_gradient_for_upload(global_model)
+                return super().get_gradient_for_upload()
 
             target_gradient = all_seller_gradients[target_seller_id]
-            g_ideal, _ = super().get_gradient_for_upload(global_model)
+            g_ideal, _ = super().get_gradient_for_upload()
             if g_ideal is None:
                 return None, {}
 
             g_orth = self._calculate_orthogonal_pivot(g_ideal, target_gradient)
             if g_orth is None:
-                return super().get_gradient_for_upload(global_model)
+                return super().get_gradient_for_upload()
 
             pivoted_gradient = [p_ideal + p_orth for p_ideal, p_orth in zip(g_ideal, g_orth)]
             return pivoted_gradient, stats
 
         # Fallback to honest behavior
         logging.warning(f"[{self.seller_id}] No valid attack type matched. Behaving honestly.")
-        return super().get_gradient_for_upload(global_model)
+        return super().get_gradient_for_upload()
 
     def _oscillate_binary_flip(
             self,

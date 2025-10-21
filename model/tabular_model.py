@@ -1,8 +1,9 @@
+import copy
 import json
 import logging
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Callable
 
 import pandas as pd
 import torch
@@ -204,8 +205,8 @@ class TabularModelFactory:
     def create_model(model_name: str, input_dim: int, num_classes: int,
                      config: TabularModelConfig,
                      device: str = 'cpu') -> nn.Module:
-
-        print(f"🧠 Creating configurable tabular model '{model_name}'...")
+        """Create a tabular model based on configuration."""
+        logging.info(f"🧠 Creating configurable tabular model '{model_name}'...")
 
         model = None
         if model_name.lower() == 'tabularmlp':
@@ -225,13 +226,12 @@ class TabularModelFactory:
         logging.info("--- STABLE init applied on CPU ---")
         _log_param_stats(model, "layers.0.weight", "After init_weights (float32)")
 
-        # --- THIS IS THE FIX ---
         # 2. Move to device AS float32
         model = model.to(device)
         logging.info(f"--- Model moved to {device} (as float32) ---")
         _log_param_stats(model, "layers.0.weight", f"After .to({device}) (float32)")
 
-        # 4. VERIFY
+        # 3. VERIFY
         for name, param in model.named_parameters():
             if torch.isnan(param).any() or torch.isinf(param).any():
                 logging.error(f"--- ❌ VERIFICATION FAILED FOR {name} ---")
@@ -239,7 +239,77 @@ class TabularModelFactory:
                 raise RuntimeError(f"NaN/Inf in '{name}' after universal init!")
 
         logging.info("--- ✅ Model verification PASSED ---")
+
+        # 4. Log model details
+        num_params = sum(p.numel() for p in model.parameters())
+        num_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        logging.info(f"  -> Instantiated model class: '{model.__class__.__name__}'")
+        logging.info(f"  -> Total parameters: {num_params:,}")
+        logging.info(f"  -> Trainable parameters: {num_trainable:,}")
+
         return model
+
+    @staticmethod
+    def create_factory(model_name: str, input_dim: int, num_classes: int,
+                       config: TabularModelConfig, device: str = 'cpu') -> Callable[[], nn.Module]:
+        """
+        Create a zero-argument factory function with frozen parameters.
+
+        This ensures all models created from this factory are identical,
+        even if the original config is mutated after factory creation.
+
+        Args:
+            model_name: Name of the model architecture
+            input_dim: Input feature dimension
+            num_classes: Number of output classes
+            config: Model configuration
+            device: Device to place models on
+
+        Returns:
+            A callable that takes no arguments and returns a model instance
+        """
+        # Validate inputs
+        if not isinstance(config, TabularModelConfig):
+            raise TypeError(f"config must be TabularModelConfig, got {type(config)}")
+
+        if input_dim <= 0:
+            raise ValueError(f"input_dim must be positive, got {input_dim}")
+
+        if num_classes <= 0:
+            raise ValueError(f"num_classes must be positive, got {num_classes}")
+
+        # Deep copy all parameters to freeze them at factory creation time
+        frozen_model_name = str(model_name)
+        frozen_input_dim = int(input_dim)
+        frozen_num_classes = int(num_classes)
+        frozen_config = copy.deepcopy(config)
+        frozen_device = str(device)
+
+        def model_factory() -> nn.Module:
+            """Zero-argument factory that creates a model with frozen config."""
+            return TabularModelFactory.create_model(
+                model_name=frozen_model_name,
+                input_dim=frozen_input_dim,
+                num_classes=frozen_num_classes,
+                config=frozen_config,
+                device=frozen_device
+            )
+
+        # Validate factory creates valid models
+        try:
+            test_model = model_factory()
+            num_params = sum(p.numel() for p in test_model.parameters())
+            logging.info(f"Tabular model factory created and validated:")
+            logging.info(f"  - Architecture: {frozen_model_name}")
+            logging.info(f"  - Parameters: {num_params:,}")
+            logging.info(f"  - Input dimension: {frozen_input_dim}")
+            logging.info(f"  - Output classes: {frozen_num_classes}")
+            del test_model  # Clean up
+        except Exception as e:
+            logging.error(f"Failed to create test model from factory: {e}")
+            raise
+
+        return model_factory
 
     @staticmethod
     def save_model_and_config(model: nn.Module, config: TabularModelConfig,
@@ -257,13 +327,13 @@ class TabularModelFactory:
         with open(config_path, 'w') as f:
             json.dump(asdict(config), f, indent=2)
 
-        print(f"💾 Saved tabular model and config to {save_path}")
+        logging.info(f"💾 Saved tabular model and config to {save_path}")
         return model_path, config_path
 
     @staticmethod
     def load_model_and_config(save_dir: str, model_name: str, input_dim: int,
                               num_classes: int,
-                              device: str = 'cpu') -> tuple:  # <-- ADDED device parameter
+                              device: str = 'cpu') -> tuple:
         """Load tabular model state and configuration."""
         save_path = Path(save_dir)
 
@@ -274,7 +344,6 @@ class TabularModelFactory:
         config = TabularModelConfig(**config_dict)
 
         # Create model
-        # NOTE: create_model now handles initialization and device placement
         model = TabularModelFactory.create_model(
             config.model_name, input_dim, num_classes, config, device=device
         )
@@ -286,9 +355,8 @@ class TabularModelFactory:
         # Ensure model is on the correct device after loading state
         model = model.to(device)
 
-        print(f"📂 Loaded tabular model and config from {save_path}")
+        logging.info(f"📂 Loaded tabular model and config from {save_path}")
         return model, config
-
 
 class TabularConfigManager:
     def __init__(self, config_dir: str = "./configs"):

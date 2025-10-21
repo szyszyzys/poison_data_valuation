@@ -268,33 +268,7 @@ class GradientSeller(BaseSeller):
         self.performance_history = []  # Track contribution to global model
         self.reward_history = []  # Track hypothetical rewards
 
-        # ==================== NEW DEBUGGING LOGS ====================
-        # This block will run every time a seller is created.
-        logging.info(f"--- 🕵️ Initializing Seller: {self.seller_id} ---")
-        try:
-            # 1. Log Data Config
-            dataset_size = len(self.data_config.dataset) if self.data_config.dataset else 0
-            logging.info(f"  [Data] Dataset size: {dataset_size} samples")
-
-            # 2. Log Training Config
-            logging.info(f"  [Training] LR: {self.training_config.learning_rate}, "
-                         f"Epochs: {self.training_config.local_epochs}, "
-                         f"Batch Size: {self.training_config.batch_size}")
-
-            # 3. Log Model Factory Info by creating a test instance
-            test_model = self.model_factory()
-            num_params = sum(p.numel() for p in test_model.parameters())
-            logging.info(f"  [Model] Factory creates model of type: '{test_model.__class__.__name__}'")
-            logging.info(f"  [Model] Parameter count: {num_params:,}")
-            del test_model  # Clean up the test model
-
-            logging.info(f"--- ✅ Seller '{self.seller_id}' initialized successfully ---")
-
-        except Exception as e:
-            logging.error(f"--- ❌ FAILED to properly initialize seller '{self.seller_id}': {e} ---", exc_info=True)
-        # ==========================================================
-
-    def get_gradient_for_upload(self, global_model: nn.Module,
+    def get_gradient_for_upload(self,
                                 all_seller_gradients: Dict[str, List[torch.Tensor]] = None,
                                 target_seller_id: str = None) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
@@ -302,17 +276,17 @@ class GradientSeller(BaseSeller):
         This is the primary method for the federated learning coordinator to call.
         """
         try:
-            # 1. Create a fresh model instance using the injected factory.
+            # Create a fresh model instance with current global weights
+            # The stateful factory automatically loads global_model.state_dict()
             local_model = self.model_factory().to(self.device)
-            local_model.load_state_dict(global_model.state_dict())
         except Exception as e:
             logging.error(f"[{self.seller_id}] Failed to prepare model: {e}", exc_info=True)
             return None, {'error': 'Model preparation failed.'}
 
-        # 2. Delegate the actual training and gradient calculation.
+        # Delegate the actual training and gradient calculation
         gradient, stats = self._compute_local_grad(local_model, self.data_config.dataset)
 
-        # 3. Update the seller's internal state for logging or inspection.
+        # Update the seller's internal state for logging or inspection
         self.last_computed_gradient = gradient
         self.last_training_stats = stats
 
@@ -956,7 +930,7 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
         # The seller simply stores the generator it was given.
         self.poison_generator = poison_generator
 
-    def get_gradient_for_upload(self, global_model: nn.Module,
+    def get_gradient_for_upload(self,
                                 all_seller_gradients: Dict[str, List[torch.Tensor]] = None,
                                 target_seller_id: str = None) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         """
@@ -975,7 +949,6 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
             # Create a local copy of the global model for training
             # IMPORTANT: Don't modify global_model directly!
             local_model = self.model_factory().to(self.device)
-            local_model.load_state_dict(global_model.state_dict())
 
             # Debug logging (only for specific sellers to reduce noise)
             if self.seller_id in ["adv_0", "bn_4"]:
@@ -995,14 +968,11 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
                 logging.info(f"[{self.seller_id}] 😇 Benign phase: using clean data")
                 dataset_for_training = self.dataset
 
-            # Compute local gradient
-            # CRITICAL: Train the LOCAL model, not the global one!
             base_gradient, stats = self._compute_local_grad(
                 model_to_train=local_model,  # ✅ Use local_model!
                 dataset_to_use=dataset_for_training
             )
 
-            # Validate gradient before any modifications
             if base_gradient is None:
                 logging.error(f"[{self.seller_id}] ❌ _compute_local_grad returned None!")
                 return None, {}
@@ -1014,28 +984,6 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
             if len(base_gradient) == 0:
                 logging.error(f"[{self.seller_id}] ❌ Gradient is empty!")
                 return None, {}
-
-            # Validate against global model
-            global_params = list(global_model.parameters())
-            if len(base_gradient) != len(global_params):
-                logging.error(
-                    f"[{self.seller_id}] ❌ Gradient length mismatch: "
-                    f"got {len(base_gradient)}, expected {len(global_params)}"
-                )
-                return None, {}
-
-            # Validate shapes
-            for i, (grad_tensor, global_param) in enumerate(zip(base_gradient, global_params)):
-                if not isinstance(grad_tensor, torch.Tensor):
-                    logging.error(f"[{self.seller_id}] ❌ Gradient[{i}] is not a tensor: {type(grad_tensor)}")
-                    return None, {}
-
-                if grad_tensor.shape != global_param.shape:
-                    logging.error(
-                        f"[{self.seller_id}] ❌ Shape mismatch at param {i}: "
-                        f"gradient shape {grad_tensor.shape} vs expected {global_param.shape}"
-                    )
-                    return None, {}
 
             logging.info(f"[{self.seller_id}] ✅ Base gradient validated: {len(base_gradient)} parameters")
 
@@ -1054,13 +1002,6 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
                 # Validate coordinated gradient
                 if coordinated_gradient is None:
                     logging.error(f"[{self.seller_id}] ❌ Sybil coordinator returned None!")
-                    return None, {}
-
-                if len(coordinated_gradient) != len(global_params):
-                    logging.error(
-                        f"[{self.seller_id}] ❌ Coordinated gradient length mismatch: "
-                        f"{len(coordinated_gradient)} vs {len(global_params)}"
-                    )
                     return None, {}
 
                 logging.info(f"[{self.seller_id}] ✅ Coordinated gradient validated")
@@ -1175,20 +1116,16 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
             f"with a '{type(backdoor_generator).__name__}'."
         )
 
-        # In class AdvancedBackdoorAdversarySeller:
-
     @staticmethod
     def _create_poison_generator(adv_cfg: AdversarySellerConfig, model_type: str, device: str,
                                  **kwargs: Any) -> PoisonGenerator:
         """Factory method to create the correct backdoor generator from configuration."""
         poison_cfg = adv_cfg.poisoning
 
-        # --- NEW: Get poison_type enum from the config string ---
         try:
             poison_type = PoisonType(poison_cfg.type)
         except ValueError:
             raise ValueError(f"Invalid poison type in config: '{poison_cfg.type}'.")
-        # --- END NEW ---
 
         if 'backdoor' not in poison_type.value:
             raise ValueError(f"This factory only supports backdoor types, but got '{poison_type.value}'.")
@@ -1270,7 +1207,8 @@ class AdaptiveAttackerSeller(GradientSeller):
 
     def _apply_gradient_manipulation(self, gradient: List[torch.Tensor], strategy: str) -> List[torch.Tensor]:
         """Applies a manipulation directly to the gradient tensors."""
-        if strategy == "honest": return gradient
+        if strategy == "honest":
+            return gradient
 
         manipulated_grad = []
         for tensor in gradient:
@@ -1296,7 +1234,7 @@ class AdaptiveAttackerSeller(GradientSeller):
             return PoisonedDataset(
                 original_dataset=self.dataset,
                 poison_generator=poison_generator,
-                poison_rate=self.adversary_config.poisoning.poison_rate  # Use existing config
+                poison_rate=self.adversary_config.poisoning.poison_rate
             )
         return self.dataset  # Fallback to clean data
 
@@ -1322,9 +1260,13 @@ class AdaptiveAttackerSeller(GradientSeller):
         logging.info(
             f"[{self.seller_id}] Exploration complete. Success Rates: {dict(success_rates)}. Best Strategy: '{self.best_strategy}'")
 
-    def get_gradient_for_upload(self, global_model: nn.Module,
+    def get_gradient_for_upload(self,
                                 all_seller_gradients: Dict[str, List[torch.Tensor]] = None,
                                 target_seller_id: str = None) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
+        """
+        Computes gradient using adaptive strategy.
+        The stateful factory automatically provides model with current global weights.
+        """
         self.round_counter += 1
 
         if self.phase == "exploration" and self.round_counter > self.adv_cfg.exploration_rounds:
@@ -1332,36 +1274,44 @@ class AdaptiveAttackerSeller(GradientSeller):
             self._determine_best_strategy()
 
         # 1. Choose a strategy for this round
-        strategy_pool = self.adv_cfg.gradient_strategies if self.adv_cfg.attack_mode == "gradient_manipulation" else self.adv_cfg.data_strategies
+        strategy_pool = (self.adv_cfg.gradient_strategies
+                         if self.adv_cfg.attack_mode == "gradient_manipulation"
+                         else self.adv_cfg.data_strategies)
         if self.phase == "exploration":
             self.current_strategy = random.choice(strategy_pool)
         else:
             self.current_strategy = self.best_strategy
 
         logging.info(
-            f"[{self.seller_id}][{self.phase.capitalize()}] Round {self.round_counter}: Using strategy '{self.current_strategy}'")
+            f"[{self.seller_id}][{self.phase.capitalize()}] Round {self.round_counter}: "
+            f"Using strategy '{self.current_strategy}'")
 
-        # 2. Prepare for gradient computation based on mode
+        # 2. Prepare dataset based on attack mode
         dataset_for_training = self.dataset
         if self.adv_cfg.attack_mode == "data_poisoning":
             dataset_for_training = self._get_poisoned_dataset(self.current_strategy)
 
-        local_model = self.model_factory().to(self.device)
-        local_model.load_state_dict(global_model.state_dict())
+        # 3. Create model with current global weights (factory handles this)
+        try:
+            local_model = self.model_factory().to(self.device)
+        except Exception as e:
+            logging.error(f"[{self.seller_id}] Failed to create model: {e}", exc_info=True)
+            return None, {'error': 'Model creation failed.'}
 
-        # 3. Compute the base gradient
+        # 4. Compute the base gradient
         base_gradient, stats = self._compute_local_grad(local_model, dataset_for_training)
         if base_gradient is None:
             return None, stats
 
         stats['attack_strategy'] = self.current_strategy
+        stats['attack_phase'] = self.phase
 
-        # 4. If in gradient manipulation mode, apply the change now
+        # 5. If in gradient manipulation mode, apply the manipulation
         if self.adv_cfg.attack_mode == "gradient_manipulation":
             final_gradient = self._apply_gradient_manipulation(base_gradient, self.current_strategy)
             return final_gradient, stats
 
-        # Otherwise, the manipulation was already done via the dataset
+        # Otherwise, manipulation was done via poisoned dataset
         return base_gradient, stats
 
     def round_end_process(self, round_number: int, was_selected: bool, **kwargs):
@@ -1397,7 +1347,7 @@ class DrowningAttackerSeller(GradientSeller):
             f"Mimicking for {self.adv_cfg.mimicry_rounds} rounds."
         )
 
-    def get_gradient_for_upload(self, global_model: nn.Module,
+    def get_gradient_for_upload(self,
                                 all_seller_gradients: Dict[str, List[torch.Tensor]] = None,
                                 target_seller_id: str = None) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
         self.round_counter += 1
@@ -1409,7 +1359,7 @@ class DrowningAttackerSeller(GradientSeller):
 
         # 1. Always compute the honest gradient first.
         # This represents the gradient of the honest, high-quality target we are mimicking.
-        honest_gradient, stats = super().get_gradient_for_upload(global_model)
+        honest_gradient, stats = super().get_gradient_for_upload()
         if honest_gradient is None:
             return None, stats
 
@@ -1454,7 +1404,7 @@ class CompetitorMimicrySeller(GradientSeller):
 
     def __init__(self, *args, adversary_config: AdversarySellerConfig, **kwargs):
         super().__init__(*args, **kwargs)
-        self.adv_cfg = adversary_config.mimicry_attack  # Note: changed from drowning_attack
+        self.adv_cfg = adversary_config.mimicry_attack
         if not self.adv_cfg.is_active:
             raise ValueError("CompetitorMimicrySeller created but is_active is False in config.")
 
@@ -1476,15 +1426,18 @@ class CompetitorMimicrySeller(GradientSeller):
 
     def get_gradient_for_upload(
             self,
-            global_model: nn.Module,
             all_seller_gradients: Dict[str, List[torch.Tensor]] = None,
             target_seller_id: str = None
     ) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
-
+        """
+        Computes gradient that mimics a target competitor.
+        The stateful factory automatically provides model with current global weights.
+        """
         self.round_counter += 1
 
-        # 1. Compute our own honest gradient (we may not use it, but compute for stats)
-        honest_gradient, stats = super().get_gradient_for_upload(global_model)
+        # 1. Compute our own honest gradient (for fallback and stats)
+        # Note: super().get_gradient_for_upload() creates its own model via factory
+        honest_gradient, stats = super().get_gradient_for_upload()
         if honest_gradient is None:
             return None, stats
 

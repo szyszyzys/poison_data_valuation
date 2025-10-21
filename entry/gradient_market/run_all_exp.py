@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader, random_split
 from common.datasets.dataset import get_image_dataset, get_text_dataset
 from common.datasets.tabular_data_processor import get_tabular_dataset
 from common.evaluators import create_evaluators, CleanEvaluator
-from common.factories import SellerFactory
+from common.factories import SellerFactory, StatefulModelFactory, TextModelFactory
 from common.gradient_market_configs import AppConfig, RuntimeDataConfig
 from common.utils import set_seed
 from entry.gradient_market.automate_exp.config_parser import load_config
@@ -58,16 +58,18 @@ def setup_data_and_model(cfg: AppConfig, device):
             logging.error("get_text_dataset returned empty seller_loaders!")
             raise ValueError("get_text_dataset returned no sellers. Check data partitioning.")
 
-        model_init_cfg = {
-            "dataset_name": dataset_name,  # Use dataset_name for the match case
-            "num_classes": num_classes,
-            "vocab_size": len(vocab),
-            "padding_idx": pad_idx,
-            "device": cfg.experiment.device  # <-- PASS THE DEVICE HERE
-        }
         # The factory now correctly passes the device
-        model_factory = lambda: get_text_model(**model_init_cfg)
+        # Create base factory
+        base_factory = TextModelFactory.create_factory(
+            dataset_name=dataset_name,
+            num_classes=num_classes,
+            vocab_size=len(vocab),
+            padding_idx=pad_idx,
+            device=device
+        )
 
+        # Wrap in stateful factory
+        model_factory = StatefulModelFactory(base_factory, device)
         seller_extra_args = {"vocab": vocab, "pad_idx": pad_idx}
 
     elif dataset_type == "image":
@@ -112,7 +114,7 @@ def setup_data_and_model(cfg: AppConfig, device):
         logging.info(f"  - Image size: {image_size}")
         logging.info(f"  - Classes: {num_classes}")
 
-        model_factory = ImageModelFactory.create_factory(
+        base_factory = ImageModelFactory.create_factory(
             model_name=image_model_config.model_name,
             num_classes=num_classes,
             in_channels=in_channels,
@@ -120,7 +122,9 @@ def setup_data_and_model(cfg: AppConfig, device):
             config=image_model_config,
             device=device
         )
-        validate_model_factory(model_factory, num_tests=3)
+
+        # Wrap in stateful factory
+        model_factory = StatefulModelFactory(base_factory, device)
 
         collate_fn = None  # --- FIX 2: Explicitly set collate_fn ---
         seller_extra_args = {}
@@ -137,13 +141,17 @@ def setup_data_and_model(cfg: AppConfig, device):
         tabular_model_config = config_manager.get_config_by_name(cfg.experiment.tabular_model_config_name)
 
         # --- FIX 1: Pass device into the factory ---
-        model_factory = lambda: TabularModelFactory.create_model(
+        base_factory = TabularModelFactory.create_factory(
             model_name=tabular_model_config.model_name,
             input_dim=input_dim,
             num_classes=num_classes,
             config=tabular_model_config,
-            device=device  # <-- CRITICAL FIX
+            device=device
         )
+
+        # Wrap in stateful factory
+        model_factory = StatefulModelFactory(base_factory, device)
+
         collate_fn = None
         seller_extra_args = {"feature_to_idx": feature_to_idx}
 
@@ -305,7 +313,7 @@ def initialize_sellers(
         seller_extra_args,
         sybil_coordinator,
         collate_fn,
-        num_classes: int
+        num_classes: int,
 ):
     """
     Creates and registers all sellers in the marketplace using the factory.
@@ -351,19 +359,6 @@ def initialize_sellers(
     adversary_ids = all_client_ids[:n_adversaries]
 
     logging.info(f"\n📋 Adversary IDs: {adversary_ids}")
-
-    # Validate model_factory creates valid models
-    try:
-        test_model = model_factory()
-        test_params = list(test_model.parameters())
-        logging.info(f"\n🔍 Model factory validation:")
-        logging.info(f"  - Parameters: {len(test_params)}")
-        logging.info(f"  - Total params: {sum(p.numel() for p in test_params):,}")
-        logging.info(f"  - First param shape: {test_params[0].shape}")
-        del test_model  # Clean up
-    except Exception as e:
-        logging.error(f"❌ Model factory validation failed: {e}")
-        raise ValueError(f"Invalid model_factory: {e}")
 
     # Create seller factory
     seller_factory = SellerFactory(
@@ -412,23 +407,6 @@ def initialize_sellers(
             # Validate seller has model_factory
             if not hasattr(seller, 'model_factory') or seller.model_factory is None:
                 logging.error(f"  ❌ {seller_id}: No model_factory attribute! Skipping.")
-                failed_creations += 1
-                continue
-
-            # Validate seller's model matches expected architecture
-            try:
-                seller_model = seller.model_factory()
-                seller_params = list(seller_model.parameters())
-                if len(seller_params) != len(test_params):
-                    logging.error(
-                        f"  ❌ {seller_id}: Model architecture mismatch! "
-                        f"Expected {len(test_params)} params, got {len(seller_params)}"
-                    )
-                    failed_creations += 1
-                    continue
-                del seller_model
-            except Exception as e:
-                logging.error(f"  ❌ {seller_id}: Model validation failed: {e}")
                 failed_creations += 1
                 continue
 
@@ -987,8 +965,13 @@ def run_attack(cfg: AppConfig):
         buyer_loader, seller_loaders, test_loader, validation_loader, model_factory, seller_extra_args, collate_fn, num_classes = \
             setup_data_and_model(cfg, device=cfg.experiment.device)
 
+        # Create global model (first call returns fresh model with random weights)
         global_model = model_factory().to(cfg.experiment.device)
         logging.info(f"✅ Global model created and moved to {cfg.experiment.device}")
+
+        # Register global model with the stateful factory
+        model_factory.set_global_model(global_model)
+        logging.info("✅ Model factory now maintains global model reference")
         logging.info(f"--- Global Model Architecture ---\n{global_model}")
 
         # 3. FL Component Initialization
@@ -1012,13 +995,14 @@ def run_attack(cfg: AppConfig):
             aggregator=aggregator,
             sellers={},
             input_shape=input_shape,
-            SellerClass=GradientSeller,  # <-- PASS THE SELLER CLASS
-            validation_loader=validation_loader,  # <-- PASS THE VALIDATION LOADER
-            model_factory=model_factory,  # <-- PASS THE MODEL FACTORY HERE
+            SellerClass=GradientSeller,
+            validation_loader=validation_loader,
+            model_factory=model_factory,  # Pass the stateful factory
             num_classes=num_classes
         )
 
         # 5. Seller Initialization
+        # Remove global_model parameter - factory handles it now
         initialize_sellers(
             cfg, marketplace, seller_loaders, model_factory,
             seller_extra_args, sybil_coordinator, collate_fn, num_classes
@@ -1058,10 +1042,8 @@ def run_attack(cfg: AppConfig):
         logging.error("=" * 80)
         logging.error(f"❌ Experiment Failed: {e}")
         logging.error("=" * 80)
-        # Mark as failed (optional)
         _mark_experiment_failed(save_path, str(e))
-        raise  # Re-raise to propagate error to orchestrator
-
+        raise
 
 # ==============================================================================
 # Helper Functions

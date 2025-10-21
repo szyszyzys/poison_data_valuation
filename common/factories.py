@@ -1,6 +1,8 @@
+import copy
 import logging
 from typing import Callable, Optional, Dict, Any
 
+import torch
 from torch import nn
 from torch.utils.data import Dataset
 
@@ -16,6 +18,8 @@ from marketplace.seller.gradient_seller import (
     GradientSeller, AdvancedBackdoorAdversarySeller, SybilCoordinator,
     AdvancedPoisoningAdversarySeller, AdaptiveAttackerSeller, DrowningAttackerSeller
 )
+from marketplace.utils.model_utils import _log_param_stats
+from model.models import TextCNN
 
 
 class SellerFactory:
@@ -29,7 +33,8 @@ class SellerFactory:
         PoisonType.LABEL_FLIP: AdvancedPoisoningAdversarySeller,
     }
 
-    def __init__(self, cfg: AppConfig, model_factory: Callable[[], nn.Module], num_classes: int, **kwargs):
+    def __init__(self, cfg: AppConfig, model_factory: Callable[[], nn.Module], num_classes: int,
+                 **kwargs):
         """Initializes the factory with the main application config and runtime args."""
         self.cfg = cfg
         self.model_factory = model_factory
@@ -99,6 +104,7 @@ class SellerFactory:
             num_classes=self.num_classes,  # Use it here
             collate_fn=collate_fn
         )
+        training_cfg = self.cfg.training
         training_cfg = self.cfg.training
         base_kwargs = {
             "seller_id": seller_id,
@@ -206,3 +212,177 @@ def create_generic_poison_generator(cfg: AppConfig, **kwargs: Dict[str, Any]) ->
     # This function would be extended for other *generic* attacks like noise, etc.
     logging.warning(f"Unhandled poison type in generic generator factory: {poison_cfg.type}")
     return None
+
+
+class StatefulModelFactory:
+    """
+    A stateful model factory that maintains a reference to the global model.
+    Every call to the factory returns a new model initialized with current global weights.
+    Works across text, image, and tabular modalities.
+    """
+
+    def __init__(self, base_factory: Callable[[], nn.Module], device: str):
+        """
+        Args:
+            base_factory: Function that creates a fresh model instance
+            device: Device to place models on
+        """
+        self.base_factory = base_factory
+        self.device = device
+        self.global_model = None
+        logging.info("✅ Created stateful model factory (will maintain global model reference)")
+
+    def __call__(self) -> nn.Module:
+        """
+        Create a new model instance.
+        If global model exists, copy its weights to the new model.
+
+        Returns:
+            nn.Module with current global weights (if set)
+        """
+        # Create fresh model
+        model = self.base_factory()
+
+        # Copy global weights if available
+        if self.global_model is not None:
+            model.load_state_dict(self.global_model.state_dict())
+            logging.debug("Model created with current global weights")
+        else:
+            logging.debug("Model created with fresh initialization (no global model set yet)")
+
+        return model
+
+    def set_global_model(self, model: nn.Module):
+        """
+        Register the global model with this factory.
+        All subsequent factory calls will copy weights from this model.
+
+        Args:
+            model: The global model to maintain reference to
+        """
+        self.global_model = model
+        logging.info("✅ Global model registered with factory")
+
+    def get_global_model(self) -> Optional[nn.Module]:
+        """Get reference to the current global model."""
+        return self.global_model
+
+
+class TextModelFactory:
+    """Factory class for creating text models."""
+
+    @staticmethod
+    def create_model(dataset_name: str, num_classes: int, vocab_size: int,
+                     padding_idx: int, device: str = 'cpu', **model_kwargs) -> nn.Module:
+        """Create a text model based on dataset configuration."""
+        logging.info(f"🧠 Creating text model for dataset: {dataset_name}")
+
+        target_device = torch.device(device)
+        model: nn.Module
+
+        # Instantiate the model on CPU
+        match dataset_name.lower():
+            case "ag_news" | "trec":
+                embed_dim = model_kwargs.get("embed_dim", 100)
+                num_filters = model_kwargs.get("num_filters", 100)
+                filter_sizes = model_kwargs.get("filter_sizes", [3, 4, 5])
+                dropout = model_kwargs.get("dropout", 0.5)
+
+                if not isinstance(filter_sizes, list):
+                    raise TypeError("'filter_sizes' must be a list")
+
+                model = TextCNN(
+                    vocab_size=vocab_size,
+                    embed_dim=embed_dim,
+                    num_filters=num_filters,
+                    filter_sizes=filter_sizes,
+                    num_class=num_classes,
+                    dropout=dropout,
+                    padding_idx=padding_idx
+                )
+            case _:
+                raise NotImplementedError(f"Model not found for dataset {dataset_name}")
+
+        # Move to target device
+        model = model.to(target_device)
+        logging.info(f"--- Text Model moved to {target_device} ---")
+        log_dtype = model.embedding.weight.dtype
+        _log_param_stats(model, "embedding.weight", f"After .to({target_device}) ({log_dtype})")
+
+        # Verify no NaN/Inf
+        for name, param in model.named_parameters():
+            if torch.isnan(param).any() or torch.isinf(param).any():
+                logging.error(f"--- ❌ VERIFICATION FAILED FOR {name} ---")
+                _log_param_stats(model, name, "FAILURE")
+                raise RuntimeError(f"NaN/Inf in parameter '{name}' after initialization!")
+
+        logging.info("--- ✅ Text Model verification PASSED ---")
+
+        # Log model details
+        num_params = sum(p.numel() for p in model.parameters())
+        num_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        logging.info(f"  -> Instantiated model class: '{model.__class__.__name__}'")
+        logging.info(f"  -> Total parameters: {num_params:,}")
+        logging.info(f"  -> Trainable parameters: {num_trainable:,}")
+
+        return model
+
+    @staticmethod
+    def create_factory(dataset_name: str, num_classes: int, vocab_size: int,
+                       padding_idx: int, device: str = 'cpu', **model_kwargs) -> Callable[[], nn.Module]:
+        """
+        Create a zero-argument factory function with frozen parameters.
+
+        Args:
+            dataset_name: Name of the dataset (determines model architecture)
+            num_classes: Number of output classes
+            vocab_size: Size of vocabulary
+            padding_idx: Padding index for embeddings
+            device: Device to place models on
+            **model_kwargs: Additional model configuration (embed_dim, num_filters, etc.)
+
+        Returns:
+            A callable that takes no arguments and returns a model instance
+        """
+        # Validate inputs
+        if vocab_size <= 0:
+            raise ValueError(f"vocab_size must be positive, got {vocab_size}")
+
+        if num_classes <= 0:
+            raise ValueError(f"num_classes must be positive, got {num_classes}")
+
+        # Deep copy all parameters to freeze them at factory creation time
+        frozen_dataset_name = str(dataset_name)
+        frozen_num_classes = int(num_classes)
+        frozen_vocab_size = int(vocab_size)
+        frozen_padding_idx = int(padding_idx)
+        frozen_device = str(device)
+        frozen_model_kwargs = copy.deepcopy(model_kwargs)
+
+        def model_factory() -> nn.Module:
+            """Zero-argument factory that creates a model with frozen config."""
+            return TextModelFactory.create_model(
+                dataset_name=frozen_dataset_name,
+                num_classes=frozen_num_classes,
+                vocab_size=frozen_vocab_size,
+                padding_idx=frozen_padding_idx,
+                device=frozen_device,
+                **frozen_model_kwargs
+            )
+
+        # Validate factory creates valid models
+        try:
+            test_model = model_factory()
+            num_params = sum(p.numel() for p in test_model.parameters())
+            logging.info(f"Text model factory created and validated:")
+            logging.info(f"  - Dataset: {frozen_dataset_name}")
+            logging.info(f"  - Architecture: {test_model.__class__.__name__}")
+            logging.info(f"  - Parameters: {num_params:,}")
+            logging.info(f"  - Vocabulary size: {frozen_vocab_size}")
+            logging.info(f"  - Output classes: {frozen_num_classes}")
+            del test_model  # Clean up
+        except Exception as e:
+            logging.error(f"Failed to create test model from factory: {e}")
+            raise
+
+        return model_factory
