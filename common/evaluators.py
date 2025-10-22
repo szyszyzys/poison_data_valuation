@@ -43,7 +43,6 @@ class CleanEvaluator(BaseEvaluator):
         model.eval()
         total_loss, total_correct, total_samples = 0.0, 0, 0
         with torch.no_grad():
-            # --- FIX IS HERE: Make the loop modality-aware --- ✅
             for batch in test_loader:
                 # Check the batch format to handle different data modalities
                 if len(batch) == 3:  # Text data: (labels, texts, lengths)

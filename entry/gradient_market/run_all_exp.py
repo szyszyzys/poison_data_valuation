@@ -696,17 +696,13 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
                 logging.error(f"❌ Validation failed in round {round_num}: {e}", exc_info=True)
                 patience_counter += 1
 
-        # --- 4. SAVE ROUND DATA INCREMENTALLY ---
-        save_round_incremental(round_record, save_path)
-        save_seller_metrics_incremental(save_path, round_record)
-        save_marketplace_analysis_data_incremental(save_path, round_record)
 
-        # --- 5. CHECK EARLY STOPPING ---
+        # --- 4. CHECK EARLY STOPPING ---
         if cfg.experiment.use_early_stopping and patience_counter >= patience:
             logging.warning(f"🛑 EARLY STOPPING: No improvement for {patience} rounds. Halting at round {round_num}.")
             break
 
-        # --- 6. PERIODIC TEST EVALUATION ---
+        # --- 5. PERIODIC TEST EVALUATION ---
         if round_num % cfg.experiment.eval_frequency == 0:
             logging.info(f"📈 Running test evaluation at round {round_num}...")
             eval_metrics = {}
@@ -730,6 +726,11 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
             # Save evaluation
             eval_path = save_path / "evaluations" / f"round_{round_num}.json"
             save_json_atomic(eval_metrics, eval_path)
+
+        # --- 6. SAVE ROUND DATA INCREMENTALLY ---
+        save_round_incremental(round_record, save_path)
+        save_seller_metrics_incremental(save_path, round_record)
+        save_marketplace_analysis_data_incremental(save_path, round_record)
 
         # --- 7. GENERATE REPORTS ---
         generate_marketplace_report(save_path, marketplace, cfg.experiment.global_rounds)

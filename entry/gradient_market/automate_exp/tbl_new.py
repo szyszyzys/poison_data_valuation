@@ -38,7 +38,7 @@ def get_base_tabular_config() -> AppConfig:
             device="cuda" if torch.cuda.is_available() else "cpu",
             dataset_type="tabular",
             eval_frequency=10,
-            evaluations=["clean", "backdoor"],  # <--- CRITICAL FIX 2 (added "poison")
+            evaluations=["clean", "backdoor"],
             tabular_model_config_name="mlp_texas100_baseline"
         ),
         # training=TrainingConfig(local_epochs=2, batch_size=64, learning_rate=0.0001,),
