@@ -60,8 +60,9 @@ def train_local_model(model: nn.Module,
 
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
                 if batch_idx == 0:  # Only log first batch
+                    data_stats = data.float()
                     logging.info(
-                        f"🔍 Input data stats: min={data.min():.4f}, max={data.max():.4f}, mean={data.mean():.4f}")
+                        f"🔍 Input data stats: min={data_stats.min():.4f}, max={data_stats.max():.4f}, mean={data_stats.mean():.4f}")
                     logging.info(f"🔍 Input data has NaN: {torch.isnan(data).any()}")
                     logging.info(f"🔍 Input data has Inf: {torch.isinf(data).any()}")
                     logging.info(f"🔍 Input shape: {data.shape}, dtype: {data.dtype}")
