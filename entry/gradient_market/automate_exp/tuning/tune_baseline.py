@@ -37,8 +37,9 @@ def generate_fedavg_tuning_scenario_for_modality(
         base_config_factory: Callable[[], AppConfig],
         dataset_name: str,
         model_structure: str,
-        model_config_param_key: str,  # e.g., 'experiment.tabular_model_config_name'
-        model_config_name: str  # e.g., 'mlp_texas100_baseline'
+        model_config_param_key: str,
+        model_config_name: str,
+        dataset_modifier: Callable[[AppConfig], AppConfig] # ADDED dataset_modifier
 ) -> Scenario:
     """Creates the tuning scenario object for a specific modality."""
 
@@ -82,7 +83,7 @@ def generate_fedavg_tuning_scenario_for_modality(
     return Scenario(
         name=scenario_name,
         base_config_factory=base_config_factory,
-        modifiers=[ensure_benign],
+        modifiers=[ensure_benign, dataset_modifier], # APPLY BOTH MODIFIERS
         parameter_grid=parameter_grid
     )
 
