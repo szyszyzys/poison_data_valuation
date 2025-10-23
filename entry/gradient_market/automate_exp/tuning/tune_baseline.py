@@ -5,7 +5,7 @@ from typing import Callable
 
 from common.enums import PoisonType
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
-from entry.gradient_market.automate_exp.scenarios import Scenario
+from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar100_config, use_cifar10_config
 from entry.gradient_market.automate_exp.tbl_new import get_base_tabular_config
 
 # --- Assuming your config generator and base factories are importable ---
@@ -111,13 +111,14 @@ if __name__ == "__main__":
         },
 
         # --- Image Tuning ---
-        {
+{
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
             "dataset_name": "cifar10",
-            "model_structure": "cnn",  # Your custom CNN
+            "model_structure": "cnn",
             "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "cifar10_cnn",  # Assumed name (match your actual config)
+            "model_config_name": "cifar10_cnn",
+            "dataset_modifier": use_cifar10_config, # Pass the function itself
         },
         {
             "modality_name": "image",
@@ -125,15 +126,17 @@ if __name__ == "__main__":
             "dataset_name": "cifar10",
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "cifar10_resnet18",  # Assumed name (match your actual config)
+            "model_config_name": "cifar10_resnet18",
+            "dataset_modifier": use_cifar10_config, # Pass the function itself
         },
         {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
             "dataset_name": "cifar100",
-            "model_structure": "cnn",  # Your custom CNN
+            "model_structure": "cnn",
             "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "cifar100_cnn",  # Assumed name (match your actual config)
+            "model_config_name": "cifar100_cnn",
+            "dataset_modifier": use_cifar100_config, # Pass the function itself
         },
         {
             "modality_name": "image",
@@ -141,7 +144,8 @@ if __name__ == "__main__":
             "dataset_name": "cifar100",
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "cifar100_resnet18",  # Assumed name (match your actual config)
+            "model_config_name": "cifar100_resnet18",
+            "dataset_modifier": use_cifar100_config, # Pass the function itself
         },
 
         # --- Text Tuning ---

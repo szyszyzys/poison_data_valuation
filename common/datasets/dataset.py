@@ -285,14 +285,14 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     tokenizer = get_tokenizer('basic_english')
     dataset_name = exp_cfg.dataset_name.lower()
     # 2. --- Load Raw Dataset ---
-    if exp_cfg.dataset_name == "ag_news":
+    if dataset_name == "ag_news":
         if not hf_datasets_available:
             raise ImportError("HuggingFace 'datasets' library required for AG_NEWS.")
         ds = hf_load("ag_news", cache_dir=cfg.data_root)
         train_ds_hf, test_ds_hf = ds["train"], ds["test"]
         num_classes, class_names = 4, ['World', 'Sports', 'Business', 'Sci/Tech']
         text_field, label_field = "text", "label"
-    elif exp_cfg.dataset_name == "trec":
+    elif dataset_name == "trec":
         # 1. DEFINE the field names first
         text_field, label_field = "text", "coarse_label"
 
