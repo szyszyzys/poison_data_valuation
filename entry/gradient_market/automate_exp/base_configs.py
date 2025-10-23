@@ -27,7 +27,6 @@ def get_base_image_config() -> AppConfig:
         adversary_seller_config=AdversarySellerConfig(),
         data=DataConfig(
             image=ImageDataConfig(
-                buyer_config={"buyer_overall_fraction": 0.1},
                 discovery=DiscoverySplitParams(),
                 property_skew=PropertySkewParams()
             )

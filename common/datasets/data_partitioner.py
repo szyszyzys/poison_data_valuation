@@ -121,11 +121,7 @@ class FederatedDataPartitioner:
         # NOTE: Current implementation primarily supports IID buyer.
         # Non-IID buyer requires careful definition for a single entity.
         if buyer_strategy.lower() == 'iid':
-            # For IID buyer, we just use the randomly selected pool directly
-            # Split this pool into the final buyer (root) and test sets
-            # Allow specifying the fraction used for root via buyer_config (if needed later)
-            root_fraction = data_config.buyer_config.get("root_set_fraction", 0.5) if hasattr(data_config,
-                                                                                              'buyer_config') and data_config.buyer_config else 0.5
+            root_fraction = data_config.buyer_ratio
             self._split_buyer_pool_for_root_test(buyer_pool_indices, root_fraction)
             logger.info(f"Buyer strategy: IID. Using randomly sampled indices.")
         elif buyer_strategy.lower() == 'dirichlet':
@@ -133,8 +129,9 @@ class FederatedDataPartitioner:
             # For now, treat as IID or raise an error.
             logger.warning(
                 f"Buyer strategy 'dirichlet' requested, but complex for a single buyer entity. Treating as IID for now.")
-            root_fraction = data_config.buyer_config.get("root_set_fraction", 0.5) if hasattr(data_config,
-                                                                                              'buyer_config') and data_config.buyer_config else 0.5
+            root_fraction = data_config.buyer_ratio
+            # root_fraction = data_config.buyer_config.get("root_set_fraction", 0.5) if hasattr(data_config,
+            #                                                                                   'buyer_config') and data_config.buyer_config else 0.5
             self._split_buyer_pool_for_root_test(buyer_pool_indices, root_fraction)
         else:
             raise ValueError(f"Unsupported buyer strategy: {buyer_strategy}")

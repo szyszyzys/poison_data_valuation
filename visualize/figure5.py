@@ -21,7 +21,7 @@ def load_metrics_for_buyer_data_sweep(exp_paths: list) -> pd.DataFrame:
             config = json.load(f)
 
         # Navigate the nested config to find the buyer_percentage
-        buyer_percent = config.get('data', {}).get('image', {}).get('buyer_config', {}).get('buyer_percentage', 0.0)
+        buyer_percent = config.get('data', {}).get('image', {}).get('buyer_ratio', 0.1)
 
         all_metrics.append({
             'Buyer Data Percentage': buyer_percent * 100,  # Convert to percentage for plotting

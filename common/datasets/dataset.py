@@ -165,7 +165,6 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         "buyer_ratio": image_cfg.buyer_ratio,
         "buyer_strategy": image_cfg.buyer_strategy,
         "buyer_dirichlet_alpha": image_cfg.buyer_dirichlet_alpha,
-        "buyer_config_extra": image_cfg.buyer_config  # Keep any extra buyer config if used
     }
 
     # Convert dict to a canonical string and hash it
