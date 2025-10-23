@@ -133,12 +133,13 @@ class ExperimentGenerator:
             file_path = save_path / "config.yaml"
 
             try:
+
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 config_dict = asdict(final_config)
                 with open(file_path, 'w') as f:
-                    # Make sure CustomDumper is defined or use default dumper
-                    yaml.dump(config_dict, f, sort_keys=False, indent=2)
-                    # print(f"  Saved config to: {file_path}") # Optional: Can make output verbose
+                    # --- FIX: Add Dumper=CustomDumper ---
+                    yaml.dump(config_dict, f, Dumper=CustomDumper, sort_keys=False, indent=2)
+                    # --- End FIX ---
                 count_saved += 1
             except Exception as e:
                 print(f"  ❌ Error saving config file {file_path}: {e}")
