@@ -155,39 +155,91 @@ def load_dataset(name: str, root: str = "./data", download: bool = True) -> Tupl
 
 # --- 3. Statistics and Orchestration ---
 
-def save_data_statistics(buyer_indices, seller_splits, client_properties, targets, save_filepath) -> Dict:
+def save_data_statistics(
+    buyer_indices: np.ndarray,
+    seller_splits: Dict[int, List[int]],
+    test_indices: np.ndarray, # <-- ADDED ARGUMENT
+    client_properties: Dict[int, str],
+    targets: np.ndarray,
+    save_filepath: str # Path object is also fine here
+) -> Dict[str, Any]: # Changed return type hint
     """
-    Calculates and saves detailed data distribution statistics to a specific file path.
+    Calculates and saves detailed data distribution statistics
+    (buyer, sellers, test set) to a specific file path.
     """
-    # --- CHANGE: The function body is mostly the same, but it uses save_filepath ---
     stats = {
         "buyer": {
             "total_samples": len(buyer_indices),
-            "label_distribution": dict(sorted(collections.Counter(targets[buyer_indices].tolist()).items()))
+            "label_distribution": {} # Initialize empty
         },
+        # --- ADDED TEST SET STATS ---
+        "test_set": {
+            "total_samples": len(test_indices),
+            "label_distribution": {} # Initialize empty
+        },
+        # --- END ADDITION ---
         "sellers": {},
         "client_properties": client_properties
     }
 
+    # Calculate label distributions only if indices exist
+    if len(buyer_indices) > 0:
+        try:
+             stats["buyer"]["label_distribution"] = dict(sorted(collections.Counter(targets[buyer_indices].tolist()).items()))
+        except IndexError:
+             logger.error("Error calculating buyer label distribution - indices might be out of bounds.")
+             stats["buyer"]["label_distribution"] = {"error": "Index out of bounds"}
+
+
+    # --- CALCULATE TEST SET DISTRIBUTION ---
+    if len(test_indices) > 0:
+        try:
+             stats["test_set"]["label_distribution"] = dict(sorted(collections.Counter(targets[test_indices].tolist()).items()))
+        except IndexError:
+             logger.error("Error calculating test set label distribution - indices might be out of bounds.")
+             stats["test_set"]["label_distribution"] = {"error": "Index out of bounds"}
+    # --- END CALCULATION ---
+
     for cid, indices in seller_splits.items():
-        stats["sellers"][cid] = {
-            "total_samples": len(indices),
-            "property": client_properties.get(cid, "N/A"),
-            "label_distribution": dict(sorted(collections.Counter(targets[indices].tolist()).items()))
-        }
+        if indices: # Check if indices list is not empty
+            try:
+                label_dist = dict(sorted(collections.Counter(targets[indices].tolist()).items()))
+            except IndexError:
+                 logger.error(f"Error calculating seller {cid} label distribution - indices might be out of bounds.")
+                 label_dist = {"error": "Index out of bounds"}
+            stats["sellers"][cid] = {
+                "total_samples": len(indices),
+                "property": client_properties.get(str(cid), client_properties.get(int(cid),"N/A")), # Handle string/int keys
+                "label_distribution": label_dist
+            }
+        else:
+             # Include entry even for empty clients
+             stats["sellers"][cid] = {
+                "total_samples": 0,
+                "property": client_properties.get(str(cid), client_properties.get(int(cid),"N/A")),
+                "label_distribution": {}
+            }
+
 
     save_path = Path(save_filepath)
-
-    # Use pathlib to create the parent directory
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # The 'open' function works directly with Path objects
-    with open(save_path, 'w') as f:
-        json.dump(stats, f, indent=4)
+    try:
+        with open(save_path, 'w') as f:
+            # Use NumPy encoder helper if targets might contain numpy types not handled by default json
+            class NpEncoder(json.JSONEncoder):
+                def default(self, obj):
+                    if isinstance(obj, np.integer): return int(obj)
+                    if isinstance(obj, np.floating): return float(obj)
+                    if isinstance(obj, np.ndarray): return obj.tolist()
+                    return super(NpEncoder, self).default(obj)
+            json.dump(stats, f, indent=4, cls=NpEncoder) # Use the encoder
+        logger.info(f"Data statistics saved to {save_path}")
+    except Exception as e:
+        logger.error(f"Failed to save data statistics to {save_path}: {e}")
+        # Optionally re-raise or return partial stats
 
-    logger.info(f"Data statistics saved to {save_path}")
     return stats
-
 
 class StandardVisionDataset(Dataset):
     """

@@ -19,7 +19,6 @@ from torchtext.vocab import Vocab, build_vocab_from_iterator
 from torchvision.transforms import v2 as transforms
 
 from common.datasets.data_partitioner import FederatedDataPartitioner, _extract_targets
-from common.datasets.data_split import OverallFractionSplit
 from common.datasets.image_data_processor import save_data_statistics, CelebACustom
 from common.datasets.text_data_processor import ProcessedTextData, get_cache_path, \
     generate_buyer_bias_distribution, split_text_dataset_martfl_discovery, collate_batch, StandardFormatDataset
@@ -113,7 +112,7 @@ def _get_dataset_loaders(dataset_name: str, data_root: str) -> Tuple[Dataset, Da
             transforms.ToDtype(torch.float32, scale=True),
             transforms.Normalize(
                 (0.4914, 0.4822, 0.4465),  # Mean - correct
-                (0.2470, 0.2435, 0.2616)   # Std - FIXED!
+                (0.2470, 0.2435, 0.2616)  # Std - FIXED!
             )
         ])
         raw_train_set = torchvision.datasets.CIFAR10(root=data_root, train=True, download=True, transform=transform)
@@ -147,28 +146,32 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     if not image_cfg:
         raise ValueError("Image data configuration ('data.image') is missing.")
 
-    # ==================== 1. CACHING LOGIC (NEW) ====================
-    # Define a cache directory within your main data root
     cache_dir = Path(cfg.data_root) / ".cache"
     cache_dir.mkdir(exist_ok=True)
 
-    # Create a unique key based on all parameters that affect the data split
+    # --- UPDATED CACHE KEY ---
+    # Include all relevant fields from ImageDataConfig in the hash
     config_params = {
         "dataset": cfg.experiment.dataset_name,
         "n_sellers": cfg.experiment.n_sellers,
         "seed": cfg.seed,
         "use_subset": cfg.experiment.use_subset,
         "subset_size": cfg.experiment.subset_size if cfg.experiment.use_subset else None,
-        "strategy": image_cfg.strategy,
-        "buyer_config": image_cfg.buyer_config,
-        "partition_params": asdict(image_cfg.property_skew)
+        # Seller params
+        "seller_strategy": image_cfg.strategy,
+        "seller_dirichlet_alpha": image_cfg.dirichlet_alpha,
+        "seller_property_skew_params": asdict(image_cfg.property_skew) if image_cfg.property_skew else None,
+        # Buyer params
+        "buyer_ratio": image_cfg.buyer_ratio,
+        "buyer_strategy": image_cfg.buyer_strategy,
+        "buyer_dirichlet_alpha": image_cfg.buyer_dirichlet_alpha,
+        "buyer_config_extra": image_cfg.buyer_config  # Keep any extra buyer config if used
     }
-    # Convert dict to a canonical string and hash it for a unique filename
+
+    # Convert dict to a canonical string and hash it
     config_string = json.dumps(config_params, sort_keys=True)
     config_hash = hashlib.md5(config_string.encode('utf-8')).hexdigest()
     cache_file = cache_dir / f"{config_hash}.pkl"
-    # =================================================================
-
     # Load base dataset
     train_set, test_set, num_classes = _get_dataset_loaders(cfg.experiment.dataset_name, cfg.data_root)
     if cfg.experiment.dataset_name == "CelebA":
@@ -180,41 +183,46 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         num_samples = min(cfg.experiment.subset_size, len(train_set))
         train_set = Subset(train_set, list(range(num_samples)))
 
-    # ==================== 2. LOAD OR CREATE SPLITS (MODIFIED) ====================
-    if cache_file.exists():
+    if cache_file.exists() and cfg.use_cache:  # Check use_cache flag
         logger.info(f"✅ Found cached data split. Loading from: {cache_file}")
         with open(cache_file, 'rb') as f:
             cached_data = pickle.load(f)
         buyer_indices = cached_data['buyer_indices']
         seller_splits = cached_data['seller_splits']
+        test_indices = cached_data['test_indices']  # Load test indices from cache
         client_properties = cached_data['client_properties']
 
     else:
-        logger.info(f"❗️ No cached data split found. Running partitioning...")
-        # Initialize and run the partitioner (this part is the same as before)
+        if not cfg.use_cache:
+            logger.info("Cache disabled by config. Running partitioning...")
+        else:
+            logger.info(f"❗️ No cached data split found or cache disabled. Running partitioning...")
+
+        # Initialize the partitioner with the (potentially subsetted) training dataset
         partitioner = FederatedDataPartitioner(
             dataset=train_set, num_clients=cfg.experiment.n_sellers, seed=cfg.seed
         )
-        buyer_strategy = OverallFractionSplit()
-        partitioner.partition(
-            buyer_split_strategy=buyer_strategy,
-            client_partition_strategy=image_cfg.strategy,
-            buyer_config=image_cfg.buyer_config,
-            partition_params=asdict(image_cfg.property_skew)
-        )
-        buyer_indices, seller_splits, _ = partitioner.get_splits()
+
+        # --- MODIFIED CALL ---
+        # Pass the whole image_cfg object to the updated partition method
+        partitioner.partition(data_config=image_cfg)
+        # --- END MODIFICATION ---
+
+        # Get all three sets of indices from the partitioner
+        buyer_indices, seller_splits, test_indices = partitioner.get_splits()
         client_properties = partitioner.client_properties
 
-        # --- Save the newly created split to the cache file ---
-        logger.info(f"💾 Saving new data split to cache: {cache_file}")
-        with open(cache_file, 'wb') as f:
-            pickle.dump({
-                'buyer_indices': buyer_indices,
-                'seller_splits': seller_splits,
-                'client_properties': client_properties
-            }, f)
+        # --- Save the newly created split (including test_indices) to the cache file ---
+        if cfg.use_cache:
+            logger.info(f"💾 Saving new data split to cache: {cache_file}")
+            with open(cache_file, 'wb') as f:
+                pickle.dump({
+                    'buyer_indices': buyer_indices,
+                    'seller_splits': seller_splits,
+                    'test_indices': test_indices,  # Save test indices
+                    'client_properties': client_properties
+                }, f)
     # ===========================================================================
-
     # Generate statistics and save to a DEDICATED path
     logger.info("Generating and saving image data split statistics...")
 
@@ -250,6 +258,116 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     logger.info(f"✅ Federated dataset setup complete. Using {num_classes} classes.")
 
     return buyer_loader, seller_loaders, test_loader, stats, num_classes
+
+
+# --- Helper to extract targets from StandardFormatDataset ---
+def _extract_text_targets(dataset: StandardFormatDataset) -> np.ndarray:
+    """Extracts targets from the StandardFormatDataset."""
+    # Assuming the second element of each item in processed_data is the label
+    return np.array([item[1] for item in dataset.processed_data])
+
+
+# --- Helper to partition Dirichlet (adapted for StandardFormatDataset) ---
+def _partition_text_dirichlet(
+        seller_pool_indices: np.ndarray,
+        targets: np.ndarray,  # Full dataset targets
+        num_clients: int,
+        alpha: float,
+        client_indices_dict: Dict[int, List[int]]  # Pass dict to modify directly
+):
+    """Partitions text data indices using Dirichlet."""
+    logger.info(
+        f"Partitioning {len(seller_pool_indices)} seller samples for {num_clients} clients using Dirichlet (alpha={alpha})...")
+    try:
+        pool_targets = targets[seller_pool_indices]
+    except IndexError as e:
+        logger.error(
+            f"IndexError accessing targets. Max index: {seller_pool_indices.max() if len(seller_pool_indices) > 0 else 'N/A'}, Targets length: {len(targets)}")
+        raise e
+
+    unique_targets = np.unique(targets)
+    n_classes = len(unique_targets)
+    logger.info(f"Found {n_classes} unique classes in total dataset.")
+
+    label_distribution = np.random.dirichlet([alpha] * num_clients, n_classes)
+
+    class_to_pool_indices = {}
+    present_classes = np.unique(pool_targets)
+    for label in present_classes:
+        class_to_pool_indices[label] = seller_pool_indices[np.where(pool_targets == label)[0]]
+
+    assigned_indices_count = 0
+    indices_available = set(seller_pool_indices)
+
+    for class_label in present_classes:
+        class_indices_in_pool = class_to_pool_indices[class_label]
+        np.random.shuffle(class_indices_in_pool)
+        try:
+            class_dist_index = np.where(unique_targets == class_label)[0][0]
+        except IndexError:
+            logger.error(f"Class label {class_label} present in pool but not in unique targets. Skipping.")
+            continue
+
+        proportions = label_distribution[class_dist_index]
+        total_class_samples = len(class_indices_in_pool)
+        samples_per_client = (proportions * total_class_samples).astype(int)
+        samples_per_client[-1] = total_class_samples - np.sum(samples_per_client[:-1])  # Adjust last
+        samples_per_client = np.maximum(0, samples_per_client)  # Ensure non-negative
+        diff = total_class_samples - samples_per_client.sum()  # Ensure sum matches
+        samples_per_client[-1] += diff
+
+        start_idx = 0
+        for client_id in range(num_clients):
+            num_samples = samples_per_client[client_id]
+            if num_samples == 0: continue
+            end_idx = start_idx + num_samples
+            assigned_indices = class_indices_in_pool[start_idx:end_idx].tolist()
+            client_indices_dict[client_id].extend(assigned_indices)  # Modify the passed dict
+            assigned_indices_count += len(assigned_indices)
+            start_idx = end_idx
+
+    logger.info(f"Dirichlet distribution assigned {assigned_indices_count} / {len(seller_pool_indices)} samples.")
+    # Distribute remaining samples
+    remaining_indices = list(
+        indices_available - set(idx for indices in client_indices_dict.values() for idx in indices))
+    if remaining_indices:
+        logger.warning(f"Distributing {len(remaining_indices)} remaining Dirichlet samples.")
+        np.random.shuffle(remaining_indices)
+        extra_indices_split = np.array_split(np.array(remaining_indices), num_clients)
+        for client_id in range(num_clients):
+            client_indices_dict[client_id].extend(extra_indices_split[client_id].tolist())
+
+
+# --- Helper for IID Split ---
+def _partition_text_iid(
+        seller_pool_indices: np.ndarray,
+        num_clients: int,
+        client_indices_dict: Dict[int, List[int]]
+):
+    """Partitions seller data evenly and randomly (IID)."""
+    logger.info(f"Partitioning {len(seller_pool_indices)} samples for {num_clients} clients (IID)...")
+    np.random.shuffle(seller_pool_indices)
+    split_indices = np.array_split(seller_pool_indices, num_clients)
+    for client_id in range(num_clients):
+        client_indices_dict[client_id].extend(split_indices[client_id].tolist())
+
+
+# --- Helper to Split Buyer Pool ---
+def _split_buyer_pool_for_root_test(
+        buyer_pool_all_data: np.ndarray,
+        root_set_fraction: float = 0.5
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Helper to split a pool of indices into root and test sets."""
+    np.random.shuffle(buyer_pool_all_data)
+    split_idx = int(len(buyer_pool_all_data) * root_set_fraction)
+    buyer_root_indices = buyer_pool_all_data[:split_idx]
+    test_indices = buyer_pool_all_data[split_idx:]
+    logger.info(
+        f"Buyer pool ({len(buyer_pool_all_data)}) split: "
+        f"{len(buyer_root_indices)} root (buyer), {len(test_indices)} test. "
+        f"Fraction: {root_set_fraction:.2f}"
+    )
+    return buyer_root_indices, test_indices
 
 
 # The get_text_dataset function remains unchanged as it was already robust.
@@ -396,107 +514,177 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     standardized_test_data = StandardFormatDataset(processed_test_data, label_first=False)
 
     # 5. --- Split Data ---
-    split_params = (
-        exp_cfg.dataset_name, vocab_cache_file, cfg.seed, buyer_percentage, exp_cfg.n_sellers,
-        text_cfg.strategy, discovery_params.discovery_quality, discovery_params.buyer_data_mode,
-        discovery_params.buyer_bias_type, discovery_params.buyer_dirichlet_alpha
-    )
-    split_cache_file = get_cache_path(app_cache_dir, "split_indices", split_params)
+# 5. --- CACHING & PARTITIONING (UPDATED) ---
+    cache_dir_splits = Path(cfg.data_root) / ".cache_splits" # Separate cache dir for splits
+    cache_dir_splits.mkdir(exist_ok=True)
 
-    if cfg.use_cache and os.path.exists(split_cache_file):
-        logging.info(f"Loading split indices from cache: {split_cache_file}")
+    # Create cache key based on partitioning parameters
+    split_config_params = {
+        "dataset": exp_cfg.dataset_name,
+        "n_sellers": exp_cfg.n_sellers,
+        "seed": cfg.seed,
+        "seller_strategy": text_cfg.strategy,
+        "seller_dirichlet_alpha": text_cfg.dirichlet_alpha if text_cfg.strategy == 'dirichlet' else None,
+        "seller_prop_skew_params": asdict(text_cfg.property_skew) if text_cfg.strategy == 'property-skew' and text_cfg.property_skew else None,
+        "buyer_ratio": text_cfg.buyer_ratio,
+        "buyer_strategy": text_cfg.buyer_strategy,
+        "buyer_dirichlet_alpha": text_cfg.buyer_dirichlet_alpha if text_cfg.buyer_strategy == 'dirichlet' else None,
+    }
+    split_config_string = json.dumps(split_config_params, sort_keys=True)
+    split_config_hash = hashlib.md5(split_config_string.encode('utf-8')).hexdigest()
+    split_cache_file = cache_dir_splits / f"{split_config_hash}.pkl"
+
+    if cfg.use_cache and split_cache_file.exists():
+        logger.info(f"✅ Loading split indices from cache: {split_cache_file}")
         with open(split_cache_file, "rb") as f:
-            buyer_indices, seller_splits = pickle.load(f)
+            cached_data = pickle.load(f)
+        buyer_indices = cached_data['buyer_indices']
+        seller_splits = cached_data['seller_splits']
+        test_indices = cached_data['test_indices']
+        client_properties = cached_data.get('client_properties', {}) # Load properties if available
+
     else:
-        logging.info(f"Splitting data using method: '{text_cfg.strategy}'")
-        total_samples = len(processed_train_data)
-        buyer_count = int(total_samples * buyer_percentage)
+        if not cfg.use_cache: logger.info("Cache disabled. Running partitioning...")
+        else: logger.info(f"❗️ No cached split found or cache disabled. Running partitioning...")
 
-        if text_cfg.strategy == "discovery":
-            buyer_bias_dist = None
-            if discovery_params.buyer_data_mode == "biased":
-                buyer_bias_dist = generate_buyer_bias_distribution(
-                    num_classes=num_classes,
-                    bias_type=discovery_params.buyer_bias_type,
-                    alpha=discovery_params.buyer_dirichlet_alpha
-                )
+        # --- Perform Partitioning ---
+        all_train_indices = np.arange(len(standardized_train_data))
+        np.random.shuffle(all_train_indices)
 
-            buyer_indices, seller_splits = split_text_dataset_martfl_discovery(
-                dataset=standardized_train_data,
-                buyer_count=buyer_count,
-                num_clients=exp_cfg.n_sellers,  # Use correct config path
-                noise_factor=discovery_params.discovery_quality,
-                buyer_data_mode=discovery_params.buyer_data_mode,
-                buyer_bias_distribution=buyer_bias_dist,
-                seed=cfg.seed
-            )
+        # Stage 1: Split into Buyer Pool and Seller Pool
+        buyer_pool_size = int(len(all_train_indices) * text_cfg.buyer_ratio)
+        # Add size checks
+        if buyer_pool_size == 0 and text_cfg.buyer_ratio > 0:
+             logger.warning("Buyer ratio resulted in 0 samples for buyer pool.")
+        elif buyer_pool_size >= len(all_train_indices):
+             raise ValueError("Buyer ratio too high, leaves no data for sellers.")
+
+        buyer_pool_indices_all = all_train_indices[:buyer_pool_size]
+        seller_pool_indices = all_train_indices[buyer_pool_size:]
+        logger.info(f"Initial split: {len(buyer_pool_indices_all)} buyer pool, {len(seller_pool_indices)} seller pool.")
+
+        # Stage 2: Handle Buyer Pool (Split Root/Test)
+        # Assuming IID buyer for text simplicity for now
+        if text_cfg.buyer_strategy.lower() == 'iid':
+            buyer_indices, test_indices = _split_buyer_pool_for_root_test(buyer_pool_indices_all)
+            logger.info(f"Buyer strategy: IID.")
+        elif text_cfg.buyer_strategy.lower() == 'dirichlet':
+             logger.warning("Buyer strategy 'dirichlet' for text currently treated as IID.")
+             buyer_indices, test_indices = _split_buyer_pool_for_root_test(buyer_pool_indices_all)
         else:
-            raise ValueError(f"Unsupported split_method: '{text_cfg.strategy}'")
+             raise ValueError(f"Unsupported buyer strategy: {text_cfg.buyer_strategy}")
 
+        # Stage 3: Partition Seller Pool
+        logger.info(f"Partitioning seller pool using strategy: '{text_cfg.strategy}'")
+        seller_splits = {i: [] for i in range(exp_cfg.n_sellers)} # Initialize empty dict
+        client_properties = {} # Initialize empty properties
+
+        if text_cfg.strategy.lower() == 'dirichlet':
+            all_train_targets = _extract_text_targets(standardized_train_data)
+            _partition_text_dirichlet(
+                seller_pool_indices,
+                all_train_targets,
+                exp_cfg.n_sellers,
+                text_cfg.dirichlet_alpha,
+                seller_splits # Pass dict to be modified
+            )
+        elif text_cfg.strategy.lower() == 'iid':
+             _partition_text_iid(seller_pool_indices, exp_cfg.n_sellers, seller_splits)
+        elif text_cfg.strategy.lower() == 'property-skew':
+            # Property skew for text is complex as it needs raw text.
+            # This logic should ideally be here, but requires passing raw_train_ds_hf
+            # and text_field. Let's assume it's handled for now or raise error.
+            raise NotImplementedError("Text property skew partitioning needs refactoring "
+                                      "to access raw text data within this function.")
+            # If refactored:
+            # client_properties = _partition_text_property_skew(...) # This func would need access to raw text
+        elif text_cfg.strategy.lower() == 'discovery':
+             # Keep your existing discovery split logic if needed, adapting it
+             # to operate on seller_pool_indices and populate seller_splits.
+             # You'll need to pass standardized_train_data and extract targets within it.
+             logger.info("Using 'discovery' split strategy for sellers...")
+             train_targets_subset = _extract_text_targets(Subset(standardized_train_data, seller_pool_indices))
+             # Adapt split_text_dataset_martfl_discovery or call relevant parts
+             # Example adaptation (replace with your actual logic):
+             # temp_dataset = Subset(standardized_train_data, seller_pool_indices)
+             # _, seller_splits_relative = split_text_dataset_martfl_discovery(...) # Operates on subset indices
+             # Convert relative indices back to absolute indices based on seller_pool_indices
+             # seller_splits = {cid: seller_pool_indices[rel_indices].tolist() for cid, rel_indices in seller_splits_relative.items()}
+             raise NotImplementedError("Adapt 'discovery' split logic for the new structure.")
+
+        else:
+            raise ValueError(f"Unknown client partitioning strategy: {text_cfg.strategy}")
+
+        # --- Save split to cache ---
         if cfg.use_cache:
+            logger.info(f"💾 Saving new data split to cache: {split_cache_file}")
             with open(split_cache_file, "wb") as f:
-                pickle.dump((buyer_indices, seller_splits), f)
-            logging.info(f"Split indices saved to cache: {split_cache_file}")
+                pickle.dump({
+                    'buyer_indices': buyer_indices,
+                    'seller_splits': seller_splits,
+                    'test_indices': test_indices,
+                    'client_properties': client_properties
+                }, f)
 
-    # Sanity check for overlaps
-    assigned_indices = set(buyer_indices.tolist())
-    for seller_id, indices in seller_splits.items():
-        if not assigned_indices.isdisjoint(indices):
-            logging.error(f"FATAL: Overlap detected between buyer and seller {seller_id} indices!")
-        assigned_indices.update(indices)
-    # ==================== ADD THIS SECTION ====================
-    # 6. --- Generate and Save Statistics to a DEDICATED Path ---
+    # 6. --- Generate and Save Statistics ---
     logger.info("Generating and saving data split statistics...")
-
-    # --- ADD THIS: Re-use the hash from your caching logic to create a unique path ---
-    # The split_cache_file path already contains the unique hash.
-    # We can derive the statistics filename from it.
     config_hash = Path(split_cache_file).stem
     stats_dir = Path(cfg.data_root) / "data_statistics"
     stats_save_path = stats_dir / f"{config_hash}_stats.json"
-    # --- END ADDITION ---
-
-    train_targets = standardized_train_data.targets
-
-    # Pass the new, specific path to the function
+    all_train_targets = _extract_text_targets(standardized_train_data) # Get targets again
     stats = save_data_statistics(
         buyer_indices=buyer_indices,
         seller_splits=seller_splits,
-        client_properties={},
-        targets=train_targets,
-        save_filepath=stats_save_path  # Use the new path
+        test_indices=test_indices,
+        client_properties=client_properties,
+        targets=all_train_targets,
+        save_filepath=stats_save_path
     )
 
-    # Create DataLoaders ---
+    # 7. --- Create DataLoaders ---
     collate_fn = lambda batch: collate_batch(batch, padding_value=pad_idx)
-
-    # Use training batch size from the training config
     batch_size = train_cfg.batch_size
+    num_workers = cfg.data.num_workers
 
     buyer_loader = None
     if buyer_indices is not None and len(buyer_indices) > 0:
         buyer_loader = DataLoader(Subset(standardized_train_data, buyer_indices.tolist()), batch_size=batch_size,
-                                  shuffle=True, collate_fn=collate_fn, num_workers=cfg.data.num_workers)
+                                  shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
+    if buyer_loader is None: logger.warning("Buyer loader is None.")
+
 
     seller_loaders = {}
+    non_empty_clients = 0
     for i in range(exp_cfg.n_sellers):
         indices = seller_splits.get(i)
-        if indices:
+        # Check if indices is None or empty list/array
+        if indices is not None and len(indices) > 0:
             seller_loaders[i] = DataLoader(Subset(standardized_train_data, indices), batch_size=batch_size,
-                                           shuffle=True,
-                                           collate_fn=collate_fn, num_workers=cfg.data.num_workers)
+                                           shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
+            non_empty_clients += 1
         else:
-            seller_loaders[i] = None
+            seller_loaders[i] = None # Explicitly set to None
+            logger.warning(f"Client {i} has no data assigned.")
+    logger.info(f"Created DataLoaders for {non_empty_clients} / {exp_cfg.n_sellers} sellers.")
 
-    test_loader = DataLoader(standardized_test_data, batch_size=batch_size, shuffle=False,
-                             collate_fn=collate_fn, num_workers=cfg.data.num_workers) if processed_test_data else None
+
+    test_loader = None
+    if test_indices is not None and len(test_indices) > 0:
+        test_loader = DataLoader(Subset(standardized_train_data, test_indices.tolist()), batch_size=batch_size, shuffle=False,
+                                 collate_fn=collate_fn, num_workers=num_workers)
+    if test_loader is None: logger.warning("Test loader (from buyer pool split) is None.")
+
+    # Optional: Loader for the original test set
+    # original_test_loader = DataLoader(standardized_test_data, batch_size=batch_size, shuffle=False,
+    #                              collate_fn=collate_fn, num_workers=num_workers) if standardized_test_data else None
+
 
     logging.info("DataLoader creation complete.")
 
     return ProcessedTextData(
         buyer_loader=buyer_loader,
         seller_loaders=seller_loaders,
-        test_loader=test_loader,
+        test_loader=test_loader, # Return the test loader from the buyer pool split
         class_names=class_names,
         vocab=vocab,
         pad_idx=pad_idx,

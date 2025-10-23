@@ -290,23 +290,6 @@ class TextPropertySkewParams:
     standard_prevalence_ratio: float = 0.4
 
 
-@dataclass
-class TextDataConfig:
-    """All settings related to a text dataset source."""
-    vocab: VocabConfig
-    strategy: str = "discovery"
-    discovery: Optional[DiscoverySplitParams] = None
-    property_skew: Optional[TextPropertySkewParams] = None
-    buyer_config: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class ImageDataConfig:
-    """All settings related to an image dataset source."""
-    strategy: str = "property-skew"
-    property_skew: Optional[PropertySkewParams] = None
-    discovery: Optional[DiscoverySplitParams] = None
-    buyer_config: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -343,24 +326,58 @@ class AdversarySellerConfig:
     drowning_attack: DrowningAttackConfig = field(default_factory=DrowningAttackConfig)
     mimicry_attack: MimicryAttackConfig = field(default_factory=MimicryAttackConfig)  # <-- Add this
 
+@dataclass
+class TextDataConfig:
+    """All settings related to a text dataset source."""
+    vocab: VocabConfig
+    strategy: str = "dirichlet"  # Strategy for SELLERS (Changed default)
+    dirichlet_alpha: float = 0.5  # Alpha for SELLERS (Added)
+    discovery: Optional[DiscoverySplitParams] = None # Keep if used
+    property_skew: Optional[TextPropertySkewParams] = None # Keep if used
 
+    # --- Buyer Specific Params ---
+    buyer_ratio: float = 0.1     # Renamed from buyer_config for consistency
+    buyer_strategy: str = "iid"  # Strategy for BUYER ('iid', 'dirichlet')
+    buyer_dirichlet_alpha: Optional[float] = None # Alpha ONLY for buyer if buyer_strategy='dirichlet'
+
+# --- Image Data Configuration ---
+@dataclass
+class ImageDataConfig:
+    """All settings related to an image dataset source."""
+    strategy: str = "dirichlet" # Strategy for SELLERS (Defaulting to Dirichlet)
+    dirichlet_alpha: float = 0.5 # Alpha for SELLERS
+    property_skew: Optional[PropertySkewParams] = None # Keep if you use property skew sometimes
+    discovery: Optional[DiscoverySplitParams] = None # Keep if used
+
+    # --- Buyer Specific Params ---
+    buyer_ratio: float = 0.1
+    buyer_strategy: str = "iid" # Strategy for BUYER ('iid', 'dirichlet')
+    buyer_dirichlet_alpha: Optional[float] = None # Alpha ONLY for buyer if buyer_strategy='dirichlet'
+
+# --- Tabular Data Configuration ---
 @dataclass
 class TabularDataConfig:
+    """All settings related to a tabular dataset source."""
     dataset_config_path: str = "configs/tabular_datasets.yaml"
     model_config_dir: str = "model/configs"
+
+    strategy: str = "dirichlet"  # Strategy for SELLERS (Changed default from 'iid')
+    dirichlet_alpha: float = 0.5  # Alpha for SELLERS (Added, assuming you have this param)
+    property_skew: Dict[str, Any] = field(default_factory=dict) # Keep if used
+
+    # --- Buyer Specific Params ---
     buyer_ratio: float = 0.1
-    strategy: str = "iid"  # Add 'strategy' field
-    property_skew: Dict[str, Any] = field(default_factory=dict)  # Add 'property_skew' field
+    buyer_strategy: str = "iid"  # Strategy for BUYER ('iid', 'dirichlet')
+    buyer_dirichlet_alpha: Optional[float] = None # Alpha ONLY for buyer if buyer_strategy='dirichlet'
 
-
+# --- Main Data Configuration ---
 @dataclass
 class DataConfig:
     """Holds configuration for one type of data source."""
     text: Optional[TextDataConfig] = None
     image: Optional[ImageDataConfig] = None
-    num_workers = 2
     tabular: Optional[TabularDataConfig] = None
-
+    num_workers: int = 2 # Keep num_workers here if it applies globally
 
 @dataclass
 class RuntimeDataConfig:

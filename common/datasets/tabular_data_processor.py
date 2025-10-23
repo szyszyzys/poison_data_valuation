@@ -3,7 +3,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 from urllib import request
 
 import numpy as np
@@ -17,7 +17,7 @@ from ucimlrepo import fetch_ucirepo
 
 from common.datasets.data_partitioner import TabularDataPartitioner
 from common.datasets.image_data_processor import save_data_statistics
-from common.gradient_market_configs import AppConfig  # Import your main config
+from common.gradient_market_configs import AppConfig, TabularDataConfig  # Import your main config
 
 logger = logging.getLogger(__name__)
 
@@ -64,48 +64,52 @@ def _load_and_prepare_tabular_df(config: Dict[str, Any]) -> Tuple[pd.DataFrame, 
     return df, categorical_cols
 
 
-def get_tabular_dataset(cfg: AppConfig):
+def get_tabular_dataset(cfg: AppConfig) -> Tuple[
+    Optional[DataLoader], Dict[str, DataLoader], Optional[DataLoader], int, int, Dict[str, int]]:
     logger.info(f"--- Starting Federated Tabular Dataset Setup for '{cfg.experiment.dataset_name}' ---")
 
+    # --- Ensure tabular config exists ---
+    tabular_cfg = cfg.data.tabular
+    if not tabular_cfg or not isinstance(tabular_cfg, TabularDataConfig):
+        raise ValueError("Tabular data configuration ('data.tabular') is missing or invalid.")
+    # --- End Check ---
+
     # 1. Load dataset-specific configuration and raw data
-    with open(cfg.data.tabular.dataset_config_path, 'r') as f:
+    with open(tabular_cfg.dataset_config_path, 'r') as f:
         all_tabular_configs = yaml.safe_load(f)
     dataset_cfg = all_tabular_configs[cfg.experiment.dataset_name]
     df, categorical_cols = _load_and_prepare_tabular_df(config=dataset_cfg)
     target_col = dataset_cfg['target_column']
-
-    # Validate target column exists
-    if target_col not in df.columns:
-        raise ValueError(f"Target column '{target_col}' not found in dataset")
+    if target_col not in df.columns: raise ValueError(f"Target column '{target_col}' not found")
 
     # 2. Preprocess Data (Dummify, Scale, Split)
     df_processed = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
     X = df_processed.drop(columns=[target_col])
     y = df_processed[target_col]
-
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_train_pd, X_test_pd, y_train_pd, y_test_pd = train_test_split(
         X, y, test_size=0.2, random_state=cfg.seed, stratify=y
     )
+    X_train_pd = X_train_pd.copy()
+    X_test_pd = X_test_pd.copy()
 
-    # Create copies to avoid any potential data leakage
-    X_train = X_train.copy()
-    X_test = X_test.copy()
-
-    numerical_cols = X_train.select_dtypes(include=np.number).columns
-
+    numerical_cols = X_train_pd.select_dtypes(include=np.number).columns
     if numerical_cols.empty:
         logger.error("CRITICAL: No numerical columns found!")
         raise ValueError("Dataset must contain at least one numerical column")
 
     logger.info(f"Dataset: {cfg.experiment.dataset_name}")
     logger.info(f"Total features: {len(numerical_cols)}")
-    logger.info(f"Training samples: {len(X_train)}, Test samples: {len(X_test)}")
+    # --- FIX ---
+    logger.info(f"Training samples: {len(X_train_pd)}, Test samples: {len(X_test_pd)}")
+    # --- END FIX ---
 
     # Log statistics BEFORE scaling
     logger.info("📊 Data statistics BEFORE scaling (first 5 numerical columns):")
     cols_to_check = numerical_cols[:5]
-    train_stats_before = X_train[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
-    test_stats_before = X_test[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
+    # --- FIX ---
+    train_stats_before = X_train_pd[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
+    test_stats_before = X_test_pd[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
+    # --- END FIX ---
     logger.info(f"\n--- X_train (raw) ---\n{train_stats_before.to_string()}")
     logger.info(f"\n--- X_test (raw) ---\n{test_stats_before.to_string()}")
 
@@ -113,21 +117,27 @@ def get_tabular_dataset(cfg: AppConfig):
     logger.info("🔍 Analyzing feature distribution for privacy benchmark dataset...")
 
     # Check sparsity
-    sparsity = (X_train[numerical_cols] == 0).sum().sum() / (len(X_train) * len(numerical_cols))
+    # --- FIX ---
+    sparsity = (X_train_pd[numerical_cols] == 0).sum().sum() / (len(X_train_pd) * len(numerical_cols))
+    # --- END FIX ---
     logger.info(f"Data sparsity: {sparsity:.2%} of values are zero")
 
     # Check value range
-    data_min = X_train[numerical_cols].min().min()
-    data_max = X_train[numerical_cols].max().max()
+    # --- FIX ---
+    data_min = X_train_pd[numerical_cols].min().min()
+    data_max = X_train_pd[numerical_cols].max().max()
+    # --- END FIX ---
     logger.info(f"Value range: [{data_min}, {data_max}]")
 
     # Identify feature types
-    binary_cols = [col for col in numerical_cols if X_train[col].nunique() <= 2]
+    # --- FIX ---
+    binary_cols = [col for col in numerical_cols if X_train_pd[col].nunique() <= 2]
     bounded_cols = [col for col in numerical_cols
-                    if X_train[col].min() >= 0 and X_train[col].max() <= 1
+                    if X_train_pd[col].min() >= 0 and X_train_pd[col].max() <= 1
                     and col not in binary_cols]
     continuous_cols = [col for col in numerical_cols
                        if col not in binary_cols and col not in bounded_cols]
+    # --- END FIX ---
 
     logger.info(f"Feature breakdown:")
     logger.info(f"  - Binary features (0/1): {len(binary_cols)}")
@@ -151,15 +161,17 @@ def get_tabular_dataset(cfg: AppConfig):
             logger.info(f"   Scaling {len(continuous_cols)} continuous features with StandardScaler")
             scaler = StandardScaler()
 
-            X_train[continuous_cols] = X_train[continuous_cols].astype(np.float64)
-            X_test[continuous_cols] = X_test[continuous_cols].astype(np.float64)
+            # --- FIX ---
+            X_train_pd[continuous_cols] = X_train_pd[continuous_cols].astype(np.float64)
+            X_test_pd[continuous_cols] = X_test_pd[continuous_cols].astype(np.float64)
 
-            X_train[continuous_cols] = scaler.fit_transform(X_train[continuous_cols])
-            X_test[continuous_cols] = scaler.transform(X_test[continuous_cols])
+            X_train_pd[continuous_cols] = scaler.fit_transform(X_train_pd[continuous_cols])
+            X_test_pd[continuous_cols] = scaler.transform(X_test_pd[continuous_cols])
 
             # Clip extreme outliers (protect against rare extreme values)
-            X_train[continuous_cols] = X_train[continuous_cols].clip(-10, 10)
-            X_test[continuous_cols] = X_test[continuous_cols].clip(-10, 10)
+            X_train_pd[continuous_cols] = X_train_pd[continuous_cols].clip(-10, 10)
+            X_test_pd[continuous_cols] = X_test_pd[continuous_cols].clip(-10, 10)
+            # --- END FIX ---
             logger.info(f"   Clipped continuous features to [-10, 10]")
         else:
             logger.info("   ✅ All features are binary/bounded - no scaling needed")
@@ -169,46 +181,60 @@ def get_tabular_dataset(cfg: AppConfig):
         logger.info("Applying StandardScaler to all numerical features")
         scaler = StandardScaler()
 
-        X_train[numerical_cols] = X_train[numerical_cols].astype(np.float64)
-        X_test[numerical_cols] = X_test[numerical_cols].astype(np.float64)
+        # --- FIX ---
+        X_train_pd[numerical_cols] = X_train_pd[numerical_cols].astype(np.float64)
+        X_test_pd[numerical_cols] = X_test_pd[numerical_cols].astype(np.float64)
 
-        X_train[numerical_cols] = scaler.fit_transform(X_train[numerical_cols])
-        X_test[numerical_cols] = scaler.transform(X_test[numerical_cols])
+        X_train_pd[numerical_cols] = scaler.fit_transform(X_train_pd[numerical_cols])
+        X_test_pd[numerical_cols] = scaler.transform(X_test_pd[numerical_cols])
+        # --- END FIX ---
 
     # Log statistics AFTER scaling
     logger.info("📊 Data statistics AFTER processing (first 5 numerical columns):")
-    train_stats_after = X_train[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
-    test_stats_after = X_test[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
+    # --- FIX ---
+    train_stats_after = X_train_pd[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
+    test_stats_after = X_test_pd[cols_to_check].describe().loc[['mean', 'std', 'min', 'max']]
+    # --- END FIX ---
     logger.info(f"\n--- X_train ---\n{train_stats_after.to_string()}")
     logger.info(f"\n--- X_test ---\n{test_stats_after.to_string()}")
 
-    feature_to_idx = {col: i for i, col in enumerate(X_train.columns)}
+    # --- FIX ---
+    feature_to_idx = {col: i for i, col in enumerate(X_train_pd.columns)}
+    # --- END FIX ---
 
     # 5. Convert to PyTorch Datasets
-    X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
-    y_train_tensor = torch.tensor(y_train.values, dtype=torch.long)
+    # --- FIX ---
+    X_train_tensor = torch.tensor(X_train_pd.values, dtype=torch.float32)
+    # --- END FIX ---
+    y_train_tensor = torch.tensor(y_train_pd.values, dtype=torch.long)
 
     # Check for NaN/Inf values
     if torch.isnan(X_train_tensor).any() or torch.isinf(X_train_tensor).any():
         logger.error("NaN/Inf detected in training data after processing!")
         nan_mask = torch.isnan(X_train_tensor).any(dim=0)
         inf_mask = torch.isinf(X_train_tensor).any(dim=0)
-        problem_cols = [col for i, col in enumerate(X_train.columns)
+        # --- FIX ---
+        problem_cols = [col for i, col in enumerate(X_train_pd.columns)
                         if nan_mask[i] or inf_mask[i]]
+        # --- END FIX ---
         logger.error(f"Problematic columns: {problem_cols}")
         raise ValueError("Cannot proceed with NaN/Inf values in training data. Check data quality.")
 
     train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
 
-    X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
-    y_test_tensor = torch.tensor(y_test.values, dtype=torch.long)
+    # --- FIX ---
+    X_test_tensor = torch.tensor(X_test_pd.values, dtype=torch.float32)
+    # --- END FIX ---
+    y_test_tensor = torch.tensor(y_test_pd.values, dtype=torch.long)
 
     if torch.isnan(X_test_tensor).any() or torch.isinf(X_test_tensor).any():
         logger.error("NaN/Inf detected in test data after processing!")
         nan_mask = torch.isnan(X_test_tensor).any(dim=0)
         inf_mask = torch.isinf(X_test_tensor).any(dim=0)
-        problem_cols = [col for i, col in enumerate(X_test.columns)
+        # --- FIX ---
+        problem_cols = [col for i, col in enumerate(X_test_pd.columns)
                         if nan_mask[i] or inf_mask[i]]
+        # --- END FIX ---
         logger.error(f"Problematic columns: {problem_cols}")
         raise ValueError("Cannot proceed with NaN/Inf values in test data. Check data quality.")
 
@@ -217,70 +243,107 @@ def get_tabular_dataset(cfg: AppConfig):
     input_dim = X_train_tensor.shape[1]
     num_classes = len(torch.unique(y_train_tensor))
 
-    # 6. Partition the training data
+    # 4. Partition the training data using the updated partitioner call
+    logger.info("Partitioning training data...")
     partitioner = TabularDataPartitioner(
         dataset=train_dataset,
-        features=X_train,
-        targets=y_train,
+        features=X_train_pd,  # Pass original X_train dataframe for property skew
+        targets=y_train_pd,  # Pass original y_train series for stratification/skew
         num_clients=cfg.experiment.n_sellers,
         seed=cfg.seed
     )
-    partitioner.partition(
-        client_partition_strategy=cfg.data.tabular.strategy,
-        partition_params=cfg.data.tabular.property_skew,
-        buyer_fraction=cfg.data.tabular.buyer_ratio
-    )
-    buyer_indices, seller_splits, _ = partitioner.get_splits()
 
-    # 7. Save data split statistics
+    # --- UPDATED PARTITION CALL ---
+    partitioner.partition(data_config=tabular_cfg)
+    # --- END UPDATE ---
+
+    # --- UPDATED GET SPLITS ---
+    buyer_indices, seller_splits, test_indices_from_partition = partitioner.get_splits()
+    client_properties = getattr(partitioner, 'client_properties', {})  # Get properties if available
+    # --- END UPDATE ---
+
+    # 5. Save data split statistics (including test indices from partition)
     logger.info("Generating and saving tabular data split statistics...")
+    # --- Create cache key based on TabularDataConfig ---
     tabular_split_params = {
         "dataset": cfg.experiment.dataset_name,
         "n_sellers": cfg.experiment.n_sellers,
         "seed": cfg.seed,
-        "strategy": cfg.data.tabular.strategy,
-        "buyer_ratio": cfg.data.tabular.buyer_ratio,
-        "partition_params": cfg.data.tabular.property_skew
+        # Seller params
+        "seller_strategy": tabular_cfg.strategy,
+        "seller_dirichlet_alpha": tabular_cfg.dirichlet_alpha if tabular_cfg.strategy == 'dirichlet' else None,
+        "seller_property_skew_params": tabular_cfg.property_skew if tabular_cfg.strategy == 'property-skew' else None,
+        # Buyer params
+        "buyer_ratio": tabular_cfg.buyer_ratio,
+        "buyer_strategy": tabular_cfg.buyer_strategy,
+        "buyer_dirichlet_alpha": tabular_cfg.buyer_dirichlet_alpha if tabular_cfg.buyer_strategy == 'dirichlet' else None,
     }
     config_string = json.dumps(tabular_split_params, sort_keys=True)
     config_hash = hashlib.md5(config_string.encode('utf-8')).hexdigest()
-
     stats_dir = Path(cfg.data_root) / "data_statistics"
     stats_save_path = stats_dir / f"{config_hash}_stats.json"
 
     save_data_statistics(
         buyer_indices=buyer_indices,
         seller_splits=seller_splits,
-        client_properties={},
-        targets=y_train.values,
+        test_indices=test_indices_from_partition,  # Pass the new test indices
+        client_properties=client_properties,
+        targets=y_train_pd.values,  # Use original numpy array of train targets
         save_filepath=stats_save_path
     )
 
-    # 8. Create final DataLoaders
+    # 6. Create final DataLoaders
     batch_size = cfg.training.batch_size
     num_workers = cfg.data.num_workers
 
-    buyer_loader = DataLoader(
-        Subset(train_dataset, buyer_indices),
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers
-    )
-    seller_loaders = {
-        f"{client_id}": DataLoader(
-            Subset(train_dataset, indices),
+    buyer_loader = None
+    if buyer_indices is not None and len(buyer_indices) > 0:
+        buyer_loader = DataLoader(
+            Subset(train_dataset, buyer_indices.tolist()),  # Convert numpy array to list
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers
         )
-        for client_id, indices in seller_splits.items() if len(indices) > 0
-    }
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers
-    )
+    if buyer_loader is None: logger.warning("Buyer loader is None.")
+
+    seller_loaders = {}
+    non_empty_clients = 0
+    for client_id, indices in seller_splits.items():
+        # Ensure indices is not None and is a list/array with size > 0
+        if indices is not None and len(indices) > 0:
+            # Use string key consistent with previous version
+            seller_loaders[f"{client_id}"] = DataLoader(
+                Subset(train_dataset, indices),  # indices should already be list from partitioner
+                batch_size=batch_size,
+                shuffle=True,
+                num_workers=num_workers
+            )
+            non_empty_clients += 1
+        else:
+            logger.warning(f"Client {client_id} has no data.")
+    logger.info(f"Created DataLoaders for {non_empty_clients} / {cfg.experiment.n_sellers} sellers.")
+
+    # --- UPDATED TEST LOADER ---
+    # Create the test loader using the indices derived from the partitioner's split
+    test_loader = None
+    if test_indices_from_partition is not None and len(test_indices_from_partition) > 0:
+        test_loader = DataLoader(
+            Subset(train_dataset, test_indices_from_partition.tolist()),  # Convert numpy array to list
+            batch_size=batch_size,
+            shuffle=False,  # Test set should not be shuffled
+            num_workers=num_workers
+        )
+    if test_loader is None: logger.warning("Test loader (from buyer pool split) is None.")
+    # --- END UPDATE ---
+
+    # --- Optional: Loader for the original hold-out test set ---
+    # original_holdout_test_loader = DataLoader(
+    #     test_dataset, # Use the original hold-out test set
+    #     batch_size=batch_size,
+    #     shuffle=False,
+    #     num_workers=num_workers
+    # )
 
     logger.info(f"✅ Federated tabular dataset setup complete.")
+    # Return the test_loader derived from the training data partition
     return buyer_loader, seller_loaders, test_loader, num_classes, input_dim, feature_to_idx

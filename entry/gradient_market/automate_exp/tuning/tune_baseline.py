@@ -39,42 +39,37 @@ def generate_fedavg_tuning_scenario_for_modality(
         model_structure: str,
         model_config_param_key: str,
         model_config_name: str,
-        dataset_modifier: Callable[[AppConfig], AppConfig] # ADDED dataset_modifier
+        dataset_modifier: Callable[[AppConfig], AppConfig]
 ) -> Scenario:
     """Creates the tuning scenario object for a specific modality."""
-
-    scenario_name = f"step1_tune_fedavg_{modality_name}_{dataset_name}"
+    scenario_name = f"step1_tune_fedavg_{modality_name}_{dataset_name}_{model_structure}"
     print(f"-- Defining scenario: {scenario_name}")
 
     parameter_grid = {
-        # --- Fixed Parameters for this tuning run ---
         "experiment.dataset_name": [dataset_name],
         "experiment.model_structure": [model_structure],
-        model_config_param_key: [model_config_name],  # Use the correct key name
-        "aggregation.method": ["fedavg"],  # Only test FedAvg
-        "experiment.adv_rate": [0.0],  # <<< CRITICAL: Benign setting ONLY
-        "n_samples": [NUM_SEEDS_PER_CONFIG],  # Number of seeds per combo
-        # Ensure early stopping is ON for tuning (avoids long runs for unstable params)
+        model_config_param_key: [model_config_name],
+        "aggregation.method": ["fedavg"],
+        "experiment.adv_rate": [0.0],
+        "n_samples": [NUM_SEEDS_PER_CONFIG],
         "experiment.use_early_stopping": [True],
-        "experiment.patience": [10],  # Standard patience
+        "experiment.patience": [10],
 
-        # --- Hyperparameters to Sweep (The actual tuning part) ---
         "training.learning_rate": LEARNING_RATES_TO_SWEEP,
         "training.local_epochs": LOCAL_EPOCHS_TO_SWEEP,
+
+        f"data.{modality_name}.strategy": ["dirichlet"],
+        f"data.{modality_name}.dirichlet_alpha": [0.5],  # Example alpha, adjust if needed
+
+        f"data.{modality_name}.buyer_strategy": ["iid"],
+        f"data.{modality_name}.buyer_ratio": [0.1],  # Or your standard buyer ratio
     }
 
-    # Add modality-specific fixed parameters if they aren't set in the base config
-    if modality_name == "tabular":
-        parameter_grid["experiment.dataset_type"] = ["tabular"]
-    elif modality_name == "image":
-        parameter_grid["experiment.dataset_type"] = ["image"]
-    elif modality_name == "text":
-        parameter_grid["experiment.dataset_type"] = ["text"]
+    # Add modality-specific fixed parameters (e.g., dataset_type)
+    parameter_grid[f"experiment.dataset_type"] = [modality_name]  # Simplified
 
-    # Use a simple lambda modifier to ensure adv_rate is 0, overriding any base config default
     def ensure_benign(config: AppConfig) -> AppConfig:
         config.experiment.adv_rate = 0.0
-        # Make sure no attacks are accidentally active
         config.adversary_seller_config.poisoning.type = PoisonType.NONE
         config.adversary_seller_config.sybil.is_sybil = False
         config.buyer_attack_config.is_active = False
@@ -83,7 +78,7 @@ def generate_fedavg_tuning_scenario_for_modality(
     return Scenario(
         name=scenario_name,
         base_config_factory=base_config_factory,
-        modifiers=[ensure_benign, dataset_modifier], # APPLY BOTH MODIFIERS
+        modifiers=[ensure_benign, dataset_modifier],
         parameter_grid=parameter_grid
     )
 
@@ -101,7 +96,7 @@ if __name__ == "__main__":
             "model_structure": "mlp",
             "model_config_param_key": "experiment.tabular_model_config_name",
             "model_config_name": "mlp_texas100_baseline",  # Assumed name
-            "dataset_modifier": lambda cfg: cfg, # No specific modifier needed if base is Texas100
+            "dataset_modifier": lambda cfg: cfg,  # No specific modifier needed if base is Texas100
         },
         {
             "modality_name": "tabular",
@@ -110,18 +105,18 @@ if __name__ == "__main__":
             "model_structure": "mlp",  # Assuming MLP, as ResNet is unusual for tabular. Adjust if needed.
             "model_config_param_key": "experiment.tabular_model_config_name",
             "model_config_name": "mlp_purchase100_baseline",  # Assumed name
-            "dataset_modifier": lambda cfg: cfg, # No specific modifier needed if base is Texas100
+            "dataset_modifier": lambda cfg: cfg,  # No specific modifier needed if base is Texas100
         },
 
         # --- Image Tuning ---
-{
+        {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
             "dataset_name": "CIFAR10",
             "model_structure": "cnn",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "CIFAR10_cnn",
-            "dataset_modifier": use_cifar10_config, # Pass the function itself
+            "dataset_modifier": use_cifar10_config,  # Pass the function itself
         },
         {
             "modality_name": "image",
@@ -130,7 +125,7 @@ if __name__ == "__main__":
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "CIFAR10_resnet18",
-            "dataset_modifier": use_cifar10_config, # Pass the function itself
+            "dataset_modifier": use_cifar10_config,  # Pass the function itself
         },
         {
             "modality_name": "image",
@@ -139,7 +134,7 @@ if __name__ == "__main__":
             "model_structure": "cnn",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "CIFAR100_cnn",
-            "dataset_modifier": use_cifar100_config, # Pass the function itself
+            "dataset_modifier": use_cifar100_config,  # Pass the function itself
         },
         {
             "modality_name": "image",
@@ -148,7 +143,7 @@ if __name__ == "__main__":
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "CIFAR100_resnet18",
-            "dataset_modifier": use_cifar100_config, # Pass the function itself
+            "dataset_modifier": use_cifar100_config,  # Pass the function itself
         },
 
         # --- Text Tuning ---
@@ -159,7 +154,7 @@ if __name__ == "__main__":
             "model_structure": "textcnn",  # Assuming 'text_cnn' is the structure name
             "model_config_param_key": "experiment.text_model_config_name",  # Assuming this key name
             "model_config_name": "textcnn_trec_baseline",  # Assumed name
-            "dataset_modifier": lambda cfg: cfg, # No specific modifier needed if base is TRE
+            "dataset_modifier": lambda cfg: cfg,  # No specific modifier needed if base is TRE
         },
     ]
     # --- Output Directory for Configs ---
