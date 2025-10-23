@@ -24,7 +24,7 @@ except ImportError as e:
 # --- Fixed Attack Settings for Verification ---
 # Use the standard attack strength you plan for your main benchmark
 ATTACK_ADV_RATE = 0.3
-ATTACK_POISON_RATE = 1.0  # Use a high rate here to ensure the pattern works
+ATTACK_POISON_RATE = 0.5  # Use a high rate here to ensure the pattern works
 
 NUM_SEEDS_PER_CONFIG = 3  # Run a few seeds to ensure consistency
 

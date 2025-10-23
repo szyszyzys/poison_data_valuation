@@ -61,7 +61,7 @@ TUNING_GRIDS = {
         "aggregation.clip_norm": [5.0, 10.0],  # Tune the clip value used when clip=True
         # Optionally add initial_baseline and max_k if you implemented those
         # "aggregation.martfl.initial_baseline": ["buyer", "bn_0"],
-        # "aggregation.martfl.max_k": [5, 10],
+        "aggregation.martfl.max_k": [5, 10],
     },
     "skymask": {
         "aggregation.method": ["skymask"],

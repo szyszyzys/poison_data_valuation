@@ -414,17 +414,25 @@ def initialize_sellers(
             else:
                 created_benign += 1
 
-            # Register as Sybil if applicable
-            # Only register if: 1) is adversary, 2) Sybil globally enabled, 3) seller is Sybil
+            is_registered_as_sybil = False  # Flag for logging
             if is_adv and cfg.adversary_seller_config.sybil.is_sybil:
-                # Check if this specific seller should be a Sybil
-                # (In case you want fine-grained control later)
-                is_sybil = getattr(seller, 'is_sybil', True)  # Default to True for all advs
+                should_be_sybil = getattr(seller, 'is_sybil', True)
 
+                if should_be_sybil:
+                    # --- THIS IS THE CRITICAL MISSING LINE ---
+                    if marketplace.sybil_coordinator:  # Make sure coordinator exists
+                        marketplace.sybil_coordinator.register_seller(seller)
+                        registered_sybils += 1  # Increment the counter HERE
+                        is_registered_as_sybil = True
+                        logging.debug(f"      -> Registered {seller_id} with SybilCoordinator.")
+                    else:
+                        logging.warning(
+                            f"      -> Sybil attack enabled, but SybilCoordinator not found in marketplace!")
+            # Updated logging using the flag
             logging.info(
                 f"  ✅ {seller_id} ({seller_type}): "
                 f"{len(loader.dataset)} samples"
-                f"{' [SYBIL]' if (is_adv and registered_sybils) else ''}"
+                f"{' [SYBIL Registered]' if is_registered_as_sybil else ''}"  # Corrected log message
             )
 
         except Exception as e:
