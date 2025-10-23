@@ -131,7 +131,21 @@ class ExperimentGenerator:
             file_path = save_path / "config.yaml"
 
             try:
+                print(f"DEBUG: Attempting to save {file_path}")
+                print(f"DEBUG: Using Dumper: {CustomDumper}")
+                # Check if the Enum representer is actually registered on this dumper instance
+                if Enum in CustomDumper.yaml_representers:
+                    print(f"DEBUG: Enum representer IS registered for CustomDumper.")
+                else:
+                    print(f"DEBUG: WARNING! Enum representer NOT registered for CustomDumper!")
 
+                # Optionally, print the specific value causing issues if you know it
+                try:
+                    problem_value = final_config.adversary_seller_config.poisoning.type
+                    print(f"DEBUG: Value of poison type: {problem_value} (Type: {type(problem_value)})")
+                except Exception as e_debug:
+                    print(f"DEBUG: Could not access poison type for debug print: {e_debug}")
+                # --- END DEBUG PRINTS ---
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 # ... (mkdir logic) ...
                 config_dict = asdict(final_config)
