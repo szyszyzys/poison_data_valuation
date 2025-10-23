@@ -16,27 +16,40 @@ from entry.gradient_market.automate_exp.scenarios import Scenario
 
 
 class CustomDumper(yaml.SafeDumper):
-    """A custom YAML dumper to correctly handle None and numpy types."""
+    """A custom YAML dumper to correctly handle None, numpy types, and enums."""
 
     def represent_none(self, _):
-        return self.represent_scalar('tag:yaml.org,2002:null', '')
+        """Represents None as an empty string (or choose 'null')."""
+        return self.represent_scalar('tag:yaml.org,2002:null', '')  # or 'null'
 
     def represent_numpy(self, data):
+        """Represents various numpy types as standard Python types."""
         if isinstance(data, np.integer): return self.represent_int(int(data))
         if isinstance(data, np.floating): return self.represent_float(float(data))
         if isinstance(data, np.ndarray): return self.represent_list(data.tolist())
         if isinstance(data, np.bool_): return self.represent_bool(bool(data))
-        return self.represent_data(data)
+        # Add fallback for other numpy types if needed, or let default handle it
+        return super().represent_data(data)
 
     def represent_enum(self, data):
-        """Tells YAML how to represent any Enum: by using its value."""
-        return self.represent_scalar('tag:yaml.org,2002:str', data.value)
+        """Tells YAML how to represent any Enum: by using its NAME as a string."""
+        # --- FIX: Use data.name instead of data.value ---
+        return self.represent_scalar('tag:yaml.org,2002:str', data.name)
+        # --- End FIX ---
 
 
+# --- Register the custom representers ---
+# For NoneType
 CustomDumper.add_representer(NoneType, CustomDumper.represent_none)
-CustomDumper.add_multi_representer(Enum, CustomDumper.represent_enum)
+
+# For Enums (using the corrected represent_enum method)
+# Use add_representer for a base class like Enum
+CustomDumper.add_representer(Enum, CustomDumper.represent_enum)
+
+# For NumPy types (using add_multi_representer for specific types)
 for numpy_type in (np.integer, np.floating, np.ndarray, np.bool_):
-    CustomDumper.add_multi_representer(numpy_type, CustomDumper.represent_numpy)
+    # Ensure you add representers for the specific types, not the base class np.generic
+    CustomDumper.add_representer(numpy_type, CustomDumper.represent_numpy)
 
 
 def set_nested_attr(obj: Any, key: str, value: Any):
