@@ -7,7 +7,7 @@ import torch
 
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig, AggregationConfig, TabularDataConfig, DataConfig, \
-    AdversarySellerConfig, ServerAttackConfig, TrainingConfig, ExperimentConfig, DebugConfig, PropertySkewParams
+    AdversarySellerConfig, ServerAttackConfig, TrainingConfig, ExperimentConfig, DebugConfig
 from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 
 # --- Define your target labels ---
@@ -31,7 +31,7 @@ def get_base_tabular_config() -> AppConfig:
     return AppConfig(
         experiment=ExperimentConfig(
             dataset_name="Texas100",
-            model_structure="mlp",  # <--- CRITICAL FIX 1 (was "None")
+            model_structure="mlp",
             global_rounds=80,
             n_sellers=10,
             adv_rate=0.0,
@@ -54,8 +54,12 @@ def get_base_tabular_config() -> AppConfig:
         adversary_seller_config=AdversarySellerConfig(),
         data=DataConfig(
             tabular=TabularDataConfig(
-                property_skew=PropertySkewParams()
+                strategy="dirichlet",
+                dirichlet_alpha=0.5,
+                buyer_ratio=0.1,
+                buyer_strategy="iid"
             )
+
         ),
         aggregation=AggregationConfig(method="fedavg"),
         seed=42,

@@ -8,8 +8,6 @@ from entry.gradient_market.automate_exp.base_configs import get_base_image_confi
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar100_config, use_cifar10_config
 from entry.gradient_market.automate_exp.tbl_new import get_base_tabular_config
 
-# --- Assuming your config generator and base factories are importable ---
-# Adjust these import paths based on your project structure
 try:
     # Import the necessary config classes
     from common.gradient_market_configs import AppConfig, ExperimentConfig, TrainingConfig, \

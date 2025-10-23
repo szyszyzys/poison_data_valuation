@@ -16,18 +16,26 @@ def get_base_image_config() -> AppConfig:
             evaluations=["clean", "backdoor"],
         ),
         training=TrainingConfig(
+            # --- This looks correct based on your tuning ---
             local_epochs=2,
             batch_size=64,
-            learning_rate=0.01,  # Changed: 0.0001 → 0.01 for SGD
-            optimizer="sgd",  # Added: Use SGD instead of Adam
-            momentum=0.9,  # Added: Momentum for SGD
-            weight_decay=0.0001  # Added: Small regularization
+            learning_rate=0.01,
+            optimizer="sgd",
+            momentum=0.9,
+            weight_decay=0.0001
+            # ----------------------------------------------
         ),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
         data=DataConfig(
             image=ImageDataConfig(
-                property_skew=PropertySkewParams()
+                property_skew=PropertySkewParams(),
+                # --- ADD THESE LINES TO MATCH TUNE SCRIPT ---
+                strategy="dirichlet",
+                dirichlet_alpha=0.5,
+                buyer_ratio=0.1,
+                buyer_strategy="iid"
+                # --------------------------------------------
             )
         ),
         debug=DebugConfig(
@@ -39,8 +47,6 @@ def get_base_image_config() -> AppConfig:
             method="fedavg"
         ),
     )
-
-
 def get_base_text_config() -> AppConfig:
     """Creates the default, base AppConfig for TEXT-based experiments."""
     return AppConfig(
@@ -51,18 +57,26 @@ def get_base_text_config() -> AppConfig:
             evaluations=["clean", "backdoor"]
         ),
         training=TrainingConfig(
+            # --- This looks correct based on your tuning ---
             local_epochs=2,
             batch_size=64,
             optimizer='sgd',
             learning_rate=0.01,
-            momentum=0.9,  # <-- Add this
-            weight_decay=0.0001  # <-- Add this for regularization
+            momentum=0.9,
+            weight_decay=0.0001
+            # ----------------------------------------------
         ),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
         data=DataConfig(
             text=TextDataConfig(
                 vocab=VocabConfig(),
+                # --- ADD THESE LINES TO MATCH TUNE SCRIPT ---
+                strategy="dirichlet",
+                dirichlet_alpha=0.5,
+                buyer_ratio=0.1,
+                buyer_strategy="iid"
+                # --------------------------------------------
             )
         ),
         debug=DebugConfig(
@@ -71,7 +85,7 @@ def get_base_text_config() -> AppConfig:
         ),
         seed=42, n_samples=3,
         aggregation=AggregationConfig(
-            method="fedavg"  # Set the default method here
+            method="fedavg"
         ),
 
     )

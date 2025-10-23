@@ -159,7 +159,7 @@ if __name__ == "__main__":
         for defense_name, defense_grid in TUNING_GRIDS.items():
 
             # Skip SkyMask for text data if it's not compatible
-            if modality == "text" and defense_name == "skymask":
+            if modality != "image" and defense_name == "skymask":
                 print(f"   Skipping {defense_name} tuning for text modality.")
                 continue
 
@@ -183,7 +183,8 @@ if __name__ == "__main__":
                 "experiment.model_structure": [combo_config["model_structure"]],
                 combo_config["model_config_param_key"]: [combo_config["model_config_name"]],
                 "n_samples": [NUM_SEEDS_PER_CONFIG],
-                # Ensure sm_model_type is set correctly for SkyMask
+                "experiment.use_early_stopping": [True],
+                "experiment.patience": [10],
                 "aggregation.skymask.sm_model_type": [
                     combo_config["model_structure"]] if defense_name == "skymask" else [None],
 
