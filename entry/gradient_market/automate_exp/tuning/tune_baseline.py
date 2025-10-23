@@ -5,7 +5,7 @@ from typing import Callable
 
 from common.enums import PoisonType
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
-from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar100_config, use_cifar10_config
+from entry.gradient_market.automate_exp.scenarios import Scenario, use_CIFAR100_config, use_CIFAR10_config
 from entry.gradient_market.automate_exp.tbl_new import get_base_tabular_config
 
 # --- Assuming your config generator and base factories are importable ---
@@ -96,7 +96,7 @@ if __name__ == "__main__":
         {
             "modality_name": "tabular",
             "base_config_factory": get_base_tabular_config,
-            "dataset_name": "texas100",
+            "dataset_name": "Texas100",
             "model_structure": "mlp",
             "model_config_param_key": "experiment.tabular_model_config_name",
             "model_config_name": "mlp_texas100_baseline",  # Assumed name
@@ -104,7 +104,7 @@ if __name__ == "__main__":
         {
             "modality_name": "tabular",
             "base_config_factory": get_base_tabular_config,
-            "dataset_name": "purchase100",
+            "dataset_name": "Purchase100",
             "model_structure": "mlp",  # Assuming MLP, as ResNet is unusual for tabular. Adjust if needed.
             "model_config_param_key": "experiment.tabular_model_config_name",
             "model_config_name": "mlp_purchase100_baseline",  # Assumed name
@@ -114,45 +114,45 @@ if __name__ == "__main__":
 {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
-            "dataset_name": "cifar10",
+            "dataset_name": "CIFAR10",
             "model_structure": "cnn",
             "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "cifar10_cnn",
-            "dataset_modifier": use_cifar10_config, # Pass the function itself
+            "model_config_name": "CIFAR10_cnn",
+            "dataset_modifier": use_CIFAR10_config, # Pass the function itself
         },
         {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
-            "dataset_name": "cifar10",
+            "dataset_name": "CIFAR10",
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "cifar10_resnet18",
-            "dataset_modifier": use_cifar10_config, # Pass the function itself
+            "model_config_name": "CIFAR10_resnet18",
+            "dataset_modifier": use_CIFAR10_config, # Pass the function itself
         },
         {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
-            "dataset_name": "cifar100",
+            "dataset_name": "CIFAR100",
             "model_structure": "cnn",
             "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "cifar100_cnn",
-            "dataset_modifier": use_cifar100_config, # Pass the function itself
+            "model_config_name": "CIFAR100_cnn",
+            "dataset_modifier": use_CIFAR100_config, # Pass the function itself
         },
         {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
-            "dataset_name": "cifar100",
+            "dataset_name": "CIFAR100",
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "cifar100_resnet18",
-            "dataset_modifier": use_cifar100_config, # Pass the function itself
+            "model_config_name": "CIFAR100_resnet18",
+            "dataset_modifier": use_CIFAR100_config, # Pass the function itself
         },
 
         # --- Text Tuning ---
         {
             "modality_name": "text",
             "base_config_factory": get_base_text_config,
-            "dataset_name": "trec",
+            "dataset_name": "TREC",
             "model_structure": "textcnn",  # Assuming 'text_cnn' is the structure name
             "model_config_param_key": "experiment.text_model_config_name",  # Assuming this key name
             "model_config_name": "textcnn_trec_baseline",  # Assumed name

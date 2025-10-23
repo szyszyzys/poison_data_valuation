@@ -98,8 +98,7 @@ def _get_dataset_loaders(dataset_name: str, data_root: str) -> Tuple[Dataset, Da
     A helper factory to load standard torchvision datasets and get their properties.
     This makes adding new datasets much easier.
     """
-    dataset_name = dataset_name.lower()
-    if dataset_name == "cifar100":
+    if dataset_name == "CIFAR100":
         transform = transforms.Compose([
             transforms.ToImage(),
             transforms.ToDtype(torch.float32, scale=True),
@@ -108,7 +107,7 @@ def _get_dataset_loaders(dataset_name: str, data_root: str) -> Tuple[Dataset, Da
         raw_train_set = torchvision.datasets.CIFAR100(root=data_root, train=True, download=True, transform=transform)
         raw_test_set = torchvision.datasets.CIFAR100(root=data_root, train=False, download=True, transform=transform)
         num_classes = 100
-    elif dataset_name == "cifar10":
+    elif dataset_name == "CIFAR10":
         transform = transforms.Compose([
             transforms.ToImage(),
             transforms.ToDtype(torch.float32, scale=True),
@@ -120,7 +119,7 @@ def _get_dataset_loaders(dataset_name: str, data_root: str) -> Tuple[Dataset, Da
         raw_train_set = torchvision.datasets.CIFAR10(root=data_root, train=True, download=True, transform=transform)
         raw_test_set = torchvision.datasets.CIFAR10(root=data_root, train=False, download=True, transform=transform)
         num_classes = 10
-    elif dataset_name == "celeba":
+    elif dataset_name == "CelebA":
         # Note: CelebA does not have a standard test set split in torchvision
         # We handle this by partitioning the 'train' set into train/test splits.
         # The property_key for CelebA is handled in the main function.
@@ -283,16 +282,16 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     logging.info(f"Using cache directory: {app_cache_dir}")
 
     tokenizer = get_tokenizer('basic_english')
-    dataset_name = exp_cfg.dataset_name.lower()
+
     # 2. --- Load Raw Dataset ---
-    if dataset_name == "ag_news":
+    if exp_cfg.dataset_name == "AG_NEWS":
         if not hf_datasets_available:
             raise ImportError("HuggingFace 'datasets' library required for AG_NEWS.")
         ds = hf_load("ag_news", cache_dir=cfg.data_root)
         train_ds_hf, test_ds_hf = ds["train"], ds["test"]
         num_classes, class_names = 4, ['World', 'Sports', 'Business', 'Sci/Tech']
         text_field, label_field = "text", "label"
-    elif dataset_name == "trec":
+    elif exp_cfg.dataset_name == "TREC":
         # 1. DEFINE the field names first
         text_field, label_field = "text", "coarse_label"
 
