@@ -101,6 +101,7 @@ if __name__ == "__main__":
             "model_structure": "mlp",
             "model_config_param_key": "experiment.tabular_model_config_name",
             "model_config_name": "mlp_texas100_baseline",  # Assumed name
+            "dataset_modifier": lambda cfg: cfg, # No specific modifier needed if base is Texas100
         },
         {
             "modality_name": "tabular",
@@ -109,6 +110,7 @@ if __name__ == "__main__":
             "model_structure": "mlp",  # Assuming MLP, as ResNet is unusual for tabular. Adjust if needed.
             "model_config_param_key": "experiment.tabular_model_config_name",
             "model_config_name": "mlp_purchase100_baseline",  # Assumed name
+            "dataset_modifier": lambda cfg: cfg, # No specific modifier needed if base is Texas100
         },
 
         # --- Image Tuning ---
@@ -157,6 +159,7 @@ if __name__ == "__main__":
             "model_structure": "textcnn",  # Assuming 'text_cnn' is the structure name
             "model_config_param_key": "experiment.text_model_config_name",  # Assuming this key name
             "model_config_name": "textcnn_trec_baseline",  # Assumed name
+            "dataset_modifier": lambda cfg: cfg, # No specific modifier needed if base is TRE
         },
     ]
     # --- Output Directory for Configs ---
