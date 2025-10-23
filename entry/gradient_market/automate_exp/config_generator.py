@@ -71,9 +71,13 @@ class ExperimentGenerator:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def generate(self, base_config: AppConfig, scenario: Scenario):
+    # --- ADDED A RETURN TYPE HINT ---
+    def generate(self, base_config: AppConfig, scenario: Scenario) -> int:
         """
         Generates all config files for a given experimental scenario.
+
+        Returns:
+            int: The number of configuration files generated for this scenario.
         """
         print(f"\n--- Generating '{scenario.name}' Configs ---")
 
@@ -85,36 +89,52 @@ class ExperimentGenerator:
         # 2. Create all combinations from the parameter grid
         keys, values = zip(*scenario.parameter_grid.items())
         param_combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
-        print(f"  Found {len(param_combinations)} parameter combinations for this scenario.")
+
+        # --- STORE THE COUNT ---
+        num_generated = len(param_combinations)
+        print(f"  Found {num_generated} parameter combinations for this scenario.")
 
         # 3. Generate a file for each unique combination
-        for params in param_combinations:
+        count_saved = 0  # Keep track of successfully saved files
+        for i, params in enumerate(param_combinations):
             final_config = copy.deepcopy(scenario_config)
 
             # Apply the specific parameters for this run
             for key, value in params.items():
-                set_nested_attr(final_config, key, value)
+                try:
+                    set_nested_attr(final_config, key, value)
+                except (AttributeError, KeyError) as e:
+                    print(f"  ❌ Error setting {key}={value} for combo {i}: {e}. Skipping this combo.")
+                    num_generated -= 1  # Decrement count if setting fails
+                    continue  # Skip to the next combination
 
-            # --- THIS IS THE UPDATED LOGIC ---
-            # 1. Generate the descriptive run name from the FINAL config object.
-            run_name = self.create_run_name(final_config)
+            # --- Assuming self.create_run_name exists ---
+            try:
+                run_name = self.create_run_name(final_config)
+            except Exception as e:
+                print(f"  ❌ Error creating run name for combo {i}: {e}. Using index instead.")
+                run_name = f"combo_{i}"
 
-            # 2. Create the full, unique path for this run's results.
             save_path = self.output_dir / scenario.name / run_name
-
-            # 3. Update the config object to be self-aware of its save path.
             final_config.experiment.save_path = str(save_path)
-
-            # 4. Set the path for the config file itself inside the unique directory.
             file_path = save_path / "config.yaml"
-            # -----------------------------------
 
-            # Your existing saving logic is correct
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            config_dict = asdict(final_config)
-            with open(file_path, 'w') as f:
-                yaml.dump(config_dict, f, Dumper=CustomDumper, sort_keys=False, indent=2)
-            print(f"  Saved config to: {file_path}")
+            try:
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                config_dict = asdict(final_config)
+                with open(file_path, 'w') as f:
+                    # Make sure CustomDumper is defined or use default dumper
+                    yaml.dump(config_dict, f, sort_keys=False, indent=2)
+                    # print(f"  Saved config to: {file_path}") # Optional: Can make output verbose
+                count_saved += 1
+            except Exception as e:
+                print(f"  ❌ Error saving config file {file_path}: {e}")
+                num_generated -= 1  # Decrement if saving fails
+
+        print(f"  Successfully saved {count_saved} / {len(param_combinations)} config files.")
+
+        # --- RETURN THE COUNT ---
+        return num_generated
 
     @staticmethod
     def create_run_name(config: AppConfig) -> str:
