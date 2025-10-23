@@ -43,8 +43,7 @@ def load_config(config_path: str) -> AppConfig:
     logger.info(f"Loading configuration from: {config_path}")
     try:
         with open(config_path, 'r') as f:
-            config_dict = yaml.safe_load(f)
-
+            config_dict = yaml.load(f, Loader=yaml.FullLoader)  # Use FullLoader
         processed_config_dict = _convert_lists_to_tuples_for_specific_fields(config_dict)
 
         # --- FIX: Added 'Enum' to the cast list ---
