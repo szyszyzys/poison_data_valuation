@@ -2,7 +2,7 @@ import torch
 
 from common.gradient_market_configs import (
     AppConfig, ExperimentConfig, TrainingConfig, AdversarySellerConfig, DataConfig, ImageDataConfig, PropertySkewParams,
-    DiscoverySplitParams, VocabConfig, TextDataConfig, DebugConfig, ServerAttackConfig, AggregationConfig
+    VocabConfig, TextDataConfig, DebugConfig, ServerAttackConfig, AggregationConfig
 )
 
 
@@ -27,7 +27,6 @@ def get_base_image_config() -> AppConfig:
         adversary_seller_config=AdversarySellerConfig(),
         data=DataConfig(
             image=ImageDataConfig(
-                discovery=DiscoverySplitParams(),
                 property_skew=PropertySkewParams()
             )
         ),
@@ -64,7 +63,6 @@ def get_base_text_config() -> AppConfig:
         data=DataConfig(
             text=TextDataConfig(
                 vocab=VocabConfig(),
-                discovery=DiscoverySplitParams()
             )
         ),
         debug=DebugConfig(

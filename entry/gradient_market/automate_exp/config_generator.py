@@ -274,7 +274,7 @@ class ExperimentGenerator:
                     parts.append(f"alpha-{alpha_str}")
 
             # Buyer data percentage (for buyer_data_impact experiments)
-            buyer_pct = config.data.image.discovery.buyer_percentage
+            buyer_pct = config.data.image.buyer_ratio
             if buyer_pct != 0.1:  # Only include if non-default
                 pct_str = f"{buyer_pct:g}".replace('.', 'p')
                 parts.append(f"buyerdata-{pct_str}")

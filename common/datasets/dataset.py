@@ -384,9 +384,8 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         raise ValueError("Text data configuration ('data.text') is missing from the AppConfig.")
 
     # Get parameters from their new, correct locations
-    discovery_params = text_cfg.discovery
     vocab_cfg = text_cfg.vocab
-    buyer_percentage = discovery_params.buyer_percentage
+    buyer_percentage = text_cfg.buyer_ratio
 
     if not (0.0 <= buyer_percentage <= 1.0):
         raise ValueError("buyer_percentage must be between 0 and 1.")

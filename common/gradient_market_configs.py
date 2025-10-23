@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Tuple, List, Union, Callable, Literal
 from torch.utils.data import Dataset
 
 from common.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation, PoisonType, LabelFlipMode, \
-    VictimStrategy, ImageBackdoorAttackName, TextBackdoorAttackName
+    ImageBackdoorAttackName, TextBackdoorAttackName
 
 logger = logging.getLogger("Configs")
 
@@ -98,8 +98,6 @@ class TextBackdoorParams:
     trigger_content: str = "cf"  # The trigger phrase
     location: TextTriggerLocation = TextTriggerLocation.END
     attack_name: TextBackdoorAttackName = TextBackdoorAttackName.SIMPLE_DATA_POISON
-
-
 
 
 @dataclass
@@ -249,16 +247,6 @@ class SybilConfig:
     strategy_configs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
-@dataclass
-class DiscoverySplitParams:
-    """Parameters for the 'discovery' text data splitting strategy."""
-    buyer_percentage: float = 0.05
-    discovery_quality: float = 0.3
-    buyer_data_mode: str = "biased"
-    buyer_bias_type: str = "dirichlet"
-    buyer_dirichlet_alpha: float = 0.2
-
-
 @dataclass  # --- FIXED: Added the @dataclass decorator ---
 class VocabConfig:
     """Configuration for building the torchtext vocabulary."""
@@ -288,8 +276,6 @@ class TextPropertySkewParams:
     high_prevalence_ratio: float = 0.8
     low_prevalence_ratio: float = 0.1
     standard_prevalence_ratio: float = 0.4
-
-
 
 
 @dataclass
@@ -326,33 +312,35 @@ class AdversarySellerConfig:
     drowning_attack: DrowningAttackConfig = field(default_factory=DrowningAttackConfig)
     mimicry_attack: MimicryAttackConfig = field(default_factory=MimicryAttackConfig)  # <-- Add this
 
+
 @dataclass
 class TextDataConfig:
     """All settings related to a text dataset source."""
     vocab: VocabConfig
     strategy: str = "dirichlet"  # Strategy for SELLERS (Changed default)
     dirichlet_alpha: float = 0.5  # Alpha for SELLERS (Added)
-    discovery: Optional[DiscoverySplitParams] = None # Keep if used
-    property_skew: Optional[TextPropertySkewParams] = None # Keep if used
+
+    property_skew: Optional[TextPropertySkewParams] = None  # Keep if used
 
     # --- Buyer Specific Params ---
-    buyer_ratio: float = 0.1     # Renamed from buyer_config for consistency
+    buyer_ratio: float = 0.1  # Renamed from buyer_config for consistency
     buyer_strategy: str = "iid"  # Strategy for BUYER ('iid', 'dirichlet')
-    buyer_dirichlet_alpha: Optional[float] = None # Alpha ONLY for buyer if buyer_strategy='dirichlet'
+    buyer_dirichlet_alpha: Optional[float] = None  # Alpha ONLY for buyer if buyer_strategy='dirichlet'
+
 
 # --- Image Data Configuration ---
 @dataclass
 class ImageDataConfig:
     """All settings related to an image dataset source."""
-    strategy: str = "dirichlet" # Strategy for SELLERS (Defaulting to Dirichlet)
-    dirichlet_alpha: float = 0.5 # Alpha for SELLERS
-    property_skew: Optional[PropertySkewParams] = None # Keep if you use property skew sometimes
-    discovery: Optional[DiscoverySplitParams] = None # Keep if used
+    strategy: str = "dirichlet"  # Strategy for SELLERS (Defaulting to Dirichlet)
+    dirichlet_alpha: float = 0.5  # Alpha for SELLERS
+    property_skew: Optional[PropertySkewParams] = None  # Keep if you use property skew sometimes
 
     # --- Buyer Specific Params ---
     buyer_ratio: float = 0.1
-    buyer_strategy: str = "iid" # Strategy for BUYER ('iid', 'dirichlet')
-    buyer_dirichlet_alpha: Optional[float] = None # Alpha ONLY for buyer if buyer_strategy='dirichlet'
+    buyer_strategy: str = "iid"  # Strategy for BUYER ('iid', 'dirichlet')
+    buyer_dirichlet_alpha: Optional[float] = None  # Alpha ONLY for buyer if buyer_strategy='dirichlet'
+
 
 # --- Tabular Data Configuration ---
 @dataclass
@@ -363,12 +351,13 @@ class TabularDataConfig:
 
     strategy: str = "dirichlet"  # Strategy for SELLERS (Changed default from 'iid')
     dirichlet_alpha: float = 0.5  # Alpha for SELLERS (Added, assuming you have this param)
-    property_skew: Dict[str, Any] = field(default_factory=dict) # Keep if used
+    property_skew: Dict[str, Any] = field(default_factory=dict)  # Keep if used
 
     # --- Buyer Specific Params ---
     buyer_ratio: float = 0.1
     buyer_strategy: str = "iid"  # Strategy for BUYER ('iid', 'dirichlet')
-    buyer_dirichlet_alpha: Optional[float] = None # Alpha ONLY for buyer if buyer_strategy='dirichlet'
+    buyer_dirichlet_alpha: Optional[float] = None  # Alpha ONLY for buyer if buyer_strategy='dirichlet'
+
 
 # --- Main Data Configuration ---
 @dataclass
@@ -377,7 +366,8 @@ class DataConfig:
     text: Optional[TextDataConfig] = None
     image: Optional[ImageDataConfig] = None
     tabular: Optional[TabularDataConfig] = None
-    num_workers: int = 2 # Keep num_workers here if it applies globally
+    num_workers: int = 2  # Keep num_workers here if it applies globally
+
 
 @dataclass
 class RuntimeDataConfig:
