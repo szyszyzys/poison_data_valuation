@@ -135,11 +135,12 @@ class ExperimentGenerator:
             try:
 
                 file_path.parent.mkdir(parents=True, exist_ok=True)
+                # ... (mkdir logic) ...
                 config_dict = asdict(final_config)
                 with open(file_path, 'w') as f:
-                    # --- FIX: Add Dumper=CustomDumper ---
+                    # --- ENSURE THIS LINE HAS Dumper=CustomDumper ---
                     yaml.dump(config_dict, f, Dumper=CustomDumper, sort_keys=False, indent=2)
-                    # --- End FIX ---
+                    # --- END VERIFICATION ---
                 count_saved += 1
             except Exception as e:
                 print(f"  ❌ Error saving config file {file_path}: {e}")
