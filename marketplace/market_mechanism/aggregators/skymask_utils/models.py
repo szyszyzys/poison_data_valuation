@@ -1,13 +1,11 @@
-import torch
-import torch
-import torch.nn as nn
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.nn.functional as F
 from collections import OrderedDict
 from typing import List
 
-import marketplace.market_mechanism.aggregators.skymask_utils.mytorch as my
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torchvision.models as models
+
 from . import mytorch as my  # Assuming your custom layers are here
 
 
@@ -61,19 +59,35 @@ def create_masknet(param_list, net_type, ctx):
         # ✅ THIS IS THE CORRECT, MERGED RESNET LOGIC
         elif net_type in ["resnet20", "resnet18"]:
             print("✅ Using robust ResMaskNet by inspecting real model structure...")
-            # This requires the "real" model to inspect its structure.
-            # We build a temporary real model to pass to the MaskNet constructor.
-            # Make sure these imports are valid in your project structure.
-            from your_model_module import ConfigurableResNet
-            from your_config_module import get_resnet_config_for_cifar10
-
-            # Assuming ctx holds the device
             device = ctx if isinstance(ctx, torch.device) else torch.device("cpu")
-
-            # The number of workers is nworker - 1 because param_list includes the buyer
             num_workers = nworker - 1
 
-            temp_real_model = ConfigurableResNet(num_classes=10, config=get_resnet_config_for_cifar10())
+            # --- THIS IS THE FLEXIBLE FIX ---
+            #
+            # Infer num_classes from the model's parameters.
+            # The last parameter is the bias of the final linear layer.
+            # Its shape is [num_classes].
+            try:
+                last_param = param_list[0][-1]
+                num_classes = last_param.shape[0]
+
+                # Sanity check: the 2nd to last param (weight) should also have this shape
+                weight_param = param_list[0][-2]
+                if weight_param.shape[0] != num_classes:
+                    # This logic assumes [out_features, in_features] for weight
+                    print(
+                        f"Warning: Bias shape {last_param.shape} doesn't match weight shape {weight_param.shape}. Using bias shape.")
+
+            except IndexError:
+                print("ERROR: Could not infer num_classes from param_list. Defaulting to 10.")
+                num_classes = 10  # Fallback
+
+            print(f"  -> Inferred num_classes = {num_classes} for temp ResNet")
+
+            # Create a standard torchvision ResNet18 model as a template.
+            temp_real_model = models.resnet18(num_classes=num_classes)
+            # --- END FIX ---
+
             masknet = ResMaskNet(temp_real_model, param_list, num_workers, device)
 
         elif net_type == "lr":
@@ -527,6 +541,7 @@ class ResMaskNet(nn.Module):
         out = self.linear(out)
         # Return raw logits, as expected by the training loss function
         return out
+
 
 class LR(nn.Module):
     def __init__(self):
