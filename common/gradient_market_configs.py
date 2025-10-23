@@ -213,7 +213,7 @@ class PoisoningConfig:
 class GradientInversionParams:
     """Parameters for the Gradient Inversion Attack."""
     frequency: int = 10
-    victim_strategy: VictimStrategy = VictimStrategy.RANDOM
+    victim_strategy = 'random'
     fixed_victim_idx: int = 0
     lrs_to_try: List[float] = field(default_factory=lambda: [0.1, 0.01])
     base_attack_params: Dict[str, Any] = field(default_factory=dict)
@@ -225,10 +225,7 @@ class ServerAttackConfig:
     # This is the main switch: 'none', 'gradient_inversion', etc.
     attack_name: str = 'none'
 
-    # Nested parameters for each possible attack
     gradient_inversion_params: GradientInversionParams = field(default_factory=GradientInversionParams)
-    # You could add others here in the future
-    # membership_inference: MembershipInferenceParams = field(default_factory=MembershipInferenceParams)
 
 
 @dataclass

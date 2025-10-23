@@ -33,9 +33,7 @@ class CustomDumper(yaml.SafeDumper):
 
     def represent_enum(self, data):
         """Tells YAML how to represent any Enum: by using its NAME as a string."""
-        # --- FIX: Use data.name instead of data.value ---
         return self.represent_scalar('tag:yaml.org,2002:str', data.name)
-        # --- End FIX ---
 
 
 # --- Register the custom representers ---
