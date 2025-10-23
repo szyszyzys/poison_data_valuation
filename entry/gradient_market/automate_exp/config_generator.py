@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 import yaml
 
+from common.enums import PoisonType, VictimStrategy
 from common.gradient_market_configs import AppConfig
 from entry.gradient_market.automate_exp.scenarios import Scenario
 
@@ -36,14 +37,16 @@ class CustomDumper(yaml.SafeDumper):
         return self.represent_scalar('tag:yaml.org,2002:str', data.name)
 
 
-# --- Register the custom representers ---
-# For NoneType
 CustomDumper.add_representer(NoneType, CustomDumper.represent_none)
 
-# For Enums (using the corrected represent_enum method)
-# Use add_representer for a base class like Enum
+# --- MODIFY REGISTRATION ---
+# Keep the base Enum representer (as a fallback)
 CustomDumper.add_representer(Enum, CustomDumper.represent_enum)
-
+# ADD specific representers for the exact Enum classes you use
+CustomDumper.add_representer(PoisonType, CustomDumper.represent_enum)
+CustomDumper.add_representer(VictimStrategy, CustomDumper.represent_enum)
+# Add specific lines for any other Enum types used in your AppConfig
+# --- END MODIFICATION ---
 # For NumPy types (using add_multi_representer for specific types)
 for numpy_type in (np.integer, np.floating, np.ndarray, np.bool_):
     # Ensure you add representers for the specific types, not the base class np.generic
