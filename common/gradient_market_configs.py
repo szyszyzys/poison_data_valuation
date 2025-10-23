@@ -351,7 +351,7 @@ class TabularDataConfig:
 
     strategy: str = "dirichlet"  # Strategy for SELLERS (Changed default from 'iid')
     dirichlet_alpha: float = 0.5  # Alpha for SELLERS (Added, assuming you have this param)
-    property_skew: Dict[str, Any] = field(default_factory=dict)  # Keep if used
+    property_skew: Optional[PropertySkewParams] = None  # Keep if you use property skew sometimes
 
     # --- Buyer Specific Params ---
     buyer_ratio: float = 0.1

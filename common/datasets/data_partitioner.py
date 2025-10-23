@@ -560,22 +560,27 @@ class TabularDataPartitioner:
                 self.client_indices[client_id].extend(extra_indices_split[client_id].tolist())
 
     # --- _partition_property_skew (Adapted for pandas features) ---
-    def _partition_property_skew(self, seller_pool_indices: np.ndarray, params: Dict):
+    def _partition_property_skew(self, seller_pool_indices: np.ndarray, config: PropertySkewParams):
         """Partitions sellers based on a binary feature (property)."""
-        # Ensure params is not None and contains property_key
-        if not params or 'property_key' not in params:
-            raise ValueError("Property skew requires 'property_key' in partition_params.")
 
-        prop_key = params['property_key']
-        high_prevalence_ratio = params.get('high_prevalence_ratio', 0.8)  # Use defaults if not provided
-        low_prevalence_ratio = params.get('low_prevalence_ratio', 0.1)
-        standard_prevalence_ratio = params.get('standard_prevalence_ratio', 0.4)
-        num_high_prevalence_clients = params.get('num_high_prevalence_clients', 2)
-        num_security_attackers = params.get('num_security_attackers', 2)
+        # Now you can read directly from the dataclass object
+        if not config:
+            raise ValueError("Property skew strategy selected, but 'property_skew' config is None.")
+
+        # Read directly from dataclass attributes
+        prop_key = config.property_key
+        high_prevalence_ratio = config.high_prevalence_ratio
+        low_prevalence_ratio = config.low_prevalence_ratio
+        standard_prevalence_ratio = config.standard_prevalence_ratio
+        num_high_prevalence_clients = config.num_high_prevalence_clients
+        num_security_attackers = config.num_security_attackers
 
         logger.info(f"Partitioning {len(seller_pool_indices)} seller samples using property skew: '{prop_key}'")
 
         # --- Define client groups ---
+        # The rest of your function logic (defining num_low_prevalence,
+        # separating data, and calling assign_data) works perfectly
+        # as-is because it uses the local variables defined above.
         num_low_prevalence = self.num_clients - num_high_prevalence_clients - num_security_attackers
         if num_low_prevalence < 0:
             raise ValueError("Sum of high prevalence clients and security attackers exceeds total clients.")
