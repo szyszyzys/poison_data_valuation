@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import yaml
 
-from common.enums import PoisonType, VictimStrategy, ImageBackdoorAttackName, ImageTriggerType
+from common.enums import PoisonType, VictimStrategy, ImageBackdoorAttackName, ImageTriggerType, ImageTriggerLocation
 from common.gradient_market_configs import AppConfig
 from entry.gradient_market.automate_exp.scenarios import Scenario
 
@@ -47,9 +47,7 @@ CustomDumper.add_representer(PoisonType, CustomDumper.represent_enum)
 CustomDumper.add_representer(VictimStrategy, CustomDumper.represent_enum)
 CustomDumper.add_representer(ImageBackdoorAttackName, CustomDumper.represent_enum)
 CustomDumper.add_representer(ImageTriggerType, CustomDumper.represent_enum)
-
-
-
+CustomDumper.add_representer(ImageTriggerLocation, CustomDumper.represent_enum)
 
 # Add specific lines for any other Enum types used in your AppConfig
 # --- END MODIFICATION ---
