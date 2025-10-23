@@ -377,7 +377,7 @@ class GradientSeller(BaseSeller):
                 collate_fn=collate_fn,
                 num_workers=0,  # Important for multiprocessing compatibility
                 pin_memory=False,  # Avoid issues with CUDA in multiprocessing
-                drop_last=True
+                drop_last=False
             )
 
             # Validate DataLoader

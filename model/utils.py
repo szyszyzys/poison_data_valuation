@@ -59,6 +59,9 @@ def train_local_model(model: nn.Module,
                     data, labels = batch_data
 
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+                if data.size(0) <= 1:
+                    logging.warning(f"Skipping batch {batch_idx} (size {data.size(0)}) to avoid BatchNorm error.")
+                    continue
                 if batch_idx == 0:  # Only log first batch
                     data_stats = data.float()
                     logging.info(
