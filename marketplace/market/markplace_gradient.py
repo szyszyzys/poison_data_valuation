@@ -467,8 +467,21 @@ class DataMarketplaceFederated(DataMarketplace):
             round_record[key] = marketplace_metrics.get(key)
 
         if aggregation_stats:
-            round_record.update(aggregation_stats)
+            # 1. Store the COMPLETE, detailed stats in its own nested key
+            #    This is what we will save to JSON.
+            round_record['detailed_aggregation_stats'] = aggregation_stats
 
+            # 2. "Pull up" all flat (non-nested) keys for the main CSV log
+            #    This is fully automatic and requires no manual keys.
+            for key, value in aggregation_stats.items():
+                # Check if the value is a "simple" type (not a dict or list)
+                if not isinstance(value, (dict, list, np.ndarray)):
+                    # Pull it up to the main level
+                    round_record[key] = value
+
+        else:
+            # Ensure the key exists even if stats are empty
+            round_record['detailed_aggregation_stats'] = {}
         # Add detailed seller metrics
         seller_metrics_list = []
         for sid in seller_ids:

@@ -696,7 +696,6 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
                 logging.error(f"❌ Validation failed in round {round_num}: {e}", exc_info=True)
                 patience_counter += 1
 
-
         # --- 4. CHECK EARLY STOPPING ---
         if cfg.experiment.use_early_stopping and patience_counter >= patience:
             logging.warning(f"🛑 EARLY STOPPING: No improvement for {patience} rounds. Halting at round {round_num}.")
@@ -731,7 +730,19 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
         save_round_incremental(round_record, save_path)
         save_seller_metrics_incremental(save_path, round_record)
         save_marketplace_analysis_data_incremental(save_path, round_record)
+        detailed_stats = round_record.get('detailed_aggregation_stats')
 
+        # Save the detailed log *only if* it's not empty
+        if detailed_stats:
+            # Create the save directory
+            agg_stats_save_path = save_path / "agg_stats"
+            agg_stats_save_path.mkdir(parents=True, exist_ok=True)
+
+            # Save the *entire* nested dictionary to a JSON file
+            save_json_atomic(
+                detailed_stats,
+                agg_stats_save_path / f"round_{round_record['round']}.json"
+            )
         # --- 7. GENERATE REPORTS ---
         generate_marketplace_report(save_path, marketplace, cfg.experiment.global_rounds)
 
@@ -1013,7 +1024,7 @@ def run_attack(cfg: AppConfig):
             validation_loader=validation_loader,
             model_factory=model_factory,  # Pass the stateful factory
             num_classes=num_classes,
-            sybil_coordinator = sybil_coordinator,
+            sybil_coordinator=sybil_coordinator,
         )
 
         # 5. Seller Initialization

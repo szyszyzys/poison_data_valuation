@@ -1,10 +1,11 @@
 import copy
 import logging
+from typing import Dict, List, Tuple, Any
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Tuple, Any
 
 from common.utils import clip_gradient_update, flatten_tensor
 from marketplace.market_mechanism.aggregators.base_aggregator import BaseAggregator
@@ -13,7 +14,10 @@ from marketplace.utils.gradient_market_utils.clustering import optimal_k_gap, km
 logger = logging.getLogger("Aggregator")
 
 
-def _cluster_and_score_martfl(similarities: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
+def _cluster_and_score_martfl(
+        similarities: np.ndarray,
+        max_k_param: int = 10  # Add the new argument with a default
+) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
     Cluster similarities and score inliers.
     Returns scores and clustering metadata.
@@ -26,8 +30,7 @@ def _cluster_and_score_martfl(similarities: np.ndarray) -> Tuple[np.ndarray, Dic
         return np.ones_like(similarities), clustering_info
 
     sim_reshaped = similarities.reshape(-1, 1)
-    max_k = min(len(similarities) - 1, 10)
-
+    max_k = min(len(similarities) - 1, max_k_param)
     if max_k < 2:
         clustering_info['num_clusters'] = 1
         clustering_info['cluster_method'] = 'max_k_too_small'
@@ -59,16 +62,23 @@ def _cluster_and_score_martfl(similarities: np.ndarray) -> Tuple[np.ndarray, Dic
 
 class MartflAggregator(BaseAggregator):
 
-    def __init__(self, clip: bool, change_base: bool, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.clip = clip
-        self.change_base = change_base
-        self.baseline_id = "buyer"
-        self.root_gradient = None  # Will hold the buyer's root gradient for the round
+        self.clip = kwargs.get('clip', True)
+        self.change_base = kwargs.get('change_base', True)
+        self.initial_baseline = kwargs.get('initial_baseline', "buyer")  # Use the value from kwargs
+        self.max_k = kwargs.get('max_k', 10)  # Use the value from kwargs
+
+        # --- Set internal state ---
+        self.baseline_id = self.initial_baseline  # Initialize with the configured baseline
+        self.root_gradient = None
+
         logger.info(f"MartflAggregator initialized:")
-        logger.info(f"  - clip_gradients: {self.clip}")
-        logger.info(f"  - change_baseline: {self.change_base}")
-        logger.info(f"  - initial_baseline: {self.baseline_id}")
+        logger.info(
+            f"  - clip_gradients_server_side: {self.clip} (using clip_norm: {self.clip_norm if self.clip else 'N/A'})")
+        logger.info(f"  - change_baseline_dynamically: {self.change_base}")
+        logger.info(f"  - initial_baseline: '{self.initial_baseline}'")  # Log the actual initial baseline
+        logger.info(f"  - max_clusters_k: {self.max_k}")
 
     def aggregate(
             self,

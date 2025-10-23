@@ -415,8 +415,24 @@ class BackdoorTabularConfig:
 @dataclass
 class MartFLParams:
     """Parameters specific to the martFL aggregator."""
+    # --- Existing Parameters ---
     change_base: bool = True
+    # If True, rotates baseline seller based on kappa score.
+    # If False, always uses the initial_baseline (like FLTrust).
+
     clip: bool = True
+    # If True, uses server-side clipping with the clip_norm value
+    # defined in the main AggregationConfig before similarity calculation.
+
+    # --- New Tunable Parameters ---
+    initial_baseline: str = "buyer"
+    # Specifies the ID used as the baseline anchor in the *first* round
+    # (and subsequent rounds if change_base is False).
+    # Common values: "buyer" or a specific client ID like "bn_0".
+
+    max_k: int = 10
+    # The maximum number of clusters ('k') that the k-means algorithm
+    # (in _cluster_and_score_martfl) will consider when detecting outliers.
 
 
 @dataclass
