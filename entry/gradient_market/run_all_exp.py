@@ -765,64 +765,36 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
 _csv_headers_cache = {}
 TRAINING_LOG_COLUMNS = [
     # Core Round Info
-    'round',
-    'timestamp',
-    'duration_sec',
+    'round', 'timestamp', 'duration_sec',
 
     # Aggregation/Selection Summary
-    'num_total_sellers',
-    'num_selected',
-    'num_outliers',
-    'selection_rate',
-    'outlier_rate',
+    'num_total_sellers', 'num_selected', 'num_outliers',
+    'selection_rate', 'outlier_rate',
 
     # Defense Performance
-    'num_known_adversaries',
-    'num_detected_adversaries',
-    'num_benign_outliers',
-    'adversary_detection_rate',
-    'false_positive_rate',
+    'num_known_adversaries', 'num_detected_adversaries', 'num_benign_outliers',
+    'adversary_detection_rate', 'false_positive_rate',
 
-    # Validation Metrics (from validation_loader, every round)
-    'val_loss',
-    'val_acc',
-    'asr',
-    'B-Acc',
-    'B-F1',
+    # Validation Metrics (every round)
+    'val_loss', 'val_acc', 'asr', 'B-Acc', 'B-F1',
 
-    # Test Metrics (from test_loader, periodic)
-    'test_loss',
-    'test_acc',
-    'test_asr',
-    'test_B-Acc',
-    'test_B-F1',
+    # Test Metrics (periodic)
+    'test_loss', 'test_acc', 'test_asr', 'test_B-Acc', 'test_B-F1',
 
     # Buyer Attack Info
-    "buyer_attack_active",
-    "buyer_attack_type",
-    "buyer_attack_stats",
+    "buyer_attack_active", "buyer_attack_type", "buyer_attack_stats",
 
     # Server Attack Info
-    "attack_performed",
-    "attack_victim",
-    "attack_success",
+    "attack_performed", "attack_victim", "attack_success",
 
-    # Gradient Stats (Optional)
-    'avg_gradient_norm',
-    'std_gradient_norm',
-    'min_gradient_norm',
-    'max_gradient_norm',
-    'avg_gradient_similarity',
+    # Gradient Stats (from default evaluator)
+    'avg_gradient_norm', 'std_gradient_norm', 'min_gradient_norm', 'max_gradient_norm',
 
-    # --- ADD THESE NEW COLUMNS ---
-    'avg_sim_to_buyer',
-    'std_sim_to_buyer',
-    'min_sim_to_buyer',
-    'max_sim_to_buyer',
-    'avg_sim_to_oracle',
-    'std_sim_to_oracle',
-    'min_sim_to_oracle',
-    'max_sim_to_oracle',
+    # --- ALL VALUATION METRICS (Default & Optional) ---
+    'avg_sim_to_buyer', 'std_sim_to_buyer', 'min_sim_to_buyer', 'max_sim_to_buyer',
+    'avg_sim_to_oracle', 'std_sim_to_oracle', 'min_sim_to_oracle', 'max_sim_to_oracle',
+    'avg_sim_to_aggregate_cgsv', 'std_sim_to_aggregate_cgsv',
+
 ]
 
 

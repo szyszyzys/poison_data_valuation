@@ -268,6 +268,15 @@ class GradientSeller(BaseSeller):
         self.performance_history = []  # Track contribution to global model
         self.reward_history = []  # Track hypothetical rewards
 
+        self.train_loader = DataLoader(
+            dataset=self.data_config.dataset,
+            batch_size=self.training_config.batch_size,
+            collate_fn=self.data_config.collate_fn,  # Handles text/image
+            shuffle=True,
+            num_workers=2,  # Optional: for efficiency
+            pin_memory=True if self.device == "cuda" else False  # Optional
+        )
+
     def get_gradient_for_upload(self,
                                 all_seller_gradients: Dict[str, List[torch.Tensor]] = None,
                                 target_seller_id: str = None) -> Tuple[Optional[List[torch.Tensor]], Dict[str, Any]]:
@@ -950,6 +959,7 @@ class SybilCoordinator:
         self.update_historical_patterns(self.selected_gradients)
         self.adaptive_role_assignment()
         self.selected_gradients = {}
+
 
 class PoisonedDataset(Dataset):
     """

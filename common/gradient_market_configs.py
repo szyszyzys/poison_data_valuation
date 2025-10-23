@@ -465,6 +465,26 @@ class AggregationConfig:
 
 
 @dataclass
+class ValuationConfig:
+    """Configuration for valuation methods."""
+
+    # --- Default, Always-On Methods ---
+    run_similarity: bool = True
+    # ^ Note: This is for config clarity. The manager
+    # will always run this cheap, default evaluator.
+
+    # --- Optional Expensive Methods ---
+    run_influence: bool = False  # Run fast influence function
+    run_loo: bool = False  # Run per-round Leave-One-Out
+    loo_frequency: int = 10  # Run LOO every N rounds
+
+    # --- NEW KERNELSHAP (LINEAR MODEL) ---
+    run_kernelshap: bool = False  # Run KernelSHAP approximation
+    kernelshap_frequency: int = 10
+    kernelshap_samples: int = 32  # Number of coalitions to sample (e.g., 2*N + 8)
+
+
+@dataclass
 class AppConfig:
     """Top-level configuration for the entire experiment run."""
     experiment: ExperimentConfig
@@ -479,6 +499,7 @@ class AppConfig:
     data_root: str = "./data"
     use_cache: bool = True
     buyer_attack_config: BuyerAttackConfig = field(default_factory=BuyerAttackConfig)
+    valuation: ValuationConfig = field(default_factory=ValuationConfig)
 
     def __post_init__(self):
         """

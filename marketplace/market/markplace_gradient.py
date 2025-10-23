@@ -13,6 +13,7 @@ from common.gradient_market_configs import AppConfig, ServerAttackConfig
 from entry.gradient_market.privacy_attack import GradientInversionAttacker
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.aggregator import Aggregator
+from marketplace.market_mechanism.valuation.valuation import ValuationManager
 from marketplace.seller.gradient_seller import GradientSeller, SybilCoordinator
 from marketplace.seller.seller import BaseSeller
 
@@ -86,7 +87,11 @@ class DataMarketplaceFederated(DataMarketplace):
         self.oracle_seller: GradientSeller = oracle_seller
         self.num_classes = num_classes
         self.sybil_coordinator = sybil_coordinator  # ✅ Store at marketplace level
-
+        self.valuation_manager = ValuationManager(
+            cfg=self.cfg,
+            aggregator=self.aggregator,
+            buyer_root_loader=self.buyer_seller.train_loader
+        )
         # Conditionally initialize the privacy attacker
         if self.cfg.server_attack_config.attack_name == ServerAttackMode.GRADIENT_INVERSION:
             # 2. Use the correct variable name: 'self.cfg' not 'self.config'
@@ -138,7 +143,6 @@ class DataMarketplaceFederated(DataMarketplace):
         # ===== PHASE 2: Collect Honest Gradients =====
         logging.info("\n📦 Collecting honest gradients from all sellers...")
         gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
-
 
         if not gradients_dict:
             logging.error("❌ No gradients collected! Cannot proceed with round.")
@@ -347,25 +351,29 @@ class DataMarketplaceFederated(DataMarketplace):
                 all_sellers=self.sellers
             )
 
-        # ===== PHASE 10: Save Debug Data (Optional) =====
         if self.cfg.debug.save_individual_gradients:
             if round_number % self.cfg.debug.gradient_save_frequency == 0:
                 self._save_round_gradients(round_number, gradients_dict, agg_grad)
 
-        # ===== PHASE 11: Compute Metrics =====
-        logging.info("\n📈 Computing marketplace metrics...")
-        marketplace_metrics = self._compute_marketplace_metrics(
-            round_number=round_number,
-            gradients_dict=sanitized_gradients,
-            seller_ids=seller_ids,
-            selected_ids=selected_ids,
-            outlier_ids=outlier_ids,
-            aggregation_stats=aggregation_stats,
-            seller_stats_list=seller_stats_list,
-            oracle_root_gradient=sanitized_oracle_gradient
-        )
+                # ===== PHASE 11: Compute Metrics (Valuation) =====
+                logging.info("\n📈 Computing marketplace metrics & valuation...")
 
-        # ===== PHASE 12: Create Round Record =====
+                # --- THIS IS THE ONLY CHANGE YOU MAKE ---
+                # Create a dict of stats keyed by seller_id for the evaluator
+        seller_stats_dict = {sid: stats for sid, stats in zip(seller_ids, seller_stats_list)}
+
+        seller_valuations, aggregate_metrics = self.valuation_manager.evaluate_round(
+            round_number=round_number,
+            current_global_model=self.global_model,
+            seller_gradients=sanitized_gradients,
+            seller_stats=seller_stats_dict,
+            oracle_gradient=sanitized_oracle_gradient,
+            buyer_gradient=sanitized_root_gradient,
+            aggregated_gradient=agg_grad,
+            aggregation_stats=aggregation_stats,
+            selected_ids=selected_ids,
+            outlier_ids=outlier_ids
+        )
         duration = time.time() - round_start_time
         round_record = self._create_round_record(
             round_number=round_number,
@@ -376,16 +384,20 @@ class DataMarketplaceFederated(DataMarketplace):
             buyer_stats=buyer_stats,
             attack_log=attack_log,
             aggregation_stats=aggregation_stats,
-            marketplace_metrics=marketplace_metrics
+            # --- ADD/FIX THESE TWO LINES ---
+            seller_valuations=seller_valuations,
+            aggregate_metrics=aggregate_metrics
         )
-
         # ===== PHASE 13: Notify Sellers =====
+        # NO CHANGES NEEDED HERE. This code also works as-is.
         for sid, seller in self.sellers.items():
+            seller_scores = seller_valuations.get(sid, {})
             seller.round_end_process(
                 round_number,
                 was_selected=(sid in selected_ids),
                 was_outlier=(sid in outlier_ids),
-                marketplace_metrics=marketplace_metrics.get(f'seller_{sid}', {})
+                marketplace_metrics=seller_scores,
+                price_paid=seller_scores.get('price_paid', 0.0)
             )
 
         logging.info(f"\n{'=' * 60}")
@@ -429,9 +441,19 @@ class DataMarketplaceFederated(DataMarketplace):
             for tensor in gradient
         ]
 
-    def _create_round_record(self, round_number, duration, seller_ids, selected_ids,
-                             outlier_ids, buyer_stats, attack_log, aggregation_stats,
-                             marketplace_metrics) -> Dict:
+    def _create_round_record(
+            self,
+            round_number: int,
+            duration: float,
+            seller_ids: List[str],
+            selected_ids: List[str],
+            outlier_ids: List[str],
+            buyer_stats: Dict,
+            attack_log: Dict,
+            aggregation_stats: Dict,
+            seller_valuations: Dict[str, Dict],  # <-- UPDATED
+            aggregate_metrics: Dict  # <-- UPDATED
+    ) -> Dict:
         """Create comprehensive round record."""
         round_record = {
             "round": round_number,
@@ -452,51 +474,32 @@ class DataMarketplaceFederated(DataMarketplace):
             "attack_success": attack_log.get('success') if attack_log else None,
         }
 
-        # Add aggregate metrics
-        aggregate_metric_keys = [
-            'selection_rate', 'outlier_rate',
-            'avg_gradient_norm', 'std_gradient_norm', 'min_gradient_norm', 'max_gradient_norm',
-            'avg_gradient_similarity',
-            'num_known_adversaries', 'num_detected_adversaries', 'num_benign_outliers',
-            'adversary_detection_rate', 'false_positive_rate',
-            'avg_sim_to_buyer', 'std_sim_to_buyer', 'min_sim_to_buyer', 'max_sim_to_buyer',
-            'avg_sim_to_oracle', 'std_sim_to_oracle', 'min_sim_to_oracle', 'max_sim_to_oracle'
-        ]
+        # --- 1. Automatic Aggregate Metrics ---
+        # No more manual list. This adds all keys from aggregate_metrics.
+        round_record.update(aggregate_metrics)
 
-        for key in aggregate_metric_keys:
-            round_record[key] = marketplace_metrics.get(key)
-
+        # --- 2. Aggregation Stats ---
         if aggregation_stats:
-            # 1. Store the COMPLETE, detailed stats in its own nested key
-            #    This is what we will save to JSON.
             round_record['detailed_aggregation_stats'] = aggregation_stats
-
-            # 2. "Pull up" all flat (non-nested) keys for the main CSV log
-            #    This is fully automatic and requires no manual keys.
+            # "Pull up" flat keys for the main CSV log
             for key, value in aggregation_stats.items():
-                # Check if the value is a "simple" type (not a dict or list)
                 if not isinstance(value, (dict, list, np.ndarray)):
-                    # Pull it up to the main level
                     round_record[key] = value
-
         else:
-            # Ensure the key exists even if stats are empty
             round_record['detailed_aggregation_stats'] = {}
-        # Add detailed seller metrics
+
+        # --- 3. Automatic Per-Seller Metrics ---
+        # No more manual keys. This saves all per-seller scores.
         seller_metrics_list = []
         for sid in seller_ids:
-            seller_data = {
-                'round': round_number,
-                'seller_id': sid,
-                'selected': sid in selected_ids,
-                'outlier': sid in outlier_ids,
-                'sim_to_oracle_root': marketplace_metrics.get(f'seller_{sid}_sim_to_oracle_root'),
-                'sim_to_buyer_root': marketplace_metrics.get(f'seller_{sid}_sim_to_buyer_root'),
-                'gradient_norm': marketplace_metrics.get(f'seller_{sid}_gradient_norm'),
-                'train_loss': marketplace_metrics.get(f'seller_{sid}_train_loss'),
-                'num_samples': marketplace_metrics.get(f'seller_{sid}_num_samples'),
-                'weight': marketplace_metrics.get(f'seller_{sid}_weight'),
-            }
+            # Get all scores (sim_to_oracle, price_paid, influence, etc.)
+            seller_data = seller_valuations.get(sid, {}).copy()
+
+            # Add logging metadata
+            seller_data['round'] = round_number
+            seller_data['seller_id'] = sid
+
+            # (Note: 'selected' & 'outlier' are already set by the evaluator)
             seller_metrics_list.append(seller_data)
 
         round_record['detailed_seller_metrics'] = seller_metrics_list
