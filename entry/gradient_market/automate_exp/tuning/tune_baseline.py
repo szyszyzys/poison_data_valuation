@@ -5,7 +5,7 @@ from typing import Callable
 
 from common.enums import PoisonType
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
-from entry.gradient_market.automate_exp.scenarios import Scenario, use_CIFAR100_config, use_CIFAR10_config
+from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar100_config, use_cifar10_config
 from entry.gradient_market.automate_exp.tbl_new import get_base_tabular_config
 
 # --- Assuming your config generator and base factories are importable ---
@@ -118,7 +118,7 @@ if __name__ == "__main__":
             "model_structure": "cnn",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "CIFAR10_cnn",
-            "dataset_modifier": use_CIFAR10_config, # Pass the function itself
+            "dataset_modifier": use_cifar10_config, # Pass the function itself
         },
         {
             "modality_name": "image",
@@ -127,7 +127,7 @@ if __name__ == "__main__":
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "CIFAR10_resnet18",
-            "dataset_modifier": use_CIFAR10_config, # Pass the function itself
+            "dataset_modifier": use_cifar10_config, # Pass the function itself
         },
         {
             "modality_name": "image",
@@ -136,7 +136,7 @@ if __name__ == "__main__":
             "model_structure": "cnn",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "CIFAR100_cnn",
-            "dataset_modifier": use_CIFAR100_config, # Pass the function itself
+            "dataset_modifier": use_cifar100_config, # Pass the function itself
         },
         {
             "modality_name": "image",
@@ -145,7 +145,7 @@ if __name__ == "__main__":
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "CIFAR100_resnet18",
-            "dataset_modifier": use_CIFAR100_config, # Pass the function itself
+            "dataset_modifier": use_cifar100_config, # Pass the function itself
         },
 
         # --- Text Tuning ---
