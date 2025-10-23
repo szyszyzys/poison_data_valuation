@@ -234,6 +234,7 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     stats = save_data_statistics(
         buyer_indices=buyer_indices,
         seller_splits=seller_splits,
+        test_indices=test_indices,
         client_properties=client_properties,
         targets=_extract_targets(train_set),
         save_filepath=stats_save_path  # Use the new `save_filepath` argument

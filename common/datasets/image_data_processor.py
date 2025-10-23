@@ -161,7 +161,7 @@ def save_data_statistics(
     test_indices: np.ndarray, # <-- ADDED ARGUMENT
     client_properties: Dict[int, str],
     targets: np.ndarray,
-    save_filepath: str # Path object is also fine here
+    save_filepath: Path # Path object is also fine here
 ) -> Dict[str, Any]: # Changed return type hint
     """
     Calculates and saves detailed data distribution statistics
@@ -221,7 +221,7 @@ def save_data_statistics(
             }
 
 
-    save_path = Path(save_filepath)
+    save_path = save_filepath
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
