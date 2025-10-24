@@ -1,12 +1,11 @@
 import logging
+import numpy as np
 import time
+import torch
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
-
-import numpy as np
-import torch
 
 from common.enums import ServerAttackMode
 from common.gradient_market_configs import AppConfig, ServerAttackConfig
@@ -87,11 +86,7 @@ class DataMarketplaceFederated(DataMarketplace):
         self.oracle_seller: GradientSeller = oracle_seller
         self.num_classes = num_classes
         self.sybil_coordinator = sybil_coordinator  # ✅ Store at marketplace level
-        self.valuation_manager = ValuationManager(
-            cfg=self.cfg,
-            aggregator=self.aggregator,
-            buyer_root_loader=self.buyer_seller.train_loader
-        )
+        self.valuation_manager = None
         # Conditionally initialize the privacy attacker
         if self.cfg.server_attack_config.attack_name == ServerAttackMode.GRADIENT_INVERSION:
             # 2. Use the correct variable name: 'self.cfg' not 'self.config'
@@ -361,7 +356,12 @@ class DataMarketplaceFederated(DataMarketplace):
                 # --- THIS IS THE ONLY CHANGE YOU MAKE ---
                 # Create a dict of stats keyed by seller_id for the evaluator
         seller_stats_dict = {sid: stats for sid, stats in zip(seller_ids, seller_stats_list)}
-
+        if not self.valuation_manager:
+            self.valuation_manager = ValuationManager(
+                cfg=self.cfg,
+                aggregator=self.aggregator,
+                buyer_root_loader=self.buyer_seller.train_loader
+            )
         seller_valuations, aggregate_metrics = self.valuation_manager.evaluate_round(
             round_number=round_number,
             current_global_model=self.global_model,
