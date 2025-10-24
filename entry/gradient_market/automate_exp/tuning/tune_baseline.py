@@ -23,9 +23,14 @@ except ImportError as e:
     sys.exit(1)
 
 # --- Parameters to Sweep ---
-# These are the learning rates and local epochs we want to test
-LEARNING_RATES_TO_SWEEP = [0.05, 0.01, 0.005, 0.001]
+
+# We define separate learning rate grids for each optimizer
+ADAM_LRS_TO_SWEEP = [0.001, 0.0005, 0.0001]
+SGD_LRS_TO_SWEEP = [0.1, 0.05, 0.01]  # SGD typically needs larger LRs
+
+OPTIMIZERS_TO_SWEEP = ["Adam", "SGD"]
 LOCAL_EPOCHS_TO_SWEEP = [1, 2, 5]
+
 NUM_SEEDS_PER_CONFIG = 3  # Run each hyperparameter combination 3 times
 
 
@@ -40,6 +45,7 @@ def generate_fedavg_tuning_scenario_for_modality(
         dataset_modifier: Callable[[AppConfig], AppConfig]
 ) -> Scenario:
     """Creates the tuning scenario object for a specific modality."""
+    # The scenario name is now the *base folder* for results
     scenario_name = f"step1_tune_fedavg_{modality_name}_{dataset_name}_{model_structure}"
     print(f"-- Defining scenario: {scenario_name}")
 
@@ -53,18 +59,20 @@ def generate_fedavg_tuning_scenario_for_modality(
         "experiment.use_early_stopping": [True],
         "experiment.patience": [10],
 
-        "training.learning_rate": LEARNING_RATES_TO_SWEEP,
+        # These will be looped over in the main block
+        "training.optimizer": OPTIMIZERS_TO_SWEEP,
         "training.local_epochs": LOCAL_EPOCHS_TO_SWEEP,
+        # Note: learning_rate is NOT here, it's handled in the main loop
 
         f"data.{modality_name}.strategy": ["dirichlet"],
-        f"data.{modality_name}.dirichlet_alpha": [0.5],  # Example alpha, adjust if needed
+        f"data.{modality_name}.dirichlet_alpha": [0.5],
 
         f"data.{modality_name}.buyer_strategy": ["iid"],
-        f"data.{modality_name}.buyer_ratio": [0.1],  # Or your standard buyer ratio
+        f"data.{modality_name}.buyer_ratio": [0.1],
     }
 
     # Add modality-specific fixed parameters (e.g., dataset_type)
-    parameter_grid[f"experiment.dataset_type"] = [modality_name]  # Simplified
+    parameter_grid[f"experiment.dataset_type"] = [modality_name]
 
     def ensure_benign(config: AppConfig) -> AppConfig:
         config.experiment.adv_rate = 0.0
@@ -85,7 +93,6 @@ def generate_fedavg_tuning_scenario_for_modality(
 if __name__ == "__main__":
 
     TUNING_CONFIGS = [
-
         # --- Tabular Tuning ---
         {
             "modality_name": "tabular",
@@ -93,17 +100,17 @@ if __name__ == "__main__":
             "dataset_name": "Texas100",
             "model_structure": "mlp",
             "model_config_param_key": "experiment.tabular_model_config_name",
-            "model_config_name": "mlp_texas100_baseline",  # Assumed name
-            "dataset_modifier": lambda cfg: cfg,  # No specific modifier needed if base is Texas100
+            "model_config_name": "mlp_texas100_baseline",
+            "dataset_modifier": lambda cfg: cfg,
         },
         {
             "modality_name": "tabular",
             "base_config_factory": get_base_tabular_config,
             "dataset_name": "Purchase100",
-            "model_structure": "mlp",  # Assuming MLP, as ResNet is unusual for tabular. Adjust if needed.
+            "model_structure": "mlp",
             "model_config_param_key": "experiment.tabular_model_config_name",
-            "model_config_name": "mlp_purchase100_baseline",  # Assumed name
-            "dataset_modifier": lambda cfg: cfg,  # No specific modifier needed if base is Texas100
+            "model_config_name": "mlp_purchase100_baseline",
+            "dataset_modifier": lambda cfg: cfg,
         },
 
         # --- Image Tuning ---
@@ -114,7 +121,7 @@ if __name__ == "__main__":
             "model_structure": "cnn",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "CIFAR10_cnn",
-            "dataset_modifier": use_cifar10_config,  # Pass the function itself
+            "dataset_modifier": use_cifar10_config,
         },
         {
             "modality_name": "image",
@@ -123,7 +130,7 @@ if __name__ == "__main__":
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "CIFAR10_resnet18",
-            "dataset_modifier": use_cifar10_config,  # Pass the function itself
+            "dataset_modifier": use_cifar10_config,
         },
         {
             "modality_name": "image",
@@ -132,7 +139,7 @@ if __name__ == "__main__":
             "model_structure": "cnn",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "CIFAR100_cnn",
-            "dataset_modifier": use_cifar100_config,  # Pass the function itself
+            "dataset_modifier": use_cifar100_config,
         },
         {
             "modality_name": "image",
@@ -141,7 +148,7 @@ if __name__ == "__main__":
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "CIFAR100_resnet18",
-            "dataset_modifier": use_cifar100_config,  # Pass the function itself
+            "dataset_modifier": use_cifar100_config,
         },
 
         # --- Text Tuning ---
@@ -149,12 +156,13 @@ if __name__ == "__main__":
             "modality_name": "text",
             "base_config_factory": get_base_text_config,
             "dataset_name": "TREC",
-            "model_structure": "textcnn",  # Assuming 'text_cnn' is the structure name
-            "model_config_param_key": "experiment.text_model_config_name",  # Assuming this key name
-            "model_config_name": "textcnn_trec_baseline",  # Assumed name
-            "dataset_modifier": lambda cfg: cfg,  # No specific modifier needed if base is TRE
+            "model_structure": "textcnn",
+            "model_config_param_key": "experiment.text_model_config_name",
+            "model_config_name": "textcnn_trec_baseline",
+            "dataset_modifier": lambda cfg: cfg,
         },
     ]
+
     # --- Output Directory for Configs ---
     output_dir = "./configs_generated/step1_fedavg_tuning"
     generator = ExperimentGenerator(output_dir)
@@ -170,23 +178,76 @@ if __name__ == "__main__":
     # --- Generate Config Files ---
     print("\n--- Generating Configuration Files ---")
     total_configs = 0
+
+    # --- START OF CRITICAL FIX ---
+    # We must manually loop over the optimizers to assign the correct LR grid
+
     for scenario in all_tuning_scenarios:
         print(f"\nProcessing scenario: {scenario.name}")
-        base_config = scenario.base_config_factory()
-        # Apply the ensure_benign modifier
-        for modifier in scenario.modifiers:
-            base_config = modifier(base_config)
 
-        # The generate method handles the parameter grid and saves files
-        num_generated = generator.generate(base_config, scenario)
-        total_configs += num_generated
-        print(f"  Generated {num_generated} config files.")
+        # Get the lists of parameters to sweep from the grid
+        optimizers_to_sweep = scenario.parameter_grid.get("training.optimizer", ["Adam"])
+        epochs_to_sweep = scenario.parameter_grid.get("training.local_epochs", [1])
+
+        # Get all the *other* static parameters from the grid
+        static_grid_params = {
+            key: value for key, value in scenario.parameter_grid.items()
+            if key not in ["training.optimizer", "training.learning_rate", "training.local_epochs", "experiment.save_path"]
+        }
+
+        num_generated_for_scenario = 0
+
+        # Loop through every combination
+        for optimizer in optimizers_to_sweep:
+
+            # Select the correct LR grid based on the optimizer
+            if optimizer == "Adam":
+                lrs_to_sweep = ADAM_LRS_TO_SWEEP
+            else: # Assumes "SGD"
+                lrs_to_sweep = SGD_LRS_TO_SWEEP
+
+            for lr in lrs_to_sweep:
+                for epochs in epochs_to_sweep:
+
+                    # 1. Create a new grid for *only this combination*
+                    new_grid = static_grid_params.copy()
+                    new_grid["training.optimizer"] = [optimizer]
+                    new_grid["training.learning_rate"] = [lr]
+                    new_grid["training.local_epochs"] = [epochs]
+
+                    # 2. CREATE THE UNIQUE SAVE PATH
+                    # This is the path your *results* will be saved to.
+                    unique_save_path = f"./results/{scenario.name}/opt_{optimizer}_lr_{lr}_epochs_{epochs}"
+
+                    # 3. Add this unique path to the new grid
+                    new_grid["experiment.save_path"] = [unique_save_path]
+
+                    # 4. Create a temporary Scenario object for this single run
+                    #    The name determines the config *filename*
+                    temp_scenario_name = f"{scenario.name}/opt_{optimizer}_lr_{lr}_epochs_{epochs}"
+                    temp_scenario = Scenario(
+                        name=temp_scenario_name,
+                        base_config_factory=scenario.base_config_factory,
+                        modifiers=scenario.modifiers,
+                        parameter_grid=new_grid
+                    )
+
+                    # 5. Get the base config and apply modifiers
+                    base_config = temp_scenario.base_config_factory()
+                    for modifier in temp_scenario.modifiers:
+                        base_config = modifier(base_config)
+
+                    # 6. Generate the single config file for this combo
+                    num_generated = generator.generate(base_config, temp_scenario)
+                    num_generated_for_scenario += num_generated
+
+        total_configs += num_generated_for_scenario
+        print(f"  Generated {num_generated_for_scenario} config files for this scenario.")
+
+    # --- END OF CRITICAL FIX ---
 
     print(f"\n✅ All tuning configurations generated ({total_configs} total).")
     print(f"   Configs saved to: {output_dir}")
     print("\nNext steps:")
-    print(f"1. Run the experiments using the configs in '{output_dir}'. Use your existing experiment runner.")
-    print("2. Aggregate results using your aggregation script (e.g., aggregate_experiment_results.py).")
-    print("3. Analyze the aggregated CSV and individual training_log.csv files to find the")
-    print("   'Golden Training Parameters' (best stable lr and local_epochs) for EACH modality.")
-    print("4. Hard-code these golden parameters into your base config factories for future steps.")
+    print(f"1. Run the experiments using the configs in '{output_dir}'.")
+    print(f"2. Analyze the results, which will now be in unique folders under './results/...'")

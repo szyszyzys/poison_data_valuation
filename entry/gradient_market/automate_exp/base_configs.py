@@ -30,12 +30,10 @@ def get_base_image_config() -> AppConfig:
         data=DataConfig(
             image=ImageDataConfig(
                 property_skew=PropertySkewParams(),
-                # --- ADD THESE LINES TO MATCH TUNE SCRIPT ---
                 strategy="dirichlet",
                 dirichlet_alpha=0.5,
                 buyer_ratio=0.1,
                 buyer_strategy="iid"
-                # --------------------------------------------
             )
         ),
         debug=DebugConfig(
