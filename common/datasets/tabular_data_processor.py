@@ -77,7 +77,7 @@ def get_tabular_dataset(cfg: AppConfig) -> Tuple[
     # 1. Load dataset-specific configuration and raw data
     with open(tabular_cfg.dataset_config_path, 'r') as f:
         all_tabular_configs = yaml.safe_load(f)
-    dataset_cfg = all_tabular_configs[cfg.experiment.dataset_name]
+    dataset_cfg = all_tabular_configs[cfg.experiment.dataset_name.lower()]
     df, categorical_cols = _load_and_prepare_tabular_df(config=dataset_cfg)
     target_col = dataset_cfg['target_column']
     if target_col not in df.columns: raise ValueError(f"Target column '{target_col}' not found")
