@@ -263,9 +263,7 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
 # --- Helper to extract targets from StandardFormatDataset ---
 def _extract_text_targets(dataset: StandardFormatDataset) -> np.ndarray:
     """Extracts targets from the StandardFormatDataset."""
-    # Assuming the second element of each item in processed_data is the label
-    return np.array([item[1] for item in dataset.processed_data])
-
+    return dataset.targets
 
 # --- Helper to partition Dirichlet (adapted for StandardFormatDataset) ---
 def _partition_text_dirichlet(
