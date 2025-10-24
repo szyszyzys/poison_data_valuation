@@ -397,7 +397,6 @@ class DataMarketplaceFederated(DataMarketplace):
                 was_selected=(sid in selected_ids),
                 was_outlier=(sid in outlier_ids),
                 marketplace_metrics=seller_scores,
-                price_paid=seller_scores.get('price_paid', 0.0)
             )
 
         logging.info(f"\n{'=' * 60}")
