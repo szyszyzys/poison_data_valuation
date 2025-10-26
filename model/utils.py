@@ -35,7 +35,8 @@ def train_local_model(model: nn.Module,
                       optimizer: optim.Optimizer,
                       device: torch.device,
                       epochs: int = 1,
-                      max_grad_norm: float = 1.0) -> Tuple[nn.Module, Union[float, None]]:
+                      max_grad_norm: float = 1.0,
+                      use_amp: bool = False) -> Tuple[nn.Module, Union[float, None]]:
     logging.info(f"--- ⚡️ Running with CORRECTED GradScaler + Autocast ---")
     model.train()
     batch_losses_all = []
@@ -43,7 +44,6 @@ def train_local_model(model: nn.Module,
     # Convert to torch.device if it's a string
     if isinstance(device, str):
         device = torch.device(device)
-    use_amp = False
     scaler = GradScaler() if use_amp else None
 
     if not train_loader or len(train_loader) == 0:
@@ -60,7 +60,8 @@ def train_local_model(model: nn.Module,
 
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
                 if data.size(0) <= 1:
-                    logging.warning(f"Skipping batch {batch_idx} (size {data.size(0)}) to avoid BatchNorm error.")
+                    # This is expected if drop_last=False, log at debug level
+                    logging.debug(f"Skipping batch {batch_idx} (size {data.size(0)}) to avoid potential BatchNorm error.")
                     continue
                 if batch_idx == 0:  # Only log first batch
                     data_stats = data.float()
@@ -80,7 +81,7 @@ def train_local_model(model: nn.Module,
                     logging.error(f"❌ Corrupt data in batch {batch_idx}. Skipping.")
                     continue
 
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True) # set_to_none=True is slightly more memory efficient
 
                 # Autocast ONLY wraps the forward pass
                 with autocast(device_type=device.type, enabled=use_amp):
