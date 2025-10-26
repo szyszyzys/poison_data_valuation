@@ -369,7 +369,7 @@ class ImageModelFactory:
         # --- 1. Instantiate the correct model class ON CPU ---
         if model_name.lower() == 'lenet':
             model = ConfigurableLeNet(in_channels, image_size, num_classes, config)
-        elif model_name.lower() == 'flexiblecnn':
+        elif model_name.lower() == 'flexiblecnn' or model_name.lower() == 'cnn':
             model = ConfigurableFlexibleCNN(in_channels, image_size, num_classes, config)
         elif model_name.lower() == 'resnet18':
             model = ConfigurableResNet(num_classes=num_classes, config=config, input_channels=in_channels)

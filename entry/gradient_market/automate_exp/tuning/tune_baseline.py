@@ -42,11 +42,11 @@ def generate_fedavg_tuning_scenario_for_modality(
         model_structure: str,
         model_config_param_key: str,
         model_config_name: str,
-        dataset_modifier: Callable[[AppConfig], AppConfig]
+        dataset_modifier: Callable[[AppConfig], AppConfig],
+        data_setting: str  # <-- 1. ADD THIS NEW ARGUMENT
 ) -> Scenario:
-    """Creates the tuning scenario object for a specific modality."""
-    # The scenario name is now the *base folder* for results
-    scenario_name = f"step1_tune_fedavg_{modality_name}_{dataset_name}_{model_structure}"
+    # 2. MAKE THE SCENARIO NAME UNIQUE based on data setting
+    scenario_name = f"step1_tune_fedavg_{modality_name}_{dataset_name}_{model_structure}_{data_setting}"
     print(f"-- Defining scenario: {scenario_name}")
 
     parameter_grid = {
@@ -64,12 +64,20 @@ def generate_fedavg_tuning_scenario_for_modality(
         "training.local_epochs": LOCAL_EPOCHS_TO_SWEEP,
         # Note: learning_rate is NOT here, it's handled in the main loop
 
-        f"data.{modality_name}.strategy": ["dirichlet"],
-        f"data.{modality_name}.dirichlet_alpha": [0.5],
-
+        # (Other params like buyer_strategy are the same)
         f"data.{modality_name}.buyer_strategy": ["iid"],
         f"data.{modality_name}.buyer_ratio": [0.1],
     }
+
+    # 3. SET DATA STRATEGY BASED ON THE NEW ARGUMENT
+    if data_setting == "noniid":
+        parameter_grid[f"data.{modality_name}.strategy"] = ["dirichlet"]
+        parameter_grid[f"data.{modality_name}.dirichlet_alpha"] = [0.5]
+    elif data_setting == "iid":
+        parameter_grid[f"data.{modality_name}.strategy"] = ["iid"]
+        # No dirichlet_alpha needed
+    else:
+        raise ValueError(f"Unknown data_setting: '{data_setting}'. Must be 'iid' or 'noniid'.")
 
     # Add modality-specific fixed parameters (e.g., dataset_type)
     parameter_grid[f"experiment.dataset_type"] = [modality_name]
@@ -117,40 +125,39 @@ if __name__ == "__main__":
         {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
-            "dataset_name": "CIFAR10",
-            "model_structure": "cnn",
+            "dataset_name": "cifar10",  # <-- lowercase
+            "model_structure": "flexiblecnn",  # <-- (Optional clarity fix)
             "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "CIFAR10_cnn",
+            "model_config_name": "cifar10_cnn",  # <-- lowercase
             "dataset_modifier": use_cifar10_config,
         },
         {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
-            "dataset_name": "CIFAR10",
+            "dataset_name": "cifar10",  # <-- lowercase
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "CIFAR10_resnet18",
+            "model_config_name": "cifar10_resnet18",  # <-- lowercase
             "dataset_modifier": use_cifar10_config,
         },
         {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
-            "dataset_name": "CIFAR100",
-            "model_structure": "cnn",
+            "dataset_name": "cifar100",  # <-- lowercase
+            "model_structure": "flexiblecnn",  # <-- (Optional clarity fix)
             "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "CIFAR100_cnn",
+            "model_config_name": "cifar100_cnn",  # <-- lowercase
             "dataset_modifier": use_cifar100_config,
         },
         {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
-            "dataset_name": "CIFAR100",
+            "dataset_name": "cifar100",  # <-- lowercase
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "CIFAR100_resnet18",
+            "model_config_name": "cifar100_resnet18",  # <-- lowercase
             "dataset_modifier": use_cifar100_config,
         },
-
         # --- Text Tuning ---
         {
             "modality_name": "text",
@@ -171,10 +178,18 @@ if __name__ == "__main__":
 
     # --- Generate Scenarios for Each Modality ---
     print("\n--- Generating Tuning Scenarios (Step 1: Benign FedAvg Baseline) ---")
-    for config in TUNING_CONFIGS:
-        scenario = generate_fedavg_tuning_scenario_for_modality(**config)
-        all_tuning_scenarios.append(scenario)
+    for config_params in TUNING_CONFIGS:
+        # For each model, create an IID and a Non-IID scenario
+        for data_setting in ["iid", "noniid"]:
+            # Create a fresh copy of the parameters
+            scenario_params = config_params.copy()
 
+            # Add the new data_setting argument
+            scenario_params["data_setting"] = data_setting
+
+            # Call your modified function
+            scenario = generate_fedavg_tuning_scenario_for_modality(**scenario_params)
+            all_tuning_scenarios.append(scenario)
     # --- Generate Config Files ---
     print("\n--- Generating Configuration Files ---")
     total_configs = 0

@@ -43,12 +43,12 @@ def get_base_tabular_config() -> AppConfig:
         ),
         # training=TrainingConfig(local_epochs=2, batch_size=64, learning_rate=0.0001,),
         training=TrainingConfig(
-            local_epochs=2,
+            local_epochs=5,                 # <-- From your tuning winner
             batch_size=64,
-            optimizer="SGD",  # Set optimizer to SGD
-            learning_rate=0.01,  # Use a standard SGD learning rate (0.0001 is very low)
-            momentum=0.9,  # Add momentum (important for SGD)
-            weight_decay=0.0001,  # Optional: small L2 regularization
+            optimizer="Adam",                 # <-- From your tuning winner
+            learning_rate=0.001,            # <-- From your tuning winner
+            momentum=0.0,                   # <-- Adam does not use SGD momentum
+            weight_decay=0.0,                 # <-- Not needed for Adam here
         ),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
