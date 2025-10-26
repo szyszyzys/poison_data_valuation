@@ -171,7 +171,7 @@ if __name__ == "__main__":
     ]
 
     # --- Output Directory for Configs ---
-    output_dir = "./configs_generated/step1_fedavg_tuning"
+    output_dir = "./configs_generated/step1_fedavg_tuning_new"
     generator = ExperimentGenerator(output_dir)
 
     all_tuning_scenarios = []
