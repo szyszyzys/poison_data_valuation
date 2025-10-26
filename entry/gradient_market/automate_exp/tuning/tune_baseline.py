@@ -125,7 +125,7 @@ if __name__ == "__main__":
         {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
-            "dataset_name": "cifar10",  # <-- lowercase
+            "dataset_name": "CIFAR10",  # <-- lowercase
             "model_structure": "flexiblecnn",  # <-- (Optional clarity fix)
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "cifar10_cnn",  # <-- lowercase
@@ -134,7 +134,7 @@ if __name__ == "__main__":
         {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
-            "dataset_name": "cifar10",  # <-- lowercase
+            "dataset_name": "CIFAR10",  # <-- lowercase
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "cifar10_resnet18",  # <-- lowercase
@@ -143,7 +143,7 @@ if __name__ == "__main__":
         {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
-            "dataset_name": "cifar100",  # <-- lowercase
+            "dataset_name": "CIFAR100",  # <-- lowercase
             "model_structure": "flexiblecnn",  # <-- (Optional clarity fix)
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "cifar100_cnn",  # <-- lowercase
@@ -152,7 +152,7 @@ if __name__ == "__main__":
         {
             "modality_name": "image",
             "base_config_factory": get_base_image_config,
-            "dataset_name": "cifar100",  # <-- lowercase
+            "dataset_name": "CIFAR100",  # <-- lowercase
             "model_structure": "resnet18",
             "model_config_param_key": "experiment.image_model_config_name",
             "model_config_name": "cifar100_resnet18",  # <-- lowercase
