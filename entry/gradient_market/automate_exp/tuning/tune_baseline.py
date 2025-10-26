@@ -192,7 +192,8 @@ if __name__ == "__main__":
         # Get all the *other* static parameters from the grid
         static_grid_params = {
             key: value for key, value in scenario.parameter_grid.items()
-            if key not in ["training.optimizer", "training.learning_rate", "training.local_epochs", "experiment.save_path"]
+            if
+            key not in ["training.optimizer", "training.learning_rate", "training.local_epochs", "experiment.save_path"]
         }
 
         num_generated_for_scenario = 0
@@ -203,7 +204,7 @@ if __name__ == "__main__":
             # Select the correct LR grid based on the optimizer
             if optimizer == "Adam":
                 lrs_to_sweep = ADAM_LRS_TO_SWEEP
-            else: # Assumes "SGD"
+            else:  # Assumes "SGD"
                 lrs_to_sweep = SGD_LRS_TO_SWEEP
 
             for lr in lrs_to_sweep:
