@@ -1,4 +1,5 @@
 import collections
+import copy
 import csv
 import json
 import logging
@@ -687,72 +688,173 @@ class SybilCoordinator:
         )
         self.selection_patterns = {}
 
+        self.known_strategies: Set[str] = set(self.strategies.keys()) | {"oracle_blend", "systematic_probe"}
+
     def register_seller(self, seller: GradientSeller) -> None:
         """Register a malicious seller with the coordinator."""
         if not hasattr(seller, 'seller_id'):
             raise AttributeError("Seller object must have a 'seller_id' attribute")
         self.clients[seller.seller_id] = ClientState(seller_obj=seller)
 
-    def apply_manipulation(self, gradients_dict: Dict, all_sellers: Dict) -> Dict:
-        """
-        Apply sybil manipulation based on historical patterns.
-
-        Args:
-            gradients_dict: Dictionary of {seller_id: gradient}
-            all_sellers: Dictionary of {seller_id: seller_object}
-
-        Returns:
-            Updated gradients_dict with manipulated sybil gradients
-        """
+    def apply_manipulation(self,
+                           current_round_gradients: Dict[str, List[torch.Tensor]],
+                           all_sellers: Dict[str, GradientSeller],
+                           current_root_gradient: Optional[List[torch.Tensor]] = None,
+                           global_epoch=-1, buyer_data_loader=None) -> Dict[str, List[torch.Tensor]]:
         if not self.start_atk:
-            logging.info("[SybilCoordinator] Not in attack phase yet - no manipulation")
-            return gradients_dict
+            logging.debug("[SybilCoordinator] Not in attack phase - no manipulation.")
+            return current_round_gradients
 
-        if not self.selection_patterns:
-            logging.info("[SybilCoordinator] No historical patterns yet - sybils submit honest gradients")
-            return gradients_dict
+        manipulated_gradients = copy.deepcopy(current_round_gradients)
+        sybil_ids = set(self.clients.keys())
+        benign_ids = set(current_round_gradients.keys()) - sybil_ids
 
-        avg_similarity = self.selection_patterns.get('avg_similarity', 0)
-        logging.info(f"[SybilCoordinator] Applying manipulation (historical similarity: {avg_similarity:.4f})")
+        # --- 1. Determine which strategies are needed ---
+        strategies_in_use = set()
+        active_sybils = []
+        for sybil_id in sybil_ids:
+            if sybil_id in manipulated_gradients and self.clients[sybil_id].phase == "attack":
+                strategy_name = self._get_strategy_for_client(self.clients[sybil_id])
+                strategies_in_use.add(strategy_name)
+                active_sybils.append(sybil_id)
 
+        if not active_sybils:
+            logging.debug("[SybilCoordinator] No active Sybils needing manipulation.")
+            return current_round_gradients
+
+        logging.info(
+            f"[SybilCoordinator] Applying manipulations for {len(active_sybils)} active Sybils. Strategies: {strategies_in_use}")
+
+        # --- 2. Calculate Oracle Information (if needed) ---
+        oracle_centroid_flat: Optional[torch.Tensor] = None
+        if "oracle_blend" in strategies_in_use:
+            benign_gradients_dict = {
+                sid: manipulated_gradients[sid] for sid in benign_ids if sid in manipulated_gradients
+            }
+            if benign_gradients_dict and current_root_gradient is not None:  # Ensure root gradient is available
+                logging.debug("[SybilCoordinator] Running hypothetical aggregation for Oracle...")
+                try:
+                    _hypo_agg_grad, hypothetical_selected_ids, _hypo_outliers, _hypo_stats = self.aggregator.aggregate(
+                        global_epoch=global_epoch,
+                        seller_updates=benign_gradients_dict,
+                        root_gradient=current_root_gradient,
+                        buyer_data_loader = buyer_data_loader
+                    )
+
+                    if hypothetical_selected_ids:
+                        selected_benign_grads_flat = [
+                            self._ensure_tensor(benign_gradients_dict[sid])
+                            for sid in hypothetical_selected_ids if sid in benign_gradients_dict
+                        ]
+                        if selected_benign_grads_flat:
+                            oracle_centroid_flat = torch.mean(torch.stack(selected_benign_grads_flat), dim=0)
+                            logging.info(
+                                f"[SybilCoordinator] Oracle centroid calculated from {len(selected_benign_grads_flat)} hypothetically selected benign gradients.")
+                        else:
+                            logging.warning(
+                                "[SybilCoordinator] Oracle calc failed: No valid benign grads after hypothetical selection.")
+                    else:
+                        logging.warning(
+                            "[SybilCoordinator] Oracle calc failed: Aggregator hypothetically selected no benign clients.")
+                except Exception as e:
+                    logging.error(
+                        f"[SybilCoordinator] Error during hypothetical aggregation for Oracle: {e}. Oracle attack will fail.",
+                        exc_info=True)
+            elif not benign_gradients_dict:
+                logging.warning("[SybilCoordinator] Oracle calc skipped: No benign gradients.")
+            elif current_root_gradient is None:
+                logging.warning("[SybilCoordinator] Oracle calc skipped: Root gradient not provided.")
+
+        historical_centroid_flat: Optional[torch.Tensor] = None
+        needs_historical = any(
+            s in self.strategies for s in strategies_in_use)  # Check if any known historical strategy is needed
+        if needs_historical:
+            if self.selection_patterns and "centroid" in self.selection_patterns:
+                historical_centroid_flat = self.selection_patterns["centroid"]
+                logging.debug("[SybilCoordinator] Using historical centroid for mimic/pivot/knock_out.")
+            else:
+                logging.warning(
+                    "[SybilCoordinator] Historical strategies requested but no historical centroid available yet.")
+
+        # --- 4. Loop through ACTIVE Sybils and Manipulate ---
         manipulated_count = 0
-        for sybil_id in self.clients:
-            if sybil_id not in gradients_dict:
-                continue
-
+        for sybil_id in active_sybils:
             client_state = self.clients[sybil_id]
+            strategy_name = self._get_strategy_for_client(client_state)
 
-            # Only manipulate if in attack phase
-            if client_state.phase == "attack":
-                # Get strategy based on role
-                strategy = self._get_strategy_for_role(client_state.role)
+            original_malicious_grad_list = current_round_gradients[sybil_id]  # Use original input
+            original_shapes = [g.shape for g in original_malicious_grad_list]
+            original_malicious_flat = self._ensure_tensor(original_malicious_grad_list)
 
-                # Get honest gradient from seller
-                seller = all_sellers.get(sybil_id)
-                if not seller or not hasattr(seller, 'get_honest_gradient'):
-                    continue
+            manipulated_grad_flat: Optional[torch.Tensor] = None
 
-                original_grad = seller.get_honest_gradient()
-                if not original_grad:
-                    continue
+            # --- Apply Oracle Blend ---
+            if strategy_name == "oracle_blend":
+                if oracle_centroid_flat is not None:
+                    alpha = self.sybil_cfg.oracle_blend_alpha  # Get alpha from config
+                    manipulated_grad_flat = alpha * original_malicious_flat + (1.0 - alpha) * oracle_centroid_flat
+                    logging.debug(f"   Oracle Blending applied to {sybil_id} (alpha={alpha})")
+                else:
+                    logging.warning(
+                        f"   Oracle Blend for {sybil_id} failed (no oracle centroid). Submitting original malicious gradient.")
+                    manipulated_grad_flat = original_malicious_flat  # Fallback
 
-                # Manipulate based on historical winners
-                manipulated_grad = self.update_nonselected_gradient(
-                    current_gradient=original_grad,
-                    strategy=strategy
-                )
+            # --- Apply Historical Strategies ---
+            elif strategy_name in self.strategies:
+                if historical_centroid_flat is not None:
+                    strategy_obj = self.strategies[strategy_name]
+                    try:
+                        manipulated_grad_flat = strategy_obj.manipulate(original_malicious_flat,
+                                                                        historical_centroid_flat)
+                        logging.debug(f"   Historical Strategy '{strategy_name}' applied to {sybil_id}")
+                    except Exception as e:
+                        logging.error(
+                            f"   Error applying historical strategy {strategy_name} to {sybil_id}: {e}. Submitting original.",
+                            exc_info=False)
+                        manipulated_grad_flat = original_malicious_flat  # Fallback
+                else:
+                    logging.warning(
+                        f"   Historical Strategy '{strategy_name}' for {sybil_id} failed (no historical centroid). Submitting original.")
+                    manipulated_grad_flat = original_malicious_flat  # Fallback
 
-                # Replace in gradients dict
-                gradients_dict[sybil_id] = manipulated_grad
+            # --- Placeholder for Systematic Probing ---
+            elif strategy_name == "systematic_probe":
+                # TODO: Implement systematic probing logic.
+                # This is complex and stateful. Might involve:
+                # 1. Assigning a specific probe target based on sybil_id or internal state.
+                # 2. Generating the probe gradient (e.g., perturbing a base gradient).
+                # 3. Requires tracking results in update_post_selection.
+                logging.warning(
+                    f"   Systematic Probing for {sybil_id} not implemented. Submitting original malicious gradient.")
+                manipulated_grad_flat = original_malicious_flat  # Placeholder
 
-                # Update seller's cache
-                seller.last_computed_gradient = manipulated_grad
+            # --- Unknown Strategy ---
+            else:
+                logging.error(
+                    f"   Unknown strategy '{strategy_name}' for {sybil_id}. Submitting original malicious gradient.")
+                manipulated_grad_flat = original_malicious_flat  # Fallback
 
+            # --- Unflatten and Store ---
+            if manipulated_grad_flat is not None:
+                manipulated_grad_list = unflatten_tensor(manipulated_grad_flat, original_shapes)
+                manipulated_gradients[sybil_id] = manipulated_grad_list
                 manipulated_count += 1
-                logging.debug(f"   Manipulated {sybil_id} (role: {client_state.role}, strategy: {strategy})")
+                # Update seller's cache (if available)
+                sybil_seller = all_sellers.get(sybil_id)
+                if sybil_seller: sybil_seller.last_computed_gradient = manipulated_grad_list
 
-        logging.info(f"[SybilCoordinator] Manipulated {manipulated_count} sybil gradients")
-        return gradients_dict
+        logging.info(
+            f"[SybilCoordinator] Successfully manipulated {manipulated_count}/{len(active_sybils)} active Sybil gradients.")
+        return manipulated_gradients
+
+    def _get_strategy_for_client(self, client_state: ClientState) -> str:
+        """Determines the strategy based on config or role."""
+        # 1. Global override from config (if valid)
+        config_strategy = self.sybil_cfg.gradient_default_mode
+        if config_strategy and config_strategy in self.known_strategies:
+            return config_strategy
+        # 2. Role-based strategy
+        return self._get_strategy_for_role(client_state.role)
 
     def update_post_selection(self, selected_ids: List[str], all_sellers: Dict):
         """
@@ -1637,7 +1739,7 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
             proj_noise_on_grad = (torch.dot(noise, flat_grad) / (torch.dot(flat_grad, flat_grad) + 1e-9)) * flat_grad
             orthogonal_noise = noise - proj_noise_on_grad
             scaled_noise = orthogonal_noise * self.adv_cfg.noise_level * torch.norm(flat_grad) / (
-                        torch.norm(orthogonal_noise) + 1e-9)
+                    torch.norm(orthogonal_noise) + 1e-9)
             manipulated_flat_grad = flat_grad + scaled_noise
             log_msg += "."
         elif strategy == "reduce_norm":

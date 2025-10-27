@@ -1,11 +1,12 @@
 import logging
-import numpy as np
 import time
-import torch
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
+
+import numpy as np
+import torch
 
 from common.enums import ServerAttackMode
 from common.gradient_market_configs import AppConfig, ServerAttackConfig
@@ -209,24 +210,44 @@ class DataMarketplaceFederated(DataMarketplace):
                 elif attack_type == "class_exclusion":
                     ratio = buyer_stats.get('exclusion_ratio', 0)
                     logging.debug(f"   Exclusion ratio: {ratio:.2%}")
+        current_root_gradient_for_sybil = buyer_root_gradient
+        # Start with the original gradients collected earlier (assuming gradients_dict holds them)
+        final_gradients_to_aggregate = gradients_dict
 
-        # ===== PHASE 4: Sybil Manipulation (Based on Historical Patterns) =====
-        if self.sybil_coordinator:
-            logging.info("\n🎭 Applying sybil manipulation...")
-            gradients_dict = self.sybil_coordinator.apply_manipulation(
-                gradients_dict=gradients_dict,
-                all_sellers=self.sellers
-            )
+        # ===== APPLY SYBIL MANIPULATION (IF ACTIVE) =====
+        if hasattr(self,
+                   'sybil_coordinator') and self.sybil_coordinator is not None and self.sybil_coordinator.sybil_cfg.is_sybil:
+            logging.info("\n🐍 Applying Sybil Manipulation...")
+            try:
+                # Pass the original gradients, all sellers, and the CURRENT UNSANITIZED root gradient
+                final_gradients_to_aggregate = self.sybil_coordinator.apply_manipulation(
+                    current_round_gradients=gradients_dict,  # Pass original gradients collected earlier
+                    all_sellers=self.sellers,
+                    current_root_gradient=current_root_gradient_for_sybil,  # Use the unsanitized root gradient
+                    global_epoch=round_number,  # Pass current round number
+                    buyer_data_loader=self.aggregator.buyer_data_loader  # Pass if needed by hypothetical aggregate
+                )
+                logging.info("🐍 Sybil Manipulation complete.\n")
+            except Exception as e:
+                logging.error(f"❌ Error during Sybil Manipulation: {e}. Using original gradients.", exc_info=True)
+                final_gradients_to_aggregate = gradients_dict  # Fallback to original if manipulation fails
+
+        else:
+            logging.info("Sybil Coordinator not active or not present. Using original gradients.")
 
         # ===== PHASE 5: Sanitize Gradients =====
+        # NOW sanitize the potentially manipulated gradients and the root gradients
         logging.info("\n🧹 Sanitizing gradients...")
         target_device = self.aggregator.device
         param_meta = [(p.shape, p.dtype) for p in self.global_model.parameters()]
 
-        sanitized_gradients = self._sanitize_gradients(gradients_dict, param_meta, target_device)
-        sanitized_root_gradient = self._sanitize_gradient(buyer_root_gradient, target_device)
-        sanitized_oracle_gradient = self._sanitize_gradient(oracle_root_gradient, target_device)
+        # Sanitize the final set of gradients that will go to the real aggregation
+        sanitized_gradients = self._sanitize_gradients(final_gradients_to_aggregate, param_meta, target_device)
 
+        # Sanitize the root gradients separately (needed for the real aggregation)
+        sanitized_root_gradient = self._sanitize_gradient(buyer_root_gradient, target_device)
+        sanitized_oracle_gradient = self._sanitize_gradient(oracle_root_gradient,
+                                                            target_device)  # If oracle root is different
         # ===== PHASE 6: Privacy Attack (Optional) =====
         attack_log = None
         if self.attacker and self.attacker.should_run(round_number):

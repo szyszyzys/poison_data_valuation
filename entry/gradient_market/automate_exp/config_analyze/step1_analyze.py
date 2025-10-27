@@ -10,6 +10,28 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+HPARAM_REGEX = re.compile(r"opt_(?P<optimizer>\w+)_lr_(?P<lr>[\d\.]+)_epochs_(?P<epochs>\d+)")
+
+def parse_hp_tuning_folder_name(name: str) -> Dict[str, Any]:
+    """
+    Parses 'opt_Adam_lr_0.001_epochs_5'
+    into {'optimizer': 'Adam', 'lr': 0.001, 'epochs': 5}
+    """
+    match = HPARAM_REGEX.match(name)
+    if not match:
+        logger.warning(f"Could not parse HP tuning folder name: {name}")
+        return {} # Return empty if no match
+
+    data = match.groupdict()
+    try:
+        # Convert types
+        data['lr'] = float(data['lr'])
+        data['epochs'] = int(data['epochs'])
+        return data
+    except ValueError:
+        logger.warning(f"Could not convert types in HP tuning folder name: {name}")
+        return {} # Return empty on conversion error
+
 def parse_sub_exp_name(name: str) -> Dict[str, str]:
     """
     Parses 'model-cnn_agg-fedavg_def-krum_adv-backdoor'
@@ -68,8 +90,11 @@ def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
             run_name = run_dir.name           # e.g., "run_0_seed_42"
 
             # 3. Parse parameters from the sub-experiment name
-            sub_exp_params = parse_sub_exp_name(sub_exp_name)
-
+            if "step1_tune_iid" in exp_name or "step4_train_sens" in exp_name:
+                parsed_params = parse_hp_tuning_folder_name(sub_exp_dir.name)
+            else:
+                # Use the original parser for other experiment types
+                parsed_params = parse_sub_exp_name(sub_exp_dir.name)
             # 4. Parse seed
             try:
                 seed = int(run_name.split('_')[-1])
@@ -81,17 +106,15 @@ def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
             with open(metrics_file, 'r') as f:
                 metrics = json.load(f)
 
-            # 6. Store the combined record
             record = {
                 "exp_name": exp_name,
-                "sub_exp_name": sub_exp_name,
-                **sub_exp_params,
+                "sub_exp_name": sub_exp_name,  # Still useful as a raw identifier
+                **parsed_params,  # Add the correctly parsed HPs or sub_exp params
                 "seed": seed,
                 "status": "success",
-                **metrics  # Unpack all metrics from the JSON file
+                **metrics
             }
             all_results.append(record)
-
         except Exception as e:
             logger.warning(f"Warning: Could not process file {metrics_file}: {e}")
             continue

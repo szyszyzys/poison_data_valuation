@@ -237,15 +237,39 @@ class DrowningAttackConfig:
 @dataclass
 class SybilConfig:
     """Configuration for Sybil attack coordination and behavior."""
-    is_sybil: bool = False
-    detection_threshold: float = 0.8
-    benign_rounds: int = 0
-    gradient_default_mode: str = "mimic"
-    trigger_mode: str = "static"
-    history_window_size: int = 10
-    role_config: Dict[str, float] = field(default_factory=dict)
+    is_sybil: bool = False # Is Sybil coordination active?
+    benign_rounds: int = 0 # Rounds before Sybils start manipulating (0 = immediate attack)
+
+    # --- Strategy Control ---
+    # Specifies the primary manipulation strategy used by Sybils.
+    # Options: "mimic", "pivot", "knock_out", "oracle_blend", "systematic_probe"
+    # If None, might fall back to role-based strategies (less common now).
+    gradient_default_mode: Optional[str] = "mimic"
+
+    # --- Oracle Blend Specific ---
+    # Blending factor alpha for oracle_blend strategy.
+    # G_submit = alpha * G_mal + (1 - alpha) * G_oracle_centroid
+    oracle_blend_alpha: float = 0.1 # Example: 10% malicious intent
+
+    # --- Historical Mimicry Specific ---
+    # Number of past rounds to consider for calculating historical centroid.
+    history_window_size: int = 5 # Reduced default example
+
+    # --- Role Assignment (Less critical if gradient_default_mode is set) ---
+    # Defines proportions for dynamic role assignment (attacker, hybrid, explorer).
+    # Used if adaptive_role_assignment is called and gradient_default_mode is None.
+    role_config: Dict[str, float] = field(default_factory=lambda: {'attacker': 0.2, 'explorer': 0.4})
+
+    # --- Strategy-Specific Parameters ---
+    # Holds keyword arguments for specific strategy classes (e.g., MimicStrategy).
     strategy_configs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
+    # --- Triggering (Keep if used elsewhere) ---
+    # Controls how/when the attack activates (e.g., 'static' after benign_rounds).
+    trigger_mode: str = "static"
+
+    # --- REMOVED ---
+    detection_threshold: float = 0.8 # No longer needed with simplified phase logic
 
 @dataclass  # --- FIXED: Added the @dataclass decorator ---
 class VocabConfig:

@@ -165,12 +165,6 @@ def generate_tabular_main_summary_scenarios() -> List[Scenario]:
     return scenarios
 
 
-def use_tabular_label_flipping_attack(config: AppConfig) -> AppConfig:
-    """Modifier for a simple label-flipping attack."""
-    config.adversary_seller_config.poisoning.type = PoisonType.LABEL_FLIP
-    config.adversary_seller_config.poisoning.poison_rate = 1.0
-    return config
-
 
 def use_sybil_attack(strategy: str) -> Callable[[AppConfig], AppConfig]:
     """Modifier to enable a specific Sybil attack strategy."""
