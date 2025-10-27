@@ -1,0 +1,91 @@
+experiment:
+  dataset_name: AG_NEWS
+  model_structure: BiLSTM
+  aggregation_method: martfl
+  global_rounds: 50
+  n_sellers: 20
+  adv_rate: 0.3
+  device: cuda
+  save_path: configs_generated\poison_vary_poison_rate_agnews\pr-0p7_adv-0p3_aggregation_method-martfl
+  num_classes: 0
+training:
+  local_epochs: 3
+  batch_size: 32
+  learning_rate: 0.001
+  optimizer: Adam
+server_attack_config:
+  attack_name: none
+  gradient_inversion_params:
+    frequency: 10
+    victim_strategy: random
+    fixed_victim_idx: 0
+    lrs_to_try:
+    - 0.1
+    - 0.01
+    base_attack_params: {}
+adversary_seller_config:
+  name: benign
+  poisoning:
+    type: backdoor
+    poison_rate: 0.7
+    image_backdoor_params:
+      attack_name: simple_data_poison
+      simple_data_poison_params:
+        target_label: 0
+        trigger_type: blended_patch
+        location: bottom_right
+        trigger_shape:
+        - 4
+        - 4
+    text_backdoor_params:
+      target_label: 0
+      trigger_content: cf
+      location: end
+      attack_name: simple_data_poison
+    label_flip:
+      target_label: 0
+      mode: fixed_target
+  sybil:
+    is_sybil: false
+    detection_threshold: 0.8
+    benign_rounds: 0
+    gradient_default_mode: mimic
+    trigger_mode: static
+    history_window_size: 10
+    role_config: {}
+    strategy_configs: {}
+data:
+  text:
+    vocab:
+      min_freq: 1
+      unk_token: <unk>
+      pad_token: <pad>
+    strategy: discovery
+    discovery:
+      buyer_percentage: 0.05
+      discovery_quality: 0.3
+      buyer_data_mode: biased
+      buyer_bias_type: dirichlet
+      buyer_dirichlet_alpha: 0.2
+    buyer_config: {}
+  image:
+debug:
+  save_individual_gradients: false
+  gradient_save_frequency: 10
+aggregation:
+  method: fedavg
+  clip_norm: 0.01
+  martfl:
+    change_base: true
+    clip: true
+  skymask:
+    clip: true
+    sm_model_type: None
+    mask_epochs: 20
+    mask_lr: 0.0001
+    mask_clip: 1.0
+    mask_threshold: 0.5
+seed: 42
+n_samples: 10
+data_root: ./data
+use_cache: true

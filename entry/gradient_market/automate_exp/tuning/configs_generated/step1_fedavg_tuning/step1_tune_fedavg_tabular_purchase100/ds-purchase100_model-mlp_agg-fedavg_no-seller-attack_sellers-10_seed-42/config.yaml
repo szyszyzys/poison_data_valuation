@@ -1,0 +1,166 @@
+experiment:
+  dataset_name: purchase100
+  model_structure: mlp
+  global_rounds: 80
+  n_sellers: 10
+  adv_rate: 0.0
+  device: cuda
+  eval_frequency: 10
+  compute_gradient_similarity: true
+  save_path: configs_generated\step1_fedavg_tuning\step1_tune_fedavg_tabular_purchase100\ds-purchase100_model-mlp_agg-fedavg_no-seller-attack_sellers-10_seed-42
+  num_classes: 0
+  use_subset: false
+  subset_size: 3000
+  dataset_type: tabular
+  evaluations:
+  - clean
+  - backdoor
+  image_model_config_name: cifar10_cnn
+  tabular_model_config_name: mlp_purchase100_baseline
+  use_early_stopping: true
+  patience: 10
+training:
+  local_epochs: 5
+  batch_size: 64
+  learning_rate: 0.001
+  optimizer: SGD
+  momentum: 0.9
+  weight_decay: 0.0001
+  eps: 0.0001
+server_attack_config:
+  attack_name: none
+  gradient_inversion_params:
+    frequency: 10
+    fixed_victim_idx: 0
+    lrs_to_try:
+    - 0.1
+    - 0.01
+    base_attack_params: {}
+adversary_seller_config:
+  name: benign
+  poisoning:
+    type: NONE
+    poison_rate: 0.1
+    image_backdoor_params:
+      attack_name: SIMPLE_DATA_POISON
+      simple_data_poison_params:
+        target_label: 0
+        trigger_type: BLENDED_PATCH
+        location: BOTTOM_RIGHT
+        trigger_shape:
+        - 10
+        - 10
+        strength: 1
+        pattern_channel: 3
+    text_backdoor_params:
+      target_label: 0
+      trigger_content: cf
+      location: END
+      attack_name: SIMPLE_DATA_POISON
+    tabular_backdoor_params:
+      attack_name: FEATURE_TRIGGER
+      target_label: 0
+      feature_trigger_params:
+        trigger_conditions: {}
+    label_flip_params:
+      target_label: 0
+      mode: FIXED_TARGET
+  sybil:
+    is_sybil: false
+    detection_threshold: 0.8
+    benign_rounds: 0
+    gradient_default_mode: mimic
+    trigger_mode: static
+    history_window_size: 10
+    role_config: {}
+    strategy_configs: {}
+  adaptive_attack:
+    is_active: false
+    attack_mode: gradient_manipulation
+    exploration_rounds: 20
+    gradient_strategies:
+    - honest
+    - scale_up
+    - add_noise
+    scale_factor: 1.5
+    noise_level: 0.01
+    data_strategies:
+    - honest
+    - label_flip
+  drowning_attack:
+    is_active: false
+    mimicry_rounds: 10
+    drift_factor: 0.1
+  mimicry_attack:
+    is_active: false
+    target_seller_id: bn_0
+    observation_rounds: 3
+    noise_scale: 0.05
+    strategy: noisy_copy
+data:
+  text:
+  image:
+  tabular:
+    dataset_config_path: configs/tabular_datasets.yaml
+    model_config_dir: model/configs
+    buyer_ratio: 0.1
+    strategy: dirichlet
+    property_skew:
+      dirichlet_alpha: 0.5
+debug:
+  save_individual_gradients: false
+  gradient_save_frequency: 10
+aggregation:
+  method: fedavg
+  clip_norm: 0.01
+  martfl:
+    change_base: true
+    clip: true
+    initial_baseline: buyer
+    max_k: 10
+  skymask:
+    clip: true
+    sm_model_type: None
+    mask_epochs: 20
+    mask_lr: 0.0001
+    mask_clip: 1.0
+    mask_threshold: 0.5
+seed: 42
+n_samples: 3
+data_root: ./data
+use_cache: true
+buyer_attack_config:
+  is_active: false
+  attack_type: none
+  starvation_classes: []
+  exclusion_target_classes: []
+  exclusion_exclude_classes: []
+  exclusion_gradient_scale: 1.0
+  oscillation_strategy: binary_flip
+  oscillation_period: 2
+  oscillation_classes_a:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  oscillation_classes_b:
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  oscillation_class_subsets:
+  - - 0
+    - 1
+    - 2
+  - - 3
+    - 4
+    - 5
+  - - 6
+    - 7
+    - 8
+  - - 9
+  num_classes: 10
+  oscillation_subset_size: 3
+  oscillation_drift_total_rounds: 50

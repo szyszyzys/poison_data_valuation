@@ -14,10 +14,6 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         activation="relu",
         epochs=50,
         batch_size=128,
-        learning_rate=0.001,
-        optimizer_type='adam',
-        use_scheduler=True,
-        scheduler_step=30,  # Reduce LR every 30 epochs
         scheduler_gamma=0.1,  # Multiply LR by 0.1
         weight_decay=1e-4,
     ),

@@ -4,6 +4,7 @@ from typing import List, Callable, Dict, Any
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
+from entry.gradient_market.automate_exp.config_generator import set_nested_attr
 
 
 def disable_all_seller_attacks(config: AppConfig) -> AppConfig:
@@ -59,60 +60,32 @@ def use_text_backdoor_attack(config: AppConfig) -> AppConfig:
     return config
 
 
-def generate_main_summary_figure_scenarios() -> List[Scenario]:
-    """
-    Generates a broad set of results for a main summary figure.
-    This scenario fixes the attack parameters and evaluates various
-    datasets, models, and aggregators, respecting their data modality.
-    """
-    scenarios = []
+from typing import List
 
-    # --- FIX: Define separate aggregator lists ---
-    IMAGE_AGGREGATORS = ['fedavg', 'fltrust', 'martfl', 'skymask']
-    TEXT_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']  # Excludes SkyMask
+TUNED_DEFENSE_PARAMS = {
+    "fedavg": {"aggregation.method": "fedavg"},
+    "fltrust": {"aggregation.method": "fltrust", "aggregation.clip_norm": 10.0},
+    "martfl": {"aggregation.method": "martfl", "aggregation.martfl.max_k": 5, "aggregation.clip_norm": 10.0},
+    # --- IMPORTANT: Fill in the SkyMask parameters correctly ---
+    "skymask": {
+        "aggregation.method": "skymask",
+        "aggregation.skymask.mask_epochs": 20,  # Example
+        "aggregation.skymask.mask_lr": 0.01,  # Example
+        "aggregation.skymask.mask_threshold": 0.7,  # Example
+        "aggregation.clip_norm": 10.0  # Example
+        # Add other necessary SkyMask params if they exist in TUNED_DEFENSE_PARAMS
+    },
+}
+IMAGE_DEFENSES = ["fedavg", "fltrust", "martfl", "skymask"]
+TEXT_DEFENSES = ["fedavg", "fltrust", "martfl"]
 
-    fixed_attack_params = {
-        "experiment.adv_rate": [0.3],
-        "adversary_seller_config.poisoning.poison_rate": [0.3],
-    }
+FIXED_ATTACK_ADV_RATE = 0.3
+FIXED_ATTACK_POISON_RATE = 0.5 # Match defense tune
 
-    IMAGE_DATASETS_TO_TEST = [
-        ("cifar10", use_cifar10_config),
-        ("cifar100", use_cifar100_config)
-    ]
+# --- Heterogeneity Levels to Sweep ---
+DIRICHLET_ALPHAS_TO_SWEEP = [100.0, 1.0, 0.5, 0.1] # High alpha = More IID, Low alpha = More Non-IID
 
-    # --- Image Scenarios ---
-    for dataset_name, dataset_modifier in IMAGE_DATASETS_TO_TEST:
-        for model_name in ["cnn", "resnet18"]:
-            sm_model_type = 'flexiblecnn' if model_name == 'cnn' else 'resnet18'
-            scenarios.append(Scenario(
-                name=f"main_summary_{dataset_name}_{model_name}",
-                base_config_factory=get_base_image_config,
-                modifiers=[dataset_modifier, use_image_backdoor_attack, use_sybil_attack('mimic')],
-                parameter_grid={
-                    "experiment.image_model_config_name": [f"{dataset_name}_{model_name}"],
-                    "experiment.model_structure": [model_name],
-                    # Use the correct list
-                    "aggregation.method": IMAGE_AGGREGATORS,
-                    "aggregation.sm_model_type": [sm_model_type],
-                    **fixed_attack_params
-                }
-            ))
-
-    # --- Text Scenario (TREC) ---
-    scenarios.append(Scenario(
-        name="main_summary_trec",
-        base_config_factory=get_base_text_config,
-        modifiers=[use_trec_config, use_text_backdoor_attack],
-        parameter_grid={
-            # Use the correct list
-            "aggregation.method": TEXT_AGGREGATORS,
-            **fixed_attack_params
-        }
-    ))
-    return scenarios
-
-
+NUM_SEEDS_PER_CONFIG = 3
 def use_sybil_attack(strategy: str) -> Callable[[AppConfig], AppConfig]:
     """Returns a modifier function that enables a specific Sybil attack strategy."""
 
@@ -124,255 +97,183 @@ def use_sybil_attack(strategy: str) -> Callable[[AppConfig], AppConfig]:
     return modifier
 
 
-# --- Generator Functions for Scenarios ---
-
-def generate_attack_impact_scenarios() -> List[Scenario]:
-    """Generates scenarios to test the impact of attacks against different defenses."""
-    scenarios = []
-    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
-    ADV_RATES_TO_SWEEP = [0.1, 0.2, 0.3, 0.4, 0.5]
-    POISON_RATES_TO_SWEEP = [0.1, 0.3, 0.5, 0.7, 1.0]
-    IMAGE_MODELS_TO_TEST = ["cnn", "resnet18"]
-    IMAGE_DATASETS = [("cifar10", use_cifar10_config), ("cifar100", use_cifar100_config)]
-    # --- FIX: Use the correct modifier for the TREC dataset ---
-    TEXT_DATASETS = [("trec", use_trec_config)]
-
-    for group_name, sweep_params in [
-        ("vary_adv_rate",
-         {"experiment.adv_rate": ADV_RATES_TO_SWEEP, "adversary_seller_config.poisoning.poison_rate": [0.3]}),
-        ("vary_poison_rate",
-         {"experiment.adv_rate": [0.3], "adversary_seller_config.poisoning.poison_rate": POISON_RATES_TO_SWEEP})
-    ]:
-        for dataset_name, modifier in IMAGE_DATASETS:
-            for model_name in IMAGE_MODELS_TO_TEST:
-                model_config_name = f"{dataset_name}_{model_name}"
-                scenarios.append(Scenario(
-                    name=f"impact_{group_name}_{dataset_name}_{model_name}",
-                    base_config_factory=get_base_image_config,
-                    modifiers=[modifier, use_image_backdoor_attack],
-                    parameter_grid={
-                        "experiment.image_model_config_name": [model_config_name],
-                        "experiment.model_structure": [model_name],
-                        "aggregation.method": ALL_AGGREGATORS,
-                        **sweep_params
-                    }
-                ))
-        for dataset_name, modifier in TEXT_DATASETS:
-            scenarios.append(Scenario(
-                name=f"impact_{group_name}_{dataset_name}",
-                base_config_factory=get_base_text_config,
-                modifiers=[modifier, use_text_backdoor_attack],
-                parameter_grid={
-                    "aggregation.method": ALL_AGGREGATORS,
-                    **sweep_params
-                }
-            ))
-    return scenarios
-
-
 def generate_sybil_impact_scenarios() -> List[Scenario]:
-    """Generates scenarios to isolate the impact of Sybil coordination strategies."""
+    """
+    Compares baseline attack vs. attack + Sybil using TUNED defenses
+    and GOLDEN training HPs. Tests different Sybil strategies.
+    """
     scenarios = []
-    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
     SYBIL_STRATEGIES = ['mimic', 'pivot', 'knock_out']
-    IMAGE_MODELS_TO_TEST = ["cnn", "resnet18"]
+    IMAGE_MODELS_TO_TEST = ["cnn", "resnet18"] # Focus on one dataset if needed, e.g., cifar10
 
-    for model_name in IMAGE_MODELS_TO_TEST:
-        model_config_name = f"cifar10_{model_name}"
-        # --- Baseline Scenario (Poisoning Attack WITHOUT Sybil Coordination) ---
-        scenarios.append(Scenario(
-            name=f"sybil_baseline_cifar10_{model_name}",
-            base_config_factory=get_base_image_config,
-            modifiers=[use_cifar10_config, use_image_backdoor_attack],
-            parameter_grid={
+    # --- Fixed attack parameters ---
+    fixed_attack_params = {
+        "experiment.adv_rate": [0.3],
+        "adversary_seller_config.poisoning.poison_rate": [0.3], # Or match defense tune
+    }
+
+    for model_config_suffix in IMAGE_MODELS_TO_TEST:
+        dataset_name = "cifar10" # Example: Focus on CIFAR-10
+        model_config_name = f"{dataset_name}_{model_config_suffix}"
+
+        for defense_name in IMAGE_DEFENSES:
+            if defense_name not in TUNED_DEFENSE_PARAMS: continue
+
+            tuned_params = TUNED_DEFENSE_PARAMS[defense_name]
+
+            sm_model_type = None
+            if defense_name == "skymask":
+                sm_model_type = "resnet18" if "resnet" in model_config_name else "flexiblecnn"
+
+            # --- Base Grid (Tuned Defense + Fixed Attack) ---
+            base_grid = {
                 "experiment.image_model_config_name": [model_config_name],
-                "experiment.model_structure": [model_name],
-                "aggregation.method": ALL_AGGREGATORS,
-                "experiment.adv_rate": [0.3],
-                "adversary_seller_config.poisoning.poison_rate": [0.3],
-                "adversary_seller_config.sybil.is_sybil": [False],
+                **tuned_params,
+                **fixed_attack_params
             }
-        ))
-        # --- Scenarios for each Sybil Strategy ---
-        for strategy in SYBIL_STRATEGIES:
+            if sm_model_type:
+                 base_grid["aggregation.skymask.sm_model_type"] = [sm_model_type]
+
+            # --- Baseline Scenario (No Sybil) ---
             scenarios.append(Scenario(
-                name=f"sybil_{strategy}_cifar10_{model_name}",
-                base_config_factory=get_base_image_config,
-                modifiers=[use_cifar10_config, use_image_backdoor_attack, use_sybil_attack(strategy)],
-                parameter_grid={
-                    "experiment.image_model_config_name": [model_config_name],
-                    "experiment.model_structure": [model_name],
-                    "aggregation.method": ALL_AGGREGATORS,
-                    "experiment.adv_rate": [0.3],
-                    "adversary_seller_config.poisoning.poison_rate": [0.3],
-                }
+                name=f"sybil_compare_baseline_{defense_name}_{dataset_name}_{model_config_suffix}",
+                base_config_factory=get_base_image_config, # Assumes Golden HPs
+                modifiers=[use_cifar10_config, use_image_backdoor_attack], # Base attack
+                parameter_grid={**base_grid, "adversary_seller_config.sybil.is_sybil": [False]} # Explicitly False
             ))
+
+            # --- Scenarios for each Sybil Strategy ---
+            for strategy in SYBIL_STRATEGIES:
+                scenarios.append(Scenario(
+                    name=f"sybil_compare_{strategy}_{defense_name}_{dataset_name}_{model_config_suffix}",
+                    base_config_factory=get_base_image_config, # Assumes Golden HPs
+                    modifiers=[use_cifar10_config, use_image_backdoor_attack, use_sybil_attack(strategy)], # Add Sybil modifier
+                    parameter_grid=base_grid.copy() # is_sybil=True is set by modifier
+                ))
     return scenarios
 
 
+def create_fixed_params_modifier_heterogeneity(
+    modality: str,
+    defense_params: Dict[str, Any],
+    attack_modifier: Callable[[AppConfig], AppConfig],
+    model_config_name: str
+) -> Callable[[AppConfig], AppConfig]:
+
+    def modifier(config: AppConfig) -> AppConfig:
+        # 1. Apply Golden Training HPs
+        training_params = GOLDEN_TRAINING_PARAMS.get(modality)
+        if training_params:
+            for key, value in training_params.items():
+                set_nested_attr(config, key, value)
+
+        # 2. Apply Tuned Defense HPs
+        for key, value in defense_params.items():
+            set_nested_attr(config, key, value)
+
+        # 3. Apply the fixed attack type and strength
+        config.experiment.adv_rate = FIXED_ATTACK_ADV_RATE
+        config = attack_modifier(config)
+        set_nested_attr(config, "adversary_seller_config.poisoning.poison_rate", FIXED_ATTACK_POISON_RATE)
+        # config.adversary_seller_config.sybil.is_sybil = True # Optional
+
+        # 4. Set SkyMask model type if needed
+        if defense_params.get("aggregation.method") == "skymask":
+            model_struct = "resnet18" if "resnet" in model_config_name else "flexiblecnn"
+            set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
+
+        return config
+    return modifier
+
+
+BUYER_PARAMETER_GRID = {
+    # Sweep the fraction of total data held by the buyer
+    "data.{modality}.buyer_ratio": [0.01, 0.05, 0.1, 0.2],
+    # Test both IID and Non-IID buyer data (if relevant)
+    "data.{modality}.buyer_strategy": ["iid", "dirichlet"],
+    # If using 'dirichlet' for buyer, set alpha (e.g., 0.5 for skewed)
+    "data.{modality}.buyer_dirichlet_alpha": [0.5],
+}
+
+MODELS_TO_TEST = [
+    {
+        "modality_name": "image",
+        "base_config_factory": get_base_image_config,
+        "dataset_name": "cifar10",
+        "model_config_param_key": "experiment.image_model_config_name",
+        "model_config_name": "cifar10_resnet18",
+        "dataset_modifier": use_cifar10_config,
+        "attack_modifier": use_image_backdoor_attack,
+    },
+    # Add tabular/text if desired
+]
+
+# ==============================================================================
+# --- UPDATED: generate_data_heterogeneity_scenarios ---
+# ==============================================================================
 def generate_data_heterogeneity_scenarios() -> List[Scenario]:
-    """Generates scenarios to test the impact of Non-IID data distributions."""
+    """
+    Generates scenarios testing TUNED defenses under FIXED attack & GOLDEN training,
+    while varying the DEGREE of data heterogeneity (Dirichlet alpha).
+    Focuses on image data as an example.
+    """
     scenarios = []
-    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
-    DIRICHLET_ALPHAS_TO_SWEEP = [100.0, 1.0, 0.1]
+    modality = "image" # Focus on image for this example
+
     IMAGE_MODELS_TO_TEST = ["cnn", "resnet18"]
+    IMAGE_DATASETS = [("cifar10", use_cifar10_config, use_image_backdoor_attack)] # Example: CIFAR-10 only
 
-    for model_name in IMAGE_MODELS_TO_TEST:
-        model_config_name = f"cifar10_{model_name}"
-        scenarios.append(Scenario(
-            name=f"heterogeneity_impact_cifar10_{model_name}",
-            base_config_factory=get_base_image_config,
-            modifiers=[use_cifar10_config, use_image_backdoor_attack],
-            parameter_grid={
-                "experiment.image_model_config_name": [model_config_name],
-                "experiment.model_structure": [model_name],
-                "aggregation.method": ALL_AGGREGATORS,
-                "data.image.property_skew.dirichlet_alpha": DIRICHLET_ALPHAS_TO_SWEEP,
-                "data.image.strategy": ["dirichlet"],
-                "experiment.adv_rate": [0.3],
-                "adversary_seller_config.poisoning.poison_rate": [0.3],
-            }
-        ))
-    return scenarios
+    for dataset_name, dataset_modifier, attack_modifier in IMAGE_DATASETS:
+        for model_config_suffix in IMAGE_MODELS_TO_TEST:
+            model_config_name = f"{dataset_name}_{model_config_suffix}"
 
+            for defense_name in IMAGE_DEFENSES:
+                if defense_name not in TUNED_DEFENSE_PARAMS: continue
 
-def generate_oracle_vs_buyer_bias_scenarios() -> List[Scenario]:
-    """
-    Generates scenarios to compare the Oracle baseline (validation set reference)
-    against the standard Biased Buyer baseline.
-    """
-    scenarios = []
-    # Include SkyMask as it's discussed in the paper
-    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl', 'skymask']
+                tuned_defense_params = TUNED_DEFENSE_PARAMS[defense_name]
 
-    # This scenario uses a fixed, challenging attack setting
-    fixed_attack_params = {
-        "experiment.adv_rate": [0.3],
-        "adversary_seller_config.poisoning.poison_rate": [0.3],
-    }
+                # --- Create the modifier to fix Training HPs, Defense HPs, and Attack ---
+                fixed_params_modifier = create_fixed_params_modifier_heterogeneity(
+                    modality,
+                    tuned_defense_params,
+                    attack_modifier,
+                    model_config_name
+                )
 
-    scenarios.append(Scenario(
-        name="oracle_vs_buyer_bias_cifar10_cnn",
-        base_config_factory=get_base_image_config,
-        modifiers=[use_cifar10_config, use_image_backdoor_attack, use_sybil_attack('mimic')],
-        parameter_grid={
-            "experiment.image_model_config_name": ["cifar10_cnn"],
-            "experiment.model_structure": ["cnn"],
-            "aggregation.method": ALL_AGGREGATORS,
-            # This is the key parameter we sweep over
-            "aggregation.root_gradient_source": ["buyer", "validation"],
-            "aggregation.sm_model_type": ["flexiblecnn"],
-            **fixed_attack_params
-        }
-    ))
-    return scenarios
+                # --- Define the base parameters (fixed for this group) ---
+                base_params = {
+                    "experiment.dataset_name": [dataset_name],
+                    "experiment.image_model_config_name": [model_config_name],
+                    "n_samples": [NUM_SEEDS_PER_CONFIG],
+                    "experiment.use_early_stopping": [True],
+                    "experiment.patience": [10],
+                    f"data.{modality}.strategy": ["dirichlet"], # Explicitly Dirichlet
+                    # Note: alpha is swept below
+                }
 
+                # --- Combine base params with the HETEROGENEITY sweep ---
+                full_parameter_grid = {
+                    **base_params,
+                    f"data.{modality}.dirichlet_alpha": DIRICHLET_ALPHAS_TO_SWEEP
+                }
 
-def generate_buyer_data_impact_scenarios() -> List[Scenario]:
-    """
-    Generates scenarios to test the impact of the buyer's local data size
-    on the effectiveness of various defense aggregators.
-    """
-    scenarios = []
-    ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl', 'skymask']
+                # Create the Scenario
+                scenario_name = f"heterogeneity_impact_{defense_name}_{dataset_name}_{model_config_suffix}"
 
-    # This scenario uses a fixed, challenging attack setting
-    fixed_attack_params = {
-        "experiment.adv_rate": [0.3],
-        "adversary_seller_config.poisoning.poison_rate": [0.3],
-    }
-
-    scenarios.append(Scenario(
-        name="buyer_data_impact_cifar10_cnn",
-        base_config_factory=get_base_image_config,
-        modifiers=[use_cifar10_config, use_image_backdoor_attack, use_sybil_attack('mimic')],
-        parameter_grid={
-            # --- Fixed Parameters for this Experiment ---
-            "experiment.image_model_config_name": ["cifar10_cnn"],
-            "experiment.model_structure": ["cnn"],
-            "aggregation.root_gradient_source": ["buyer"],  # We only care about the buyer's data here
-
-            # --- Swept Parameters ---
-            "aggregation.method": ALL_AGGREGATORS,  # Test against all defenses
-
-            # ✅ THIS IS THE KEY: Sweep over the buyer's data percentage
-            # It will test the defenses when the buyer has 1%, 5%, 10%, and 20% of the data.
-            "data.image.discovery.buyer_percentage": [0.01, 0.05, 0.10, 0.20],
-
-            # --- Attack Parameters ---
-            **fixed_attack_params
-        }
-    ))
-    return scenarios
-
-
-def generate_adv_rate_trend_scenarios() -> List[Scenario]:
-    """
-    A lean set of scenarios to show the trend of ASR vs. Adversary Rate for MartFL.
-    """
-    scenarios = []
-    # Add a 0.0 baseline for a clean comparison point
-    ADV_RATES_TO_SWEEP = [0.0, 0.2, 0.3, 0.4, 0.5, 0.7, 1]
-
-    scenarios.append(Scenario(
-        name="trend_adv_rate_martfl_cifar10_cnn",
-        base_config_factory=get_base_image_config,
-        modifiers=[use_cifar10_config, use_image_backdoor_attack],
-        parameter_grid={
-            "experiment.image_model_config_name": ["cifar10_cnn"],
-            "experiment.model_structure": ["cnn"],
-            "aggregation.method": ['martfl'],  # Only test MartFL for this trend
-            "experiment.adv_rate": ADV_RATES_TO_SWEEP,
-            "adversary_seller_config.poisoning.poison_rate": [0.3],
-        }
-    ))
+                scenario = Scenario(
+                    name=scenario_name,
+                    base_config_factory=get_base_image_config, # Assumes this sets defaults overwritten by modifier
+                    modifiers=[fixed_params_modifier, dataset_modifier], # Apply all fixed settings
+                    parameter_grid=full_parameter_grid # Sweep ONLY dirichlet_alpha
+                )
+                scenarios.append(scenario)
     return scenarios
 
 
 def use_label_flipping_attack(config: AppConfig) -> AppConfig:
     """Modifier to set up for a simple label-flipping attack."""
     config.adversary_seller_config.poisoning.type = PoisonType.LABEL_FLIP
-    # For a simple label-flipping attack, adversaries often flip all their data
-    config.adversary_seller_config.poisoning.poison_rate = 1.0
     return config
-
-
-def generate_label_flipping_scenarios() -> List[Scenario]:
-    """
-    Generates simple scenarios to test defenses against a label-flipping attack.
-    """
-    scenarios = []
-    AGGREGATORS = ['fedavg', 'fltrust', 'martfl']
-    fixed_attack_params = {
-        "experiment.adv_rate": [0.3],  # Set a fixed adversary rate
-    }
-
-    # --- Image Scenario (CIFAR-10) ---
-    for model_name in ["cnn", "resnet18"]:
-        scenarios.append(Scenario(
-            name=f"label_flip_cifar10_{model_name}",
-            base_config_factory=get_base_image_config,
-            modifiers=[use_cifar10_config, use_label_flipping_attack],
-            parameter_grid={
-                "experiment.image_model_config_name": [f"cifar10_{model_name}"],
-                "experiment.model_structure": [model_name],
-                "aggregation.method": AGGREGATORS,
-                **fixed_attack_params
-            }
-        ))
-
-    # --- Text Scenario (TREC) ---
-    scenarios.append(Scenario(
-        name="label_flip_trec",
-        base_config_factory=get_base_text_config,
-        modifiers=[use_trec_config, use_label_flipping_attack],
-        parameter_grid={
-            "aggregation.method": AGGREGATORS,
-            **fixed_attack_params
-        }
-    ))
-    return scenarios
-
 
 def generate_sybil_selection_rate_scenarios() -> List[Scenario]:
     """
@@ -887,59 +788,6 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
 
     return scenarios
 
-
-# ============================================================================
-# 🆕 NEW: Comparative Analysis Scenarios
-# ============================================================================
-
-def generate_attack_comparison_scenarios() -> List[Scenario]:
-    """
-    Generates scenarios to directly compare old vs. new attack effectiveness.
-    Useful for validating that the new attacks are improvements.
-    """
-    scenarios = []
-
-    # Compare Drowning vs. Competitor Mimicry
-    scenarios.append(Scenario(
-        name="comparison_drowning_vs_mimicry_martfl",
-        base_config_factory=get_base_image_config,
-        modifiers=[use_cifar10_config],
-        parameter_grid={
-            "experiment.image_model_config_name": ["cifar10_cnn"],
-            "experiment.model_structure": ["cnn"],
-            "aggregation.method": ["martfl"],  # Focus on MartFL as it's most vulnerable
-            "experiment.adv_rate": [0.3],
-            # Sweep between the two attack types
-            "adversary_seller_config.drowning_attack.is_active": [True, False],
-            "adversary_seller_config.mimicry_attack.is_active": [False, True],
-        }
-    ))
-
-    # Compare Orthogonal Pivot vs. Class Exclusion
-    scenarios.append(Scenario(
-        name="comparison_orthogonal_vs_class_exclusion_fltrust",
-        base_config_factory=get_base_image_config,
-        modifiers=[use_cifar10_config, disable_all_seller_attacks],
-        parameter_grid={
-            "experiment.image_model_config_name": ["cifar10_cnn"],
-            "experiment.model_structure": ["cnn"],
-            "aggregation.method": ["fltrust"],  # Focus on FLTrust
-            # Sweep between buyer attack types
-            "buyer_attack_config.is_active": [True],
-            "buyer_attack_config.attack_type": ["orthogonal_pivot", "class_exclusion"],
-            "buyer_attack_config.exclusion_exclude_classes": [[7, 8, 9]],
-        }
-    ))
-
-    return scenarios
-
-
-# ============================================================================
-# Updated ALL_SCENARIOS List
-# ============================================================================
-# ============================================================================
-# 🆕 NEW: Attack Scalability Analysis (Rate-Based)
-# ============================================================================
 
 def generate_attack_scalability_scenarios_OLD() -> List[Scenario]:
     """
@@ -1526,4 +1374,3 @@ if __name__ == '__main__':
     print(f"Generated {len(ALL_SCENARIOS)} focused scenarios:")
     for s in ALL_SCENARIOS:
         print(f"  - {s.name}")
-

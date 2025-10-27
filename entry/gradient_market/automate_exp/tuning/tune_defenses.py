@@ -5,7 +5,8 @@ import sys
 from typing import Callable
 
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
-from entry.gradient_market.automate_exp.scenarios import use_image_backdoor_attack, use_text_backdoor_attack
+from entry.gradient_market.automate_exp.scenarios import use_image_backdoor_attack, use_text_backdoor_attack, \
+    use_label_flipping_attack
 from entry.gradient_market.automate_exp.tbl_new import get_base_tabular_config, use_tabular_backdoor_with_trigger, \
     TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL, Scenario
 
@@ -106,7 +107,6 @@ def apply_tuning_setup(config: AppConfig, modality: str, attack_modifier: Callab
 # --- Define the specific Model/Dataset combinations to tune defenses on ---
 # Use the same list as in tune_baselines.py or a subset if tuning is too long
 MODELS_DATASETS_TO_TUNE = [
-    # --- Tabular ---
     {
         "modality_name": "tabular",
         "base_config_factory": get_base_tabular_config,
@@ -114,9 +114,9 @@ MODELS_DATASETS_TO_TUNE = [
         "model_structure": "mlp",
         "model_config_param_key": "experiment.tabular_model_config_name",
         "model_config_name": "mlp_texas100_baseline",
-        "attack_modifier": use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL),
+        "backdoor_attack_modifier": use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL),
+        "labelflip_attack_modifier": use_label_flipping_attack,  # Add this
     },
-    # --- Image ---
     {
         "modality_name": "image",
         "base_config_factory": get_base_image_config,
@@ -124,9 +124,9 @@ MODELS_DATASETS_TO_TUNE = [
         "model_structure": "resnet18",
         "model_config_param_key": "experiment.image_model_config_name",
         "model_config_name": "cifar10_resnet18",
-        "attack_modifier": use_image_backdoor_attack,  # Assumes standard backdoor
+        "backdoor_attack_modifier": use_image_backdoor_attack,
+        "labelflip_attack_modifier": use_label_flipping_attack,  # Add this
     },
-    # --- Text ---
     {
         "modality_name": "text",
         "base_config_factory": get_base_text_config,
@@ -134,11 +134,10 @@ MODELS_DATASETS_TO_TUNE = [
         "model_structure": "textcnn",
         "model_config_param_key": "experiment.text_model_config_name",
         "model_config_name": "textcnn_trec_baseline",
-        "attack_modifier": use_text_backdoor_attack,  # Assumes standard backdoor
+        "backdoor_attack_modifier": use_text_backdoor_attack,
+        "labelflip_attack_modifier": use_label_flipping_attack,  # Add this
     },
-    # Add other combinations if necessary
 ]
-
 # --- Main Execution Block ---
 if __name__ == "__main__":
 
@@ -149,63 +148,95 @@ if __name__ == "__main__":
 
     print("\n--- Generating Defense Tuning Scenarios (Step 3) ---")
 
-    # Iterate through each model/dataset combination
+    # Define Attack States AND Types
+    ATTACK_STATES_TO_TUNE = ["no_attack", "with_attack"]
+    ATTACK_TYPES_TO_TUNE = ["backdoor", "labelflip"]  # NEW
+
     for combo_config in MODELS_DATASETS_TO_TUNE:
         modality = combo_config["modality_name"]
         print(
-            f"\n-- Processing Modality: {modality}, Dataset: {combo_config['dataset_name']}, Model: {combo_config['model_structure']}")
+            f"\n-- Processing Modality: {modality}, Dataset: {combo_config['dataset_name']}, Model: {combo_config['model_config_name']}")
 
-        # Iterate through each defense method to tune
-        for defense_name, defense_grid in TUNING_GRIDS.items():
+        for attack_state in ATTACK_STATES_TO_TUNE:
+            print(f"  -- Attack State: {attack_state}")
 
-            # Skip SkyMask for text data if it's not compatible
-            if modality != "image" and defense_name == "skymask":
-                print(f"   Skipping {defense_name} tuning for text modality.")
-                continue
+            # Determine which attack types to use for this state
+            current_attack_types = ATTACK_TYPES_TO_TUNE if attack_state == "with_attack" else [
+                "benign"]  # Use 'benign' placeholder for no_attack
 
-            scenario_name = f"step3_tune_{defense_name}_{modality}_{combo_config['dataset_name']}"
-            print(f"  - Defining scenario for {defense_name}: {scenario_name}")
+            # --- NEW: Loop over Attack Types ---
+            for attack_type in current_attack_types:
+                print(f"    -- Attack Type: {attack_type}")
 
-            # Create the base config using the factory
-            base_cfg_instance = combo_config["base_config_factory"]()
+                # Select the correct modifier
+                selected_attack_modifier = None
+                if attack_state == "no_attack":
+                    selected_attack_modifier = lambda cfg: cfg  # Empty modifier for no_attack
+                elif attack_type == "backdoor":
+                    modifier_key = "backdoor_attack_modifier"
+                    if modifier_key not in combo_config: continue  # Skip if not defined
+                    selected_attack_modifier = combo_config[modifier_key]
+                elif attack_type == "labelflip":
+                    modifier_key = "labelflip_attack_modifier"
+                    if modifier_key not in combo_config: continue  # Skip if not defined
+                    selected_attack_modifier = combo_config[modifier_key]
+                else:
+                    continue  # Should not happen
+
+                # Iterate through each defense method to tune
+                for defense_name, defense_grid in TUNING_GRIDS.items():
+
+                    # Skip incompatible combos (same as before)
+                    if modality != "image" and defense_name == "skymask": continue
+
+                    # --- Modify Scenario Name to include attack_type ---
+                    attack_tag = attack_type if attack_state == "with_attack" else "no_attack"
+                    scenario_name = f"step3_tune_{defense_name}_{attack_tag}_{modality}_{combo_config['dataset_name']}"
+                    print(f"      - Defining scenario for {defense_name}: {scenario_name}")
 
 
-            # Create a modifier function that applies BOTH golden params and attack
-            def setup_modifier(config: AppConfig) -> AppConfig:
-                # Need to use the correct modality and attack modifier for this specific combo
-                return apply_tuning_setup(config, combo_config["modality_name"], combo_config["attack_modifier"])
+                    # --- Create setup_modifier with correct state AND modifier ---
+                    def create_setup_modifier(current_attack_state=attack_state,
+                                              current_modifier=selected_attack_modifier):
+                        def modifier(config: AppConfig) -> AppConfig:
+                            return apply_tuning_setup(
+                                config,
+                                combo_config["modality_name"],
+                                current_modifier,  # Pass the selected attack func
+                                current_attack_state
+                            )
+
+                        return modifier
 
 
-            # Combine the base fixed parameters with the defense-specific grid
-            full_parameter_grid = {
-                # Fixed parameters for this model/dataset
-                "experiment.dataset_name": [combo_config["dataset_name"]],
-                "experiment.model_structure": [combo_config["model_structure"]],
-                combo_config["model_config_param_key"]: [combo_config["model_config_name"]],
-                "n_samples": [NUM_SEEDS_PER_CONFIG],
-                "experiment.use_early_stopping": [True],
-                "experiment.patience": [10],
-                "aggregation.skymask.sm_model_type": [
-                    combo_config["model_structure"]] if defense_name == "skymask" else [None],
+                    setup_modifier_func = create_setup_modifier()
 
-                # The defense method and its specific tuning grid
-                **defense_grid
-            }
+                    # --- Combine parameters (same as before) ---
+                    full_parameter_grid = {
+                        "experiment.dataset_name": [combo_config["dataset_name"]],
+                        combo_config["model_config_param_key"]: [combo_config["model_config_name"]],
+                        "n_samples": [NUM_SEEDS_PER_CONFIG],
+                        "experiment.use_early_stopping": [True],
+                        "experiment.patience": [10],
+                        f"data.{modality}.strategy": ["dirichlet"],
+                        f"data.{modality}.dirichlet_alpha": [0.5],
+                        "aggregation.skymask.sm_model_type": [
+                            "resnet18" if "resnet" in combo_config["model_config_name"] else "flexiblecnn"
+                        ] if defense_name == "skymask" else [None],
+                        **defense_grid
+                    }
+                    if defense_name != "skymask":
+                        if "aggregation.skymask.sm_model_type" in full_parameter_grid:
+                            del full_parameter_grid["aggregation.skymask.sm_model_type"]
 
-            # Need to remove None values if a defense doesn't use a specific param
-            # For example, Skymask grid sets its own sm_model_type, others don't need it.
-            if defense_name != "skymask":
-                if "aggregation.skymask.sm_model_type" in full_parameter_grid:
-                    del full_parameter_grid["aggregation.skymask.sm_model_type"]
-
-            scenario = Scenario(
-                name=scenario_name,
-                base_config_factory=combo_config["base_config_factory"],  # Use original factory
-                modifiers=[setup_modifier],  # Apply golden params + attack via modifier
-                parameter_grid=full_parameter_grid
-            )
-            all_defense_tuning_scenarios.append(scenario)
-
+                    # --- Create Scenario (same as before) ---
+                    scenario = Scenario(
+                        name=scenario_name,
+                        base_config_factory=combo_config["base_config_factory"],
+                        modifiers=[setup_modifier_func],
+                        parameter_grid=full_parameter_grid
+                    )
+                    all_defense_tuning_scenarios.append(scenario)
     # --- Generate Config Files ---
     print("\n--- Generating Configuration Files ---")
     total_configs = 0

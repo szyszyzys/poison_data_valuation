@@ -1,0 +1,88 @@
+experiment:
+  dataset_name: CelebA
+  model_structure: SimpleCNN
+  aggregation_method: martfl
+  global_rounds: 100
+  n_sellers: 30
+  adv_rate: 0.3
+  device: cuda
+  save_path: configs_generated\poison_vary_poison_rate_celeba\pr-0p3_adv-0p3_aggregation_method-martfl
+  num_classes: 0
+training:
+  local_epochs: 2
+  batch_size: 64
+  learning_rate: 0.001
+  optimizer: Adam
+server_attack_config:
+  attack_name: none
+  gradient_inversion_params:
+    frequency: 10
+    victim_strategy: random
+    fixed_victim_idx: 0
+    lrs_to_try:
+    - 0.1
+    - 0.01
+    base_attack_params: {}
+adversary_seller_config:
+  name: benign
+  poisoning:
+    type: backdoor
+    poison_rate: 0.3
+    image_backdoor_params:
+      attack_name: simple_data_poison
+      simple_data_poison_params:
+        target_label: 0
+        trigger_type: blended_patch
+        location: bottom_right
+        trigger_shape:
+        - 4
+        - 4
+    text_backdoor_params:
+      target_label: 0
+      trigger_content: cf
+      location: end
+      attack_name: simple_data_poison
+    label_flip:
+      target_label: 0
+      mode: fixed_target
+  sybil:
+    is_sybil: false
+    detection_threshold: 0.8
+    benign_rounds: 0
+    gradient_default_mode: mimic
+    trigger_mode: static
+    history_window_size: 10
+    role_config: {}
+    strategy_configs: {}
+data:
+  text:
+  image:
+    strategy: property-skew
+    property_skew:
+      property_key: Smiling
+      num_high_prevalence_clients: 2
+      num_security_attackers: 2
+      high_prevalence_ratio: 0.8
+      low_prevalence_ratio: 0.1
+      standard_prevalence_ratio: 0.4
+    buyer_config: {}
+debug:
+  save_individual_gradients: false
+  gradient_save_frequency: 10
+aggregation:
+  method: fedavg
+  clip_norm: 0.01
+  martfl:
+    change_base: true
+    clip: true
+  skymask:
+    clip: true
+    sm_model_type: None
+    mask_epochs: 20
+    mask_lr: 0.0001
+    mask_clip: 1.0
+    mask_threshold: 0.5
+seed: 42
+n_samples: 10
+data_root: ./data
+use_cache: true
