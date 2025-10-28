@@ -10,22 +10,22 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- Parsers for different folder name patterns ---
+# --- Parsers for ALL folder name patterns ---
 
 HPARAM_REGEX = re.compile(r"opt_(?P<optimizer>\w+)_lr_(?P<lr>[\d\.]+)_epochs_(?P<epochs>\d+)")
-EXP_NAME_REGEX = re.compile(r"step1_tune_fedavg_.*") # Finds the main experiment folder
 SEED_REGEX_1 = re.compile(r"run_\d+_seed_(\d+)") # e.g., run_1_seed_43
 SEED_REGEX_2 = re.compile(r".*_seed-(\d+)") # e.g., ds-texas100_..._seed-42
 
-# --- NEW: Regex to find data setting ---
+# This will find '..._iid' or '..._noniid'
 DATA_SETTING_REGEX = re.compile(r".*_(?P<data_setting>iid|noniid)$")
 
+# This finds the main experiment name (which also has the data setting)
+EXP_NAME_REGEX = re.compile(
+    r"(?P<base_name>step1_tune_fedavg_.+?)(_(?P<data_setting_exp>iid|noniid))?$"
+)
 
 def parse_hp_from_name(name: str) -> Dict[str, Any]:
-    """
-    Parses 'opt_Adam_lr_0.001_epochs_5'
-    into {'optimizer': 'Adam', 'lr': 0.001, 'epochs': 5}
-    """
+    """Parses 'opt_Adam_lr_0.001_epochs_5'"""
     match = HPARAM_REGEX.match(name)
     if not match:
         return {}
@@ -35,11 +35,25 @@ def parse_hp_from_name(name: str) -> Dict[str, Any]:
         data['epochs'] = int(data['epochs'])
         return data
     except ValueError:
-        logger.warning(f"Could not convert types in HP folder name: {name}")
         return {}
 
+def parse_sub_exp_name(name: str) -> Dict[str, str]:
+    """Parses 'ds-purchase100_model-mlp_agg-fedavg'"""
+    params = {}
+    try:
+        parts = name.split('_')
+        for part in parts:
+            if '-' in part:
+                key, value = part.split('-', 1)
+                # We only care about these specific keys
+                if key in ['ds', 'model', 'agg']:
+                    params[key] = value
+    except Exception as e:
+        logger.warning(f"Could not parse sub-experiment name: {name} ({e})")
+    return params
+
 def parse_seed_from_name(name: str) -> int:
-    """Parses seed from various run folder name formats."""
+    """Parses seed from 'run_1_seed_43' or '..._seed-42'"""
     for regex in [SEED_REGEX_1, SEED_REGEX_2]:
         match = regex.match(name)
         if match:
@@ -47,31 +61,35 @@ def parse_seed_from_name(name: str) -> int:
                 return int(match.group(1))
             except (ValueError, IndexError):
                 pass
-
-    # Fallback
     if "seed" in name:
         try:
-            seed_str = name.split('_')[-1]
-            return int(seed_str)
+            return int(name.split('_')[-1])
         except (ValueError, IndexError):
             pass
-
     return -1
 
-def parse_data_setting_from_name(name: str) -> str:
-    """Parses 'iid' or 'noniid' from a folder name."""
-    match = DATA_SETTING_REGEX.match(name)
+def parse_exp_context(name: str) -> Dict[str, str]:
+    """Parses 'step1_tune_..._mlp_iid'"""
+    match = EXP_NAME_REGEX.match(name)
     if match:
-        return match.group("data_setting")
-    return ""
+        data = match.groupdict()
+        return {
+            "base_name": data.get("base_name") or "unknown_base",
+            "data_setting": data.get("data_setting_exp") or "unknown_ds"
+        }
+
+    # Check if it's just a data_setting string
+    ds_match = DATA_SETTING_REGEX.match(name)
+    if ds_match:
+        return {"data_setting": ds_match.group("data_setting")}
+
+    return {}
 
 
 def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
     """
-    Finds all final_metrics.json files recursively and parses their context
-    from the directory structure.
-
-    This version is robust to different/inconsistent directory structures.
+    Finds all final_metrics.json files and parses context by
+    walking up the parent directories, robustly.
     """
     logger.info(f"🔍 Scanning recursively for results in: {results_dir}...")
     metrics_files = list(results_dir.rglob("final_metrics.json"))
@@ -86,70 +104,76 @@ def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
     for metrics_file in metrics_files:
         try:
             run_dir = metrics_file.parent
-
             if not (run_dir / ".success").exists():
                 logger.debug(f"Skipping failed/incomplete run: {run_dir.name}")
                 continue
 
-            # 2. Initialize context parts
-            parsed_hps = {}
-            data_setting = "unknown"
-            exp_name = "unknown_exp"
-            seed = -1
+            # --- Initialize ALL possible fields ---
+            record = {
+                "base_name": "unknown_base",
+                "data_setting": "unknown_ds",
+                "optimizer": None, "lr": None, "epochs": None,
+                "ds": None, "model": None, "agg": None,
+                "seed": -1,
+                "full_path": str(metrics_file) # For debugging
+            }
 
-            # 3. Iterate up the parents to find context
+            # --- Walk up the path from the file ---
             current_path = metrics_file.parent
-
-            # --- This is the key logic ---
-            # We walk up and fill in the blanks. We take the *first* one we find
-            # (the one closest to the json file).
             while str(current_path).startswith(str(results_dir)) and current_path != results_dir.parent:
                 folder_name = current_path.name
 
-                if not parsed_hps:
-                    parsed_hps = parse_hp_from_name(folder_name)
+                # Try to parse HPs (opt_...)
+                if record["optimizer"] is None:
+                    hps = parse_hp_from_name(folder_name)
+                    if hps: record.update(hps)
 
-                if exp_name == "unknown_exp" and EXP_NAME_REGEX.match(folder_name):
-                    exp_name = folder_name
+                # Try to parse exp context (step1_tune_..._iid)
+                exp_context = parse_exp_context(folder_name)
+                if exp_context:
+                    if record["base_name"] == "unknown_base" and "base_name" in exp_context:
+                        record["base_name"] = exp_context["base_name"]
+                    if record["data_setting"] == "unknown_ds" and "data_setting" in exp_context:
+                        record["data_setting"] = exp_context["data_setting"]
 
-                if seed == -1:
+                # Try to parse sub-exp name (ds-...)
+                if record["ds"] is None:
+                    sub_exp_params = parse_sub_exp_name(folder_name)
+                    if sub_exp_params: record.update(sub_exp_params)
+
+                # Try to parse seed
+                if record["seed"] == -1:
                     seed = parse_seed_from_name(folder_name)
-
-                # --- NEW: Explicitly look for iid/noniid ---
-                if data_setting == "unknown":
-                    ds = parse_data_setting_from_name(folder_name)
-                    if ds:
-                        data_setting = ds
-                # --- End New ---
+                    if seed != -1: record["seed"] = seed
 
                 current_path = current_path.parent
-            # --- End while loop ---
 
-            # 4. Handle "swapped" paths where exp_name is missing
-            #    but HPs are found and data_setting is still unknown.
-            if exp_name == "unknown_exp" and parsed_hps:
-                logger.debug(f"Found 'swapped' path. Using folder name as exp_name for: {metrics_file}")
-                # Fallback to the parent of the HP folder
-                exp_name = metrics_file.parent.parent.parent.name
+            # --- Post-processing / Sanity Checks ---
 
-            # 5. Handle missing HPs (if folder was 'opt_...' but parser failed)
-            if not parsed_hps:
+            # If data_setting is still unknown, try to infer from base_name
+            if record["data_setting"] == "unknown_ds" and record["base_name"] != "unknown_base":
+                if record["base_name"].endswith("_iid"):
+                    record["data_setting"] = "iid"
+                elif record["base_name"].endswith("_noniid"):
+                    record["data_setting"] = "noniid"
+
+            # If base_name is still unknown, fall back to ds/model
+            if record["base_name"] == "unknown_base" and record["ds"]:
+                record["base_name"] = f"{record['ds']}_{record['model']}"
+
+            # Check for minimum required info
+            if record["optimizer"] is None:
                 logger.warning(f"Could not find HP folder (opt_...) for {metrics_file}. Skipping.")
                 continue
 
-            # 6. Load the metrics JSON
+            # Load metrics
             with open(metrics_file, 'r') as f:
-                metrics = json.load(f)
+                metrics_data = json.load(f)
 
-            record = {
-                "exp_name": exp_name,
-                "data_setting": data_setting, # <-- NEW COLUMN
-                **parsed_hps,
-                "seed": seed,
-                "status": "success",
-                **metrics
-            }
+            # Add metrics to record
+            record.update(metrics_data)
             all_results.append(record)
+
         except Exception as e:
             logger.warning(f"Warning: Could not process file {metrics_file}: {e}", exc_info=True)
             continue
@@ -165,36 +189,32 @@ def analyze_results(results: List[Dict[str, Any]], results_dir: Path):
 
     df = pd.DataFrame(results)
 
-    if "data_setting" not in df.columns:
-        logger.error("❌ 'data_setting' column was not created. This is a script bug.")
-        return
-
     # --- 1. Identify Config vs. Metric Columns ---
 
-    # --- THIS IS THE KEY FIX ---
-    # We now explicitly group by 'data_setting'
-    config_cols = ["exp_name", "data_setting", "optimizer", "lr", "epochs"]
-    # ---------------------------
+    # Define ALL columns that describe a configuration
+    all_config_cols = [
+        "base_name", "data_setting",
+        "optimizer", "lr", "epochs",
+        "ds", "model", "agg"
+    ]
 
-    # Find all config cols that actually exist in the DataFrame
-    existing_config_cols = [c for c in config_cols if c in df.columns]
-
-    if len(existing_config_cols) < 3: # e.g., missing optimizer, lr, etc.
-        logger.error(f"❌ Missing critical config columns. Found: {df.columns.tolist()}")
-        return
+    # Find which of these config columns actually exist in our DataFrame
+    config_cols = [c for c in all_config_cols if c in df.columns]
 
     # Find metrics
     metric_cols_to_agg = []
-    known_config_cols = set(existing_config_cols + ["seed", "status"])
+    known_cols = set(config_cols + ["seed", "status", "full_path"])
+
     for col in df.columns:
-        if col not in known_config_cols and pd.api.types.is_numeric_dtype(df[col]):
+        if col not in known_cols and pd.api.types.is_numeric_dtype(df[col]):
             metric_cols_to_agg.append(col)
 
     if not metric_cols_to_agg:
         logger.error("❌ No numeric metric columns found to aggregate (e.g., 'test_acc').")
+        logger.error(f"DataFrame columns found: {df.columns.tolist()}")
         return
 
-    logger.info(f"📊 Aggregating by: {existing_config_cols}")
+    logger.info(f"📊 Aggregating by: {config_cols}")
     logger.info(f"📊 Found metrics to aggregate: {metric_cols_to_agg}")
 
     # --- 2. Build Aggregation Dictionary Dynamically ---
@@ -212,10 +232,9 @@ def analyze_results(results: List[Dict[str, Any]], results_dir: Path):
 
     # --- 3. Perform Aggregation ---
     try:
-        agg_df = df.groupby(existing_config_cols).agg(**agg_ops).reset_index()
+        agg_df = df.groupby(config_cols).agg(**agg_ops).reset_index()
     except Exception as e:
         logger.error(f"Error during aggregation: {e}")
-        logger.error(f"Original DataFrame columns:", df.columns)
         return
 
     agg_df[std_cols] = agg_df[std_cols].fillna(0)
@@ -238,23 +257,25 @@ def analyze_results(results: List[Dict[str, Any]], results_dir: Path):
     print(f"📈 Aggregated Experiment Results (sorted by {primary_metric})")
     print("="*80)
 
-    display_cols = existing_config_cols.copy() # Show all config columns
+    # Show all config columns + primary metrics + run count
+    display_cols = config_cols.copy()
     display_cols.append(primary_metric)
     primary_std = primary_metric.replace("mean_", "std_")
     if primary_std in agg_df.columns:
         display_cols.append(primary_std)
+    display_cols.append("num_success_runs")
 
+    # Add other common/key metrics if they exist
     for m_key in ['backdoor_asr', 'adv_success_rate', 'test_loss', 'target_class_acc']:
         m_mean = f"mean_{m_key}"
         if m_mean in agg_df.columns and m_mean != primary_metric:
             display_cols.append(m_mean)
-    display_cols.append("num_success_runs")
 
     final_display_cols = [c for c in display_cols if c in agg_df.columns]
     print(agg_df[final_display_cols].to_string(index=False, float_format="%.4f"))
 
     # --- 6. Save Full Results to CSV ---
-    output_csv = results_dir / "aggregated_results_FINAL.csv"
+    output_csv = results_dir / "aggregated_results_UNIFIED.csv"
     try:
         agg_df.to_csv(output_csv, index=False, float_format="%.4f")
         logger.info(f"\n✅ Full aggregated results saved to: {output_csv}")
@@ -281,7 +302,7 @@ def main():
 
     pd.set_option('display.max_rows', None)
     pd.set_option('display.max_columns', None)
-    pd.set_option('display.width', 200)
+    pd.set_option('display.width', 1000) # Set wide for all columns
 
     try:
         results_list = find_all_results(results_path)
