@@ -28,34 +28,20 @@ except ImportError as e:
     sys.exit(1)
 TUNING_GRIDS = {
     "fltrust": {
-        # FLTrust primarily relies on the root gradient; clipping is an optional add-on.
-        # Test effectiveness with different clip norms. None means no server-side clipping.
         "aggregation.clip_norm": [1.0, 5.0, 10.0, 20.0, None],
     },
     "martfl": {
-        # MartFL relies on identifying a baseline and selecting k neighbors.
-        # max_k: How many neighbors to include (influences diversity vs. robustness).
-        # clip_norm: Server-side clipping before similarity check.
         "aggregation.martfl.max_k": [3, 5, 7, 10],
         "aggregation.clip_norm": [5.0, 10.0, 20.0, None],
-        # "aggregation.martfl.change_base": [True, False], # Optional: Test baseline update strategy
     },
     "skymask": {
-        # SkyMask uses iterative masking based on sign consistency.
-        # mask_epochs: Iterations for mask optimization.
-        # mask_lr: Learning rate for mask optimization.
-        # mask_threshold: Cutoff for including gradients based on mask score.
         "aggregation.skymask.mask_epochs": [10, 20, 50],
         "aggregation.skymask.mask_lr": [0.01, 0.001],
         "aggregation.skymask.mask_threshold": [0.5, 0.7, 0.9],
         "aggregation.clip_norm": [10.0],  # Typically keep fixed or sweep separately
     }
-    # Add other defenses here (e.g., Krum, TrimmedMean if testing them)
-    # "krum": {"aggregation.krum.k": [1, 3, 5]},
 }
 
-# --- Attack Types to Tune Against ---
-# Test defenses against representative poisoning attacks.
 ATTACK_TYPES_TO_TUNE = ["backdoor", "labelflip"]
 
 # --- All Models/Datasets Combinations for Tuning ---

@@ -4,6 +4,7 @@
 # --- CRITICAL: FILL THESE WITH YOUR ACTUAL RESULTS ---
 from typing import Dict, Any, Callable
 
+from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig
 from entry.gradient_market.automate_exp.config_generator import set_nested_attr
 
@@ -21,14 +22,6 @@ GOLDEN_TRAINING_PARAMS = {
         "training.momentum": 0.0, "training.weight_decay": 0.0,
     }
 }
-
-# ==============================================================================
-# --- 2. USER ACTION: Define Tuned Defense HPs (from Step 3 Defense Tune) ---
-# ==============================================================================
-# --- CRITICAL: FILL THESE WITH YOUR ACTUAL RESULTS ---
-# Define the BEST HPs found for EACH defense against BOTH backdoor AND labelflip
-# You might need separate dicts if optimal HPs differ significantly per attack type.
-# Using one dict here for simplicity, assuming tuning found generally good HPs.
 TUNED_DEFENSE_PARAMS = {
     "fedavg": {"aggregation.method": "fedavg"},
     "fltrust": {"aggregation.method": "fltrust", "aggregation.clip_norm": 10.0},
@@ -51,6 +44,31 @@ NUM_SEEDS_PER_CONFIG = 3
 DEFAULT_ADV_RATE = 0.3
 DEFAULT_POISON_RATE = 0.5  # Match defense tuning
 
+def disable_all_attacks(config: AppConfig) -> AppConfig:
+    """
+    This modifier disables all attack flags across the entire configuration
+    to create a purely benign (non-adversarial) experiment setting.
+    """
+
+    # 1. Set main adversary rate to 0
+    config.experiment.adv_rate = 0.0
+
+    # 2. Disable all Adversarial Seller attacks
+    adv_seller_cfg = config.adversary_seller_config
+    adv_seller_cfg.poisoning.type = PoisonType.NONE
+    adv_seller_cfg.sybil.is_sybil = False
+    adv_seller_cfg.adaptive_attack.is_active = False
+    adv_seller_cfg.drowning_attack.is_active = False
+    adv_seller_cfg.mimicry_attack.is_active = False
+
+    # 3. Disable all Server attacks (e.g., gradient inversion)
+    config.server_attack_config.attack_name = "none"
+
+    # 4. Disable all Buyer attacks
+    config.buyer_attack_config.is_active = False
+    config.buyer_attack_config.attack_type = "none"
+
+    return config
 
 # --- Helper to apply fixed Golden Training & Tuned Defense HPs ---
 def create_fixed_params_modifier(

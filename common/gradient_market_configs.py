@@ -237,8 +237,8 @@ class DrowningAttackConfig:
 @dataclass
 class SybilConfig:
     """Configuration for Sybil attack coordination and behavior."""
-    is_sybil: bool = False # Is Sybil coordination active?
-    benign_rounds: int = 0 # Rounds before Sybils start manipulating (0 = immediate attack)
+    is_sybil: bool = False  # Is Sybil coordination active?
+    benign_rounds: int = 0  # Rounds before Sybils start manipulating (0 = immediate attack)
 
     # --- Strategy Control ---
     # Specifies the primary manipulation strategy used by Sybils.
@@ -249,11 +249,11 @@ class SybilConfig:
     # --- Oracle Blend Specific ---
     # Blending factor alpha for oracle_blend strategy.
     # G_submit = alpha * G_mal + (1 - alpha) * G_oracle_centroid
-    oracle_blend_alpha: float = 0.1 # Example: 10% malicious intent
+    oracle_blend_alpha: float = 0.1  # Example: 10% malicious intent
 
     # --- Historical Mimicry Specific ---
     # Number of past rounds to consider for calculating historical centroid.
-    history_window_size: int = 5 # Reduced default example
+    history_window_size: int = 5  # Reduced default example
 
     # --- Role Assignment (Less critical if gradient_default_mode is set) ---
     # Defines proportions for dynamic role assignment (attacker, hybrid, explorer).
@@ -269,9 +269,10 @@ class SybilConfig:
     trigger_mode: str = "static"
 
     # --- REMOVED ---
-    detection_threshold: float = 0.8 # No longer needed with simplified phase logic
+    detection_threshold: float = 0.8  # No longer needed with simplified phase logic
 
-@dataclass  # --- FIXED: Added the @dataclass decorator ---
+
+@dataclass
 class VocabConfig:
     """Configuration for building the torchtext vocabulary."""
     min_freq: int = 1

@@ -553,9 +553,8 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
     for config_path in all_config_files:
         temp_cfg = load_config(config_path)
         initial_seed = temp_cfg.seed
-        n_samples = 3
 
-        for i in range(n_samples):
+        for i in range(temp_cfg.n_samples):
             run_counter += 1
             current_seed = initial_seed + i
 
