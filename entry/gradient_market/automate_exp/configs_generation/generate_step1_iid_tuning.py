@@ -1,269 +1,307 @@
-# FILE: entry/gradient_market/automate_exp/tune_baselines.py
+import argparse
+import json
+import re
+from pathlib import Path
+from typing import Dict, Any, List
+import pandas as pd
+import logging
 
-import sys
-from typing import Callable
+# Set up a simple logger
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-from common.enums import PoisonType
-from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
-from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar100_config, use_cifar10_config
-from entry.gradient_market.automate_exp.tbl_new import get_base_tabular_config
+# --- Parsers for different folder name patterns ---
 
-try:
-    # Import the necessary config classes
-    from common.gradient_market_configs import AppConfig, ExperimentConfig, TrainingConfig, \
-        DataConfig, AggregationConfig, ServerAttackConfig, AdversarySellerConfig, \
-        DebugConfig, BuyerAttackConfig
+HPARAM_REGEX = re.compile(r"opt_(?P<optimizer>\w+)_lr_(?P<lr>[\d\.]+)_epochs_(?P<epochs>\d+)")
+EXP_NAME_REGEX = re.compile(r"step1_tune_fedavg_.*") # Finds the main experiment folder
+SEED_REGEX_1 = re.compile(r"run_\d+_seed_(\d+)") # e.g., run_1_seed_43
+SEED_REGEX_2 = re.compile(r".*_seed-(\d+)") # e.g., ds-texas100_..._seed-42
 
-    from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator
+def parse_hp_from_name(name: str) -> Dict[str, Any]:
+    """
+    Parses 'opt_Adam_lr_0.001_epochs_5'
+    into {'optimizer': 'Adam', 'lr': 0.001, 'epochs': 5}
+    """
+    match = HPARAM_REGEX.match(name)
+    if not match:
+        return {} # Return empty if no match
 
-except ImportError as e:
-    print(f"Error importing necessary modules: {e}")
-    print("Please ensure your project structure allows importing these components.")
-    print("Verify base config factories (tabular, image, text) exist and use SGD.")
-    sys.exit(1)
+    data = match.groupdict()
+    try:
+        # Convert types
+        data['lr'] = float(data['lr'])
+        data['epochs'] = int(data['epochs'])
+        return data
+    except ValueError:
+        logger.warning(f"Could not convert types in HP folder name: {name}")
+        return {} # Return empty on conversion error
 
-# --- Parameters to Sweep ---
+def parse_seed_from_name(name: str) -> int:
+    """Parses seed from various run folder name formats."""
+    match1 = SEED_REGEX_1.match(name)
+    if match1:
+        try:
+            return int(match1.group(1))
+        except ValueError:
+            pass
+    
+    match2 = SEED_REGEX_2.match(name)
+    if match2:
+        try:
+            return int(match2.group(1))
+        except ValueError:
+            pass
+            
+    # Fallback for old "run_0_seed_42" or similar
+    if "seed" in name:
+        try:
+            seed_str = name.split('_')[-1]
+            return int(seed_str)
+        except (ValueError, IndexError):
+            pass
+            
+    return -1 # Return -1 if no seed found
 
-# We define separate learning rate grids for each optimizer
-ADAM_LRS_TO_SWEEP = [0.001, 0.0005, 0.0001]
-SGD_LRS_TO_SWEEP = [0.1, 0.05, 0.01]  # SGD typically needs larger LRs
+def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
+    """
+    Finds all final_metrics.json files recursively and parses their context
+    from the directory structure.
+    
+    This version is robust to different/inconsistent directory structures.
+    """
+    logger.info(f"🔍 Scanning recursively for results in: {results_dir}...")
 
-OPTIMIZERS_TO_SWEEP = ["Adam", "SGD"]
-LOCAL_EPOCHS_TO_SWEEP = [1, 2, 5]
+    # Use rglob to find all 'final_metrics.json' files recursively
+    metrics_files = list(results_dir.rglob("final_metrics.json"))
 
-NUM_SEEDS_PER_CONFIG = 3  # Run each hyperparameter combination 3 times
+    if not metrics_files:
+        logger.error(f"❌ ERROR: No 'final_metrics.json' files found in {results_dir}.")
+        logger.error("Please make sure you are pointing to the correct root results directory.")
+        return []
+
+    logger.info(f"✅ Found {len(metrics_files)} individual run results.")
+
+    all_results = []
+
+    for metrics_file in metrics_files:
+        try:
+            run_dir = metrics_file.parent
+            
+            # 1. Check if the run was successful (using the .success marker)
+            if not (run_dir / ".success").exists():
+                logger.debug(f"Skipping failed/incomplete run: {run_dir.name}")
+                continue
+
+            # 2. Initialize context parts
+            parsed_hps = {}
+            exp_name = "unknown_exp"
+            seed = -1
+            run_name_raw = run_dir.name # Default run name
+
+            # 3. Iterate up the parents to find context
+            current_path = metrics_file.parent
+            # Stop if we reach the root or are outside the results_dir
+            while str(current_path).startswith(str(results_dir)) and current_path != results_dir.parent:
+                folder_name = current_path.name
+                
+                # A. Try to parse HPs (only take the first one found)
+                if not parsed_hps:
+                    parsed_hps = parse_hp_from_name(folder_name)
+                
+                # B. Try to find the experiment name
+                if EXP_NAME_REGEX.match(folder_name):
+                    exp_name = folder_name
+                
+                # C. Try to parse seed (only take the first one found)
+                if seed == -1:
+                    seed = parse_seed_from_name(folder_name)
+                    if seed != -1:
+                        run_name_raw = folder_name # Store name we got seed from
+
+                current_path = current_path.parent
+
+            # 4. Final check if seed wasn't found in a parent
+            if seed == -1:
+                seed = parse_seed_from_name(run_dir.name)
+                run_name_raw = run_dir.name
+
+            # 5. Handle missing HPs (e.g., the 'swapped' structure)
+            if not parsed_hps:
+                # Check if the 'exp_name' was actually the HP folder
+                parsed_hps = parse_hp_from_name(exp_name)
+                if not parsed_hps:
+                    logger.warning(f"Could not find HP folder (opt_...) for {metrics_file}. Skipping.")
+                    continue
+
+            # 6. Load the metrics JSON
+            with open(metrics_file, 'r') as f:
+                metrics = json.load(f)
+
+            record = {
+                "exp_name": exp_name,
+                "run_name_raw": run_name_raw,  # For debugging
+                **parsed_hps,  # Adds 'optimizer', 'lr', 'epochs'
+                "seed": seed,
+                "status": "success",
+                **metrics
+            }
+            all_results.append(record)
+        except Exception as e:
+            logger.warning(f"Warning: Could not process file {metrics_file}: {e}", exc_info=True)
+            continue
+
+    return all_results
+
+def analyze_results(results: List[Dict[str, Any]], results_dir: Path):
+    """Aggregates results and prints summary table."""
+
+    if not results:
+        logger.warning("No successful results to analyze.")
+        return
+
+    df = pd.DataFrame(results)
+
+    # --- 1. Identify Config vs. Metric Columns ---
+    
+    # Config columns are what define a single experiment configuration
+    # We group by 'exp_name' + all parsed HP columns
+    known_cols = {"exp_name", "run_name_raw", "seed", "status"}
+    
+    metric_cols_to_agg = []
+    # Start with exp_name, as it contains dataset/model/iid info
+    config_cols = ["exp_name"] 
+    
+    for col in df.columns:
+        if col in known_cols:
+            continue
+            
+        if pd.api.types.is_numeric_dtype(df[col]):
+            # Check if it's a known HP config column
+            if col in ['lr', 'epochs']:
+                config_cols.append(col)
+            else:
+                # Otherwise, it's a metric to aggregate
+                metric_cols_to_agg.append(col)
+        elif col == 'optimizer': # String config col
+             config_cols.append(col)
+
+    if not metric_cols_to_agg:
+        logger.error("❌ No numeric metric columns found to aggregate (e.g., 'test_acc').")
+        logger.error(f"DataFrame columns found: {df.columns.tolist()}")
+        return
+
+    logger.info(f"📊 Aggregating by: {sorted(list(set(config_cols)))}")
+    logger.info(f"📊 Found metrics to aggregate: {metric_cols_to_agg}")
+
+    # --- 2. Build Aggregation Dictionary Dynamically ---
+    agg_ops = {}
+    mean_cols = []
+    std_cols = []
+
+    for col in metric_cols_to_agg:
+        agg_ops[f"mean_{col}"] = pd.NamedAgg(column=col, aggfunc="mean")
+        agg_ops[f"std_{col}"] = pd.NamedAgg(column=col, aggfunc="std")
+        mean_cols.append(f"mean_{col}")
+        std_cols.append(f"std_{col}")
+
+    agg_ops["num_success_runs"] = pd.NamedAgg(column="seed", aggfunc="count")
+
+    # --- 3. Perform Aggregation ---
+    try:
+        # Ensure config_cols are unique
+        config_cols = sorted(list(set(config_cols)))
+        agg_df = df.groupby(config_cols).agg(**agg_ops).reset_index()
+    except Exception as e:
+        logger.error(f"Error during aggregation: {e}")
+        logger.error(f"Attempted to group by: {config_cols}")
+        logger.error(f"Original DataFrame columns: {df.columns.tolist()}")
+        return
+
+    # Fill NaN std (for single-seed runs) with 0 for cleaner sorting/display
+    for col in std_cols:
+        if col in agg_df.columns:
+            agg_df[col] = agg_df[col].fillna(0)
+
+    # --- 4. Sort by a Primary Metric ---
+    primary_metric = "mean_test_acc"
+    if primary_metric not in agg_df.columns:
+        if "mean_acc" in agg_df.columns: # Fallback for tabular (which often just uses 'acc')
+             primary_metric = "mean_acc"
+        elif mean_cols:
+            primary_metric = mean_cols[0] # Fallback to first available metric
+            logger.warning(f"'mean_test_acc' and 'mean_acc' not found. Sorting by '{primary_metric}'.")
+        else:
+            primary_metric = "num_success_runs" # Last resort
+
+    agg_df = agg_df.sort_values(by=primary_metric, ascending=False)
+
+    # --- 5. Display Summary Table ---
+    print("\n" + "="*80)
+    print(f"📈 Aggregated Experiment Results (sorted by {primary_metric})")
+    print("="*80)
+
+    # Dynamically create display columns, prioritizing key metrics
+    display_cols = config_cols.copy() # Show all config columns
+
+    # Add primary metric and its std dev
+    display_cols.append(primary_metric)
+    primary_std = primary_metric.replace("mean_", "std_")
+    if primary_std in agg_df.columns:
+        display_cols.append(primary_std)
+
+    # Add other common/key metrics if they exist
+    for m_key in ['backdoor_asr', 'adv_success_rate', 'test_loss', 'target_class_acc']:
+        m_mean = f"mean_{m_key}"
+        if m_mean in agg_df.columns and m_mean != primary_metric:
+            display_cols.append(m_mean)
+
+    display_cols.append("num_success_runs")
+
+    # Filter display_cols to only those that actually exist in the aggregated DataFrame
+    final_display_cols = [c for c in display_cols if c in agg_df.columns]
+
+    print(agg_df[final_display_cols].to_string(index=False, float_format="%.4f"))
+
+    # --- 6. Save Full Results to CSV ---
+    output_csv = results_dir / "aggregated_results_ROBUST.csv"
+    try:
+        agg_df.to_csv(output_csv, index=False, float_format="%.4f")
+        logger.info(f"\n✅ Full aggregated results saved to: {output_csv}")
+    except Exception as e:
+        logger.warning(f"\n⚠️ Could not save aggregated results to CSV: {e}")
+
+    print("\n" + "="*80)
+    print("Analysis complete.")
 
 
-# --- Function to generate tuning scenario for a given modality ---
-def generate_fedavg_tuning_scenario_for_modality(
-        modality_name: str,
-        base_config_factory: Callable[[], AppConfig],
-        dataset_name: str,
-        model_structure: str,
-        model_config_param_key: str,
-        model_config_name: str,
-        dataset_modifier: Callable[[AppConfig], AppConfig],
-        data_setting: str  # <-- 1. ADD THIS NEW ARGUMENT
-) -> Scenario:
-    # 2. MAKE THE SCENARIO NAME UNIQUE based on data setting
-    scenario_name = f"step1_tune_fedavg_{modality_name}_{dataset_name}_{model_structure}_{data_setting}"
-    print(f"-- Defining scenario: {scenario_name}")
-
-    parameter_grid = {
-        "experiment.dataset_name": [dataset_name],
-        "experiment.model_structure": [model_structure],
-        model_config_param_key: [model_config_name],
-        "aggregation.method": ["fedavg"],
-        "experiment.adv_rate": [0.0],
-        "n_samples": [NUM_SEEDS_PER_CONFIG],
-        "experiment.use_early_stopping": [True],
-        "experiment.patience": [10],
-
-        # These will be looped over in the main block
-        "training.optimizer": OPTIMIZERS_TO_SWEEP,
-        "training.local_epochs": LOCAL_EPOCHS_TO_SWEEP,
-        # Note: learning_rate is NOT here, it's handled in the main loop
-
-        # (Other params like buyer_strategy are the same)
-        f"data.{modality_name}.buyer_strategy": ["iid"],
-        f"data.{modality_name}.buyer_ratio": [0.1],
-    }
-
-    # 3. SET DATA STRATEGY BASED ON THE NEW ARGUMENT
-    if data_setting == "noniid":
-        parameter_grid[f"data.{modality_name}.strategy"] = ["dirichlet"]
-        parameter_grid[f"data.{modality_name}.dirichlet_alpha"] = [0.5]
-    elif data_setting == "iid":
-        parameter_grid[f"data.{modality_name}.strategy"] = ["iid"]
-        # No dirichlet_alpha needed
-    else:
-        raise ValueError(f"Unknown data_setting: '{data_setting}'. Must be 'iid' or 'noniid'.")
-
-    # Add modality-specific fixed parameters (e.g., dataset_type)
-    parameter_grid[f"experiment.dataset_type"] = [modality_name]
-
-    def ensure_benign(config: AppConfig) -> AppConfig:
-        config.experiment.adv_rate = 0.0
-        config.adversary_seller_config.poisoning.type = PoisonType.NONE
-        config.adversary_seller_config.sybil.is_sybil = False
-        config.buyer_attack_config.is_active = False
-        return config
-
-    return Scenario(
-        name=scenario_name,
-        base_config_factory=base_config_factory,
-        modifiers=[ensure_benign, dataset_modifier],
-        parameter_grid=parameter_grid
+def main():
+    parser = argparse.ArgumentParser(
+        description="Analyze FL experiment results from the run_parallel.py script."
+    )
+    parser.add_argument(
+        "results_dir",
+        type=str,
+        nargs="?",
+        default="./results", # Assuming your configs save to a 'results' dir
+        help="The root directory where all experiment results are stored (default: ./results)"
     )
 
+    args = parser.parse_args()
+    results_path = Path(args.results_dir).resolve() # Use resolve for clean paths
 
-# --- Main Execution Block ---
+    # Set pandas display options for nice console output
+    pd.set_option('display.max_rows', None)
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.width', 200)
+
+    try:
+        results_list = find_all_results(results_path)
+        if results_list:
+            analyze_results(results_list, results_path)
+    except FileNotFoundError:
+        logger.error(f"❌ ERROR: The directory '{results_path}' does not exist.")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
 if __name__ == "__main__":
-
-    TUNING_CONFIGS = [
-        # --- Tabular Tuning ---
-        {
-            "modality_name": "tabular",
-            "base_config_factory": get_base_tabular_config,
-            "dataset_name": "Texas100",
-            "model_structure": "mlp",
-            "model_config_param_key": "experiment.tabular_model_config_name",
-            "model_config_name": "mlp_texas100_baseline",
-            "dataset_modifier": lambda cfg: cfg,
-        },
-        {
-            "modality_name": "tabular",
-            "base_config_factory": get_base_tabular_config,
-            "dataset_name": "Purchase100",
-            "model_structure": "mlp",
-            "model_config_param_key": "experiment.tabular_model_config_name",
-            "model_config_name": "mlp_purchase100_baseline",
-            "dataset_modifier": lambda cfg: cfg,
-        },
-
-        # --- Image Tuning ---
-        {
-            "modality_name": "image",
-            "base_config_factory": get_base_image_config,
-            "dataset_name": "CIFAR10",  # <-- lowercase
-            "model_structure": "flexiblecnn",  # <-- (Optional clarity fix)
-            "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "cifar10_cnn",  # <-- lowercase
-            "dataset_modifier": use_cifar10_config,
-        },
-        {
-            "modality_name": "image",
-            "base_config_factory": get_base_image_config,
-            "dataset_name": "CIFAR10",  # <-- lowercase
-            "model_structure": "resnet18",
-            "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "cifar10_resnet18",  # <-- lowercase
-            "dataset_modifier": use_cifar10_config,
-        },
-        {
-            "modality_name": "image",
-            "base_config_factory": get_base_image_config,
-            "dataset_name": "CIFAR100",  # <-- lowercase
-            "model_structure": "flexiblecnn",  # <-- (Optional clarity fix)
-            "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "cifar100_cnn",  # <-- lowercase
-            "dataset_modifier": use_cifar100_config,
-        },
-        {
-            "modality_name": "image",
-            "base_config_factory": get_base_image_config,
-            "dataset_name": "CIFAR100",  # <-- lowercase
-            "model_structure": "resnet18",
-            "model_config_param_key": "experiment.image_model_config_name",
-            "model_config_name": "cifar100_resnet18",  # <-- lowercase
-            "dataset_modifier": use_cifar100_config,
-        },
-        # --- Text Tuning ---
-        {
-            "modality_name": "text",
-            "base_config_factory": get_base_text_config,
-            "dataset_name": "TREC",
-            "model_structure": "textcnn",
-            "model_config_param_key": "experiment.text_model_config_name",
-            "model_config_name": "textcnn_trec_baseline",
-            "dataset_modifier": lambda cfg: cfg,
-        },
-    ]
-
-    # --- Output Directory for Configs ---
-    output_dir = "./configs_generated/step1_fedavg_tuning_new"
-    generator = ExperimentGenerator(output_dir)
-
-    all_tuning_scenarios = []
-
-    # --- Generate Scenarios for Each Modality ---
-    print("\n--- Generating Tuning Scenarios (Step 1: Benign FedAvg Baseline) ---")
-    for config_params in TUNING_CONFIGS:
-        # For each model, create an IID and a Non-IID scenario
-        for data_setting in ["iid", "noniid"]:
-            # Create a fresh copy of the parameters
-            scenario_params = config_params.copy()
-
-            # Add the new data_setting argument
-            scenario_params["data_setting"] = data_setting
-
-            # Call your modified function
-            scenario = generate_fedavg_tuning_scenario_for_modality(**scenario_params)
-            all_tuning_scenarios.append(scenario)
-    # --- Generate Config Files ---
-    print("\n--- Generating Configuration Files ---")
-    total_configs = 0
-
-    # --- START OF CRITICAL FIX ---
-    # We must manually loop over the optimizers to assign the correct LR grid
-
-    for scenario in all_tuning_scenarios:
-        print(f"\nProcessing scenario: {scenario.name}")
-
-        # Get the lists of parameters to sweep from the grid
-        optimizers_to_sweep = scenario.parameter_grid.get("training.optimizer", ["Adam"])
-        epochs_to_sweep = scenario.parameter_grid.get("training.local_epochs", [1])
-
-        # Get all the *other* static parameters from the grid
-        static_grid_params = {
-            key: value for key, value in scenario.parameter_grid.items()
-            if
-            key not in ["training.optimizer", "training.learning_rate", "training.local_epochs", "experiment.save_path"]
-        }
-
-        num_generated_for_scenario = 0
-
-        # Loop through every combination
-        for optimizer in optimizers_to_sweep:
-
-            # Select the correct LR grid based on the optimizer
-            if optimizer == "Adam":
-                lrs_to_sweep = ADAM_LRS_TO_SWEEP
-            else:  # Assumes "SGD"
-                lrs_to_sweep = SGD_LRS_TO_SWEEP
-
-            for lr in lrs_to_sweep:
-                for epochs in epochs_to_sweep:
-
-                    # 1. Create a new grid for *only this combination*
-                    new_grid = static_grid_params.copy()
-                    new_grid["training.optimizer"] = [optimizer]
-                    new_grid["training.learning_rate"] = [lr]
-                    new_grid["training.local_epochs"] = [epochs]
-
-                    # 2. CREATE THE UNIQUE SAVE PATH
-                    # This is the path your *results* will be saved to.
-                    unique_save_path = f"./results/{scenario.name}/opt_{optimizer}_lr_{lr}_epochs_{epochs}"
-
-                    # 3. Add this unique path to the new grid
-                    new_grid["experiment.save_path"] = [unique_save_path]
-
-                    # 4. Create a temporary Scenario object for this single run
-                    #    The name determines the config *filename*
-                    temp_scenario_name = f"{scenario.name}/opt_{optimizer}_lr_{lr}_epochs_{epochs}"
-                    temp_scenario = Scenario(
-                        name=temp_scenario_name,
-                        base_config_factory=scenario.base_config_factory,
-                        modifiers=scenario.modifiers,
-                        parameter_grid=new_grid
-                    )
-
-                    # 5. Get the base config and apply modifiers
-                    base_config = temp_scenario.base_config_factory()
-                    for modifier in temp_scenario.modifiers:
-                        base_config = modifier(base_config)
-
-                    # 6. Generate the single config file for this combo
-                    num_generated = generator.generate(base_config, temp_scenario)
-                    num_generated_for_scenario += num_generated
-
-        total_configs += num_generated_for_scenario
-        print(f"  Generated {num_generated_for_scenario} config files for this scenario.")
-
-    # --- END OF CRITICAL FIX ---
-
-    print(f"\n✅ All tuning configurations generated ({total_configs} total).")
-    print(f"   Configs saved to: {output_dir}")
-    print("\nNext steps:")
-    print(f"1. Run the experiments using the configs in '{output_dir}'.")
-    print(f"2. Analyze the results, which will now be in unique folders under './results/...'")
+    main()

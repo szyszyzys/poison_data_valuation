@@ -1,16 +1,18 @@
 import argparse
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Dict, Any, List
+
 import pandas as pd
-import logging
 
 # Set up a simple logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 HPARAM_REGEX = re.compile(r"opt_(?P<optimizer>\w+)_lr_(?P<lr>[\d\.]+)_epochs_(?P<epochs>\d+)")
+
 
 def parse_hp_tuning_folder_name(name: str) -> Dict[str, Any]:
     """
@@ -20,7 +22,7 @@ def parse_hp_tuning_folder_name(name: str) -> Dict[str, Any]:
     match = HPARAM_REGEX.match(name)
     if not match:
         logger.warning(f"Could not parse HP tuning folder name: {name}")
-        return {} # Return empty if no match
+        return {}  # Return empty if no match
 
     data = match.groupdict()
     try:
@@ -30,7 +32,8 @@ def parse_hp_tuning_folder_name(name: str) -> Dict[str, Any]:
         return data
     except ValueError:
         logger.warning(f"Could not convert types in HP tuning folder name: {name}")
-        return {} # Return empty on conversion error
+        return {}  # Return empty on conversion error
+
 
 def parse_sub_exp_name(name: str) -> Dict[str, str]:
     """
@@ -50,6 +53,7 @@ def parse_sub_exp_name(name: str) -> Dict[str, str]:
     except Exception as e:
         logger.warning(f"Could not parse sub-experiment name: {name} ({e})")
     return params
+
 
 def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
     """
@@ -85,9 +89,9 @@ def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
                 continue
 
             # 2. Parse context from folder names
-            exp_name = exp_dir.name           # e.g., "main_summary_cifar10_cnn"
-            sub_exp_name = sub_exp_dir.name   # e.g., "model-cnn_agg-fedavg_def-krum"
-            run_name = run_dir.name           # e.g., "run_0_seed_42"
+            exp_name = exp_dir.name  # e.g., "main_summary_cifar10_cnn"
+            sub_exp_name = sub_exp_dir.name  # e.g., "model-cnn_agg-fedavg_def-krum"
+            run_name = run_dir.name  # e.g., "run_0_seed_42"
 
             # 3. Parse parameters from the sub-experiment name
             if "step1_tune_iid" in exp_name or "step4_train_sens" in exp_name:
@@ -112,7 +116,7 @@ def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
                 **parsed_params,  # Add the correctly parsed HPs or sub_exp params
                 "seed": seed,
                 "status": "success",
-                **metrics
+                "metrics": metrics  # <-- Keep metrics in a nested dict
             }
             all_results.append(record)
         except Exception as e:
@@ -121,6 +125,7 @@ def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
 
     return all_results
 
+
 def analyze_results(results: List[Dict[str, Any]], results_dir: Path):
     """Aggregates results and prints summary table."""
 
@@ -128,8 +133,7 @@ def analyze_results(results: List[Dict[str, Any]], results_dir: Path):
         logger.warning("No successful results to analyze.")
         return
 
-    df = pd.DataFrame(results)
-
+    df = pd.json_normalize(results, sep='_')
     # --- 1. Identify Config vs. Metric Columns ---
 
     # Config columns are what define a single experiment configuration
@@ -142,10 +146,13 @@ def analyze_results(results: List[Dict[str, Any]], results_dir: Path):
 
     # Find all columns that are numeric and not known config cols
     # These are our metrics to aggregate
-    metric_cols_to_agg = []
-    for col in df.columns:
-        if col not in known_cols and pd.api.types.is_numeric_dtype(df[col]):
-            metric_cols_to_agg.append(col)
+    metric_cols_to_agg = [col for col in df.columns if col.startswith('metrics_')]
+
+    # And your config columns are everything else:
+    config_cols = [
+        col for col in df.columns
+        if not col.startswith('metrics_') and col not in ['seed', 'status']
+    ]
 
     if not metric_cols_to_agg:
         logger.error("❌ No numeric metric columns found to aggregate (e.g., 'test_acc').")
@@ -188,14 +195,14 @@ def analyze_results(results: List[Dict[str, Any]], results_dir: Path):
             primary_metric = mean_cols[0]
             logger.warning(f"'mean_test_acc' not found. Sorting by '{primary_metric}'.")
         else:
-            primary_metric = "num_success_runs" # Last resort
+            primary_metric = "num_success_runs"  # Last resort
 
     agg_df = agg_df.sort_values(by=primary_metric, ascending=False)
 
     # --- 5. Display Summary Table ---
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print(f"📈 Aggregated Experiment Results (sorted by {primary_metric})")
-    print("="*80)
+    print("=" * 80)
 
     # Dynamically create display columns, prioritizing key metrics
     display_cols = config_cols.copy()
@@ -227,7 +234,7 @@ def analyze_results(results: List[Dict[str, Any]], results_dir: Path):
     except Exception as e:
         logger.warning(f"\n⚠️ Could not save aggregated results to CSV: {e}")
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("Analysis complete.")
 
 
@@ -239,12 +246,12 @@ def main():
         "results_dir",
         type=str,
         nargs="?",
-        default="./results", # Assuming your configs save to a 'results' dir
+        default="./results",  # Assuming your configs save to a 'results' dir
         help="The root directory where all experiment results are stored (default: ./results)"
     )
 
     args = parser.parse_args()
-    results_path = Path(args.results_dir).resolve() # Use resolve for clean paths
+    results_path = Path(args.results_dir).resolve()  # Use resolve for clean paths
 
     # Set pandas display options for nice console output
     pd.set_option('display.max_rows', None)
@@ -259,6 +266,7 @@ def main():
         logger.error(f"❌ ERROR: The directory '{results_path}' does not exist.")
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
 
 if __name__ == "__main__":
     main()
