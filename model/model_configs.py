@@ -39,10 +39,8 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         use_batch_norm=True,
         activation="relu",
         epochs=150,
-        # --- FIX: Reduced batch size to lower GPU memory usage ---
         batch_size=64,
         learning_rate=0.001,
-        optimizer_type='adam',
         use_scheduler=True,
         scheduler_step=30,  # Reduce LR every 30 epochs
         scheduler_gamma=0.1,  # Multiply LR by 0.1
@@ -73,7 +71,6 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         # --- FIX: Reduced batch size to lower GPU memory usage ---
         batch_size=64,
         learning_rate=0.001,
-        optimizer_type='adam',
         use_scheduler=True,
         scheduler_step=30,  # Reduce LR every 30 epochs
         scheduler_gamma=0.1,  # Multiply LR by 0.1
