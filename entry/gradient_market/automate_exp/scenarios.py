@@ -4,7 +4,31 @@ from typing import List, Callable, Dict, Any
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
-from entry.gradient_market.automate_exp.config_generator import set_nested_attr
+
+
+def set_nested_attr(obj: Any, key: str, value: Any):
+    """
+    Sets a nested attribute on an object or a key in a nested dict
+    using a dot-separated key.
+    """
+    keys = key.split('.')
+    current_obj = obj
+
+    # Traverse to the second-to-last object in the path
+    for k in keys[:-1]:
+        current_obj = getattr(current_obj, k)
+
+    # Get the final key/attribute to be set
+    final_key = keys[-1]
+
+    # --- THIS IS THE CRITICAL LOGIC ---
+    # Check if the object we need to modify is a dictionary
+    if isinstance(current_obj, dict):
+        # If it's a dict, use item assignment (e.g., my_dict['key'] = value)
+        current_obj[final_key] = value
+    else:
+        # Otherwise, use attribute assignment (e.g., my_obj.key = value)
+        setattr(current_obj, final_key, value)
 
 
 def disable_all_seller_attacks(config: AppConfig) -> AppConfig:
@@ -393,31 +417,35 @@ def generate_sybil_selection_rate_scenarios() -> List[Scenario]:
     ))
     return scenarios
 
+
 # --- Adaptive Attack Modifier (Keep or adapt as needed) ---
 def use_adaptive_attack(
-    mode: str,
-    threat_model: str = "black_box", # Focus on black_box
-    exploration_rounds: int = 30
-    ) -> Callable[[AppConfig], AppConfig]:
+        mode: str,
+        threat_model: str = "black_box",  # Focus on black_box
+        exploration_rounds: int = 30
+) -> Callable[[AppConfig], AppConfig]:
     """ Returns a modifier to enable the adaptive attacker. """
+
     def modifier(config: AppConfig) -> AppConfig:
         adv_cfg = config.adversary_seller_config.adaptive_attack
         adv_cfg.is_active = True
         adv_cfg.attack_mode = mode
-        adv_cfg.threat_model = threat_model # Set the threat model
+        adv_cfg.threat_model = threat_model  # Set the threat model
         adv_cfg.exploration_rounds = exploration_rounds
         # Deactivate other attacks
         config.adversary_seller_config.poisoning.type = PoisonType.NONE
         config.adversary_seller_config.sybil.is_sybil = False
         # Deactivate others if needed (drowning, mimicry)
         return config
+
     return modifier
+
 
 # --- Helper to apply fixed Golden Training & Tuned Defense HPs ---
 def create_fixed_params_modifier_adaptive(
-    modality: str,
-    defense_params: Dict[str, Any],
-    model_config_name: str
+        modality: str,
+        defense_params: Dict[str, Any],
+        model_config_name: str
 ) -> Callable[[AppConfig], AppConfig]:
     def modifier(config: AppConfig) -> AppConfig:
         # 1. Apply Golden Training HPs
@@ -436,7 +464,9 @@ def create_fixed_params_modifier_adaptive(
         set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
         set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
         return config
+
     return modifier
+
 
 # ==============================================================================
 # --- UPDATED FUNCTION ---
@@ -452,7 +482,7 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
     # --- Focus on one representative setup ---
     DATASET_CONFIG = {
         "dataset_name": "cifar10",
-        "model_config_suffix": "resnet18", # Use your best model
+        "model_config_suffix": "resnet18",  # Use your best model
         "dataset_modifier": use_cifar10_config,
         "base_config_factory": get_base_image_config,
         "model_config_param_key": "experiment.image_model_config_name",
@@ -464,7 +494,7 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
     # --- Adaptive Attack Modes to Test ---
     # Focus on comparing how the black box learns different *types* of actions
     ADAPTIVE_MODES_TO_TEST = ["gradient_manipulation", "data_manipulation"]
-    ADAPTIVE_THREAT_MODEL = "black_box" # Focus on the most unique adaptive mode
+    ADAPTIVE_THREAT_MODEL = "black_box"  # Focus on the most unique adaptive mode
 
     for defense_name in IMAGE_DEFENSES:
         if defense_name not in TUNED_DEFENSE_PARAMS: continue
@@ -480,18 +510,17 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
 
         # 2. Loop through adaptive modes
         for adaptive_mode in ADAPTIVE_MODES_TO_TEST:
-
             # 3. Create the adaptive attack modifier for this mode
             adaptive_modifier = use_adaptive_attack(
                 mode=adaptive_mode,
                 threat_model=ADAPTIVE_THREAT_MODEL,
-                exploration_rounds=30 # Or adjust
+                exploration_rounds=30  # Or adjust
             )
 
             # 4. Define the base grid (fixed params for this scenario)
             grid = {
                 DATASET_CONFIG["model_config_param_key"]: [model_config_name],
-                "experiment.adv_rate": [FIXED_ATTACK_ADV_RATE], # Fixed % of adaptive attackers
+                "experiment.adv_rate": [FIXED_ATTACK_ADV_RATE],  # Fixed % of adaptive attackers
                 "n_samples": [NUM_SEEDS_PER_CONFIG],
                 # Add other fixed experiment params if needed
             }
@@ -503,15 +532,16 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
                 name=scenario_name,
                 base_config_factory=DATASET_CONFIG["base_config_factory"],
                 modifiers=[
-                    fixed_params_modifier, # Sets Golden Train + Tuned Def HPs
+                    fixed_params_modifier,  # Sets Golden Train + Tuned Def HPs
                     DATASET_CONFIG["dataset_modifier"],
-                    adaptive_modifier # Enables the specific adaptive attack
+                    adaptive_modifier  # Enables the specific adaptive attack
                 ],
-                parameter_grid=grid # Grid only contains fixed exp params here
+                parameter_grid=grid  # Grid only contains fixed exp params here
             )
             scenarios.append(scenario)
 
     return scenarios
+
 
 def use_drowning_attack(mimicry_rounds: int, drift_factor: float) -> Callable[[AppConfig], AppConfig]:
     """
@@ -774,9 +804,9 @@ def use_buyer_orthogonal_pivot_attack(target_seller_id: str) -> Callable[[AppCon
 
 
 def create_fixed_params_modifier_buyer_atk(
-    modality: str,
-    defense_params: Dict[str, Any],
-    model_config_name: str
+        modality: str,
+        defense_params: Dict[str, Any],
+        model_config_name: str
 ) -> Callable[[AppConfig], AppConfig]:
     def modifier(config: AppConfig) -> AppConfig:
         # 1. Apply Golden Training HPs
@@ -789,8 +819,8 @@ def create_fixed_params_modifier_buyer_atk(
             set_nested_attr(config, key, value)
         # 3. Set SkyMask model type if needed (unlikely needed here)
         if defense_params.get("aggregation.method") == "skymask":
-             model_struct = "resnet18" if "resnet" in model_config_name else "flexiblecnn"
-             set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
+            model_struct = "resnet18" if "resnet" in model_config_name else "flexiblecnn"
+            set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
         # 4. Ensure Non-IID Seller data (standard setup)
         set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
         set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
@@ -800,7 +830,9 @@ def create_fixed_params_modifier_buyer_atk(
         config.adversary_seller_config.sybil.is_sybil = False
         # Deactivate other seller attacks if they exist
         return config
+
     return modifier
+
 
 # ==============================================================================
 # --- UPDATED FUNCTION ---
@@ -815,15 +847,15 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
 
     # --- Focus on one representative setup ---
     DATASET_CONFIG = {
-        "dataset_name": "cifar10", # lowercase
-        "model_config_suffix": "cnn", # lowercase
+        "dataset_name": "cifar10",  # lowercase
+        "model_config_suffix": "cnn",  # lowercase
         "dataset_modifier": use_cifar10_config,
         "base_config_factory": get_base_image_config,
         "model_config_param_key": "experiment.image_model_config_name",
     }
     dataset_name = DATASET_CONFIG["dataset_name"]
     model_config_suffix = DATASET_CONFIG["model_config_suffix"]
-    model_config_name = f"{dataset_name}_{model_config_suffix}" # e.g., "cifar10_cnn"
+    model_config_name = f"{dataset_name}_{model_config_suffix}"  # e.g., "cifar10_cnn"
 
     # --- List of Buyer Attack Modifiers to Test ---
     buyer_attack_configs = [
@@ -834,8 +866,9 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
         ("class_exclusion_pos", use_buyer_class_exclusion_attack(target_classes=[0, 1, 2], gradient_scale=1.0)),
         ("oscillating_binary", use_buyer_oscillating_attack(strategy="binary_flip", period=2)),
         ("oscillating_random", use_buyer_oscillating_attack(strategy="random_walk", subset_size=3)),
-        ("oscillating_drift", use_buyer_oscillating_attack(strategy="adversarial_drift", drift_rounds=60, classes_a=[0, 1])),
-        ("orthogonal_pivot_legacy", use_buyer_orthogonal_pivot_attack(target_seller_id="bn_5")), # Optional legacy
+        ("oscillating_drift",
+         use_buyer_oscillating_attack(strategy="adversarial_drift", drift_rounds=60, classes_a=[0, 1])),
+        ("orthogonal_pivot_legacy", use_buyer_orthogonal_pivot_attack(target_seller_id="bn_5")),  # Optional legacy
     ]
 
     for defense_name in DEFENSES_TO_TEST:
@@ -852,7 +885,6 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
 
         # 2. Loop through buyer attack types
         for attack_tag, buyer_attack_modifier in buyer_attack_configs:
-
             # 3. Define the base grid (fixed params for this scenario)
             grid = {
                 DATASET_CONFIG["model_config_param_key"]: [model_config_name],
@@ -867,15 +899,16 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
                 name=scenario_name,
                 base_config_factory=DATASET_CONFIG["base_config_factory"],
                 modifiers=[
-                    fixed_params_modifier, # Sets Golden Train + Tuned Def + No Seller Atk
+                    fixed_params_modifier,  # Sets Golden Train + Tuned Def + No Seller Atk
                     DATASET_CONFIG["dataset_modifier"],
-                    buyer_attack_modifier # Enables the specific buyer attack
+                    buyer_attack_modifier  # Enables the specific buyer attack
                 ],
-                parameter_grid=grid # Grid only contains fixed exp params
+                parameter_grid=grid  # Grid only contains fixed exp params
             )
             scenarios.append(scenario)
 
     return scenarios
+
 
 def generate_attack_scalability_scenarios_OLD() -> List[Scenario]:
     """
