@@ -22,10 +22,7 @@ try:
 except ImportError as e:
     print(f"Error importing necessary modules: {e}")
     sys.exit(1)
-# --- End Imports ---
 
-## Purpose (Same as yours, it's great)
-# ...
 
 # --- Attack Parameters to Sweep ---
 ADV_RATES_TO_SWEEP = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
@@ -40,7 +37,7 @@ SENSITIVITY_SETUP_STEP5 = {
     "base_config_factory": get_base_image_config,
     "dataset_name": "cifar10",
     "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar10_resnet18",
+    "model_config_name": "cifar10_cnn",
     "dataset_modifier": use_cifar10_config,
     "backdoor_attack_modifier": use_image_backdoor_attack,
     "labelflip_attack_modifier": use_label_flipping_attack
