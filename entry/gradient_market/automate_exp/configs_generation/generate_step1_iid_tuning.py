@@ -25,9 +25,9 @@ except ImportError as e:
 
 # We define separate learning rate grids for each optimizer
 ADAM_LRS_TO_SWEEP = [0.001, 0.0005, 0.0001]
-# SGD_LRS_TO_SWEEP = [0.1, 0.05, 0.01]  # SGD typically needs larger LRs
+SGD_LRS_TO_SWEEP = [0.1, 0.05, 0.01]  # SGD typically needs larger LRs
 
-OPTIMIZERS_TO_SWEEP = ["Adam"]
+OPTIMIZERS_TO_SWEEP = ["Adam", "SGD"]
 LOCAL_EPOCHS_TO_SWEEP = [2, 5]
 
 NUM_SEEDS_PER_CONFIG = 1  # Run each hyperparameter combination 3 times
