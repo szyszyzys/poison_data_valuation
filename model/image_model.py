@@ -63,9 +63,9 @@ class ImageModelConfig(BaseModelConfig):
     # Data augmentation
     use_augmentation: bool = False
     use_normalization: bool = True
-    use_group_norm=True,   # <-- Add this
-    num_groups=32,         # <-- Add this (32 works well for 64, 128, 256)
-    # Experiment metadata
+    use_group_norm=True   # <-- Add this
+    num_groups=32         # <-- Add this (32 works well for 64, 128, 256)
+    # Experiment metadatas
 
     def __post_init__(self):
         if self.conv_channels is None:
