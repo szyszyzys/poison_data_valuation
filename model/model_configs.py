@@ -30,15 +30,15 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         scheduler_step=30,  # Reduce LR every 30 epochs
         scheduler_gamma=0.1,  # Multiply LR by 0.1
         weight_decay=1e-4,
-        use_group_norm=True,   # <-- Add this
-        num_groups=32,         # <-- Add this (32 works well for 64, 128, 256)
+        use_group_norm=True,  # <-- Add this
+        num_groups=32,  # <-- Add this (32 works well for 64, 128, 256)
     ),
     "cifar10_resnet18": ImageModelConfig(
         config_name="cifar10_resnet18",
         model_name="ResNet18",
         use_dropout=True,
         dropout_rate=0.25,
-        use_batch_norm=True,
+        use_batch_norm=False,
         activation="relu",
         epochs=150,
         batch_size=64,
@@ -47,6 +47,9 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         scheduler_step=30,  # Reduce LR every 30 epochs
         scheduler_gamma=0.1,  # Multiply LR by 0.1
         weight_decay=1e-4,
+        use_group_norm=True,  # <-- Add this
+        num_groups=32,  # <-- Add this (32 works well for 64, 128, 256)
+
     ),
     "cifar100_cnn": ImageModelConfig(
         config_name="cifar100_cnn",
@@ -61,17 +64,16 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         scheduler_step=30,  # Reduce LR every 30 epochs
         scheduler_gamma=0.1,  # Multiply LR by 0.1
         weight_decay=1e-4,
-        use_group_norm=True,   # <-- Add this
-        num_groups=32,         # <-- Add this (32 works well for 64, 128, 256)
+        use_group_norm=True,  # <-- Add this
+        num_groups=32,  # <-- Add this (32 works well for 64, 128, 256)
     ),
-
 
     "cifar100_resnet18": ImageModelConfig(
         config_name="cifar100_resnet18",
         model_name="ResNet18",
         use_dropout=True,
         dropout_rate=0.3,
-        use_batch_norm=True,
+        use_batch_norm=False,
         activation="relu",
         epochs=200,
         # --- FIX: Reduced batch size to lower GPU memory usage ---
@@ -81,6 +83,9 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         scheduler_step=30,  # Reduce LR every 30 epochs
         scheduler_gamma=0.1,  # Multiply LR by 0.1
         weight_decay=1e-4,
+        use_group_norm=True,  # <-- Add this
+        num_groups=32,  # <-- Add this (32 works well for 64, 128, 256)
+
     ),
 }
 
@@ -90,4 +95,3 @@ def get_image_model_config(name: str) -> ImageModelConfig:
     Acts as a "cookbook" to retrieve a pre-designed model configuration by name.
     """
     return _MODEL_CONFIG_REGISTRY.get(name, _MODEL_CONFIG_REGISTRY["default"])
-

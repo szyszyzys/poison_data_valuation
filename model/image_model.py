@@ -308,21 +308,46 @@ class ConfigurableFlexibleCNN(nn.Module):
         return x
 
 
-class ResidualBlock(nn.Module):
-    """A standard ResNet residual block."""
+import torch.nn as nn
+import torch.nn.functional as F
 
-    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, use_batch_norm: bool = True):
+class ResidualBlock(nn.Module):
+    """A standard ResNet residual block, updated for FL."""
+
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1,
+                 use_batch_norm: bool = False,
+                 use_group_norm: bool = False,
+                 num_groups: int = 32):
+
         super(ResidualBlock, self).__init__()
+
+        # --- Define the correct norm layer ---
+        norm_layer = nn.Identity
+
+        if use_batch_norm:
+            norm_layer = lambda channels: nn.BatchNorm2d(channels)
+        elif use_group_norm:
+            # We need a lambda to handle the fallback logic
+            def create_group_norm(channels):
+                gn_num_groups = num_groups
+                if channels % gn_num_groups != 0:
+                    # Find the largest valid group size
+                    gn_num_groups = next(g for g in range(num_groups, 0, -1) if channels % g == 0)
+                return nn.GroupNorm(gn_num_groups, channels)
+
+            norm_layer = create_group_norm
+        # -------------------------------------
+
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channels) if use_batch_norm else nn.Identity()
+        self.bn1 = norm_layer(out_channels)  # <-- FIXED
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_channels) if use_batch_norm else nn.Identity()
+        self.bn2 = norm_layer(out_channels)  # <-- FIXED
 
         self.shortcut = nn.Sequential()
         if stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(out_channels) if use_batch_norm else nn.Identity()
+                norm_layer(out_channels)  # <-- FIXED
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -331,10 +356,8 @@ class ResidualBlock(nn.Module):
         out += self.shortcut(x)
         out = F.relu(out)
         return out
-
-
 class ConfigurableResNet(nn.Module):
-    """A configurable ResNet-18 model based on ModelConfig."""
+    """A configurable ResNet-18 model, updated for FL."""
 
     def __init__(self, input_channels: int, num_classes: int, config: ImageModelConfig):
         super(ConfigurableResNet, self).__init__()
@@ -342,7 +365,18 @@ class ConfigurableResNet(nn.Module):
         self.config = config
 
         self.conv1 = nn.Conv2d(input_channels, 64, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(64) if self.config.use_batch_norm else nn.Identity()
+
+        # --- Apply normalization logic to the first BN layer ---
+        if self.config.use_batch_norm:
+            self.bn1 = nn.BatchNorm2d(64)
+        elif getattr(self.config, 'use_group_norm', False):
+            num_groups = getattr(self.config, 'num_groups', 32)
+            if 64 % num_groups != 0:
+                 num_groups = next(g for g in range(num_groups, 0, -1) if 64 % g == 0)
+            self.bn1 = nn.GroupNorm(num_groups, 64)
+        else:
+            self.bn1 = nn.Identity()
+        # -----------------------------------------------------
 
         # ResNet-18 specific layer structure
         self.layer1 = self._make_layer(ResidualBlock, 64, 2, stride=1)
@@ -358,8 +392,22 @@ class ConfigurableResNet(nn.Module):
     def _make_layer(self, block: type, out_channels: int, num_blocks: int, stride: int) -> nn.Sequential:
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
+
+        # --- Get norm configs to pass to the block ---
+        use_bn = self.config.use_batch_norm
+        use_gn = getattr(self.config, 'use_group_norm', False)
+        num_g = getattr(self.config, 'num_groups', 32)
+        # -------------------------------------------
+
         for s in strides:
-            layers.append(block(self.in_channels, out_channels, s, self.config.use_batch_norm))
+            layers.append(block(
+                self.in_channels,
+                out_channels,
+                s,
+                use_batch_norm=use_bn,  # <-- PASS configs
+                use_group_norm=use_gn,  # <-- PASS configs
+                num_groups=num_g      # <-- PASS configs
+            ))
             self.in_channels = out_channels
         return nn.Sequential(*layers)
 
@@ -374,8 +422,6 @@ class ConfigurableResNet(nn.Module):
         out = self.dropout(out)
         out = self.linear(out)
         return out
-
-
 class ImageModelFactory:
     """Factory class for creating and managing configurable models."""
 
