@@ -22,7 +22,7 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         model_name="FlexibleCNN",
         use_dropout=True,
         dropout_rate=0.2,
-        use_batch_norm=True,
+        use_batch_norm=False,
         activation="relu",
         conv_channels=[32, 64, 128],
         classifier_layers=[256, 128],
@@ -30,6 +30,8 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         scheduler_step=30,  # Reduce LR every 30 epochs
         scheduler_gamma=0.1,  # Multiply LR by 0.1
         weight_decay=1e-4,
+        use_group_norm=True,   # <-- Add this
+        num_groups=32,         # <-- Add this (32 works well for 64, 128, 256)
     ),
     "cifar10_resnet18": ImageModelConfig(
         config_name="cifar10_resnet18",
@@ -51,7 +53,7 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         model_name="FlexibleCNN",
         use_dropout=True,
         dropout_rate=0.3,
-        use_batch_norm=True,
+        use_batch_norm=False,
         activation="relu",
         conv_channels=[64, 128, 256],
         classifier_layers=[512, 256],
@@ -59,7 +61,11 @@ _MODEL_CONFIG_REGISTRY: Dict[str, ImageModelConfig] = {
         scheduler_step=30,  # Reduce LR every 30 epochs
         scheduler_gamma=0.1,  # Multiply LR by 0.1
         weight_decay=1e-4,
+        use_group_norm=True,   # <-- Add this
+        num_groups=32,         # <-- Add this (32 works well for 64, 128, 256)
     ),
+
+
     "cifar100_resnet18": ImageModelConfig(
         config_name="cifar100_resnet18",
         model_name="ResNet18",

@@ -10,7 +10,7 @@ from entry.gradient_market.automate_exp.config_generator import set_nested_attr
 
 GOLDEN_TRAINING_PARAMS = {
     "tabular": {
-        "training.optimizer": "Adam", "training.learning_rate": 0.001, "training.local_epochs": 5,
+        "training.optimizer": "Adam", "training.learning_rate": 0.0005, "training.local_epochs": 5,
         "training.momentum": 0.0, "training.weight_decay": 0.0,
     },
     "image": {
@@ -18,7 +18,7 @@ GOLDEN_TRAINING_PARAMS = {
         "training.momentum": 0.9, "training.weight_decay": 5e-4,
     },
     "text": {
-        "training.optimizer": "Adam", "training.learning_rate": 0.0005, "training.local_epochs": 2,
+        "training.optimizer": "Adam", "training.learning_rate": 0.001, "training.local_epochs": 2,
         "training.momentum": 0.0, "training.weight_decay": 0.0,
     }
 }

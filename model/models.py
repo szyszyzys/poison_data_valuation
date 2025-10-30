@@ -80,8 +80,8 @@ class TextCNN(nn.Module):
         ])
 
         # Add BatchNorm for stability
-        self.bn = nn.BatchNorm1d(num_filters * len(filter_sizes))
-
+        # self.bn = nn.BatchNorm1d(num_filters * len(filter_sizes))
+        self.ln = nn.LayerNorm(num_filters * len(filter_sizes))
         self.fc = nn.Linear(num_filters * len(filter_sizes), num_class)
         self.dropout = nn.Dropout(dropout)
 
@@ -94,7 +94,9 @@ class TextCNN(nn.Module):
         pooled = [F.max_pool1d(sq, sq.shape[2]).squeeze(2) for sq in squeezed]
 
         cat = torch.cat(pooled, dim=1)
-        cat = self.bn(cat)  # ✅ Add BatchNorm here
+        # cat = self.bn(cat)  # ✅ Add BatchNorm here
+        cat = self.ln(cat)
         cat = self.dropout(cat)
 
         return self.fc(cat)
+

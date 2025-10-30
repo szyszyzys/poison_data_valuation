@@ -63,7 +63,8 @@ class ImageModelConfig(BaseModelConfig):
     # Data augmentation
     use_augmentation: bool = False
     use_normalization: bool = True
-
+    use_group_norm=True,   # <-- Add this
+    num_groups=32,         # <-- Add this (32 works well for 64, 128, 256)
     # Experiment metadata
 
     def __post_init__(self):
@@ -175,9 +176,29 @@ class ConfigurableFlexibleCNN(nn.Module):
 
         for i, out_channels in enumerate(config.conv_channels):
             # First conv block
+
+            if config.use_batch_norm:
+                norm_layer = nn.BatchNorm2d(out_channels)
+            # Check for new 'use_group_norm' attribute in your config
+            elif getattr(config, 'use_group_norm', False):
+                # Get 'num_groups' from config, default to 32 if not present
+                num_groups = getattr(config, 'num_groups', 32)
+
+                # Add this check: GroupNorm requires num_channels to be divisible by num_groups
+                if out_channels % num_groups != 0:
+                    # Find the largest group size that works (e.g., 16, 8, ...)
+                    valid_groups = next(g for g in range(num_groups, 0, -1) if out_channels % g == 0)
+                    print(f"Warning: {out_channels} channels not divisible by {num_groups} groups. "
+                          f"Falling back to {valid_groups} groups.")
+                    num_groups = valid_groups
+
+                norm_layer = nn.GroupNorm(num_groups, out_channels)
+            else:
+                norm_layer = nn.Identity()
+
             features.extend([
                 nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-                nn.BatchNorm2d(out_channels) if config.use_batch_norm else nn.Identity(),
+                norm_layer,
                 self.activation
             ])
 
@@ -185,7 +206,7 @@ class ConfigurableFlexibleCNN(nn.Module):
             if i < len(config.conv_channels) - 1:
                 features.extend([
                     nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-                    nn.BatchNorm2d(out_channels) if config.use_batch_norm else nn.Identity(),
+                    norm_layer,
                     self.activation
                 ])
 

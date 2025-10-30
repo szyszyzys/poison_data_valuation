@@ -1,5 +1,4 @@
 import copy
-import json
 import logging
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -24,7 +23,7 @@ class TabularModelConfig(BaseModelConfig):
     hidden_dims: List[int] = None  # [128, 64] for MLP layers
     use_dropout: bool = True
     dropout_rate: float = 0.5
-    use_batch_norm: bool = True
+    use_batch_norm: bool = False
     activation: str = "relu"  # "relu", "tanh", "sigmoid", "leaky_relu"
 
     # ResNet specific
@@ -44,7 +43,7 @@ class TabularModelConfig(BaseModelConfig):
     scheduler_step: int = 30
     scheduler_gamma: float = 0.1
     optimizer_type: str = "adam"  # "sgd", "adam", "adamw"
-
+    use_layer_norm: bool = False
     # Regularization
     use_early_stopping: bool = True
     patience: int = 10
@@ -176,8 +175,17 @@ class ConfigurableTabularMLP(nn.Module):
         for i, hidden_dim in enumerate(config.hidden_dims):
             layers.append(nn.Linear(prev_dim, hidden_dim))
 
+            # --- This is the updated normalization logic ---
+            # Assume 'config' now has a 'use_layer_norm: bool' attribute
             if config.use_batch_norm:
-                layers.append(nn.BatchNorm1d(hidden_dim))
+                norm_layer = nn.BatchNorm1d(hidden_dim)
+            elif getattr(config, 'use_layer_norm', False):
+                norm_layer = nn.LayerNorm(hidden_dim)
+            else:
+                norm_layer = nn.Identity()
+
+            layers.append(norm_layer)
+            # --- End of updated logic ---
 
             layers.append(self.activation)
 
