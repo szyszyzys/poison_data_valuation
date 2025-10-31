@@ -341,7 +341,7 @@ class AdversarySellerConfig:
 @dataclass
 class TextDataConfig:
     """All settings related to a text dataset source."""
-    vocab: VocabConfig = None
+    vocab: VocabConfig = VocabConfig()
     strategy: str = "dirichlet"  # Strategy for SELLERS (Changed default)
     dirichlet_alpha: float = 0.5  # Alpha for SELLERS (Added)
 
