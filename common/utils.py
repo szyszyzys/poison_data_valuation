@@ -202,10 +202,15 @@ def add_gradient_updates(grad_accumulator: List[torch.Tensor], grad_update: List
             acc.add_(upd, alpha=weight)
 
 
-def clip_gradient_update(grad_update: List[torch.Tensor], clip_norm: float) -> List[torch.Tensor]:
-    """Clamps each tensor in a list of updates element-wise."""
-    return [torch.clamp(p, min=-clip_norm, max=clip_norm) for p in grad_update]
+def clip_gradient_update(grad_update, clip_norm):
+    # --- THIS IS THE FIX ---
+    # If clip_norm is None, it means "no clipping", so return the original.
+    if clip_norm is None:
+        return grad_update
+    # --- END FIX ---
 
+    # Otherwise, perform the clamping as usual.
+    return [torch.clamp(p, min=-clip_norm, max=clip_norm) for p in grad_update]
 
 # ===================================================================
 # Metrics and Training Control
