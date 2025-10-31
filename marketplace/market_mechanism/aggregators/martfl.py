@@ -207,8 +207,7 @@ class MartflAggregator(BaseAggregator):
         # Note: Official code uses `centroids[-1]`, implying the last cluster is highest.
         # It's safer to use argmax on the centroids found by the *optimal* k clustering.
         inlier_cluster_label = np.argmax(centroids)
-        center = centroids[inlier_cluster_label][0]  # Get the scalar value
-
+        center = centroids[inlier_cluster_label]  # Get the scalar value
         # g) Calculate the "border" distance (max distance within the k=2 inlier group)
         border = 0.0
         for i, sim_val in enumerate(similarities):
