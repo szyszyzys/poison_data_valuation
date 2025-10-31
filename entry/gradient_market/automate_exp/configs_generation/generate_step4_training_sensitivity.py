@@ -79,14 +79,21 @@ def generate_training_sensitivity_scenarios() -> List[Scenario]:
         for attack_state in ATTACK_STATES:
             print(f"  -- Attack State: {attack_state}")
 
-            def create_setup_modifier_sens(current_attack_state=attack_state):
+            def create_setup_modifier_sens(
+                    current_attack_state=attack_state,
+                    current_defense_name=defense_name,
+                    current_defense_params=tuned_defense_params
+            ):
+                # --- END FIX ---
+
                 # Closure to capture state
                 def modifier(config: AppConfig) -> AppConfig:
                     # Apply Tuned Defense HPs from common utils
-                    for key, value in tuned_defense_params.items():
-                        set_nested_attr(config, key, value)
-                    print(f"    Applied Tuned Defense HPs for {defense_name}")
 
+                    # Use the bound variables
+                    for key, value in current_defense_params.items():
+                        set_nested_attr(config, key, value)
+                    print(f"    Applied Tuned Defense HPs for {current_defense_name}")
                     # Apply Attack State
                     if current_attack_state == "with_attack":
                         config.experiment.adv_rate = DEFAULT_ADV_RATE
@@ -108,7 +115,7 @@ def generate_training_sensitivity_scenarios() -> List[Scenario]:
                     set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
 
                     # Set SkyMask type if needed (redundant? also set below)
-                    if defense_name == "skymask":
+                    if current_defense_name == "skymask":  # <-- Use the bound variable
                         model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                         set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 
