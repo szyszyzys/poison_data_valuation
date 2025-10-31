@@ -15,7 +15,7 @@ class BaseAggregator(ABC):
     """Abstract base class for all aggregation strategies."""
 
     def __init__(self, global_model: nn.Module, device: torch.device,
-                 loss_fn: nn.Module, buyer_data_loader: DataLoader, clip_norm: float):
+                 loss_fn: nn.Module, buyer_data_loader: DataLoader, clip_norm: float, **kwargs):
         self.global_model = global_model
         self.device = device
         self.loss_fn = loss_fn
