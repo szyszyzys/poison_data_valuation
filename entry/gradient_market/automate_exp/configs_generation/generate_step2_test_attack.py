@@ -32,8 +32,8 @@ TUNED_DEFENSE_PARAMS = {
 }
 
 # --- Attack Parameters to Test (One benign, one strong attack) --- ⚔️
-ATTACK_ADV_RATES_TO_SWEEP = [0.0, 0.3]  # 0% attackers, 30% attackers
-ATTACK_POISON_RATES_TO_SWEEP = [0.5]    # 100% poison rate for a clear signal
+ATTACK_ADV_RATES_TO_SWEEP = [0.3]  # 0% attackers, 30% attackers
+ATTACK_POISON_RATES_TO_SWEEP = [1.0]    # 100% poison rate for a clear signal
 
 NUM_SEEDS_PER_CONFIG = 3
 
