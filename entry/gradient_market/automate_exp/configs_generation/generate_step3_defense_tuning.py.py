@@ -104,7 +104,7 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
                 # --- END FIX ---
 
                 # Closure to capture the correct attack modifier
-                def modifier(config: AppAppConfig) -> AppConfig:
+                def modifier(config: AppConfig) -> AppConfig:
 
                     # --- START FIX ---
                     # Now, use the bound variable, not the loop variable
