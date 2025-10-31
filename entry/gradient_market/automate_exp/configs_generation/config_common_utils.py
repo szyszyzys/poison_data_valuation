@@ -8,20 +8,51 @@ from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig
 from entry.gradient_market.automate_exp.config_generator import set_nested_attr
 
+
 GOLDEN_TRAINING_PARAMS = {
-    "tabular": {
+    # --- IMAGE MODELS ---
+    "cifar10_flexiblecnn": {
+        # Best: 0.8248 acc
+        "training.optimizer": "Adam", "training.learning_rate": 0.001, "training.local_epochs": 5,
+        "training.momentum": 0.0, "training.weight_decay": 0.0,
+    },
+    "cifar10_resnet18": {
+        # Best: 0.8092 acc
+        "training.optimizer": "SGD", "training.learning_rate": 0.1, "training.local_epochs": 2,
+        "training.momentum": 0.9, "training.weight_decay": 5e-4, # (Assuming standard SGD params)
+    },
+    "cifar100_flexiblecnn": {
+        # Best: 0.5536 acc
+        "training.optimizer": "Adam", "training.learning_rate": 0.001, "training.local_epochs": 2,
+        "training.momentum": 0.0, "training.weight_decay": 0.0,
+    },
+    "cifar100_resnet18": {
+        # NOTE: No resnet18 cifar100 results were in your table.
+        # We will re-use the flexiblecnn HPs as a placeholder.
+        "training.optimizer": "Adam", "training.learning_rate": 0.001, "training.local_epochs": 2,
+        "training.momentum": 0.0, "training.weight_decay": 0.0,
+    },
+
+    # --- TABULAR MODELS ---
+    "mlp_texas100_baseline": {
+        # Best: 0.6250 acc
+        "training.optimizer": "Adam", "training.learning_rate": 0.0001, "training.local_epochs": 5,
+        "training.momentum": 0.0, "training.weight_decay": 0.0,
+    },
+    "mlp_purchase100_baseline": {
+        # Best: 0.6002 acc
         "training.optimizer": "Adam", "training.learning_rate": 0.0005, "training.local_epochs": 5,
         "training.momentum": 0.0, "training.weight_decay": 0.0,
     },
-    "image": {
-        "training.optimizer": "SGD", "training.learning_rate": 0.01, "training.local_epochs": 5,
-        "training.momentum": 0.9, "training.weight_decay": 5e-4,
-    },
-    "text": {
-        "training.optimizer": "Adam", "training.learning_rate": 0.001, "training.local_epochs": 2,
-        "training.momentum": 0.0, "training.weight_decay": 0.0,
+
+    # --- TEXT MODELS ---
+    "textcnn_trec_baseline": {
+        # Best: 0.7985 acc
+        "training.optimizer": "SGD", "training.learning_rate": 0.05, "training.local_epochs": 5,
+        "training.momentum": 0.9, "training.weight_decay": 0.0001
     }
 }
+
 TUNED_DEFENSE_PARAMS = {
     "fedavg": {"aggregation.method": "fedavg"},
     "fltrust": {"aggregation.method": "fltrust", "aggregation.clip_norm": 10.0},
@@ -79,7 +110,7 @@ def create_fixed_params_modifier(
 ) -> Callable[[AppConfig], AppConfig]:
     def modifier(config: AppConfig) -> AppConfig:
         # 1. Apply Golden Training HPs
-        training_params = GOLDEN_TRAINING_PARAMS.get(modality)
+        training_params = GOLDEN_TRAINING_PARAMS.get(model_config_name)
         if training_params:
             for key, value in training_params.items():
                 set_nested_attr(config, key, value)
