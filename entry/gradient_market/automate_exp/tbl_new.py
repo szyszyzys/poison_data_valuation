@@ -84,7 +84,7 @@ PURCHASE100_TRIGGER = {
     "feature_75": 1.0,
     "feature_150": 1.0,
     "feature_300": 1.0,
-    "feature_600": 1.0
+    "feature_500": 1.0
 }
 
 
