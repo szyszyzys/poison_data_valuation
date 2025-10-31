@@ -40,7 +40,7 @@ SYBIL_SETUP = {
     "base_config_factory": get_base_image_config,
     "dataset_name": "CIFAR10",
     "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar10_resnet18",
+    "model_config_name": "cifar10_cnn",
     "dataset_modifier": use_cifar10_config,
     "attack_modifier": use_image_backdoor_attack
 }
@@ -98,7 +98,13 @@ def generate_advanced_sybil_scenarios() -> List[Scenario]:
                 fixed_params_modifier,
                 SYBIL_SETUP["dataset_modifier"],
                 SYBIL_SETUP["attack_modifier"],
-                enable_valuation(influence=True, loo=True, loo_freq=10, kernelshap=False)
+                lambda config: enable_valuation(
+                    config,
+                    influence=True,
+                    loo=True,
+                    loo_freq=10,
+                    kernelshap=False
+                )
             ]
 
             scenario = Scenario(

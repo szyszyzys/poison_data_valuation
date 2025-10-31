@@ -112,7 +112,8 @@ def generate_main_summary_scenarios() -> List[Scenario]:
 
             # --- Create modifier to enable comprehensive valuation ---
             # ## USER ACTION ##: Adjust frequencies/methods based on computational budget
-            valuation_modifier = enable_valuation(
+            valuation_modifier = lambda config: enable_valuation(
+                config,
                 influence=True,  # Fast, run every round
                 loo=True, loo_freq=10,  # Slower, run periodically
                 kernelshap=True, kshap_freq=20,  # Slowest, run periodically

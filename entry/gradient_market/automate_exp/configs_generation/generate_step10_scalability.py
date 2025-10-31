@@ -54,7 +54,7 @@ SCALABILITY_SETUP = {
     "base_config_factory": get_base_image_config,
     "dataset_name": "cifar10", # lowercase
     "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar10_resnet18", # lowercase, use your best model
+    "model_config_name": "cifar10_cnn", # lowercase, use your best model
     "dataset_modifier": use_cifar10_config,
     "attack_modifier": use_image_backdoor_attack # Standard attack type
 }

@@ -145,8 +145,13 @@ def generate_competitor_mimicry_scenarios() -> List[Scenario]:
                 fixed_params_modifier, # Sets Golden Train, Tuned Def, Non-IID, No Other Atk
                 MIMICRY_SETUP["dataset_modifier"],
                 mimicry_modifier, # Enables the specific mimicry attack
-                # Valuation: Enable Influence + Periodic LOO to track value changes
-                enable_valuation(influence=True, loo=True, loo_freq=10, kernelshap=False)
+                lambda config: enable_valuation(
+                    config,
+                    influence=True,
+                    loo=True,
+                    loo_freq=10,
+                    kernelshap=False
+                )
             ],
             parameter_grid=grid # Grid sweeps adv_rate
         )

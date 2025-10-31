@@ -113,7 +113,14 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
                         fixed_params_modifier,
                         ADAPTIVE_SETUP["dataset_modifier"],
                         adaptive_modifier,
-                        enable_valuation(influence=True, loo=False, kernelshap=False)
+                        lambda config: enable_valuation(
+                            config,
+                            influence=True,
+                            loo=False,
+                            loo_freq=10,
+                            kernelshap=False
+                        )
+
                     ],
                     parameter_grid=grid
                 )
