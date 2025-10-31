@@ -341,7 +341,7 @@ class AdversarySellerConfig:
 @dataclass
 class TextDataConfig:
     """All settings related to a text dataset source."""
-    vocab: VocabConfig
+    vocab: VocabConfig = None
     strategy: str = "dirichlet"  # Strategy for SELLERS (Changed default)
     dirichlet_alpha: float = 0.5  # Alpha for SELLERS (Added)
 
@@ -388,9 +388,9 @@ class TabularDataConfig:
 @dataclass
 class DataConfig:
     """Holds configuration for one type of data source."""
-    text: Optional[TextDataConfig] = None
-    image: Optional[ImageDataConfig] = None
-    tabular: Optional[TabularDataConfig] = None
+    text: Optional[TextDataConfig] = TextDataConfig()
+    image: Optional[ImageDataConfig] = ImageDataConfig()
+    tabular: Optional[TabularDataConfig] = TabularDataConfig()
     num_workers: int = 2  # Keep num_workers here if it applies globally
 
 
