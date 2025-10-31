@@ -11,7 +11,7 @@ from entry.gradient_market.automate_exp.config_generator import set_nested_attr
 
 GOLDEN_TRAINING_PARAMS = {
     # --- IMAGE MODELS ---
-    "cifar10_flexiblecnn": {
+    "cifar10_cnn": {
         # Best: 0.8248 acc
         "training.optimizer": "Adam", "training.learning_rate": 0.001, "training.local_epochs": 5,
         "training.momentum": 0.0, "training.weight_decay": 0.0,
@@ -21,7 +21,7 @@ GOLDEN_TRAINING_PARAMS = {
         "training.optimizer": "SGD", "training.learning_rate": 0.1, "training.local_epochs": 2,
         "training.momentum": 0.9, "training.weight_decay": 5e-4, # (Assuming standard SGD params)
     },
-    "cifar100_flexiblecnn": {
+    "cifar100_cnn": {
         # Best: 0.5536 acc
         "training.optimizer": "Adam", "training.learning_rate": 0.001, "training.local_epochs": 2,
         "training.momentum": 0.0, "training.weight_decay": 0.0,
