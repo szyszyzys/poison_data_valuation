@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Callable
 from entry.gradient_market.automate_exp.base_configs import (
     get_base_image_config, get_base_text_config
 )
+from entry.gradient_market.automate_exp.configs_generation.config_common_utils import GOLDEN_TRAINING_PARAMS
 from entry.gradient_market.automate_exp.scenarios import (
     Scenario, use_cifar10_config, use_image_backdoor_attack, use_label_flipping_attack, use_cifar100_config,
     use_trec_config, use_text_backdoor_attack
