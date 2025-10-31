@@ -97,33 +97,26 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
             print(f"  -- Attack Type: {attack_type}")
 
             # Modifier to apply Golden HPs and Fixed Attack Settings
-            def create_setup_modifier(current_modifier=attack_modifier):
+            def create_setup_modifier(
+                    current_modifier=attack_modifier,
+                    current_model_cfg_name=model_cfg_name  # <-- BIND THE VARIABLE HERE
+            ):
+                # --- END FIX ---
+
                 # Closure to capture the correct attack modifier
-                def modifier(config: AppConfig) -> AppConfig:
+                def modifier(config: AppAppConfig) -> AppConfig:
 
-                    # --- ADD THIS DEBUG BLOCK ---
-                    print("\n" + "=" * 20 + " DEBUGGING " + "=" * 20)
-                    print(f"Attempting to get HPs for model_cfg_name: '{model_cfg_name}'")
-                    # --- END DEBUG BLOCK ---
-
-                    # Apply Golden HPs from common utils
-                    training_params = GOLDEN_TRAINING_PARAMS.get(model_cfg_name)  # <-- Your fix
+                    # --- START FIX ---
+                    # Now, use the bound variable, not the loop variable
+                    training_params = GOLDEN_TRAINING_PARAMS.get(current_model_cfg_name)
+                    # --- END FIX ---
 
                     if training_params:
-                        # --- ADD THIS DEBUG BLOCK ---
-                        print(f"SUCCESS: Found HPs: {training_params}")
-                        print("=" * 51 + "\n")
-                        # --- END DEBUG BLOCK ---
                         for key, value in training_params.items():
                             set_nested_attr(config, key, value)
                     else:
-                        # --- ADD THIS DEBUG BLOCK ---
-                        print(f"FAILURE: No key found for '{model_cfg_name}'!")
-                        print(f"Available keys in GOLDEN_TRAINING_PARAMS are: {GOLDEN_TRAINING_PARAMS.keys()}")
-                        print("=" * 51 + "\n")
-                        # --- END DEBUG BLOCK ---
-                        print(f"  WARNING: No Golden HPs found for model '{model_cfg_name}'!")
-
+                        # This warning will now be accurate
+                        print(f"  WARNING: No Golden HPs found for model '{current_model_cfg_name}'!")
                     # Apply Fixed Attack Strength and Type
                     config.experiment.adv_rate = DEFAULT_ADV_RATE
                     config = current_modifier(config)  # Sets attack type (backdoor/labelflip)
