@@ -35,7 +35,6 @@ GOLDEN_TRAINING_PARAMS = {
 
     # --- TABULAR MODELS ---
     "mlp_texas100_baseline": {
-        # Best: 0.6250 acc
         "training.optimizer": "Adam", "training.learning_rate": 0.0001, "training.local_epochs": 5,
         "training.momentum": 0.0, "training.weight_decay": 0.0,
     },
