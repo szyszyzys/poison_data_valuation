@@ -333,6 +333,31 @@ class DataMarketplaceFederated(DataMarketplace):
         logging.info(f"✅ Selected {len(selected_ids)} sellers: {selected_ids}")
         logging.info(f"   Rejected {len(outlier_ids)} sellers as outliers")
 
+        # ===== (NEW) PHASE 8: Compute Metrics (Valuation) =====
+        # --- DO VALUATION *BEFORE* APPLYING THE GRADIENT ---
+        logging.info("\n📈 Computing marketplace metrics & valuation...")
+
+        seller_stats_dict = {sid: stats for sid, stats in zip(seller_ids, seller_stats_list)}
+        if not self.valuation_manager:
+            self.valuation_manager = ValuationManager(
+                cfg=self.cfg,
+                aggregator=self.aggregator,
+                buyer_root_loader=self.buyer_seller.train_loader
+            )
+
+        seller_valuations, aggregate_metrics = self.valuation_manager.evaluate_round(
+            round_number=round_number,
+            current_global_model=self.global_model,  # <-- This is model_t (the CURRENT model), which is correct!
+            seller_gradients=sanitized_gradients,
+            seller_stats=seller_stats_dict,
+            oracle_gradient=sanitized_oracle_gradient,
+            buyer_gradient=sanitized_root_gradient,
+            aggregated_gradient=agg_grad,
+            aggregation_stats=aggregation_stats,
+            selected_ids=selected_ids,
+            outlier_ids=outlier_ids
+        )
+
         # ===== PHASE 8: Apply Update =====
         if agg_grad:
             try:
@@ -376,25 +401,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
                 # --- THIS IS THE ONLY CHANGE YOU MAKE ---
                 # Create a dict of stats keyed by seller_id for the evaluator
-        seller_stats_dict = {sid: stats for sid, stats in zip(seller_ids, seller_stats_list)}
-        if not self.valuation_manager:
-            self.valuation_manager = ValuationManager(
-                cfg=self.cfg,
-                aggregator=self.aggregator,
-                buyer_root_loader=self.buyer_seller.train_loader
-            )
-        seller_valuations, aggregate_metrics = self.valuation_manager.evaluate_round(
-            round_number=round_number,
-            current_global_model=self.global_model,
-            seller_gradients=sanitized_gradients,
-            seller_stats=seller_stats_dict,
-            oracle_gradient=sanitized_oracle_gradient,
-            buyer_gradient=sanitized_root_gradient,
-            aggregated_gradient=agg_grad,
-            aggregation_stats=aggregation_stats,
-            selected_ids=selected_ids,
-            outlier_ids=outlier_ids
-        )
+
         duration = time.time() - round_start_time
         round_record = self._create_round_record(
             round_number=round_number,
@@ -565,129 +572,6 @@ class DataMarketplaceFederated(DataMarketplace):
                 logging.info(f"Saved aggregated gradient")
             except Exception as e:
                 logging.error(f"Failed to save aggregated gradient: {e}")
-
-    def _compute_marketplace_metrics(
-            self,
-            round_number: int,
-            gradients_dict: Dict,
-            seller_ids: List[str],
-            selected_ids: List[str],
-            outlier_ids: List[str],
-            aggregation_stats: Dict,
-            seller_stats_list: List[Dict],
-            oracle_root_gradient: List[torch.Tensor]
-    ) -> Dict:
-        """
-        Compute comprehensive marketplace metrics for analysis.
-
-        Returns dict with both aggregate metrics and per-seller metrics.
-        """
-        metrics = {}
-
-        # === 1. Selection Analysis ===
-        metrics['selection_rate'] = len(selected_ids) / len(seller_ids) if seller_ids else 0
-        metrics['outlier_rate'] = len(outlier_ids) / len(seller_ids) if seller_ids else 0
-
-        # Per-seller selection info
-        for sid in seller_ids:
-            prefix = f'seller_{sid}_'
-            metrics[f'{prefix}selected'] = sid in selected_ids
-            metrics[f'{prefix}outlier'] = sid in outlier_ids
-
-        # === 2. Gradient Quality Metrics ===
-        if gradients_dict:
-            gradient_norms = {}
-            gradient_similarities = {}
-
-            for sid, grad in gradients_dict.items():
-                if grad is None:
-                    continue
-
-                # Compute L2 norm
-                norm = sum(torch.norm(g).item() ** 2 for g in grad) ** 0.5
-                gradient_norms[sid] = norm
-                metrics[f'seller_{sid}_gradient_norm'] = norm
-
-            # Aggregate gradient statistics
-            norms_list = list(gradient_norms.values())
-            if norms_list:
-                metrics['avg_gradient_norm'] = np.mean(norms_list)
-                metrics['std_gradient_norm'] = np.std(norms_list)
-                metrics['min_gradient_norm'] = np.min(norms_list)
-                metrics['max_gradient_norm'] = np.max(norms_list)
-
-            # Compute pairwise cosine similarities (expensive, do sparingly)
-            if self.cfg.experiment.compute_gradient_similarity and round_number % 5 == 0:
-                similarities = self._compute_gradient_similarities(gradients_dict)
-                metrics['avg_gradient_similarity'] = np.mean(similarities) if similarities else 0
-                metrics['gradient_similarity_matrix'] = similarities  # Full matrix for detailed analysis
-
-            if hasattr(self.aggregator.strategy,
-                       'root_gradient') and self.aggregator.strategy.root_gradient is not None:
-                g_buyer_root_flat = torch.cat([g.flatten() for g in self.aggregator.strategy.root_gradient])
-                for sid, grad in gradients_dict.items():
-                    if grad is None: continue
-                    g_seller_flat = torch.cat([g.flatten() for g in grad])
-                    sim_score = torch.nn.functional.cosine_similarity(g_buyer_root_flat.unsqueeze(0),
-                                                                      g_seller_flat.unsqueeze(0)).item()
-                    metrics[f'seller_{sid}_sim_to_buyer_root'] = sim_score
-
-            # 2. Calculate Similarity to the Oracle Root Gradient (for analysis)
-            if oracle_root_gradient is not None:
-                g_oracle_root_flat = torch.cat([g.flatten() for g in oracle_root_gradient])
-                for sid, grad in gradients_dict.items():
-                    if grad is None: continue
-                    g_seller_flat = torch.cat([g.flatten() for g in grad])
-                    sim_score = torch.nn.functional.cosine_similarity(g_oracle_root_flat.unsqueeze(0),
-                                                                      g_seller_flat.unsqueeze(0)).item()
-                    metrics[f'seller_{sid}_sim_to_oracle_root'] = sim_score
-
-        # === 3. Seller Contribution Metrics ===
-        # These come from aggregation_stats if your aggregator provides them
-        if aggregation_stats and 'seller_weights' in aggregation_stats:
-            for sid, weight in aggregation_stats['seller_weights'].items():
-                metrics[f'seller_{sid}_weight'] = weight
-
-        # === 4. Data Quality Indicators ===
-        for sid, stats in zip(seller_ids, seller_stats_list):
-            if stats:
-                metrics[f'seller_{sid}_train_loss'] = stats.get('train_loss')
-                metrics[f'seller_{sid}_num_samples'] = stats.get('num_samples', 0)
-                metrics[f'seller_{sid}_upload_bytes'] = stats.get('upload_bytes', 0)
-        sims_to_buyer = [v for k, v in metrics.items() if 'sim_to_buyer_root' in k]
-        sims_to_oracle = [v for k, v in metrics.items() if 'sim_to_oracle_root' in k]
-
-        if sims_to_buyer:
-            metrics['avg_sim_to_buyer'] = np.mean(sims_to_buyer)
-            metrics['std_sim_to_buyer'] = np.std(sims_to_buyer)
-            metrics['min_sim_to_buyer'] = np.min(sims_to_buyer)
-            metrics['max_sim_to_buyer'] = np.max(sims_to_buyer)
-
-        if sims_to_oracle:
-            metrics['avg_sim_to_oracle'] = np.mean(sims_to_oracle)
-            metrics['std_sim_to_oracle'] = np.std(sims_to_oracle)
-            metrics['min_sim_to_oracle'] = np.min(sims_to_oracle)
-            metrics['max_sim_to_oracle'] = np.max(sims_to_oracle)
-
-        # === 5. Adversary Detection Metrics ===
-        # Track known adversaries vs detected outliers
-        known_adversaries = [sid for sid in seller_ids if 'adv' in sid]
-        detected_adversaries = [sid for sid in outlier_ids if 'adv' in sid]
-        benign_outliers = [sid for sid in outlier_ids if 'bn' in sid]
-
-        metrics['num_known_adversaries'] = len(known_adversaries)
-        metrics['num_detected_adversaries'] = len(detected_adversaries)
-        metrics['num_benign_outliers'] = len(benign_outliers)
-        metrics['adversary_detection_rate'] = (
-            len(detected_adversaries) / len(known_adversaries)
-            if known_adversaries else 0
-        )
-        metrics['false_positive_rate'] = (
-            len(benign_outliers) / (len(seller_ids) - len(known_adversaries))
-            if (len(seller_ids) - len(known_adversaries)) > 0 else 0
-        )
-
-        return metrics
 
     def _compute_gradient_similarities(self, gradients_dict: Dict) -> List[float]:
         """Compute pairwise cosine similarities between gradients."""

@@ -122,15 +122,18 @@ class ValuationManager:
 
         # --- Run Slow LOO Evaluator (Periodically) ---
         if self.loo_evaluator and (round_number % self.val_cfg.loo_frequency == 0):
-            logging.info(f"Running periodic LOO evaluation for round {round_number}...")
-            loo_scores = self.loo_evaluator.evaluate_round(
-                round_number, current_global_model, seller_gradients
-            )
-            # Merge results
-            for sid, scores in loo_scores.items():
-                if sid in final_seller_valuations:
-                    final_seller_valuations[sid].update(scores)
-
+            try:
+                logging.info(f"Running periodic LOO evaluation for round {round_number}...")
+                loo_scores = self.loo_evaluator.evaluate_round(
+                    round_number, current_global_model, seller_gradients
+                )
+                # Merge results
+                for sid, scores in loo_scores.items():
+                    if sid in final_seller_valuations:
+                        final_seller_valuations[sid].update(scores)
+            except Exception as e:
+                logging.error(f"LOO evaluator failed in round {round_number}: {e}", exc_info=True)
+                # Continue without LOO scores
         if self.kernelshap_evaluator and (round_number > 0 and round_number % self.val_cfg.kernelshap_frequency == 0):
             logging.info(f"Running periodic KernelSHAP evaluation for round {round_number}...")
             kernelshap_scores = self.kernelshap_evaluator.evaluate_round(
