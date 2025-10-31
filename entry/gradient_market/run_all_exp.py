@@ -4,17 +4,17 @@ import argparse
 import copy
 import json
 import logging
+import numpy as np  # <-- Make sure numpy is imported
 import os
+import pandas as pd
 import shutil
 import tempfile
 import time
-from pathlib import Path
-from typing import List, Dict
-
-import pandas as pd
 import torch
 import torch.nn as nn
+from pathlib import Path
 from torch.utils.data import DataLoader, random_split
+from typing import List, Dict
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
 from common.datasets.tabular_data_processor import get_tabular_dataset
@@ -572,6 +572,23 @@ def run_final_evaluation_and_logging(
     logging.info("Final evaluation complete")
 
 
+class NumpyJSONEncoder(json.JSONEncoder):
+    """
+    Custom JSON encoder to handle common numpy types.
+    Converts np.int64 -> int, np.float64 -> float, and np.ndarray -> list.
+    """
+
+    def default(self, obj):
+        if isinstance(obj, np.int64):
+            return int(obj)
+        if isinstance(obj, np.float64):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        # Let the base class default method raise the TypeError
+        return json.JSONEncoder.default(self, obj)
+
+
 def save_json_atomic(data, filepath):
     """Save JSON with atomic write to prevent corruption."""
     filepath = Path(filepath)
@@ -584,7 +601,11 @@ def save_json_atomic(data, filepath):
     )
     try:
         with os.fdopen(temp_fd, 'w') as f:
-            json.dump(data, f, indent=2)
+            # --- THIS IS THE FIX ---
+            # Use the custom encoder to handle numpy types
+            json.dump(data, f, indent=2, cls=NumpyJSONEncoder)
+            # --- END FIX ---
+
         shutil.move(temp_path, filepath)
         logging.debug(f"Saved (atomic): {filepath}")
     except Exception as e:
