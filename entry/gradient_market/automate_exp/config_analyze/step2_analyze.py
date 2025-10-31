@@ -30,28 +30,31 @@ def parse_path_info(filepath):
 
         hp_suffix = parts[-3]
 
-        # Use re.search to find the patterns anywhere in the complex string
-        adv_match = re.search(r'adv-([\d_p]+)', hp_suffix)
-        poison_match = re.search(r'poison-([\d_p]+)', hp_suffix)
+        # --- THIS IS THE FIX ---
+        # The regex [\\d\\.p]+ matches digits, literal dots, and the letter 'p'.
+        # It correctly stops at the underscore '_'.
+        adv_match = re.search(r'adv-([\d\.p]+)', hp_suffix)
+        poison_match = re.search(r'poison-([\d\.p]+)', hp_suffix)
+        # --- END FIX ---
 
-        if not adv_match or not poison_match:
-            # Handle the 0.0 case which might not have 'poison'
-            if adv_match:
-                adv_rate_str = adv_match.group(1).replace('p', '.')
-                adv_rate = float(adv_rate_str)
-                if adv_rate == 0.0:
-                    poison_rate = 0.0  # Assume 0.0 if not found and adv_rate is 0
-                else:
-                    print(f"Warning: Skipping path, could not parse poison rate from: {hp_suffix}")
-                    return None
-            else:
-                print(f"Warning: Skipping path, could not parse adv rate from: {hp_suffix}")
-                return None
-        else:
+        # Handle benign case where adv_rate is 0 and poison_rate might be 0
+        if adv_match:
             adv_rate_str = adv_match.group(1).replace('p', '.')
-            poison_rate_str = poison_match.group(1).replace('p', '.')
             adv_rate = float(adv_rate_str)
+        else:
+            print(f"Warning: Skipping path, could not parse adv rate from: {hp_suffix}")
+            return None
+
+        if poison_match:
+            poison_rate_str = poison_match.group(1).replace('p', '.')
             poison_rate = float(poison_rate_str)
+        else:
+            print(f"Warning: Skipping path, could not parse poison rate from: {hp_suffix}")
+            return None
+
+        # Handle the logic from your generator: if adv_rate is 0, the attack is off
+        if adv_rate == 0.0:
+            poison_rate = 0.0  # Treat as benign regardless of poison_rate string
 
         run_info = parts[-2]
         run_match = re.match(r'run_(\d+)_seed_(\d+)', run_info)
@@ -82,15 +85,11 @@ def load_metrics(filepath):
         with open(filepath, 'r') as f:
             data = json.load(f)
 
-        # --- THIS IS THE FIX ---
-        # Look for "acc" and "asr" (from your JSON)
-        # NOT "test_acc" and "test_asr"
         return {
-            "test_acc": data.get("acc"),  # <-- CHANGED
-            "test_asr": data.get("asr"),  # <-- CHANGED
+            "test_acc": data.get("acc"),  # Look for "acc"
+            "test_asr": data.get("asr"),  # Look for "asr"
             "val_acc": data.get("B-Acc"),  # Use B-Acc as val_acc
         }
-        # --- END FIX ---
 
     except Exception as e:
         print(f"Error reading {filepath}: {e}")
@@ -100,7 +99,7 @@ def load_metrics(filepath):
 def main():
     """Main analysis function."""
 
-    # Use a more flexible wildcard "*" to match the complex HP string
+    # Use a flexible wildcard "*" to match the complex HP string
     search_path = os.path.join(
         BASE_RESULTS_DIR,
         EXPERIMENT_PATTERN,
@@ -145,8 +144,12 @@ def main():
     for col in key_metrics:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
+    # Drop rows where key metrics are still NaN
+    df = df.dropna(subset=key_metrics)
+
     df_agg = df.groupby(group_by_cols)[key_metrics].agg(['mean', 'std', 'count'])
 
+    # Sort for readability
     df_agg = df_agg.sort_values(by=['dataset', 'model', 'adv_rate'], ascending=[True, True, True])
 
     print("\n" + "=" * 80)
