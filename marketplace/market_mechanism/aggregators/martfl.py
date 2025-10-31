@@ -256,7 +256,7 @@ class MartflAggregator(BaseAggregator):
         # Update aggregation_stats (add clustering info, scores, weights)
         aggregation_stats['clustering'] = {
             'optimal_k': n_clusters,
-            'centroids': centroids.tolist(),
+            'centroids': centroids,
             'clusters_full': clusters_full,  # Includes baseline placeholder
             'clusters2_full': clusters2_full,  # Includes baseline placeholder
             'inlier_cluster_label_optimal_k': int(inlier_cluster_label),
