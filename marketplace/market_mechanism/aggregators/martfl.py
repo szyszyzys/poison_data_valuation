@@ -1,7 +1,7 @@
 import copy
 import logging
 from typing import Dict, List, Tuple, Any
-
+import random
 import numpy as np
 import torch
 import torch.nn as nn
@@ -168,7 +168,21 @@ class MartflAggregator(BaseAggregator):
         else:
             # b) Find optimal k using gap, with official adjustment
             diameter = np.max(np_similarities_for_clustering) - np.min(np_similarities_for_clustering)
-            n_clusters = gap(np_similarities_for_clustering.reshape(-1, 1))  # Assumes gap function exists
+
+            # --- START FIX ---
+            # Calculate max_k based on config and data size
+            max_k_to_test = min(len(np_similarities_for_clustering) - 1, self.max_k)
+
+            # Ensure max_k is at least 2 for gap statistic to run
+            if max_k_to_test < 2:
+                logger.warning(f"Not enough data to cluster (k_max={max_k_to_test}), defaulting k=1.")
+                n_clusters = 1
+            else:
+                # Call the correct, imported function and pass k_max
+                n_clusters = optimal_k_gap(
+                    np_similarities_for_clustering.reshape(-1, 1),
+                    k_max=max_k_to_test
+                )
             if n_clusters == 1 and diameter > 0.05:
                 n_clusters = 2
 
