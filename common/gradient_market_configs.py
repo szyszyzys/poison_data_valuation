@@ -482,7 +482,7 @@ class AggregationConfig:
     method: str = "martfl"
 
     # A common parameter used by multiple methods
-    clip_norm: float = 0.01
+    clip_norm: Optional[float] = 0.01
 
     # --- Nested parameter objects for each strategy ---
     martfl: MartFLParams = field(default_factory=MartFLParams)
