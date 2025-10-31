@@ -738,7 +738,7 @@ class SybilCoordinator:
                         global_epoch=global_epoch,
                         seller_updates=benign_gradients_dict,
                         root_gradient=current_root_gradient,
-                        buyer_data_loader = buyer_data_loader
+                        buyer_data_loader=buyer_data_loader
                     )
 
                     if hypothetical_selected_ids:
@@ -940,7 +940,10 @@ class SybilCoordinator:
     def _analyze_selection_patterns(self) -> None:
         """Analyze stored selected gradients to compute a centroid and average cosine similarity."""
         all_selected_flat = [
-            grad.flatten() for round_dict in self.selected_history for grad in round_dict.values()
+            grad.flatten()
+            for round_dict in self.selected_history
+            for grad in round_dict.values()
+            if hasattr(grad, 'flatten')  # <-- This line fixes the error
         ]
 
         if not all_selected_flat:
