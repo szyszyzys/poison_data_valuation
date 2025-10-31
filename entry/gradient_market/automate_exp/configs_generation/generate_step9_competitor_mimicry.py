@@ -51,9 +51,9 @@ OBSERVATION_ROUNDS = 5
 MIMICRY_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "cifar10", # lowercase
+    "dataset_name": "CIFAR10", # lowercase
     "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar10_resnet18", # lowercase, use your best model
+    "model_config_name": "cifar10_cnn",
     "dataset_modifier": use_cifar10_config,
     # No base poisoning attack modifier needed, mimicry IS the attack behavior
 }

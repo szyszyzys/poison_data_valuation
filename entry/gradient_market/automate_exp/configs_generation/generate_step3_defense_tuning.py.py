@@ -47,18 +47,18 @@ ATTACK_TYPES_TO_TUNE = ["backdoor", "labelflip"]
 # --- All Models/Datasets Combinations for Tuning ---
 # Use all combinations from Step 1 to ensure tuned parameters are relevant.
 TUNING_TARGETS_STEP3 = [
-    {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "texas100",
+    {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Texas100",
      "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_texas100_baseline",
      "dataset_modifier": lambda cfg: cfg,
      "backdoor_attack_modifier": use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL),
      "labelflip_attack_modifier": use_label_flipping_attack},
     # ## USER ACTION ##: Add Purchase100 trigger/label if needed
-    {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "purchase100",
+    {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Purchase100",
      "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_purchase100_baseline",
      "dataset_modifier": lambda cfg: cfg,
      "backdoor_attack_modifier": use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL),
      "labelflip_attack_modifier": use_label_flipping_attack},
-    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "cifar10",
+    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR10",
      "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar10_cnn",
      "dataset_modifier": use_cifar10_config, "backdoor_attack_modifier": use_image_backdoor_attack,
      "labelflip_attack_modifier": use_label_flipping_attack},
@@ -66,7 +66,7 @@ TUNING_TARGETS_STEP3 = [
     #  "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar10_resnet18",
     #  "dataset_modifier": use_cifar10_config, "backdoor_attack_modifier": use_image_backdoor_attack,
     #  "labelflip_attack_modifier": use_label_flipping_attack},
-    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "cifar100",
+    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR100",
      "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar100_cnn",
      "dataset_modifier": use_cifar100_config, "backdoor_attack_modifier": use_image_backdoor_attack,
      "labelflip_attack_modifier": use_label_flipping_attack},
@@ -74,7 +74,7 @@ TUNING_TARGETS_STEP3 = [
     #  "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar100_resnet18",
     #  "dataset_modifier": use_cifar100_config, "backdoor_attack_modifier": use_image_backdoor_attack,
     #  "labelflip_attack_modifier": use_label_flipping_attack},
-    {"modality_name": "text", "base_config_factory": get_base_text_config, "dataset_name": "trec",
+    {"modality_name": "text", "base_config_factory": get_base_text_config, "dataset_name": "TREC",
      "model_config_param_key": "experiment.text_model_config_name", "model_config_name": "textcnn_trec_baseline",
      "dataset_modifier": use_trec_config, "backdoor_attack_modifier": use_text_backdoor_attack,
      "labelflip_attack_modifier": use_label_flipping_attack},
@@ -101,7 +101,7 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
                 # Closure to capture the correct attack modifier
                 def modifier(config: AppConfig) -> AppConfig:
                     # Apply Golden HPs from common utils
-                    training_params = GOLDEN_TRAINING_PARAMS.get(modality)
+                    training_params = GOLDEN_TRAINING_PARAMS.get(model_cfg_name)
                     if training_params:
                         for key, value in training_params.items():
                             set_nested_attr(config, key, value)

@@ -49,7 +49,7 @@ LOCAL_EPOCHS_TO_SWEEP = [1, 2, 5]
 SENSITIVITY_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "cifar10",  # lowercase
+    "dataset_name": "CIFAR10",  # lowercase
     "model_config_param_key": "experiment.image_model_config_name",
     "model_config_name": "cifar10_cnn",  # lowercase, use your best model
     "dataset_modifier": use_cifar10_config,
@@ -79,8 +79,6 @@ def generate_training_sensitivity_scenarios() -> List[Scenario]:
         for attack_state in ATTACK_STATES:
             print(f"  -- Attack State: {attack_state}")
 
-            # Modifier to apply Tuned Defense HPs and the Attack State
-            # It specifically DOES NOT set training.* parameters from GOLDEN_TRAINING_PARAMS
             def create_setup_modifier_sens(current_attack_state=attack_state):
                 # Closure to capture state
                 def modifier(config: AppConfig) -> AppConfig:

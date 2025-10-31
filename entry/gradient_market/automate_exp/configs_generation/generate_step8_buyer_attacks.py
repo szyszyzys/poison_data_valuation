@@ -1,77 +1,60 @@
-
 # FILE: generate_step8_buyer_attacks.py
 
-import sys
 import copy
+import sys
 from pathlib import Path
 from typing import List, Callable, Dict, Any
 
-# --- Imports ---
-# Common Utils (Update path if needed)
 from config_common_utils import (
     GOLDEN_TRAINING_PARAMS, TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
-    # No DEFAULT_ADV_RATE needed here as seller attacks are off
-    IMAGE_DEFENSES, TEXT_TABULAR_DEFENSES, ALL_DEFENSES,
-    create_fixed_params_modifier, # Use the standard helper
-    enable_valuation
 )
-# Base Configs & Modifiers (Update path if needed)
-from entry.gradient_market.automate_exp.base_configs import get_base_image_config # Example
+from entry.gradient_market.automate_exp.base_configs import get_base_image_config  # Example
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_config, use_buyer_dos_attack, \
     use_buyer_starvation_attack, use_buyer_erosion_attack, use_buyer_class_exclusion_attack, \
     use_buyer_oscillating_attack, use_buyer_orthogonal_pivot_attack  # Example
-# Import needed attack modifiers
+
 try:
     from common.gradient_market_configs import AppConfig, PoisonType, BuyerAttackConfig
     from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 except ImportError as e:
     print(f"Error importing necessary modules: {e}")
     sys.exit(1)
-# --- End Imports ---
 
-## Purpose
-# Evaluate defense robustness against attacks originating from the BUYER/Aggregator.
-# This experiment tests how well TUNED defenses handle various buyer-side
-# manipulations (DoS, Starvation, Erosion, Class Exclusion, Oscillating Objectives)
-# using GOLDEN training parameters and Non-IID seller data. Crucial for assessing
-# security in a marketplace where the central entity might be compromised. 🛒🛡️
-
-# --- Focus Setup for Buyer Attack Analysis ---
-# ## USER ACTION ##: Choose one representative setup (model/dataset)
 BUYER_ATTACK_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "cifar10", # lowercase
+    "dataset_name": "CIFAR10",
     "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar10_cnn", # lowercase (or resnet18 if preferred)
+    "model_config_name": "cifar10_cnn",
     "dataset_modifier": use_cifar10_config,
-    # No seller attack modifier needed here
 }
-
-# --- Buyer Attack Configurations to Test ---
-# ## USER ACTION ##: Adjust parameters within these calls as needed
 BUYER_ATTACK_CONFIGS = [
     ("dos", use_buyer_dos_attack()),
-    ("starvation", use_buyer_starvation_attack(target_classes=[0, 1])), # Example target
+    ("starvation", use_buyer_starvation_attack(target_classes=[0, 1])),  # Example target
     ("erosion", use_buyer_erosion_attack()),
-    ("class_exclusion_neg", use_buyer_class_exclusion_attack(exclude_classes=[7, 8, 9], gradient_scale=1.2)), # Example exclude
-    ("class_exclusion_pos", use_buyer_class_exclusion_attack(target_classes=[0, 1, 2], gradient_scale=1.0)), # Example target
-    ("oscillating_binary", use_buyer_oscillating_attack(strategy="binary_flip", period=5)), # Example period
-    ("oscillating_random", use_buyer_oscillating_attack(strategy="random_walk", subset_size=3)), # Example size
-    ("oscillating_drift", use_buyer_oscillating_attack(strategy="adversarial_drift", drift_rounds=60, classes_a=[0, 1])), # Example drift
-    ("orthogonal_pivot_legacy", use_buyer_orthogonal_pivot_attack(target_seller_id="bn_5")), # Optional legacy
+    ("class_exclusion_neg", use_buyer_class_exclusion_attack(exclude_classes=[7, 8, 9], gradient_scale=1.2)),
+    # Example exclude
+    ("class_exclusion_pos", use_buyer_class_exclusion_attack(target_classes=[0, 1, 2], gradient_scale=1.0)),
+    # Example target
+    ("oscillating_binary", use_buyer_oscillating_attack(strategy="binary_flip", period=5)),  # Example period
+    ("oscillating_random", use_buyer_oscillating_attack(strategy="random_walk", subset_size=3)),  # Example size
+    (
+        "oscillating_drift",
+        use_buyer_oscillating_attack(strategy="adversarial_drift", drift_rounds=60, classes_a=[0, 1])),
+    # Example drift
+    ("orthogonal_pivot_legacy", use_buyer_orthogonal_pivot_attack(target_seller_id="bn_5")),  # Optional legacy
 ]
 
 # --- Defenses to Test ---
 # Focus on defenses potentially affected by buyer behavior (e.g., reference gradient)
-DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl"] # SkyMask less directly affected?
+DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl"]
 
-# --- Helper to apply fixed Golden Training & Tuned Defense HPs ---
+
 # (And ensure NO seller attacks)
 def create_fixed_params_modifier_buyer_atk(
-    modality: str,
-    defense_params: Dict[str, Any],
-    model_config_name: str
+        modality: str,
+        defense_params: Dict[str, Any],
+        model_config_name: str
 ) -> Callable[[AppConfig], AppConfig]:
     # --- (Implementation from previous answer - applies Golden HPs, Tuned Def HPs, SkyMask type, Non-IID data) ---
     def modifier(config: AppConfig) -> AppConfig:
@@ -89,14 +72,18 @@ def create_fixed_params_modifier_buyer_atk(
         config.adversary_seller_config.poisoning.type = PoisonType.NONE
         config.adversary_seller_config.sybil.is_sybil = False
         # Deactivate other seller attacks (adaptive, mimicry, etc.) if they exist in base config
-        if hasattr(config.adversary_seller_config, 'adaptive_attack'): config.adversary_seller_config.adaptive_attack.is_active = False
-        if hasattr(config.adversary_seller_config, 'mimicry_attack'): config.adversary_seller_config.mimicry_attack.is_active = False
+        if hasattr(config.adversary_seller_config,
+                   'adaptive_attack'): config.adversary_seller_config.adaptive_attack.is_active = False
+        if hasattr(config.adversary_seller_config,
+                   'mimicry_attack'): config.adversary_seller_config.mimicry_attack.is_active = False
         # --- Turn off valuation (usually not the focus here, but can enable if needed) ---
         config.valuation.run_influence = False
         config.valuation.run_loo = False
         config.valuation.run_kernelshap = False
         return config
+
     return modifier
+
 
 # ==============================================================================
 # --- MAIN CONFIG GENERATION FUNCTION ---
@@ -110,8 +97,8 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
 
     for defense_name in DEFENSES_TO_TEST:
         if defense_name not in TUNED_DEFENSE_PARAMS:
-             print(f"  Skipping {defense_name}: No tuned parameters found.")
-             continue
+            print(f"  Skipping {defense_name}: No tuned parameters found.")
+            continue
         tuned_defense_params = TUNED_DEFENSE_PARAMS[defense_name]
         print(f"-- Processing Defense: {defense_name}")
 
@@ -143,15 +130,16 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
                 name=scenario_name,
                 base_config_factory=BUYER_ATTACK_SETUP["base_config_factory"],
                 modifiers=[
-                    fixed_params_modifier, # Sets Golden Train, Tuned Def, No Seller Atk, Non-IID
+                    fixed_params_modifier,  # Sets Golden Train, Tuned Def, No Seller Atk, Non-IID
                     BUYER_ATTACK_SETUP["dataset_modifier"],
-                    buyer_attack_modifier # Enables the specific buyer attack
+                    buyer_attack_modifier  # Enables the specific buyer attack
                 ],
-                parameter_grid=grid # Grid only contains fixed exp params
+                parameter_grid=grid  # Grid only contains fixed exp params
             )
             scenarios.append(scenario)
 
     return scenarios
+
 
 # --- Main Execution Block ---
 if __name__ == "__main__":
@@ -170,7 +158,7 @@ if __name__ == "__main__":
         modified_base_config = copy.deepcopy(base_config)
         # Apply modifiers (sets golden train, tuned defense, NO seller attack, buyer attack type)
         for modifier in scenario.modifiers:
-             modified_base_config = modifier(modified_base_config)
+            modified_base_config = modifier(modified_base_config)
         # Generator just applies the fixed grid parameters
         num_gen = generator.generate(modified_base_config, scenario)
         all_generated_configs += num_gen

@@ -38,7 +38,7 @@ SYBIL_TEST_CONFIG = {
 SYBIL_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "cifar10",
+    "dataset_name": "CIFAR10",
     "model_config_param_key": "experiment.image_model_config_name",
     "model_config_name": "cifar10_resnet18",
     "dataset_modifier": use_cifar10_config,

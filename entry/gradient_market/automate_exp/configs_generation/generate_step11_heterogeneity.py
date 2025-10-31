@@ -52,9 +52,9 @@ FIXED_ATTACK_POISON_RATE = DEFAULT_POISON_RATE
 HETEROGENEITY_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "cifar10",  # lowercase
+    "dataset_name": "CIFAR10",  # lowercase
     "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar10_resnet18",  # lowercase, use your best model
+    "model_config_name": "cifar10_cnn",  # lowercase, use your best model
     "dataset_modifier": use_cifar10_config,
     "attack_modifier": use_image_backdoor_attack  # Standard attack type
 }
@@ -74,31 +74,41 @@ def create_fixed_params_modifier_heterogeneity(
         model_config_name: str
 ) -> Callable[[AppConfig], AppConfig]:
     def modifier(config: AppConfig) -> AppConfig:
-        # 1. Apply Golden Training HPs
-        training_params = GOLDEN_TRAINING_PARAMS.get(modality)
+
+        # 1. Apply Golden Training HPs (USING THE CORRECT KEY)
+        training_params = GOLDEN_TRAINING_PARAMS.get(model_config_name) # <-- CORRECT
+
         if training_params:
             for key, value in training_params.items(): set_nested_attr(config, key, value)
+        else:
+            # Add a warning in case you add a new model
+            print(f"!!!!!!!!!! WARNING !!!!!!!!!!!")
+            print(f"No Golden HPs found for model: '{model_config_name}'")
+
         # 2. Apply Tuned Defense HPs
         for key, value in defense_params.items(): set_nested_attr(config, key, value)
+
         # 3. Apply the fixed attack type and strength
         config.experiment.adv_rate = FIXED_ATTACK_ADV_RATE
         config = attack_modifier(config)
         set_nested_attr(config, "adversary_seller_config.poisoning.poison_rate", FIXED_ATTACK_POISON_RATE)
-        # config.adversary_seller_config.sybil.is_sybil = True # Optional fixed Sybil
+
         # 4. Set SkyMask model type if needed
         if defense_params.get("aggregation.method") == "skymask":
+            # This logic is also now correct, as it uses model_config_name
             model_struct = "resnet18" if "resnet" in model_config_name else "flexiblecnn"
             set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
+
         # 5. Data distribution is set in the grid, ensure strategy is compatible
         set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")  # Force dirichlet
-        # 6. Turn off valuation unless specifically desired for heterogeneity analysis
+
+        # 6. Turn off valuation
         config.valuation.run_influence = False
         config.valuation.run_loo = False
         config.valuation.run_kernelshap = False
         return config
 
     return modifier
-
 
 # ==============================================================================
 # --- MAIN CONFIG GENERATION FUNCTION ---

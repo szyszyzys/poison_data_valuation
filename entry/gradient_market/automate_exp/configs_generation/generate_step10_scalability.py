@@ -74,7 +74,7 @@ def create_fixed_params_modifier_scalability(
 ) -> Callable[[AppConfig], AppConfig]:
     def modifier(config: AppConfig) -> AppConfig:
         # 1. Apply Golden Training HPs
-        training_params = GOLDEN_TRAINING_PARAMS.get(modality)
+        training_params = GOLDEN_TRAINING_PARAMS.get(model_config_name)
         if training_params:
             for key, value in training_params.items(): set_nested_attr(config, key, value)
         # 2. Apply Tuned Defense HPs

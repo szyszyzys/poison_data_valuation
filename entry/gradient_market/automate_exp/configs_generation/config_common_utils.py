@@ -138,12 +138,18 @@ def create_fixed_params_modifier(
 
 # --- Valuation Config Helper ---
 def enable_valuation(config: AppConfig, influence: bool = True, loo: bool = False, kernelshap: bool = False,
-                     loo_freq: int = 10, kshap_freq: int = 20) -> AppConfig:
+                     loo_freq: int = 10, kshap_freq: int = 20,
+                     kshap_samples: int = 500) -> AppConfig: # <-- ADD kshap_samples HERE
+
     config.valuation.run_influence = influence
     config.valuation.run_loo = loo
     config.valuation.run_kernelshap = kernelshap
     config.valuation.loo_frequency = loo_freq
     config.valuation.kernelshap_frequency = kshap_freq
+
+    # Add this line to actually use the new parameter
+    config.valuation.kernelshap_samples = kshap_samples
+
     return config
 
 

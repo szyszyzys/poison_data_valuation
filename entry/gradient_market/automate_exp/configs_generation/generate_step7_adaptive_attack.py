@@ -39,15 +39,15 @@ except ImportError as e:
 ADAPTIVE_MODES_TO_TEST = ["gradient_manipulation", "data_manipulation"]
 ADAPTIVE_THREAT_MODEL = "black_box"  # Focus on learning from binary feedback
 EXPLORATION_ROUNDS = 30  # Rounds for the attacker to explore strategies
-
+ADAPTIVE_THREAT_MODELS_TO_TEST = ["black_box", "gradient_inversion", "oracle"]
 # --- Focus Setup for Adaptive Attack Analysis ---
 # ## USER ACTION ##: Choose one representative setup (model/dataset)
 ADAPTIVE_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "cifar10",  # lowercase
+    "dataset_name": "CIFAR10",  # lowercase
     "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar10_resnet18",  # lowercase, use your best model
+    "model_config_name": "cifar10_cnn",  # lowercase, use your best model
     "dataset_modifier": use_cifar10_config,
     # No base attack modifier needed, adaptive attacker IS the attack
 }
@@ -59,8 +59,7 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
     scenarios = []
     modality = ADAPTIVE_SETUP["modality_name"]
     model_cfg_name = ADAPTIVE_SETUP["model_config_name"]
-    # Determine relevant defenses based on modality
-    current_defenses = IMAGE_DEFENSES  # Adjust if testing other modalities
+    current_defenses = IMAGE_DEFENSES
 
     for defense_name in current_defenses:
         if defense_name not in TUNED_DEFENSE_PARAMS:
@@ -69,50 +68,56 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
         tuned_defense_params = TUNED_DEFENSE_PARAMS[defense_name]
         print(f"-- Processing Defense: {defense_name}")
 
-        # --- Create the modifier that applies Golden Training + Tuned Defense HPs ---
-        # Note: apply_noniid=True ensures Non-IID seller data
         fixed_params_modifier = create_fixed_params_modifier(
             modality, tuned_defense_params, model_cfg_name, apply_noniid=True
         )
 
-        # --- Loop through adaptive attack modes ---
-        for adaptive_mode in ADAPTIVE_MODES_TO_TEST:
-            print(f"  -- Adaptive Mode: {adaptive_mode}")
+        # --- UPDATE: Loop over threat models FIRST ---
+        for threat_model in ADAPTIVE_THREAT_MODELS_TO_TEST:
+            print(f"  -- Threat Model: {threat_model}")
 
-            # --- Create the adaptive attack modifier ---
-            adaptive_modifier = use_adaptive_attack(
-                mode=adaptive_mode,
-                threat_model=ADAPTIVE_THREAT_MODEL,
-                exploration_rounds=EXPLORATION_ROUNDS
-            )
+            # --- Loop through adaptive attack modes (as before) ---
+            for adaptive_mode in ADAPTIVE_MODES_TO_TEST:
+                print(f"    -- Adaptive Mode: {adaptive_mode}")
 
-            # --- Define the grid (fixed parameters for this run) ---
-            # Attack rate is fixed, defense/training params are fixed by modifiers
-            grid = {
-                ADAPTIVE_SETUP["model_config_param_key"]: [model_cfg_name],
-                "experiment.dataset_name": [ADAPTIVE_SETUP["dataset_name"]],
-                "experiment.adv_rate": [DEFAULT_ADV_RATE],  # Fixed % of adaptive attackers
-                "n_samples": [NUM_SEEDS_PER_CONFIG],
-                "experiment.use_early_stopping": [True],  # Keep early stopping
-                "experiment.patience": [10],
-            }
+                # --- LOGIC OPTIMIZATION ---
+                # Oracle and GradInv are gradient manipulations, so skip data_manipulation
+                if threat_model != "black_box" and adaptive_mode == "data_manipulation":
+                    print(f"       Skipping data_manipulation for {threat_model} (N/A)")
+                    continue
 
-            # --- Create the Scenario ---
-            scenario_name = f"step7_adaptive_{ADAPTIVE_THREAT_MODEL}_{adaptive_mode}_{defense_name}_{ADAPTIVE_SETUP['dataset_name']}"
+                # --- Create the adaptive attack modifier ---
+                adaptive_modifier = use_adaptive_attack(
+                    mode=adaptive_mode,
+                    threat_model=threat_model,  # <-- Use the loop variable
+                    exploration_rounds=EXPLORATION_ROUNDS
+                )
 
-            scenario = Scenario(
-                name=scenario_name,
-                base_config_factory=ADAPTIVE_SETUP["base_config_factory"],
-                modifiers=[
-                    fixed_params_modifier,  # Sets Golden Train + Tuned Def HPs + Non-IID
-                    ADAPTIVE_SETUP["dataset_modifier"],
-                    adaptive_modifier,  # Enables the specific adaptive attack
-                    # Valuation: Enable Influence to track attacker value score over time
-                    enable_valuation(influence=True, loo=False, kernelshap=False)
-                ],
-                parameter_grid=grid  # Grid only contains fixed exp params here
-            )
-            scenarios.append(scenario)
+                # --- Define the grid (fixed parameters for this run) ---
+                grid = {
+                    ADAPTIVE_SETUP["model_config_param_key"]: [model_cfg_name],
+                    "experiment.dataset_name": [ADAPTIVE_SETUP["dataset_name"]],
+                    "experiment.adv_rate": [DEFAULT_ADV_RATE],
+                    "n_samples": [NUM_SEEDS_PER_CONFIG],
+                    "experiment.use_early_stopping": [True],
+                    "experiment.patience": [10],
+                }
+
+                # --- Create the Scenario ---
+                scenario_name = f"step7_adaptive_{threat_model}_{adaptive_mode}_{defense_name}_{ADAPTIVE_SETUP['dataset_name']}"
+
+                scenario = Scenario(
+                    name=scenario_name,
+                    base_config_factory=ADAPTIVE_SETUP["base_config_factory"],
+                    modifiers=[
+                        fixed_params_modifier,
+                        ADAPTIVE_SETUP["dataset_modifier"],
+                        adaptive_modifier,
+                        enable_valuation(influence=True, loo=False, kernelshap=False)
+                    ],
+                    parameter_grid=grid
+                )
+                scenarios.append(scenario)
 
     return scenarios
 
