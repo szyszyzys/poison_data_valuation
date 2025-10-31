@@ -45,29 +45,43 @@ VALUATION_PARAMS = {
 
 # --- Define ALL Model/Dataset combinations for validation ---
 VALIDATION_COMBOS = [
-    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "cifar10",
-     "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar10_cnn",
-     "attack_modifier": use_image_backdoor_attack, "dataset_modifier": use_cifar10_config,
-     "sm_model_type": "flexiblecnn"},
-    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "cifar100",
-     "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar100_cnn",
-     "attack_modifier": use_image_backdoor_attack, "dataset_modifier": use_cifar100_config,
-     "sm_model_type": "flexiblecnn"},
-    {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "texas100",
-     "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_texas100_baseline",
-     "attack_modifier": use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL),
-     "dataset_modifier": lambda cfg: cfg, "sm_model_type": "mlp"},
-    {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "purchase100",
-     "model_config_param_key": "experiment.tabular_model_config_name",
-     "model_config_name": "mlp_purchase100_baseline",
-     "attack_modifier": use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL),
-     "dataset_modifier": lambda cfg: cfg, "sm_model_type": "mlp"},
-    {"modality_name": "text", "base_config_factory": get_base_text_config, "dataset_name": "trec",
-     "model_config_param_key": "experiment.text_model_config_name", "model_config_name": "textcnn_trec_baseline",
-     "attack_modifier": use_text_backdoor_attack, "dataset_modifier": use_trec_config,
-     "sm_model_type": "textcnn"},
+    {
+        "modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "cifar10",
+        "model_structure": "flexiblecnn",  # <-- ADDED
+        "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar10_cnn",
+        "attack_modifier": use_image_backdoor_attack, "dataset_modifier": use_cifar10_config,
+        "sm_model_type": "flexiblecnn"
+    },
+    {
+        "modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "cifar100",
+        "model_structure": "flexiblecnn",  # <-- ADDED
+        "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar100_cnn",
+        "attack_modifier": use_image_backdoor_attack, "dataset_modifier": use_cifar100_config,
+        "sm_model_type": "flexiblecnn"
+    },
+    {
+        "modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "texas100",
+        "model_structure": "mlp",  # <-- ADDED
+        "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_texas100_baseline",
+        "attack_modifier": use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL),
+        "dataset_modifier": lambda cfg: cfg, "sm_model_type": "mlp"
+    },
+    {
+        "modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "purchase100",
+        "model_structure": "mlp",  # <-- ADDED
+        "model_config_param_key": "experiment.tabular_model_config_name",
+        "model_config_name": "mlp_purchase100_baseline",
+        "attack_modifier": use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL),
+        "dataset_modifier": lambda cfg: cfg, "sm_model_type": "mlp"
+    },
+    {
+        "modality_name": "text", "base_config_factory": get_base_text_config, "dataset_name": "trec",
+        "model_structure": "textcnn",  # <-- ADDED
+        "model_config_param_key": "experiment.text_model_config_name", "model_config_name": "textcnn_trec_baseline",
+        "attack_modifier": use_text_backdoor_attack, "dataset_modifier": use_trec_config,
+        "sm_model_type": "textcnn"
+    },
 ]
-
 
 # --- Function to apply Golden Training Parameters ONLY ---
 def apply_benchmark_setup(config: AppConfig, model_config_name: str, dataset_modifier: Callable,
