@@ -27,7 +27,7 @@ except ImportError as e:
 # --- Defense Parameters (ONLY FedAvg) ---
 TUNED_DEFENSE_PARAMS = {
     "fedavg": {  # Include FedAvg as the undefended baseline
-        "aggregation.method": "fedavg",
+        "aggregation.method": ["fedavg"],
     }
 }
 
