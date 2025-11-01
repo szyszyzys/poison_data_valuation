@@ -758,7 +758,7 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
         # --- 6. SAVE ROUND DATA INCREMENTALLY ---
         save_round_incremental(round_record, save_path)
         save_seller_metrics_incremental(save_path, round_record)
-        save_marketplace_analysis_data_incremental(save_path, round_record)
+        # save_marketplace_analysis_data_incremental(save_path, round_record)
         detailed_stats = round_record.get('detailed_aggregation_stats')
 
         # Save the detailed log *only if* it's not empty
@@ -880,7 +880,7 @@ def save_seller_metrics_incremental(save_path: Path, round_record: Dict):
         df = pd.DataFrame(seller_metrics_list)
 
         # Ensure column order and handle missing columns
-        df = df.reindex(columns=SELLER_LOG_COLUMNS)
+        # df = df.reindex(columns=SELLER_LOG_COLUMNS)
 
         # Check if file exists to write header
         file_exists = os.path.isfile(log_path)

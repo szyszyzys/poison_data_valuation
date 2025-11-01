@@ -230,7 +230,7 @@ def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path):
     agg_df['std_test_acc'] = agg_df['std_test_acc'].fillna(0)
     agg_df['std_backdoor_asr'] = agg_df['std_backdoor_asr'].fillna(0)
     agg_df['mean_backdoor_asr'] = agg_df['mean_backdoor_asr'].fillna(0) # Ensure ASR is numeric
-
+    agg_df['mean_test_acc'] = agg_df['mean_test_acc'].fillna(0) # Ensure ACC is numeric
     # --- 2. Calculate Ranking Score ---
     if RANKING_METRIC == 'acc_minus_asr':
         agg_df['score'] = agg_df['mean_test_acc'] - agg_df['mean_backdoor_asr']

@@ -298,37 +298,6 @@ class DataMarketplaceFederated(DataMarketplace):
             buyer_data_loader=self.aggregator.buyer_data_loader
         )
 
-        if agg_grad and round_number % 1 == 0:
-            logging.info("\n" + "=" * 60)
-            logging.info(f"🔍 POST-AGGREGATION EVALUATION (Round {round_number})")
-            logging.info("=" * 60)
-
-            self.global_model.eval()
-            correct = 0
-            total = 0
-            with torch.no_grad():
-                for batch_idx, batch in enumerate(validation_loader):
-                    if batch_idx >= 10:
-                        break
-
-                    if len(batch) == 3:
-                        labels, data, _ = batch
-                    else:
-                        data, labels = batch
-
-                    data, labels = data.to(self.aggregator.device), labels.to(self.aggregator.device)
-                    outputs = self.global_model(data)
-                    _, predicted = torch.max(outputs.data, 1)
-                    total += labels.size(0)
-                    correct += (predicted == labels).sum().item()
-
-            accuracy_after = 100 * correct / total if total > 0 else 0
-            logging.info(f"Accuracy AFTER aggregation: {accuracy_after:.2f}%")
-
-            # Check if accuracy improved
-            if round_number > 5:
-                improvement = accuracy_after - accuracy_before
-                logging.info(f"Accuracy change this round: {improvement:+.2f}%")
 
         logging.info(f"✅ Selected {len(selected_ids)} sellers: {selected_ids}")
         logging.info(f"   Rejected {len(outlier_ids)} sellers as outliers")
@@ -376,6 +345,38 @@ class DataMarketplaceFederated(DataMarketplace):
                 else:
                     logging.warning("   ⚠️  Global model parameters did NOT change significantly!")
 
+                if agg_grad and round_number % 1 == 0:
+                    logging.info("\n" + "=" * 60)
+                    logging.info(f"🔍 POST-AGGREGATION EVALUATION (Round {round_number})")
+                    logging.info("=" * 60)
+
+                    self.global_model.eval()
+                    correct = 0
+                    total = 0
+                    with torch.no_grad():
+                        for batch_idx, batch in enumerate(validation_loader):
+                            if batch_idx >= 10:
+                                break
+
+                            if len(batch) == 3:
+                                labels, data, _ = batch
+                            else:
+                                data, labels = batch
+
+                            data, labels = data.to(self.aggregator.device), labels.to(self.aggregator.device)
+                            outputs = self.global_model(data)
+                            _, predicted = torch.max(outputs.data, 1)
+                            total += labels.size(0)
+                            correct += (predicted == labels).sum().item()
+
+                    accuracy_after = 100 * correct / total if total > 0 else 0
+                    logging.info(f"Accuracy AFTER aggregation: {accuracy_after:.2f}%")
+
+                    # Check if accuracy improved
+                    if round_number > 5:
+                        improvement = accuracy_after - accuracy_before
+                        logging.info(f"Accuracy change this round: {improvement:+.2f}%")
+
             except Exception as e:
                 logging.error(f"❌ Failed to apply aggregated gradient: {e}", exc_info=True)
                 self.consecutive_failed_rounds += 1
@@ -396,12 +397,6 @@ class DataMarketplaceFederated(DataMarketplace):
             if round_number % self.cfg.debug.gradient_save_frequency == 0:
                 self._save_round_gradients(round_number, gradients_dict, agg_grad)
 
-                # ===== PHASE 11: Compute Metrics (Valuation) =====
-                logging.info("\n📈 Computing marketplace metrics & valuation...")
-
-                # --- THIS IS THE ONLY CHANGE YOU MAKE ---
-                # Create a dict of stats keyed by seller_id for the evaluator
-
         duration = time.time() - round_start_time
         round_record = self._create_round_record(
             round_number=round_number,
@@ -412,7 +407,6 @@ class DataMarketplaceFederated(DataMarketplace):
             buyer_stats=buyer_stats,
             attack_log=attack_log,
             aggregation_stats=aggregation_stats,
-            # --- ADD/FIX THESE TWO LINES ---
             seller_valuations=seller_valuations,
             aggregate_metrics=aggregate_metrics
         )
