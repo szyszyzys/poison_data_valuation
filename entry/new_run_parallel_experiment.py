@@ -358,8 +358,47 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
 
         # --- Config loading and path setup ---
         app_config = load_config(config_path)
-        original_base_save_path = Path(app_config.experiment.save_path)
-        run_save_path = original_base_save_path / f"run_{sample_idx - 1}_seed_{seed}"
+        original_base_save_path = Path(app_config.experiment.save_path) # e.g., "results/step3_tune_fltrust_..."
+
+        # --- START OF MODIFICATION: Build HP Folder Name ---
+
+        hp_parts = []
+        current_method = app_config.aggregation.method # e.g., "fltrust"
+
+        # This logic MUST match your TUNING_GRIDS from generate_step3...
+
+        if current_method == "fltrust":
+            val = get_nested_hp(app_config, ["aggregation", "clip_norm"])
+            if val is not None: hp_parts.append(f"aggregation.clip_norm_{val}")
+
+        elif current_method == "martfl":
+            val = get_nested_hp(app_config, ["aggregation", "martfl", "max_k"])
+            if val is not None: hp_parts.append(f"aggregation.martfl.max_k_{val}")
+
+            val = get_nested_hp(app_config, ["aggregation", "clip_norm"])
+            if val is not None: hp_parts.append(f"aggregation.clip_norm_{val}")
+
+        elif current_method == "skymask":
+            val = get_nested_hp(app_config, ["aggregation", "skymask", "mask_epochs"])
+            if val is not None: hp_parts.append(f"aggregation.skymask.mask_epochs_{val}")
+
+            val = get_nested_hp(app_config, ["aggregation", "skymask", "mask_lr"])
+            if val is not None: hp_parts.append(f"aggregation.skymask.mask_lr_{val}")
+
+            val = get_nested_hp(app_config, ["aggregation", "skymask", "mask_threshold"])
+            if val is not None: hp_parts.append(f"aggregation.skymask.mask_threshold_{val}")
+
+            val = get_nested_hp(app_config, ["aggregation", "clip_norm"])
+            if val is not None: hp_parts.append(f"aggregation.clip_norm_{val}")
+
+
+
+        hp_folder_name = "_".join(hp_parts)
+        if not hp_folder_name:
+             hp_folder_name = "default_hps"
+
+        run_save_path = original_base_save_path / hp_folder_name / f"run_{sample_idx - 1}_seed_{seed}"
+
         run_save_path.mkdir(parents=True, exist_ok=True)
 
         # --- Locking and Cleanup Logic ---
@@ -467,6 +506,31 @@ def discover_configs(configs_base_dir: str) -> list:
     logger.info(f"Discovered {len(all_config_files)} config files.")
     return sorted(all_config_files)
 
+def get_nested_hp(cfg: object, path_keys: List[str], default=None):
+    """
+    Safely gets a nested attribute from a config object.
+
+    Args:
+        cfg: The config object (e.g., AppConfig).
+        path_keys: A list of keys, e.g., ["aggregation", "martfl", "max_k"].
+        default: Value to return if the path doesn't exist.
+
+    Returns:
+        The HP value as a string, or the default.
+    """
+    obj = cfg
+    try:
+        for key in path_keys:
+            obj = getattr(obj, key)
+
+        if obj is None:
+            return "None" # Convert Python None to string "None"
+        return str(obj)
+    except AttributeError:
+        # Path doesn't exist (e.g., asking fltrust config for martfl.max_k)
+        return default
+    except Exception:
+        return default
 
 def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = None,
                   force_rerun: bool = False, config_filter: str = None, core_only: bool = False):
