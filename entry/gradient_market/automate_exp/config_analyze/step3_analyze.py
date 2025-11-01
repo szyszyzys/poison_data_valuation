@@ -34,7 +34,7 @@ def parse_scenario_name_step3(name: str) -> Dict[str, str]:
             "attack_type": parts[3],
             "modality": parts[4],
             "dataset": parts[5],
-            "model_suffix": parts[6], # e.g., resnet18, cnn, mlp
+            "model_suffix": "_".join(parts[6:]), # Handle models with underscores
             "scenario": name,
         }
     except Exception as e:
@@ -101,9 +101,10 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
     """Finds all final_metrics.json files and parses context including defense HPs."""
     logger.info(f"🔍 Scanning for Step 3 results in: {root_dir}...")
 
-    metrics_files = list(root_dir.rglob("final_metrics.json"))
+    # Use rglob to recursively find all final_metrics.json
+    metrics_files = list(root_dir.rglob("**/final_metrics.json"))
     if not metrics_files:
-        logger.error(f"❌ ERROR: No 'final_metrics.json' files found in {root_dir}.")
+        logger.error(f"❌ ERROR: No 'final_metrics.json' files found recursively in {root_dir}.")
         return pd.DataFrame()
 
     logger.info(f"✅ Found {len(metrics_files)} individual run results.")
@@ -115,6 +116,50 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
             seed_dir = metrics_file.parent
             hp_dir = seed_dir.parent
             scenario_dir = hp_dir.parent
+
+            # Check if this file is part of a step3_tune run
+            if not scenario_dir.name.startswith("step3_tune_"):
+                # This logic assumes the scenario_dir is the one starting with 'step3_tune_'
+                # If the nesting is different, this might need adjustment.
+                # Let's check parents until we find it or hit the root_dir
+                temp_scenario_dir = scenario_dir
+                while not temp_scenario_dir.name.startswith("step3_tune_") and temp_scenario_dir != root_dir:
+                    temp_scenario_dir = temp_scenario_dir.parent
+
+                if temp_scenario_dir.name.startswith("step3_tune_"):
+                    scenario_dir = temp_scenario_dir
+                    # Re-calculate hp_dir and seed_dir based on this
+                    # This assumes a structure like:
+                    # <root_dir>/<scenario_name>/<defense_hp_name>/<seed_name>/final_metrics.json
+                    # Let's adjust the logic to be more robust
+
+                    # More robustly find the 'step3_tune_' parent
+                    current_path = metrics_file.parent
+                    scenario_dir_found = None
+                    while current_path != root_dir and current_path != current_path.parent:
+                        if current_path.name.startswith("step3_tune_"):
+                            scenario_dir_found = current_path
+                            break
+                        current_path = current_path.parent
+
+                    if scenario_dir_found is None:
+                        logger.warning(f"Could not find 'step3_tune_' parent for {metrics_file}. Skipping.")
+                        continue
+
+                    scenario_dir = scenario_dir_found
+                    # Now assume hp_dir is child of scenario, seed_dir is child of hp_dir
+                    # This requires metrics_file to be at <scenario>/<hp>/<seed>/final_metrics.json
+                    relative_path_parts = metrics_file.parent.relative_to(scenario_dir).parts
+                    if len(relative_path_parts) != 2:
+                        logger.warning(f"Unexpected path structure for {metrics_file}. Expected <scenario>/<hp>/<seed>. Skipping.")
+                        continue
+                    hp_dir_name = relative_path_parts[0]
+                    seed_dir_name = relative_path_parts[1]
+                    hp_dir = scenario_dir / hp_dir_name
+                    seed_dir = hp_dir / seed_dir_name
+                else:
+                    logger.warning(f"Skipping {metrics_file}, not in a 'step3_tune_' directory.")
+                    continue
 
             if not (seed_dir / ".success").exists(): continue # Skip failed runs
 
@@ -204,7 +249,18 @@ def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path):
     # Group by the base scenario (defense, attack type, model, dataset)
     scenario_group_cols = ['defense', 'attack_type', 'modality', 'dataset', 'model_suffix']
     # Find the index of the row with the maximum score within each group
-    best_idx = agg_df.loc[agg_df.groupby(scenario_group_cols)['score'].idxmax()]
+
+    # Handle cases where a group might be empty or all scores are NaN
+    try:
+        best_idx = agg_df.loc[agg_df.groupby(scenario_group_cols)['score'].idxmax()]
+    except ValueError as ve:
+        logger.error(f"Error finding best HPs, possibly due to empty groups or all-NaN scores: {ve}")
+        # Fallback: drop groups where score is NaN
+        agg_df_dropna = agg_df.dropna(subset=['score'])
+        if agg_df_dropna.empty:
+            logger.error("No valid scores available to rank. Exiting analysis.")
+            return
+        best_idx = agg_df_dropna.loc[agg_df_dropna.groupby(scenario_group_cols)['score'].idxmax()]
 
     # Sort for display
     best_df = best_idx.sort_values(by=['modality', 'dataset', 'model_suffix', 'attack_type', 'defense'])
@@ -227,6 +283,7 @@ def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path):
         print(best_df[display_cols].to_string(index=False))
 
     # --- 5. Save Full Aggregated Results & Best Results ---
+    # Save CSVs to the root of the provided results_dir
     output_csv_all = results_dir / "step3_defense_tuning_all_aggregated.csv"
     output_csv_best = results_dir / "step3_defense_tuning_best_hps.csv"
     try:
@@ -248,20 +305,26 @@ def main():
     parser.add_argument(
         "results_dir",
         type=str,
-        help="The ROOT results directory containing the Step 3 runs (e.g., './results/')"
+        help="The ROOT results directory containing the Step 3 run folders (e.g., './results/')"
     )
     args = parser.parse_args()
-    # Point specifically to the step3 directory within the results
-    results_path = Path(args.results_dir).resolve() / "step3_defense_tuning" # Specific subdir
+
+    # **MODIFIED CODE HERE**
+    # Use the provided results_dir directly as the root for scanning.
+    # The `find_all_tuning_results` function will recursively search inside this path.
+    results_path = Path(args.results_dir).resolve()
 
     if not results_path.exists():
         logger.error(f"❌ ERROR: The directory '{results_path}' does not exist.")
-        logger.error("Please ensure Step 3 results are saved under a 'step3_defense_tuning' subdirectory.")
+        logger.error("Please provide a valid path to the results directory.")
         return
 
     try:
+        # find_all_tuning_results will recursively search from results_path
         raw_results_df = find_all_tuning_results(results_path)
-        analyze_defense_tuning(raw_results_df, results_path) # Pass path for saving CSVs
+
+        # Save the aggregated CSVs to the root of the results_path
+        analyze_defense_tuning(raw_results_df, results_path)
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}", exc_info=True)
 
