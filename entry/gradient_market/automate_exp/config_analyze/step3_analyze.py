@@ -89,8 +89,9 @@ def parse_defense_hp_folder_name(name: str) -> Dict[str, Any]:
                     params[param_key_short] = raw_value
                     raw_params[param_key_short] = raw_value
             else:
-                 # Handle cases like boolean flags
-                 logger.warning(f"No value found after key '{param_key}' in '{name}'")
+                 # This warning is expected for run_detail folders, can be noisy
+                 # logger.warning(f"No value found after key '{param_key}' in '{name}'")
+                 pass
 
         # Add raw params prefixed with 'raw_' for reliable grouping if needed
         for k, v in raw_params.items():
@@ -135,12 +136,14 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
             # e.g., <hp_folder>, <run_details_folder>, <seed_folder>
             relative_path_parts = metrics_file.parent.relative_to(scenario_dir).parts
 
-            if len(relative_path_parts) < 2:
-                # Need at least <hp_folder> and <seed_folder>
-                logger.warning(f"Unexpected path structure for {metrics_file}. Expected <scenario>/<hp>/.../<seed>. Skipping.")
+            if len(relative_path_parts) < 1: # At least one subfolder (seed)
+                # If HPs are missing, relative_path_parts might just be <seed_folder>
+                # Let's adjust logic: Need at least <seed_folder>
+                logger.warning(f"Unexpected path structure for {metrics_file}. Expected <scenario>/.../<seed>. Skipping.")
                 continue
 
             # 3. Assume HP folder is the first, seed folder is the last
+            # If no HPs, hp_dir_name will be the run_details folder or seed folder
             hp_dir_name = relative_path_parts[0]
             seed_dir_name = relative_path_parts[-1] # This is the leaf folder
             seed_dir = metrics_file.parent # The full path to the leaf folder
@@ -151,6 +154,9 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
 
             # 4. Parse info
             scenario_info = parse_scenario_name_step3(scenario_dir.name)
+
+            # This will try to parse the first subfolder (e.g., 'ds-texas100...') as HPs.
+            # It will fail and return {}, which is correct as there are no HPs.
             hp_info = parse_defense_hp_folder_name(hp_dir_name)
 
             if not scenario_info or ("defense" not in scenario_info):
@@ -164,6 +170,14 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
 
             with open(metrics_file, 'r') as f: metrics = json.load(f)
 
+            # --- **MODIFIED METRIC READING** ---
+            # Try to find 'test_acc', fallback to 'acc'
+            test_acc = metrics.get("test_acc", metrics.get("acc"))
+
+            # Try to find 'backdoor_asr', fallback to 'test_asr', fallback to 'asr'
+            backdoor_asr = metrics.get("backdoor_asr", metrics.get("test_asr", metrics.get("asr")))
+            # --- **END MODIFICATION** ---
+
             # Store combined record
             record = {
                 **scenario_info,
@@ -171,13 +185,9 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
                 "hp_folder": hp_dir_name, # Keep original HP folder name
                 "seed": seed,
                 "status": "success",
-                "test_acc": metrics.get("test_acc"),
-                "backdoor_asr": metrics.get("backdoor_asr"), # Or "label_flip_asr", "asr", etc.
+                "test_acc": test_acc, # Use the found value
+                "backdoor_asr": backdoor_asr, # Use the found value
             }
-
-            # Handle potential missing ASR for backdoor vs labelflip runs if key differs
-            if record["backdoor_asr"] is None:
-                 record["backdoor_asr"] = metrics.get("test_asr") # Try generic key
 
             # Fill missing ASR with 0.0 if still None (useful for scoring)
             if record["backdoor_asr"] is None:
@@ -226,11 +236,16 @@ def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path):
         num_success_runs=('seed', 'count')
     ).reset_index()
 
-    # Fill NaN std (single runs) and NaN ASR (if missing originally)
+    # --- **MODIFIED FAILSAFE** ---
+    # Fill NaN std (single runs) and NaN ASR/ACC (if missing originally)
     agg_df['std_test_acc'] = agg_df['std_test_acc'].fillna(0)
     agg_df['std_backdoor_asr'] = agg_df['std_backdoor_asr'].fillna(0)
     agg_df['mean_backdoor_asr'] = agg_df['mean_backdoor_asr'].fillna(0) # Ensure ASR is numeric
+    # This line prevents the KeyError if test_acc/acc was missing in ALL json files
     agg_df['mean_test_acc'] = agg_df['mean_test_acc'].fillna(0) # Ensure ACC is numeric
+    # --- **END MODIFICATION** ---
+
+
     # --- 2. Calculate Ranking Score ---
     if RANKING_METRIC == 'acc_minus_asr':
         agg_df['score'] = agg_df['mean_test_acc'] - agg_df['mean_backdoor_asr']
@@ -245,15 +260,12 @@ def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path):
     scenario_group_cols = ['defense', 'attack_type', 'modality', 'dataset', 'model_suffix']
 
     try:
+        # This will no longer fail, as 'score' is guaranteed to be numeric
         best_idx = agg_df.loc[agg_df.groupby(scenario_group_cols)['score'].idxmax()]
     except ValueError as ve:
-        logger.error(f"Error finding best HPs, possibly due to empty groups or all-NaN scores: {ve}")
-        # Fallback: drop groups where score is NaN
-        agg_df_dropna = agg_df.dropna(subset=['score'])
-        if agg_df_dropna.empty:
-            logger.error("No valid scores available to rank. Exiting analysis.")
-            return
-        best_idx = agg_df_dropna.loc[agg_df_dropna.groupby(scenario_group_cols)['score'].idxmax()]
+        # This catch is still good practice
+        logger.error(f"Error finding best HPs, possibly due to empty groups: {ve}")
+        return
 
     # Sort for display
     best_df = best_idx.sort_values(by=['modality', 'dataset', 'model_suffix', 'attack_type', 'defense'])
