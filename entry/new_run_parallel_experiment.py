@@ -7,6 +7,7 @@ import random
 import shutil
 from multiprocessing.pool import Pool
 from pathlib import Path
+from typing import List
 
 import numpy as np
 import torch
@@ -68,10 +69,10 @@ CORE_EXPERIMENTS = [
     # 3. SELLER ATTACKS: Category 2 (Marketplace Manipulation)
     # ============================================================================
     # 3.1 Sybil Attack Analysis
-    "sybil_baseline_cifar10_cnn",       # Backdoor without Sybil
-    "sybil_mimic_cifar10_cnn",          # Backdoor + Sybil mimic
-    "sybil_pivot_cifar10_cnn",          # Backdoor + Sybil pivot
-    "sybil_knock_out_cifar10_cnn",      # Backdoor + Sybil knock_out
+    "sybil_baseline_cifar10_cnn",  # Backdoor without Sybil
+    "sybil_mimic_cifar10_cnn",  # Backdoor + Sybil mimic
+    "sybil_pivot_cifar10_cnn",  # Backdoor + Sybil pivot
+    "sybil_knock_out_cifar10_cnn",  # Backdoor + Sybil knock_out
 
     # 3.2 Selection Rate Gaming
     "selection_rate_baseline_cifar10_cnn",
@@ -94,7 +95,7 @@ CORE_EXPERIMENTS = [
     # 4.4 Trust Erosion (Oscillating Variants)
     "buyer_attack_oscillating_binary_cifar10_cnn",  # ⚠️ MISSING
     "buyer_attack_oscillating_random_cifar10_cnn",  # ⚠️ MISSING
-    "buyer_attack_oscillating_drift_cifar10_cnn",   # ⚠️ MISSING
+    "buyer_attack_oscillating_drift_cifar10_cnn",  # ⚠️ MISSING
 
     # 4.5 Targeted Exclusion (Class-based - NEW)
     "buyer_attack_class_exclusion_negative_cifar10_cnn",  # ⚠️ MISSING
@@ -358,12 +359,12 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
 
         # --- Config loading and path setup ---
         app_config = load_config(config_path)
-        original_base_save_path = Path(app_config.experiment.save_path) # e.g., "results/step3_tune_fltrust_..."
+        original_base_save_path = Path(app_config.experiment.save_path)  # e.g., "results/step3_tune_fltrust_..."
 
         # --- START OF MODIFICATION: Build HP Folder Name ---
 
         hp_parts = []
-        current_method = app_config.aggregation.method # e.g., "fltrust"
+        current_method = app_config.aggregation.method  # e.g., "fltrust"
 
         # This logic MUST match your TUNING_GRIDS from generate_step3...
 
@@ -391,11 +392,9 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
             val = get_nested_hp(app_config, ["aggregation", "clip_norm"])
             if val is not None: hp_parts.append(f"aggregation.clip_norm_{val}")
 
-
-
         hp_folder_name = "_".join(hp_parts)
         if not hp_folder_name:
-             hp_folder_name = "default_hps"
+            hp_folder_name = "default_hps"
 
         run_save_path = original_base_save_path / hp_folder_name / f"run_{sample_idx - 1}_seed_{seed}"
 
@@ -506,6 +505,7 @@ def discover_configs(configs_base_dir: str) -> list:
     logger.info(f"Discovered {len(all_config_files)} config files.")
     return sorted(all_config_files)
 
+
 def get_nested_hp(cfg: object, path_keys: List[str], default=None):
     """
     Safely gets a nested attribute from a config object.
@@ -524,13 +524,14 @@ def get_nested_hp(cfg: object, path_keys: List[str], default=None):
             obj = getattr(obj, key)
 
         if obj is None:
-            return "None" # Convert Python None to string "None"
+            return "None"  # Convert Python None to string "None"
         return str(obj)
     except AttributeError:
         # Path doesn't exist (e.g., asking fltrust config for martfl.max_k)
         return default
     except Exception:
         return default
+
 
 def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = None,
                   force_rerun: bool = False, config_filter: str = None, core_only: bool = False):
