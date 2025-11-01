@@ -322,19 +322,44 @@ def setup_gpu_allocation(num_processes: int, gpu_ids_str: str = None):
     return actual_num_processes, assigned_gpu_ids
 
 
+def get_nested_hp(cfg: object, path_keys: List[str], default=None):
+    """
+    Safely gets a nested attribute from a config object.
+
+    Args:
+        cfg: The config object (e.g., AppConfig).
+        path_keys: A list of keys, e.g., ["aggregation", "martfl", "max_k"].
+        default: Value to return if the path doesn't exist.
+
+    Returns:
+        The HP value as a string, or the default.
+    """
+    obj = cfg
+    try:
+        for key in path_keys:
+            obj = getattr(obj, key)
+
+        if obj is None:
+            return "None" # Convert Python None to string "None"
+        return str(obj)
+    except AttributeError:
+        # Path doesn't exist (e.g., asking fltrust config for martfl.max_k)
+        return default
+    except Exception:
+        return default
+
+# --- Replace your existing function with this new version ---
 def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, seed: int,
                                 gpu_id: int = None, force_rerun: bool = False, attempt: int = 0):
     run_save_path = None
 
     try:
-        # ===== GPU/Seed Setup =====
+        # ===== GPU/Seed Setup (Same as before) =====
         target_device = "cpu"
 
         if gpu_id is not None:
-            # DON'T set CUDA_VISIBLE_DEVICES here - it's already set by parent!
             target_device = f"cuda:{gpu_id}"
             log_prefix_gpu_info = f"GPU {gpu_id}"
-
             if not torch.cuda.is_available():
                 logger.error(f"[Run {run_id}] CUDA not available for gpu_id {gpu_id}")
                 target_device = "cpu"
@@ -345,7 +370,7 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
         attempt_info = f" (Attempt {attempt + 1})" if attempt > 0 else ""
         log_prefix = f"[Run {run_id} | Smp {sample_idx} | Seed {seed} | {log_prefix_gpu_info}{attempt_info}]"
 
-        # Seed everything
+        # Seed everything (Same as before)
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
@@ -359,14 +384,22 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
 
         # --- Config loading and path setup ---
         app_config = load_config(config_path)
-        original_base_save_path = Path(app_config.experiment.save_path)  # e.g., "results/step3_tune_fltrust_..."
 
-        # --- START OF MODIFICATION: Build HP Folder Name ---
+        # This is the path from your config file, e.g.:
+        # "results/step3_tune_.../ds-cifar10_model-lenet..."
+        original_base_save_path = Path(app_config.experiment.save_path)
 
+        # --- START OF NEW ROBUST FIX ---
+
+        # 1. Get the parts of the incorrect path
+        # This will be "ds-cifar10_model-lenet..."
+        run_details_folder_name = original_base_save_path.name
+        # This will be "results/step3_tune_..."
+        scenario_path = original_base_save_path.parent
+
+        # 2. Build the HP folder name (Same logic as my previous answer)
         hp_parts = []
-        current_method = app_config.aggregation.method  # e.g., "fltrust"
-
-        # This logic MUST match your TUNING_GRIDS from generate_step3...
+        current_method = app_config.aggregation.method # e.g., "fltrust"
 
         if current_method == "fltrust":
             val = get_nested_hp(app_config, ["aggregation", "clip_norm"])
@@ -392,15 +425,20 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
             val = get_nested_hp(app_config, ["aggregation", "clip_norm"])
             if val is not None: hp_parts.append(f"aggregation.clip_norm_{val}")
 
+        # ... Add elif blocks for any other defenses you are tuning ...
+
         hp_folder_name = "_".join(hp_parts)
         if not hp_folder_name:
-            hp_folder_name = "default_hps"
+             hp_folder_name = "default_hps"
 
-        run_save_path = original_base_save_path / hp_folder_name / f"run_{sample_idx - 1}_seed_{seed}"
+        # 3. Build the NEW, CORRECT path by re-ordering the parts
+        run_save_path = scenario_path / hp_folder_name / run_details_folder_name / f"run_{sample_idx - 1}_seed_{seed}"
+
+        # --- END OF NEW ROBUST FIX ---
 
         run_save_path.mkdir(parents=True, exist_ok=True)
 
-        # --- Locking and Cleanup Logic ---
+        # --- Locking and Cleanup Logic (Same as before) ---
         lock_file = run_save_path / ".lock"
         lock = FileLock(str(lock_file), timeout=10)
         with lock.acquire(timeout=5):
@@ -414,18 +452,18 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
 
             mark_run_in_progress(run_save_path)
 
-            # --- Prepare config ---
+            # --- Prepare config (Same as before) ---
             run_cfg = copy.deepcopy(app_config)
             run_cfg.seed = seed
-            run_cfg.experiment.save_path = str(run_save_path)
+            run_cfg.experiment.save_path = str(run_save_path) # Use the NEW, correct path
             run_cfg.experiment.device = target_device
 
-            # --- Run the experiment ---
+            # --- Run the experiment (Same as before) ---
             run_attack(run_cfg)
             mark_run_completed(run_save_path)
             logger.info(f"{log_prefix} ✅ Completed successfully.")
 
-            # Clean up GPU memory
+            # Clean up GPU memory (Same as before)
             if target_device.startswith("cuda"):
                 try:
                     del run_cfg
@@ -441,7 +479,6 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
         if run_save_path:
             (run_save_path / ".failed").touch()
         raise  # Re-raise to trigger retry logic
-
 
 def discover_configs_core(configs_base_dir: str) -> list:
     """
@@ -505,32 +542,6 @@ def discover_configs(configs_base_dir: str) -> list:
     logger.info(f"Discovered {len(all_config_files)} config files.")
     return sorted(all_config_files)
 
-
-def get_nested_hp(cfg: object, path_keys: List[str], default=None):
-    """
-    Safely gets a nested attribute from a config object.
-
-    Args:
-        cfg: The config object (e.g., AppConfig).
-        path_keys: A list of keys, e.g., ["aggregation", "martfl", "max_k"].
-        default: Value to return if the path doesn't exist.
-
-    Returns:
-        The HP value as a string, or the default.
-    """
-    obj = cfg
-    try:
-        for key in path_keys:
-            obj = getattr(obj, key)
-
-        if obj is None:
-            return "None"  # Convert Python None to string "None"
-        return str(obj)
-    except AttributeError:
-        # Path doesn't exist (e.g., asking fltrust config for martfl.max_k)
-        return default
-    except Exception:
-        return default
 
 
 def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = None,
