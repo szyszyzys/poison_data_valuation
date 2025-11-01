@@ -28,7 +28,9 @@ def parse_scenario_name_step3(name: str) -> Dict[str, str]:
     try:
         parts = name.split('_')
         # step3_tune_{defense}_{attack_type}_{modality}_{dataset}_{model}
-        if len(parts) < 7: return {}
+        if len(parts) < 7:
+            logger.warning(f"Could not parse scenario name: {name}")
+            return {}
         return {
             "defense": parts[2],
             "attack_type": parts[3],
@@ -60,7 +62,11 @@ def parse_defense_hp_folder_name(name: str) -> Dict[str, Any]:
                 key_parts.append(parts[i])
                 i += 1
             param_key = "_".join(key_parts)
-            param_key_short = param_key.split('.')[-1] # Use short key (e.g., 'max_k') for column name
+            # Use short key (e.g., 'max_k') for column name
+            param_key_short = param_key.split('.')[-1]
+
+            if not param_key_short: # Skip if key is empty
+                continue
 
             # Get the value
             if i < len(parts):
@@ -83,8 +89,7 @@ def parse_defense_hp_folder_name(name: str) -> Dict[str, Any]:
                     params[param_key_short] = raw_value
                     raw_params[param_key_short] = raw_value
             else:
-                 # Handle cases like boolean flags where value might be missing (e.g., 'clip_True')
-                 # This simple parser assumes value follows key. Adjust if needed.
+                 # Handle cases like boolean flags
                  logger.warning(f"No value found after key '{param_key}' in '{name}'")
 
         # Add raw params prefixed with 'raw_' for reliable grouping if needed
@@ -112,65 +117,50 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
     all_results = []
     for metrics_file in metrics_files:
         try:
-            # Path: .../<scenario_name>/<defense_hp_name>/<seed_name>/final_metrics.json
-            seed_dir = metrics_file.parent
-            hp_dir = seed_dir.parent
-            scenario_dir = hp_dir.parent
+            # --- Robust Path Finding ---
+            # 1. Find the 'step3_tune_' parent (scenario_dir)
+            current_path = metrics_file.parent
+            scenario_dir = None
+            while current_path != root_dir and current_path != current_path.parent:
+                if current_path.name.startswith("step3_tune_"):
+                    scenario_dir = current_path
+                    break
+                current_path = current_path.parent
 
-            # Check if this file is part of a step3_tune run
-            if not scenario_dir.name.startswith("step3_tune_"):
-                # This logic assumes the scenario_dir is the one starting with 'step3_tune_'
-                # If the nesting is different, this might need adjustment.
-                # Let's check parents until we find it or hit the root_dir
-                temp_scenario_dir = scenario_dir
-                while not temp_scenario_dir.name.startswith("step3_tune_") and temp_scenario_dir != root_dir:
-                    temp_scenario_dir = temp_scenario_dir.parent
+            if scenario_dir is None:
+                # logger.debug(f"Could not find 'step3_tune_' parent for {metrics_file}. Skipping.")
+                continue # Skip files not in a step3_tune directory
 
-                if temp_scenario_dir.name.startswith("step3_tune_"):
-                    scenario_dir = temp_scenario_dir
-                    # Re-calculate hp_dir and seed_dir based on this
-                    # This assumes a structure like:
-                    # <root_dir>/<scenario_name>/<defense_hp_name>/<seed_name>/final_metrics.json
-                    # Let's adjust the logic to be more robust
+            # 2. Get relative path parts from scenario_dir to the seed_dir
+            # e.g., <hp_folder>, <run_details_folder>, <seed_folder>
+            relative_path_parts = metrics_file.parent.relative_to(scenario_dir).parts
 
-                    # More robustly find the 'step3_tune_' parent
-                    current_path = metrics_file.parent
-                    scenario_dir_found = None
-                    while current_path != root_dir and current_path != current_path.parent:
-                        if current_path.name.startswith("step3_tune_"):
-                            scenario_dir_found = current_path
-                            break
-                        current_path = current_path.parent
+            if len(relative_path_parts) < 2:
+                # Need at least <hp_folder> and <seed_folder>
+                logger.warning(f"Unexpected path structure for {metrics_file}. Expected <scenario>/<hp>/.../<seed>. Skipping.")
+                continue
 
-                    if scenario_dir_found is None:
-                        logger.warning(f"Could not find 'step3_tune_' parent for {metrics_file}. Skipping.")
-                        continue
+            # 3. Assume HP folder is the first, seed folder is the last
+            hp_dir_name = relative_path_parts[0]
+            seed_dir_name = relative_path_parts[-1] # This is the leaf folder
+            seed_dir = metrics_file.parent # The full path to the leaf folder
 
-                    scenario_dir = scenario_dir_found
-                    # Now assume hp_dir is child of scenario, seed_dir is child of hp_dir
-                    # This requires metrics_file to be at <scenario>/<hp>/<seed>/final_metrics.json
-                    relative_path_parts = metrics_file.parent.relative_to(scenario_dir).parts
-                    if len(relative_path_parts) != 2:
-                        logger.warning(f"Unexpected path structure for {metrics_file}. Expected <scenario>/<hp>/<seed>. Skipping.")
-                        continue
-                    hp_dir_name = relative_path_parts[0]
-                    seed_dir_name = relative_path_parts[1]
-                    hp_dir = scenario_dir / hp_dir_name
-                    seed_dir = hp_dir / seed_dir_name
-                else:
-                    logger.warning(f"Skipping {metrics_file}, not in a 'step3_tune_' directory.")
-                    continue
+            if not (seed_dir / ".success").exists():
+                # logger.debug(f"Skipping failed run: {seed_dir}")
+                continue # Skip failed runs
 
-            if not (seed_dir / ".success").exists(): continue # Skip failed runs
-
+            # 4. Parse info
             scenario_info = parse_scenario_name_step3(scenario_dir.name)
-            hp_info = parse_defense_hp_folder_name(hp_dir.name)
+            hp_info = parse_defense_hp_folder_name(hp_dir_name)
 
-            if not scenario_info or ("defense" not in scenario_info): continue # Must have defense info
-            # hp_info can be empty if defense has no tunable HPs (like FedAvg)
+            if not scenario_info or ("defense" not in scenario_info):
+                continue # Must have valid scenario info
 
-            try: seed = int(seed_dir.name.split('_')[-1])
-            except: seed = -1
+            try:
+                # Try parsing seed from folder name, e.g., 'run_0_seed_42' -> 42
+                seed = int(seed_dir_name.split('_')[-1])
+            except:
+                seed = -1 # Fallback
 
             with open(metrics_file, 'r') as f: metrics = json.load(f)
 
@@ -178,21 +168,21 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
             record = {
                 **scenario_info,
                 **hp_info, # Parsed defense HPs (e.g., clip_norm: 10.0)
-                "hp_folder": hp_dir.name, # Keep original folder name if needed
+                "hp_folder": hp_dir_name, # Keep original HP folder name
                 "seed": seed,
                 "status": "success",
                 "test_acc": metrics.get("test_acc"),
-                # ## USER ACTION ##: Ensure your metrics file contains the correct ASR key
                 "backdoor_asr": metrics.get("backdoor_asr"), # Or "label_flip_asr", "asr", etc.
             }
+
             # Handle potential missing ASR for backdoor vs labelflip runs if key differs
             if record["backdoor_asr"] is None:
                  record["backdoor_asr"] = metrics.get("test_asr") # Try generic key
+
             # Fill missing ASR with 0.0 if still None (useful for scoring)
             if record["backdoor_asr"] is None:
                 record["backdoor_asr"] = 0.0
                 # logger.debug(f"ASR metric not found for {metrics_file}, using 0.0")
-
 
             all_results.append(record)
         except Exception as e:
@@ -222,6 +212,11 @@ def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path):
     # Ensure all group_cols actually exist in the DataFrame
     group_cols = [col for col in group_cols if col in raw_df.columns]
 
+    # Handle case where no HP columns were found (e.g., only FedAvg)
+    if not group_cols:
+        logger.warning("No grouping columns found. Analyzing raw data.")
+        group_cols = ['scenario', 'defense', 'attack_type', 'modality', 'dataset', 'model_suffix']
+
     # --- 1. Aggregate across seeds ---
     agg_df = raw_df.groupby(group_cols, dropna=False).agg( # dropna=False keeps rows with NaN HPs
         mean_test_acc=('test_acc', 'mean'),
@@ -248,9 +243,7 @@ def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path):
     # --- 3. Find Best HPs for Each Scenario Group ---
     # Group by the base scenario (defense, attack type, model, dataset)
     scenario_group_cols = ['defense', 'attack_type', 'modality', 'dataset', 'model_suffix']
-    # Find the index of the row with the maximum score within each group
 
-    # Handle cases where a group might be empty or all scores are NaN
     try:
         best_idx = agg_df.loc[agg_df.groupby(scenario_group_cols)['score'].idxmax()]
     except ValueError as ve:
@@ -309,9 +302,6 @@ def main():
     )
     args = parser.parse_args()
 
-    # **MODIFIED CODE HERE**
-    # Use the provided results_dir directly as the root for scanning.
-    # The `find_all_tuning_results` function will recursively search inside this path.
     results_path = Path(args.results_dir).resolve()
 
     if not results_path.exists():
