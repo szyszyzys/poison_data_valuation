@@ -6,7 +6,7 @@ from dataclasses import asdict
 from enum import Enum
 from pathlib import Path
 from types import NoneType
-from typing import Any
+from typing import Any, List # Added List
 
 import numpy as np
 import yaml
@@ -18,6 +18,7 @@ from entry.gradient_market.automate_exp.scenarios import Scenario
 
 
 class CustomDumper(yaml.SafeDumper):
+    # (This class is unchanged, same as your file)
     """A custom YAML dumper to correctly handle None, numpy types, and enums."""
 
     def represent_none(self, _):
@@ -30,7 +31,6 @@ class CustomDumper(yaml.SafeDumper):
         if isinstance(data, np.floating): return self.represent_float(float(data))
         if isinstance(data, np.ndarray): return self.represent_list(data.tolist())
         if isinstance(data, np.bool_): return self.represent_bool(bool(data))
-        # Add fallback for other numpy types if needed, or let default handle it
         return super().represent_data(data)
 
     def represent_enum(self, data):
@@ -38,55 +38,47 @@ class CustomDumper(yaml.SafeDumper):
         return self.represent_scalar('tag:yaml.org,2002:str', data.value)
 
 CustomDumper.add_representer(NoneType, CustomDumper.represent_none)
-
-# --- MODIFY REGISTRATION ---
-# Keep the base Enum representer (as a fallback)
 CustomDumper.add_representer(Enum, CustomDumper.represent_enum)
-# ADD specific representers for the exact Enum classes you use
 CustomDumper.add_representer(PoisonType, CustomDumper.represent_enum)
 CustomDumper.add_representer(VictimStrategy, CustomDumper.represent_enum)
 CustomDumper.add_representer(ImageBackdoorAttackName, CustomDumper.represent_enum)
 CustomDumper.add_representer(ImageTriggerType, CustomDumper.represent_enum)
 CustomDumper.add_representer(TextTriggerLocation, CustomDumper.represent_enum)
 CustomDumper.add_representer(ImageTriggerLocation, CustomDumper.represent_enum)
-
 CustomDumper.add_representer(TextBackdoorAttackName, CustomDumper.represent_enum)
 CustomDumper.add_representer(TabularBackdoorAttackName, CustomDumper.represent_enum)
-
 CustomDumper.add_representer(LabelFlipMode, CustomDumper.represent_enum)
-
-
-# Add specific lines for any other Enum types used in your AppConfig
-# --- END MODIFICATION ---
-# For NumPy types (using add_multi_representer for specific types)
 for numpy_type in (np.integer, np.floating, np.ndarray, np.bool_):
-    # Ensure you add representers for the specific types, not the base class np.generic
     CustomDumper.add_representer(numpy_type, CustomDumper.represent_numpy)
 
 
 def set_nested_attr(obj: Any, key: str, value: Any):
+    # (This function is unchanged, same as your file)
     """
     Sets a nested attribute on an object or a key in a nested dict
     using a dot-separated key.
     """
     keys = key.split('.')
     current_obj = obj
-
-    # Traverse to the second-to-last object in the path
     for k in keys[:-1]:
         current_obj = getattr(current_obj, k)
-
-    # Get the final key/attribute to be set
     final_key = keys[-1]
-
-    # --- THIS IS THE CRITICAL LOGIC ---
-    # Check if the object we need to modify is a dictionary
     if isinstance(current_obj, dict):
-        # If it's a dict, use item assignment (e.g., my_dict['key'] = value)
         current_obj[final_key] = value
     else:
-        # Otherwise, use attribute assignment (e.g., my_obj.key = value)
         setattr(current_obj, final_key, value)
+
+# --- START OF NEW FUNCTION ---
+# Added the iter_grid function you asked about
+def iter_grid(parameter_grid: dict) -> List[dict]:
+    """
+    Expands a grid (dict of lists) into a list of single-run dicts.
+    e.g., {'a': [1, 2], 'b': [3]} -> [{'a': 1, 'b': 3}, {'a': 2, 'b': 3}]
+    """
+    keys, values = zip(*parameter_grid.items())
+    param_combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
+    return param_combinations
+# --- END OF NEW FUNCTION ---
 
 
 class ExperimentGenerator:
@@ -96,8 +88,8 @@ class ExperimentGenerator:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- ADDED A RETURN TYPE HINT ---
     def generate(self, base_config: AppConfig, scenario: Scenario) -> int:
+        # (This function is unchanged, same as your file)
         """
         Generates all config files for a given experimental scenario.
 
@@ -112,6 +104,7 @@ class ExperimentGenerator:
             scenario_config = modifier_func(scenario_config)
 
         # 2. Create all combinations from the parameter grid
+        # NOTE: This uses the same logic as the new iter_grid function
         keys, values = zip(*scenario.parameter_grid.items())
         param_combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
 
@@ -132,28 +125,26 @@ class ExperimentGenerator:
 
             # 3. Create the descriptive run name
             try:
+                # THIS IS THE KEY: We updated create_run_name below
                 run_name = self.create_run_name(final_config)
             except Exception as e:
                 print(f"  ❌ Error creating run name for combo {i}: {e}. Using index instead.")
                 run_name = f"combo_{i}"
 
-            # 4. --- START OF FIX ---
-            #    Define SEPARATE paths for results and configs
-
+            # 4. Define paths
             # This is where the EXPERIMENT RESULTS will be saved
+            # We set this path *inside* the config file
             results_save_path = Path("./results") / scenario.name / run_name
             final_config.experiment.save_path = str(results_save_path)
 
             # This is where the CONFIG FILE will be saved
             config_file_path = self.output_dir / scenario.name / run_name / "config.yaml"
-            # --- END OF FIX ---
 
             # 5. Save the config file
             try:
                 config_file_path.parent.mkdir(parents=True, exist_ok=True)
                 config_dict = asdict(final_config)
                 with open(config_file_path, 'w') as f:
-                    # Make sure you have CustomDumper imported and registered!
                     yaml.dump(config_dict, f, Dumper=CustomDumper, sort_keys=False, indent=2)
                 count_saved += 1
             except Exception as e:
@@ -177,9 +168,39 @@ class ExperimentGenerator:
         parts.append(f"model-{config.experiment.model_structure.lower()}")
 
         # 3. Aggregation Method
-        parts.append(f"agg-{config.aggregation.method.lower()}")
+        agg_method = config.aggregation.method.lower()
+        parts.append(f"agg-{agg_method}")
 
-        # 5. Seller Attack Information
+        # --- START OF MODIFICATION: Add Defense HP to name ---
+        # 4. Tuned Defense HPs
+        agg_cfg = config.aggregation
+
+        # Helper to format values, turning None -> "None" and 1.0 -> "1p0"
+        def format_hp(val):
+            if val is None:
+                return "None"
+            if isinstance(val, float):
+                return f"{val:g}".replace('.', 'p')
+            return str(val)
+
+        if agg_method == "fltrust":
+            parts.append(f"clip-{format_hp(agg_cfg.clip_norm)}")
+
+        elif agg_method == "martfl":
+            parts.append(f"k-{format_hp(agg_cfg.martfl.max_k)}")
+            parts.append(f"clip-{format_hp(agg_cfg.clip_norm)}")
+
+        elif agg_method == "skymask":
+            parts.append(f"sk_ep-{format_hp(agg_cfg.skymask.mask_epochs)}")
+            parts.append(f"sk_lr-{format_hp(agg_cfg.skymask.mask_lr)}")
+            parts.append(f"sk_thr-{format_hp(agg_cfg.skymask.mask_threshold)}")
+            parts.append(f"clip-{format_hp(agg_cfg.clip_norm)}")
+
+        # (Add other defenses here if needed)
+
+        # --- END OF MODIFICATION ---
+
+        # 5. Seller Attack Information (Was part 5)
         seller_attack_parts = []
         poison_cfg = config.adversary_seller_config.poisoning
         sybil_cfg = config.adversary_seller_config.sybil
@@ -191,64 +212,46 @@ class ExperimentGenerator:
             seller_attack_parts.append(f"{poison_type}")
             seller_attack_parts.append(f"adv-{adv_rate}")
             seller_attack_parts.append(f"poison-{poison_rate}")
-
+            # (Rest of seller attack logic is fine)
             if sybil_cfg.is_sybil:
-                sybil_mode = sybil_cfg.gradient_default_mode or "unknown"
-                seller_attack_parts.append(f"sybil-{sybil_mode}")
-
-        if config.adversary_seller_config.adaptive_attack.is_active:
-            mode = config.adversary_seller_config.adaptive_attack.attack_mode
-            seller_attack_parts.append(f"adaptive-{mode}")
-        # ... (other attacks are correct) ...
+                 seller_attack_parts.append(f"sybil-{sybil_cfg.gradient_default_mode or 'unknown'}")
+            if config.adversary_seller_config.adaptive_attack.is_active:
+                seller_attack_parts.append(f"adaptive-{config.adversary_seller_config.adaptive_attack.attack_mode}")
 
         if seller_attack_parts:
             parts.append("_".join(seller_attack_parts))
         else:
             parts.append("no-seller-attack")
 
-        # 6. Buyer Attack (Your logic here is fine)
+        # 6. Buyer Attack (Was part 6, unchanged)
         if config.buyer_attack_config.is_active:
-            # ... (your existing buyer attack logic) ...
             pass # Placeholder
 
-        # 7. --- START OF FIX ---
-        #    Data Distribution Parameters (Modality-Agnostic)
+        # 7. Data Distribution Parameters (Was part 7, unchanged)
         modality_data_config = None
-        if config.data.image:
-            modality_data_config = config.data.image
-            modality_name = "image"
-        elif config.data.text:
-            modality_data_config = config.data.text
-            modality_name = "text"
-        elif config.data.tabular:
-            modality_data_config = config.data.tabular
-            modality_name = "tabular"
+        if config.data.image: modality_data_config = config.data.image
+        elif config.data.text: modality_data_config = config.data.text
+        elif config.data.tabular: modality_data_config = config.data.tabular
 
         if modality_data_config:
-            # Check strategy and alpha
             if modality_data_config.strategy == "dirichlet":
-                # Check your default non-iid alpha, e.g., 0.5
-                default_alpha = 0.5
+                default_alpha = 0.5 # Your default
                 alpha = modality_data_config.dirichlet_alpha
                 if alpha != default_alpha:
-                    alpha_str = f"{alpha:g}".replace('.', 'p')
-                    parts.append(f"alpha-{alpha_str}")
+                    parts.append(f"alpha-{format_hp(alpha)}")
 
-            # Check non-default buyer ratio
-            default_buyer_ratio = 0.1
+            default_buyer_ratio = 0.1 # Your default
             buyer_pct = modality_data_config.buyer_ratio
             if buyer_pct != default_buyer_ratio:
-                pct_str = f"{buyer_pct:g}".replace('.', 'p')
-                parts.append(f"buyerdata-{pct_str}")
-        # --- END OF FIX ---
+                parts.append(f"buyerdata-{format_hp(buyer_pct)}")
 
-        # 8. Marketplace Size
+        # 8. Marketplace Size (Was part 8, unchanged)
         n_sellers = config.experiment.n_sellers
-        default_n_sellers = 10 # Or whatever your default is
+        default_n_sellers = 10 # Your default
         if n_sellers != default_n_sellers:
             parts.append(f"sellers-{n_sellers}")
 
-        # 9. Random Seed
+        # 9. Random Seed (Was part 9, unchanged)
         parts.append(f"seed-{config.seed}")
 
         # Join and sanitize
