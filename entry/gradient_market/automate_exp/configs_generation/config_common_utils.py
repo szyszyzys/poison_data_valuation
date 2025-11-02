@@ -212,7 +212,7 @@ TEXT_TABULAR_DEFENSES = ["fedavg", "fltrust", "martfl"]  # Exclude SkyMask
 # ==============================================================================
 # --- 3. Define Shared Parameters & Modifiers ---
 # ==============================================================================
-NUM_SEEDS_PER_CONFIG = 3
+NUM_SEEDS_PER_CONFIG = 1
 DEFAULT_ADV_RATE = 0.3
 DEFAULT_POISON_RATE = 0.5  # Match defense tuning
 

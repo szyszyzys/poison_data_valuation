@@ -202,16 +202,40 @@ def add_gradient_updates(grad_accumulator: List[torch.Tensor], grad_update: List
             acc.add_(upd, alpha=weight)
 
 
-def clip_gradient_update(grad_update, clip_norm):
-    # --- THIS IS THE FIX ---
-    # If clip_norm is None, it means "no clipping", so return the original.
-    if clip_norm is None:
+def clip_gradient_update(grad_update: List[torch.Tensor], clip_norm: Optional[float]) -> List[torch.Tensor]:
+    """
+    Performs L2-norm clipping on a list of gradient tensors.
+    This scales the entire gradient if its total norm exceeds clip_norm.
+    """
+    # If clip_norm is None or 0, it means "no clipping", so return the original.
+    if not clip_norm or clip_norm <= 0:
         return grad_update
-    # --- END FIX ---
 
-    # Otherwise, perform the clamping as usual.
-    return [torch.clamp(p, min=-clip_norm, max=clip_norm) for p in grad_update]
+    try:
+        # We must operate on the flat vector to get the true total norm
+        # Ensure gradients are on the same device before cat
+        device = grad_update[0].device
+        flat_grad = torch.cat([p.data.view(-1).to(device) for p in grad_update])
 
+        # Calculate the total L2 norm
+        total_norm = torch.norm(flat_grad, p=2)
+
+        # Calculate the scaling factor
+        # (Add 1e-9 to avoid division by zero)
+        clip_coef = clip_norm / (total_norm + 1e-9)
+
+        # If the norm is already less than clip_norm, clip_coef will be > 1.
+        # We only scale *down*, so we take the minimum.
+        if clip_coef < 1.0:
+            # Apply the scaling to all original gradient tensors
+            return [p.data * clip_coef for p in grad_update]
+        else:
+            # Norm is already within bounds, return original
+            return grad_update
+
+    except Exception as e:
+        logging.error(f"Error during L2 norm clipping (norm={clip_norm}): {e}. Returning original gradient.")
+        return grad_update
 # ===================================================================
 # Metrics and Training Control
 # ===================================================================

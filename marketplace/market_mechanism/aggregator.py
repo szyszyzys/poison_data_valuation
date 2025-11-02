@@ -42,18 +42,31 @@ class Aggregator:
         if method not in strategy_map:
             raise NotImplementedError(f"Aggregation method '{method}' is not implemented.")
 
-        strategy_params = getattr(agg_config, method, {})
-        strategy_kwargs = asdict(strategy_params) if strategy_params else {}
+        strategy_config_obj = getattr(agg_config, method, None)
 
+        # 2. Convert it to a dictionary.
+        #    This will contain params like 'max_k' for martfl
+        strategy_kwargs = {}
+        if strategy_config_obj:
+            strategy_kwargs = asdict(strategy_config_obj)
+
+        # 3. Add the *shared* clip_norm to the kwargs
+        #    so it's passed to the constructor just like any other param.
+        if agg_config.clip_norm is not None:
+            strategy_kwargs['clip_norm'] = agg_config.clip_norm
+
+        # 4. Get the class to initialize
         StrategyClass = strategy_map[method]
+
+        # 5. Initialize the strategy, passing all common args and the specific kwargs
         self.strategy = StrategyClass(
             global_model=global_model,
             device=device,
             loss_fn=loss_fn,
             buyer_data_loader=buyer_data_loader,
-            clip_norm=agg_config.clip_norm,
-            **strategy_kwargs
+            **strategy_kwargs  # <-- This now contains clip_norm, max_k, etc.
         )
+
         self.device = device
         self.buyer_data_loader = buyer_data_loader
         # Cache this for efficiency and consistency
