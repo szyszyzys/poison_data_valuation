@@ -34,7 +34,7 @@ TUNING_GRIDS = {
     },
     "martfl": {
         "aggregation.martfl.max_k": [3, 5, 7, 10],
-        "aggregation.clip_norm": [5.0, 10.0, 20.0, None],
+        "aggregation.clip_norm": [5.0, 10.0, None],
     },
     "skymask": {
         "aggregation.skymask.mask_epochs": [10, 20, 50],

@@ -1,7 +1,8 @@
 import copy
 import logging
-from typing import Dict, List, Tuple, Any
 import random
+from typing import Dict, List, Tuple, Any
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -193,9 +194,15 @@ class MartflAggregator(BaseAggregator):
         # d) Force k=2 clustering (also only on non-baseline sellers)
         if len(np_similarities_for_clustering) < 2:
             clusters2_no_baseline = clusters_no_baseline  # Use the k=1 result
+            centroids2 = centroids  # Use the k=1 centroids
         else:
-            clusters2_no_baseline, _ = kmeans(np_similarities_for_clustering.reshape(-1, 1), 2)
+            # --- START FIX ---
+            # Get the centroids from the k=2 clustering as well
+            clusters2_no_baseline, centroids2 = kmeans(np_similarities_for_clustering.reshape(-1, 1), 2)
+            # --- END FIX ---
 
+        # --- NEW: Find the inlier label for the k=2 clustering ---
+        inlier_label_k2 = np.argmax(centroids2)
         # e) Reconstruct full cluster arrays, inserting baseline placeholder (e.g., -1)
         clusters_full = [-1] * len(seller_ids)
         clusters2_full = [-1] * len(seller_ids)
@@ -211,12 +218,13 @@ class MartflAggregator(BaseAggregator):
         # g) Calculate the "border" distance (max distance within the k=2 inlier group)
         border = 0.0
         for i, sim_val in enumerate(similarities):
-            if i != baseline_idx and clusters2_full[i] == np.argmax(
-                    centroids):  # Check if in the high-similarity group from k=2
+            # --- START FIX ---
+            # Use the k=2 inlier label (inlier_label_k2)
+            if i != baseline_idx and clusters2_full[i] == inlier_label_k2:
+                # --- END FIX ---
                 dist_from_center = abs(center - sim_val.item())
                 if dist_from_center > border:
                     border = dist_from_center
-
         # h) Calculate final scores ('non_outliers' in official code)
         final_scores = np.zeros(len(seller_ids))
         candidate_server_indices = []  # Indices of potential next baselines
@@ -228,8 +236,7 @@ class MartflAggregator(BaseAggregator):
                 continue  # Skip rest of checks for baseline
 
             # Check if considered outlier by the k=2 clustering
-            is_k2_outlier = (clusters2_full[i] != np.argmax(centroids))  # Check if NOT in high-sim group
-
+            is_k2_outlier = (clusters2_full[i] != inlier_label_k2)  # Use the k=2 inlier label
             if is_k2_outlier or similarities[i].item() == 0.0:
                 final_scores[i] = 0.0  # Assign score 0
             else:
@@ -347,7 +354,6 @@ class MartflAggregator(BaseAggregator):
         # --- 9 & 10. Determine selected/outliers and add stats (Same as before, using final_scores) ---
         selected_ids = [sid for i, sid in enumerate(seller_ids) if final_scores[i] > 0]
         outlier_ids = [sid for i, sid in enumerate(seller_ids) if final_scores[i] == 0]
-
 
         return aggregated_gradient, selected_ids, outlier_ids, aggregation_stats
 
