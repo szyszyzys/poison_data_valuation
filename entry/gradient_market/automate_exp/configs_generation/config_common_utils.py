@@ -163,7 +163,7 @@ TUNED_DEFENSE_PARAMS = {
 def get_tuned_defense_params(
         defense_name: str,
         model_config_name: str,
-        attack_state: str,
+        attack_state: str = 'attack',
         default_attack_type_for_tuning: str = "backdoor"
 ) -> Dict[str, Any]:
     """

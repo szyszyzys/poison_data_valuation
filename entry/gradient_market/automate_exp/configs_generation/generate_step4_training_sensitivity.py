@@ -81,7 +81,6 @@ def generate_training_sensitivity_scenarios() -> List[Scenario]:
                 defense_name=defense_name,
                 model_config_name=model_cfg_name,
                 attack_state=attack_state,
-                # This script uses backdoor in SENSITIVITY_SETUP
                 default_attack_type_for_tuning="backdoor"
             )
             if not tuned_defense_params:

@@ -9,7 +9,7 @@ from typing import List, Callable, Dict, Any
 # Common Utils (Update path if needed)
 from config_common_utils import (
     GOLDEN_TRAINING_PARAMS, TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
-    DEFAULT_ADV_RATE, DEFAULT_POISON_RATE,  # Fixed attack strength
+    DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, get_tuned_defense_params,  # Fixed attack strength
     # Use the standard helper
 )
 # Base Configs & Modifiers (Update path if needed)
@@ -125,7 +125,11 @@ def generate_heterogeneity_scenarios() -> List[Scenario]:
         if defense_name not in TUNED_DEFENSE_PARAMS:
             print(f"  Skipping {defense_name}: No tuned parameters found.")
             continue
-        tuned_defense_params = TUNED_DEFENSE_PARAMS[defense_name]
+        tuned_defense_params = get_tuned_defense_params(
+            defense_name=defense_name,
+            model_config_name=model_cfg_name,
+            default_attack_type_for_tuning="backdoor"
+        )
         print(f"-- Processing Defense: {defense_name}")
 
         # --- Create the modifier to fix Training HPs, Defense HPs, and Attack ---

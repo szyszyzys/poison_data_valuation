@@ -11,7 +11,7 @@ from config_common_utils import (
     TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
     DEFAULT_ADV_RATE, DEFAULT_POISON_RATE,  # Standard attack strength
     IMAGE_DEFENSES, TEXT_TABULAR_DEFENSES, create_fixed_params_modifier,  # Use the standard helper
-    enable_valuation, use_sybil_attack_strategy  # Use the valuation helper
+    enable_valuation, use_sybil_attack_strategy, get_tuned_defense_params  # Use the valuation helper
 )
 # Base Configs & Modifiers (Update path if needed)
 from entry.gradient_market.automate_exp.base_configs import (
@@ -102,7 +102,11 @@ def generate_main_summary_scenarios() -> List[Scenario]:
             if defense_name not in TUNED_DEFENSE_PARAMS:
                 print(f"  Skipping {defense_name}: No tuned parameters found.")
                 continue
-            tuned_defense_params = TUNED_DEFENSE_PARAMS[defense_name]
+            tuned_defense_params = get_tuned_defense_params(
+                defense_name=defense_name,
+                model_config_name=model_cfg_name,
+                default_attack_type_for_tuning="backdoor"
+            )
             print(f"  - Defense: {defense_name}")
 
             # --- Create the modifier for Golden Training + Tuned Defense HPs ---

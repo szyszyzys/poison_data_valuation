@@ -11,8 +11,8 @@ from config_common_utils import (
     GOLDEN_TRAINING_PARAMS, TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
     # DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, # Use specific fixed rates below
     IMAGE_DEFENSES, TEXT_TABULAR_DEFENSES, ALL_DEFENSES,
-    create_fixed_params_modifier, # Use the standard helper
-    enable_valuation
+    create_fixed_params_modifier,  # Use the standard helper
+    enable_valuation, get_tuned_defense_params
 )
 # Base Configs & Modifiers (Update path if needed)
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config # Example
@@ -112,7 +112,11 @@ def generate_scalability_scenarios() -> List[Scenario]:
         if defense_name not in TUNED_DEFENSE_PARAMS:
              print(f"  Skipping {defense_name}: No tuned parameters found.")
              continue
-        tuned_defense_params = TUNED_DEFENSE_PARAMS[defense_name]
+        tuned_defense_params = get_tuned_defense_params(
+            defense_name=defense_name,
+            model_config_name=model_cfg_name,
+            default_attack_type_for_tuning="backdoor"
+        )
         print(f"-- Processing Defense: {defense_name}")
 
         # --- Create the modifier to fix Training HPs, Defense HPs, and Attack Strength ---

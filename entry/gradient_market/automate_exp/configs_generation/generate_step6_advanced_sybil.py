@@ -9,7 +9,7 @@ from typing import List, Dict, Any
 from config_common_utils import (
     TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
     DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, IMAGE_DEFENSES, create_fixed_params_modifier,
-    enable_valuation, use_sybil_attack_strategy
+    enable_valuation, use_sybil_attack_strategy, get_tuned_defense_params
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_config, \
@@ -59,10 +59,11 @@ def generate_advanced_sybil_scenarios() -> List[Scenario]:
     current_defenses = IMAGE_DEFENSES
 
     for defense_name in current_defenses:
-        if defense_name not in TUNED_DEFENSE_PARAMS:
-            print(f"  Skipping {defense_name}: No tuned parameters found.")
-            continue
-        tuned_defense_params = TUNED_DEFENSE_PARAMS[defense_name]
+        tuned_defense_params = get_tuned_defense_params(
+            defense_name=defense_name,
+            model_config_name=model_cfg_name,
+            default_attack_type_for_tuning="backdoor"
+        )
         print(f"-- Processing Defense: {defense_name}")
 
         fixed_params_modifier = create_fixed_params_modifier(
