@@ -18,9 +18,6 @@ logger = logging.getLogger("Aggregator")
 
 
 class Aggregator:
-    """
-    Acts as a factory and orchestrator for different aggregation strategies.
-    """
 
     def __init__(self,
                  global_model: nn.Module,
@@ -42,18 +39,21 @@ class Aggregator:
         if method not in strategy_map:
             raise NotImplementedError(f"Aggregation method '{method}' is not implemented.")
 
+        # --- THIS IS THE FIX ---
+
+        # 1. Get the strategy-specific config object (e.g., agg_config.fltrust)
         strategy_config_obj = getattr(agg_config, method, None)
 
         # 2. Convert it to a dictionary.
         #    This will contain params like 'max_k' for martfl
         strategy_kwargs = {}
         if strategy_config_obj:
+            # Use asdict to handle dataclass objects
             strategy_kwargs = asdict(strategy_config_obj)
 
-        # 3. Add the *shared* clip_norm to the kwargs
-        #    so it's passed to the constructor just like any other param.
-        if agg_config.clip_norm is not None:
-            strategy_kwargs['clip_norm'] = agg_config.clip_norm
+        # 3. ALWAYS pass the top-level clip_norm.
+        #    The strategy's __init__ will be responsible for handling the `None` value.
+        strategy_kwargs['clip_norm'] = agg_config.clip_norm
 
         # 4. Get the class to initialize
         StrategyClass = strategy_map[method]
@@ -66,10 +66,10 @@ class Aggregator:
             buyer_data_loader=buyer_data_loader,
             **strategy_kwargs  # <-- This now contains clip_norm, max_k, etc.
         )
+        # --- END FIX ---
 
         self.device = device
         self.buyer_data_loader = buyer_data_loader
-        # Cache this for efficiency and consistency
         self.expected_num_params = len(list(self.strategy.global_model.parameters()))
         logger.info(f"Global model has {self.expected_num_params} parameters")
 
