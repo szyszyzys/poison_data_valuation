@@ -8,8 +8,8 @@ from typing import List
 # --- Imports ---
 # Common Utils (Update path if needed)
 from config_common_utils import (
-    TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
-    DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, IMAGE_DEFENSES, TEXT_TABULAR_DEFENSES,
+    NUM_SEEDS_PER_CONFIG,
+    DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, IMAGE_DEFENSES, TEXT_TABULAR_DEFENSES, get_tuned_defense_params,
     # Not used directly
     # Import valuation helper
 )
@@ -70,15 +70,25 @@ def generate_training_sensitivity_scenarios() -> List[Scenario]:
     current_defenses = IMAGE_DEFENSES if modality == "image" else TEXT_TABULAR_DEFENSES
 
     for defense_name in current_defenses:
-        if defense_name not in TUNED_DEFENSE_PARAMS:
-            print(f"  Skipping {defense_name}: No tuned parameters found.")
-            continue
-        tuned_defense_params = TUNED_DEFENSE_PARAMS[defense_name]
         print(f"-- Processing Defense: {defense_name}")
 
         for attack_state in ATTACK_STATES:
             print(f"  -- Attack State: {attack_state}")
 
+            # --- 2. THIS IS THE FIX ---
+            # Call the new helper function INSIDE the attack_state loop
+            tuned_defense_params = get_tuned_defense_params(
+                defense_name=defense_name,
+                model_config_name=model_cfg_name,
+                attack_state=attack_state,
+                # This script uses backdoor in SENSITIVITY_SETUP
+                default_attack_type_for_tuning="backdoor"
+            )
+            if not tuned_defense_params:
+                print(f"  Skipping {defense_name} for {attack_state}: No tuned params found.")
+                continue
+
+            # --- END FIX ---
             def create_setup_modifier_sens(
                     current_attack_state=attack_state,
                     current_defense_name=defense_name,

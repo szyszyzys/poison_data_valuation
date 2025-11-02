@@ -8,7 +8,6 @@ from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig
 from entry.gradient_market.automate_exp.config_generator import set_nested_attr
 
-
 GOLDEN_TRAINING_PARAMS = {
     # --- IMAGE MODELS ---
     "cifar10_cnn": {
@@ -19,7 +18,7 @@ GOLDEN_TRAINING_PARAMS = {
     "cifar10_resnet18": {
         # Best: 0.8092 acc
         "training.optimizer": "SGD", "training.learning_rate": 0.1, "training.local_epochs": 2,
-        "training.momentum": 0.9, "training.weight_decay": 5e-4, # (Assuming standard SGD params)
+        "training.momentum": 0.9, "training.weight_decay": 5e-4,  # (Assuming standard SGD params)
     },
     "cifar100_cnn": {
         # Best: 0.5536 acc
@@ -52,18 +51,161 @@ GOLDEN_TRAINING_PARAMS = {
     }
 }
 
+# In config_common_utils.py
+
+# This new structure is keyed by:
+# {defense_name}_{model_config_name}_{attack_type}
+# You MUST fill this with your results from Step 3 analysis
+
 TUNED_DEFENSE_PARAMS = {
-    "fedavg": {"aggregation.method": "fedavg"},
-    "fltrust": {"aggregation.method": "fltrust", "aggregation.clip_norm": 10.0},
-    "martfl": {"aggregation.method": "martfl", "aggregation.martfl.max_k": 5, "aggregation.clip_norm": 10.0},
-    "skymask": {  # Add all relevant tuned SkyMask params
+    # --- FedAvg (No params) ---
+    "fedavg_cifar10_cnn_backdoor": {"aggregation.method": "fedavg"},
+    "fedavg_cifar10_cnn_labelflip": {"aggregation.method": "fedavg"},
+    "fedavg_cifar100_cnn_backdoor": {"aggregation.method": "fedavg"},
+    "fedavg_cifar100_cnn_labelflip": {"aggregation.method": "fedavg"},
+    "fedavg_mlp_texas100_baseline_backdoor": {"aggregation.method": "fedavg"},
+    "fedavg_mlp_texas100_baseline_labelflip": {"aggregation.method": "fedavg"},
+    "fedavg_mlp_purchase100_baseline_backdoor": {"aggregation.method": "fedavg"},
+    "fedavg_mlp_purchase100_baseline_labelflip": {"aggregation.method": "fedavg"},
+    "fedavg_textcnn_trec_baseline_backdoor": {"aggregation.method": "fedavg"},
+    "fedavg_textcnn_trec_baseline_labelflip": {"aggregation.method": "fedavg"},
+
+    # --- FLTrust (Fill in your best clip_norm) ---
+    "fltrust_cifar10_cnn_backdoor": {
+        "aggregation.method": "fltrust", "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    "fltrust_cifar10_cnn_labelflip": {
+        "aggregation.method": "fltrust", "aggregation.clip_norm": 5.0  # <-- EXAMPLE
+    },
+    "fltrust_cifar100_cnn_backdoor": {
+        "aggregation.method": "fltrust", "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    "fltrust_cifar100_cnn_labelflip": {
+        "aggregation.method": "fltrust", "aggregation.clip_norm": 5.0  # <-- EXAMPLE
+    },
+    "fltrust_textcnn_trec_baseline_backdoor": {
+        "aggregation.method": "fltrust", "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    "fltrust_textcnn_trec_baseline_labelflip": {
+        "aggregation.method": "fltrust", "aggregation.clip_norm": 5.0  # <-- EXAMPLE
+    },
+
+    "fltrust_mlp_purchase100_baseline_backdoor": {
+        "aggregation.method": "fltrust", "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    "fltrust_mlp_purchase100_baseline_labelflip": {
+        "aggregation.method": "fltrust", "aggregation.clip_norm": 5.0  # <-- EXAMPLE
+    },
+
+    "fltrust_mlp_texas100_baseline_backdoor": {
+        "aggregation.method": "fltrust", "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    "fltrust_mlp_texas100_baseline_labelflip": {
+        "aggregation.method": "fltrust", "aggregation.clip_norm": 5.0  # <-- EXAMPLE
+    },
+
+    # --- MartFL (Fill in your best max_k and clip_norm) ---
+    "martfl_cifar10_cnn_backdoor": {
+        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    "martfl_cifar10_cnn_labelflip": {
+        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+
+    "martfl_cifar100_cnn_backdoor": {
+        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    "martfl_cifar100_cnn_labelflip": {
+        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    "martfl_mlp_texas100_baseline_backdoor": {
+        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    "martfl_mlp_texas100_baseline_labelflip": {
+        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    "martfl_mlp_purchase100_baseline_backdoor": {
+        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    "martfl_mlp_purchase100_baseline_labelflip": {
+        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    "martfl_textcnn_trec_baseline_backdoor": {
+        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    "martfl_textcnn_trec_baseline_labelflip": {
+        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
+    },
+    # --- SkyMask (Fill in all best params) ---
+    "skymask_cifar10_cnn_backdoor": {
+        "aggregation.method": "skymask", "aggregation.skymask.mask_epochs": 20,
+        "aggregation.skymask.mask_lr": 0.01, "aggregation.skymask.mask_threshold": 0.7,
+        "aggregation.clip_norm": 10.0
+    },
+    "skymask_cifar10_cnn_labelflip": {
+        "aggregation.method": "skymask", "aggregation.skymask.mask_epochs": 20,
+        "aggregation.skymask.mask_lr": 0.01, "aggregation.skymask.mask_threshold": 0.7,
+        "aggregation.clip_norm": 10.0
+    },
+    "skymask_cifar100_cnn_backdoor": {
+        "aggregation.method": "skymask", "aggregation.skymask.mask_epochs": 20,
+        "aggregation.skymask.mask_lr": 0.01, "aggregation.skymask.mask_threshold": 0.7,
+        "aggregation.clip_norm": 10.0
+    },
+    "skymask_cifar100_cnn_labelflip": {
         "aggregation.method": "skymask", "aggregation.skymask.mask_epochs": 20,
         "aggregation.skymask.mask_lr": 0.01, "aggregation.skymask.mask_threshold": 0.7,
         "aggregation.clip_norm": 10.0
     },
 }
-# Define which defenses are compatible with which modality
-ALL_DEFENSES = list(TUNED_DEFENSE_PARAMS.keys())
+
+
+def get_tuned_defense_params(
+        defense_name: str,
+        model_config_name: str,
+        attack_state: str,
+        default_attack_type_for_tuning: str = "backdoor"
+) -> Dict[str, Any]:
+    """
+    Intelligently retrieves the correct tuned defense parameters from the
+    global TUNED_DEFENSE_PARAMS dictionary.
+
+    It constructs the specific key (e.g., 'fltrust_cifar10_cnn_backdoor')
+    and handles the 'fedavg' and 'no_attack' cases.
+    """
+
+    # FedAvg is simple: it has no parameters.
+    if defense_name == "fedavg":
+        return {"aggregation.method": "fedavg"}
+
+    # For a "no_attack" run, we still need the defense's HPs
+    # (e.g., clip_norm). We'll use the HPs that were tuned
+    # against the default attack (e.g., 'backdoor') as the
+    # representative settings for that defense.
+    if attack_state == "no_attack":
+        attack_type = default_attack_type_for_tuning
+    else:  # "with_attack"
+        # This step4 script only tests one attack modifier
+        # (defined in SENSITIVITY_SETUP), so we use the default.
+        attack_type = default_attack_type_for_tuning
+
+    # Build the specific key
+    tuned_params_key = f"{defense_name}_{model_config_name}_{attack_type}"
+
+    if tuned_params_key not in TUNED_DEFENSE_PARAMS:
+        print(f"!!!!!!!!!! FATAL WARNING !!!!!!!!!!!")
+        print(f"  Could not find tuned params for key: '{tuned_params_key}'")
+        print(f"  This is required for the experiment to run.")
+        print(f"  Please check your TUNED_DEFENSE_PARAMS in config_common_utils.py")
+        # Fallback to the simple key to avoid a hard crash,
+        # but the HPs will be wrong and may cause NaNs.
+        return TUNED_DEFENSE_PARAMS.get(defense_name, {})
+
+    return TUNED_DEFENSE_PARAMS[tuned_params_key]
+
+
+# This helper list can now be simplified
+ALL_DEFENSES = ["fedavg", "fltrust", "martfl", "skymask"]
 IMAGE_DEFENSES = ["fedavg", "fltrust", "martfl", "skymask"]
 TEXT_TABULAR_DEFENSES = ["fedavg", "fltrust", "martfl"]  # Exclude SkyMask
 
@@ -73,6 +215,7 @@ TEXT_TABULAR_DEFENSES = ["fedavg", "fltrust", "martfl"]  # Exclude SkyMask
 NUM_SEEDS_PER_CONFIG = 3
 DEFAULT_ADV_RATE = 0.3
 DEFAULT_POISON_RATE = 0.5  # Match defense tuning
+
 
 def disable_all_attacks(config: AppConfig) -> AppConfig:
     """
@@ -99,6 +242,7 @@ def disable_all_attacks(config: AppConfig) -> AppConfig:
     config.buyer_attack_config.attack_type = "none"
 
     return config
+
 
 # --- Helper to apply fixed Golden Training & Tuned Defense HPs ---
 def create_fixed_params_modifier(
@@ -138,7 +282,7 @@ def create_fixed_params_modifier(
 # --- Valuation Config Helper ---
 def enable_valuation(config: AppConfig, influence: bool = True, loo: bool = False, kernelshap: bool = False,
                      loo_freq: int = 10, kshap_freq: int = 20,
-                     kshap_samples: int = 500) -> AppConfig: # <-- ADD kshap_samples HERE
+                     kshap_samples: int = 500) -> AppConfig:  # <-- ADD kshap_samples HERE
 
     config.valuation.run_influence = influence
     config.valuation.run_loo = loo
@@ -161,6 +305,7 @@ def use_sybil_attack_strategy(strategy: str, **kwargs) -> Callable[[AppConfig], 
         strategy: "oracle_blend", "systematic_probe", "mimic", "pivot", etc.
         **kwargs: Additional parameters for the strategy (e.g., blend_alpha for oracle)
     """
+
     def modifier(config: AppConfig) -> AppConfig:
         sybil_cfg = config.adversary_seller_config.sybil
         sybil_cfg.is_sybil = True
@@ -169,7 +314,7 @@ def use_sybil_attack_strategy(strategy: str, **kwargs) -> Callable[[AppConfig], 
         # Add any extra strategy-specific parameters
         # Example: Oracle blending factor
         if strategy == "oracle_blend":
-            sybil_cfg.oracle_blend_alpha = kwargs.get("blend_alpha", 0.1) # Default 10% malicious
+            sybil_cfg.oracle_blend_alpha = kwargs.get("blend_alpha", 0.1)  # Default 10% malicious
 
         # Example: Parameters for systematic probing (if needed in config)
         # if strategy == "systematic_probe":
@@ -181,5 +326,5 @@ def use_sybil_attack_strategy(strategy: str, **kwargs) -> Callable[[AppConfig], 
         # If not, you might need to set config.adversary_seller_config.poisoning.type here too.
 
         return config
-    return modifier
 
+    return modifier

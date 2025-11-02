@@ -4,7 +4,7 @@
 import copy
 import sys
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List
 
 # --- Imports ---
 from config_common_utils import (
@@ -22,7 +22,6 @@ try:
 except ImportError as e:
     print(f"Error importing necessary modules: {e}")
     sys.exit(1)
-
 
 # --- Attack Parameters to Sweep ---
 ADV_RATES_TO_SWEEP = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
@@ -53,19 +52,35 @@ def generate_attack_sensitivity_scenarios() -> List[Scenario]:
     current_defenses = IMAGE_DEFENSES
 
     for defense_name in current_defenses:
-        if defense_name not in TUNED_DEFENSE_PARAMS:
-            print(f"  Skipping {defense_name}: No tuned parameters found.")
-            continue
-        tuned_defense_params = TUNED_DEFENSE_PARAMS[defense_name]
-        print(f"-- Processing Defense: {defense_name}")
-
-        fixed_params_modifier = create_fixed_params_modifier(
-            modality, tuned_defense_params, model_cfg_name, apply_noniid=True
-        )
-
+        # Loop through attack types *first* to get the correct tuned HPs
         for attack_type in ATTACK_TYPES:
+            print(f"-- Processing Defense: {defense_name} (for {attack_type} attack) --")
+
+            # --- THIS IS THE FIX ---
+            # 1. Build the specific key for your tuned parameters
+            tuned_params_key = f"{defense_name}_{model_cfg_name}_{attack_type}"
+
+            # 2. Check if this specific key exists in your common config
+            if tuned_params_key not in TUNED_DEFENSE_PARAMS:
+                print(f"  SKIPPING: No tuned params found for key: '{tuned_params_key}'")
+                print(f"            (Did you run Step 3 for this combo?)")
+                continue
+
+            # 3. Get the *specific* tuned parameters for this exact combo
+            tuned_defense_params = TUNED_DEFENSE_PARAMS[tuned_params_key]
+            # --- END FIX ---
+
+            # 4. Create the fixed_params modifier using these specific HPs
+            #    This correctly passes model_cfg_name to the (fixed) helper
+            fixed_params_modifier = create_fixed_params_modifier(
+                modality, tuned_defense_params, model_cfg_name, apply_noniid=True
+            )
+
+            # 5. Get the attack modifier function
             attack_modifier_key = f"{attack_type}_attack_modifier"
-            if attack_modifier_key not in SENSITIVITY_SETUP_STEP5: continue
+            if attack_modifier_key not in SENSITIVITY_SETUP_STEP5:
+                print(f"  SKIPPING: No attack modifier function found for {attack_type}")
+                continue
             attack_modifier = SENSITIVITY_SETUP_STEP5[attack_modifier_key]
             print(f"  -- Attack Type: {attack_type}")
 
@@ -79,7 +94,6 @@ def generate_attack_sensitivity_scenarios() -> List[Scenario]:
             }
 
             # --- Scenario for varying Adv Rate ---
-            # We add a custom key 'sweep_type' to tell the main loop what to do
             grid_adv = base_grid.copy()
             grid_adv["sweep_type"] = ["adv_rate"]
             scenarios.append(Scenario(
@@ -98,6 +112,7 @@ def generate_attack_sensitivity_scenarios() -> List[Scenario]:
                 modifiers=[fixed_params_modifier, SENSITIVITY_SETUP_STEP5["dataset_modifier"], attack_modifier],
                 parameter_grid=grid_poison
             ))
+
     return scenarios
 
 
@@ -162,8 +177,8 @@ if __name__ == "__main__":
 
             # Handle the 0,0 case (no attack)
             if adv_rate == 0.0 or poison_rate == 0.0:
-                 modified_base_config.adversary_seller_config.poisoning.type = PoisonType.NONE
-                 modified_base_config.experiment.adv_rate = 0.0 # Force adv rate to 0 if either is 0
+                modified_base_config.adversary_seller_config.poisoning.type = PoisonType.NONE
+                modified_base_config.experiment.adv_rate = 0.0  # Force adv rate to 0 if either is 0
 
             num_gen = generator.generate(modified_base_config, temp_scenario)
             task_configs += num_gen
