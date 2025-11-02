@@ -30,16 +30,16 @@ except ImportError as e:
 # --- TUNING_GRIDS and TUNING_TARGETS_STEP3 (Same as before) ---
 TUNING_GRIDS = {
     "fltrust": {
-        "aggregation.clip_norm": [1.0, 5.0, 10, None],
+        "aggregation.clip_norm": [3.0, 5.0, 10.0, None],
     },
     "martfl": {
-        "aggregation.martfl.max_k": [3, 5, 7, 10],
+        "aggregation.martfl.max_k": [3, 7],
         "aggregation.clip_norm": [5.0, 10.0, None],
     },
     "skymask": {
-        "aggregation.skymask.mask_epochs": [10, 20, 50],
+        "aggregation.skymask.mask_epochs": [20, 50],
         "aggregation.skymask.mask_lr": [0.01, 0.001],
-        "aggregation.skymask.mask_threshold": [0.5, 0.7, 0.9],
+        "aggregation.skymask.mask_threshold": [0.5, 0.9],
         "aggregation.clip_norm": [10.0],
     }
 }
