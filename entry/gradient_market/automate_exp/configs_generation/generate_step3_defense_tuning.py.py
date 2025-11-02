@@ -30,7 +30,7 @@ except ImportError as e:
 # --- TUNING_GRIDS and TUNING_TARGETS_STEP3 (Same as before) ---
 TUNING_GRIDS = {
     "fltrust": {
-        "aggregation.clip_norm": [1.0, 5.0, 10.0, 20.0, None],
+        "aggregation.clip_norm": [1.0, 5.0, 10, None],
     },
     "martfl": {
         "aggregation.martfl.max_k": [3, 5, 7, 10],
@@ -135,7 +135,7 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
                 full_parameter_grid = {**base_grid, **defense_grid_to_sweep}
 
                 scenarios.append(Scenario(
-                    name=f"step3_tune_{defense_name}_{attack_type}_{modality}_{target['dataset_name']}_{model_cfg_name}",
+                    name=f"step3_tune_{defense_name}_{attack_type}_{modality}_{target['dataset_name']}_{model_cfg_name}_new",
                     base_config_factory=target["base_config_factory"],
                     modifiers=[setup_modifier_func, target["dataset_modifier"]],
                     parameter_grid=full_parameter_grid
