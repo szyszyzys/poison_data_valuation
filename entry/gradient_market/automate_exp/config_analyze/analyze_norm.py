@@ -14,15 +14,27 @@ logger = logging.getLogger(__name__)
 # We only care about 'ds' and 'model'
 HP_FOLDER_REGEX = re.compile(r"ds-([a-zA-Z0-9]+)_model-([a-zA-Z0-9_]+)")
 
+# The experiment name pattern from your step 1 generator
+EXPERIMENT_PATTERN = "step1_tune_fedavg_*"
+
 def find_and_analyze_norms(results_dir: Path) -> pd.DataFrame:
     """Finds all seller_metrics.csv files from Step 1 and analyzes their benign norms."""
 
-    # 1. Find all seller_metrics.csv files from Step 1 (benign, fedavg) runs
-    search_path = results_dir / "step1_tune_fedavg_*" / "*" / "run_*" / "seller_metrics.csv"
-    metrics_files = list(results_dir.glob(str(search_path)))
+    # --- THIS IS THE FIX ---
+    # The pattern for .glob() must be *relative* to the results_dir path.
+    # We build the relative path pattern directly.
+    search_pattern = f"{EXPERIMENT_PATTERN}/*"
+
+    # Check for the two possible directory structures
+    path_structure_1 = list(results_dir.glob(f"{search_pattern}/run_*/seller_metrics.csv"))
+    path_structure_2 = list(results_dir.glob(f"{search_pattern}/*/run_*/seller_metrics.csv"))
+
+    metrics_files = path_structure_1 + path_structure_2
+    # --- END FIX ---
 
     if not metrics_files:
         logger.error(f"❌ ERROR: No 'seller_metrics.csv' files found in {results_dir} matching the Step 1 structure.")
+        logger.error(f"   Searched pattern: {results_dir / search_pattern}/.../seller_metrics.csv")
         return pd.DataFrame()
 
     logger.info(f"✅ Found {len(metrics_files)} seller_metrics.csv files to analyze.")
@@ -42,8 +54,12 @@ def find_and_analyze_norms(results_dir: Path) -> pd.DataFrame:
             # Parse dataset and model from the hp_dir name
             match = HP_FOLDER_REGEX.search(hp_dir.name)
             if not match:
-                logger.warning(f"Could not parse ds/model from: {hp_dir.name}. Skipping.")
-                continue
+                # Try the parent's parent directory
+                hp_dir = hp_dir.parent
+                match = HP_FOLDER_REGEX.search(hp_dir.name)
+                if not match:
+                    logger.warning(f"Could not parse ds/model from: {hp_dir.name}. Skipping.")
+                    continue
 
             dataset, model = match.groups()
 
@@ -125,6 +141,7 @@ def main():
             print("\n" + "="*80)
             print("ACTION: Use these 'mean_norm' values to create your new, specialized")
             print("        `TUNING_GRIDS` in `generate_step3_defense_tuning.py`.")
+            print("        (Or, better yet, implement relative `clip_factor`!)")
             print("="*80)
 
             # Save the file
