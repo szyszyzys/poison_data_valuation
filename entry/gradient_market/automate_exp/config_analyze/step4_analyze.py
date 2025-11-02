@@ -29,11 +29,11 @@ HPARAM_REGEX = re.compile(r"opt_(?P<optimizer>\w+)_lr_(?P<lr>[\d\.]+)_epochs_(?P
 # }
 #
 IID_BASELINES = {
-    "texas100": 0.0,  # <-- FILL ME
-    "purchase100": 0.0,  # <-- FILL ME
-    "cifar10": 0.0,  # <-- FILL ME
-    "cifar100": 0.0,  # <-- FILL ME
-    "trec": 0.0,  # <-- FILL ME
+    "texas100": 0.625,  # <-- FILL ME
+    "purchase100": 0.6,  # <-- FILL ME
+    "cifar10": 0.8248,  # <-- FILL ME
+    "cifar100": 0.55,  # <-- FILL ME
+    "trec": 0.7985,  # <-- FILL ME
 }
 
 # Define what "usable" means (for the 'usable_hp_count' column), relative to the IID baseline
