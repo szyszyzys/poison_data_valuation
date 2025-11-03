@@ -41,7 +41,7 @@ except ImportError as e:
 ADAM_LRS_TO_SWEEP = [0.001, 0.0005, 0.0001]
 SGD_LRS_TO_SWEEP = [0.1, 0.05, 0.01]
 OPTIMIZERS_TO_SWEEP = ["Adam", "SGD"]
-LOCAL_EPOCHS_TO_SWEEP = [1, 2, 5]
+LOCAL_EPOCHS_TO_SWEEP = [2, 5]
 
 # --- NEW: Default (non-tuned) Defense HPs ---
 # We just need one "good enough" guess to find the best training HPs.
@@ -72,16 +72,16 @@ TUNING_TARGETS = [
      "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_texas100_baseline",
      "dataset_modifier": lambda cfg: cfg,
      "attack_modifier": use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL)},
-    {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Purchase100",
-     "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_purchase100_baseline",
-     "dataset_modifier": lambda cfg: cfg,
-     "attack_modifier": use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL)},
+    # {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Purchase100",
+    #  "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_purchase100_baseline",
+    #  "dataset_modifier": lambda cfg: cfg,
+    #  "attack_modifier": use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL)},
     {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR10",
      "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar10_cnn",
      "dataset_modifier": use_cifar10_config, "attack_modifier": use_image_backdoor_attack},
-    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR100",
-     "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar100_cnn",
-     "dataset_modifier": use_cifar100_config, "attack_modifier": use_image_backdoor_attack},
+    # {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR100",
+    #  "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar100_cnn",
+    #  "dataset_modifier": use_cifar100_config, "attack_modifier": use_image_backdoor_attack},
     {"modality_name": "text", "base_config_factory": get_base_text_config, "dataset_name": "TREC",
      "model_config_param_key": "experiment.text_model_config_name", "model_config_name": "textcnn_trec_baseline",
      "dataset_modifier": use_trec_config, "attack_modifier": use_text_backdoor_attack},
