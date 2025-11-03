@@ -58,105 +58,40 @@ GOLDEN_TRAINING_PARAMS = {
 # You MUST fill this with your results from Step 3 analysis
 
 TUNED_DEFENSE_PARAMS = {
-    # --- FedAvg (No params) ---
-    "fedavg_cifar10_cnn_backdoor": {"aggregation.method": "fedavg"},
-    "fedavg_cifar10_cnn_labelflip": {"aggregation.method": "fedavg"},
-    "fedavg_cifar100_cnn_backdoor": {"aggregation.method": "fedavg"},
-    "fedavg_cifar100_cnn_labelflip": {"aggregation.method": "fedavg"},
-    "fedavg_mlp_texas100_baseline_backdoor": {"aggregation.method": "fedavg"},
-    "fedavg_mlp_texas100_baseline_labelflip": {"aggregation.method": "fedavg"},
-    "fedavg_mlp_purchase100_baseline_backdoor": {"aggregation.method": "fedavg"},
-    "fedavg_mlp_purchase100_baseline_labelflip": {"aggregation.method": "fedavg"},
-    "fedavg_textcnn_trec_baseline_backdoor": {"aggregation.method": "fedavg"},
-    "fedavg_textcnn_trec_baseline_labelflip": {"aggregation.method": "fedavg"},
-
-    # --- FLTrust (Fill in your best clip_norm) ---
-    "fltrust_cifar10_cnn_backdoor": {
-        "aggregation.method": "fltrust", "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    "fltrust_cifar10_cnn_labelflip": {
-        "aggregation.method": "fltrust", "aggregation.clip_norm": 5.0  # <-- EXAMPLE
-    },
-    "fltrust_cifar100_cnn_backdoor": {
-        "aggregation.method": "fltrust", "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    "fltrust_cifar100_cnn_labelflip": {
-        "aggregation.method": "fltrust", "aggregation.clip_norm": 5.0  # <-- EXAMPLE
-    },
-    "fltrust_textcnn_trec_baseline_backdoor": {
-        "aggregation.method": "fltrust", "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    "fltrust_textcnn_trec_baseline_labelflip": {
-        "aggregation.method": "fltrust", "aggregation.clip_norm": 5.0  # <-- EXAMPLE
-    },
-
-    "fltrust_mlp_purchase100_baseline_backdoor": {
-        "aggregation.method": "fltrust", "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    "fltrust_mlp_purchase100_baseline_labelflip": {
-        "aggregation.method": "fltrust", "aggregation.clip_norm": 5.0  # <-- EXAMPLE
-    },
-
-    "fltrust_mlp_texas100_baseline_backdoor": {
-        "aggregation.method": "fltrust", "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    "fltrust_mlp_texas100_baseline_labelflip": {
-        "aggregation.method": "fltrust", "aggregation.clip_norm": 5.0  # <-- EXAMPLE
-    },
-
-    # --- MartFL (Fill in your best max_k and clip_norm) ---
-    "martfl_cifar10_cnn_backdoor": {
-        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    "martfl_cifar10_cnn_labelflip": {
-        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-
-    "martfl_cifar100_cnn_backdoor": {
-        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    "martfl_cifar100_cnn_labelflip": {
-        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    "martfl_mlp_texas100_baseline_backdoor": {
-        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    "martfl_mlp_texas100_baseline_labelflip": {
-        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    "martfl_mlp_purchase100_baseline_backdoor": {
-        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    "martfl_mlp_purchase100_baseline_labelflip": {
-        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    "martfl_textcnn_trec_baseline_backdoor": {
-        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    "martfl_textcnn_trec_baseline_labelflip": {
-        "aggregation.method": "martfl", "aggregation.martfl.max_k": 3, "aggregation.clip_norm": 10.0  # <-- EXAMPLE
-    },
-    # --- SkyMask (Fill in all best params) ---
-    "skymask_cifar10_cnn_backdoor": {
-        "aggregation.method": "skymask", "aggregation.skymask.mask_epochs": 20,
-        "aggregation.skymask.mask_lr": 0.01, "aggregation.skymask.mask_threshold": 0.7,
-        "aggregation.clip_norm": 10.0
-    },
-    "skymask_cifar10_cnn_labelflip": {
-        "aggregation.method": "skymask", "aggregation.skymask.mask_epochs": 20,
-        "aggregation.skymask.mask_lr": 0.01, "aggregation.skymask.mask_threshold": 0.7,
-        "aggregation.clip_norm": 10.0
-    },
-    "skymask_cifar100_cnn_backdoor": {
-        "aggregation.method": "skymask", "aggregation.skymask.mask_epochs": 20,
-        "aggregation.skymask.mask_lr": 0.01, "aggregation.skymask.mask_threshold": 0.7,
-        "aggregation.clip_norm": 10.0
-    },
-    "skymask_cifar100_cnn_labelflip": {
-        "aggregation.method": "skymask", "aggregation.skymask.mask_epochs": 20,
-        "aggregation.skymask.mask_lr": 0.01, "aggregation.skymask.mask_threshold": 0.7,
-        "aggregation.clip_norm": 10.0
-    },
+    "fedavg_cifar100_cnn_backdoor": {'aggregation.method': 'fedavg'},
+    "fedavg_cifar100_cnn_labelflip": {'aggregation.method': 'fedavg'},
+    "fedavg_cifar10_cnn_backdoor": {'aggregation.method': 'fedavg'},
+    "fedavg_cifar10_cnn_labelflip": {'aggregation.method': 'fedavg'},
+    "fedavg_mlp_purchase100_baseline_backdoor": {'aggregation.method': 'fedavg'},
+    "fedavg_mlp_purchase100_baseline_labelflip": {'aggregation.method': 'fedavg'},
+    "fedavg_mlp_texas100_baseline_backdoor": {'aggregation.method': 'fedavg'},
+    "fedavg_mlp_texas100_baseline_labelflip": {'aggregation.method': 'fedavg'},
+    "fedavg_textcnn_trec_baseline_backdoor": {'aggregation.method': 'fedavg'},
+    "fedavg_textcnn_trec_baseline_labelflip": {'aggregation.method': 'fedavg'},
+    "fltrust_cifar100_cnn_backdoor": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 5.0},
+    "fltrust_cifar100_cnn_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 3.0},
+    "fltrust_cifar10_cnn_backdoor": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 3.0},
+    "fltrust_cifar10_cnn_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 3.0},
+    "fltrust_mlp_purchase100_baseline_backdoor": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 5.0},
+    "fltrust_mlp_purchase100_baseline_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 3.0},
+    "fltrust_mlp_texas100_baseline_backdoor": {'aggregation.method': 'fltrust'},
+    "fltrust_mlp_texas100_baseline_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 5.0},
+    "fltrust_textcnn_trec_baseline_backdoor": {'aggregation.method': 'fltrust'},
+    "fltrust_textcnn_trec_baseline_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 5.0},
+    "martfl_cifar100_cnn_backdoor": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 3},
+    "martfl_cifar100_cnn_labelflip": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 3},
+    "martfl_cifar10_cnn_backdoor": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 5.0, 'aggregation.martfl.max_k': 3},
+    "martfl_cifar10_cnn_labelflip": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 3},
+    "martfl_mlp_purchase100_baseline_backdoor": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 3},
+    "martfl_mlp_purchase100_baseline_labelflip": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 10.0, 'aggregation.martfl.max_k': 3},
+    "martfl_mlp_texas100_baseline_backdoor": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 20.0, 'aggregation.martfl.max_k': 10},
+    "martfl_mlp_texas100_baseline_labelflip": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 5.0, 'aggregation.martfl.max_k': 3},
+    "martfl_textcnn_trec_baseline_backdoor": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 5.0, 'aggregation.martfl.max_k': 3},
+    "martfl_textcnn_trec_baseline_labelflip": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 5.0, 'aggregation.martfl.max_k': 3},
+    "skymask_cifar100_cnn_backdoor": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 50, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.5},
+    "skymask_cifar100_cnn_labelflip": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 50, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.5},
+    "skymask_cifar10_cnn_backdoor": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 20, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.5},
+    "skymask_cifar10_cnn_labelflip": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 50, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.5},
 }
 
 
