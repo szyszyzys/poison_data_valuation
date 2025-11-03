@@ -233,6 +233,11 @@ class DrowningAttackConfig:
     mimicry_rounds: int = 10  # Number of rounds to act honestly to build trust
     drift_factor: float = 0.1  # How much to shift the gradient each drift round
 
+@dataclass
+class SybilDrowningConfig:
+    """Configuration for the Targeted Drowning Attack."""
+    target_victim_id: str = "bn_0"
+    attack_strength: float = 1.0
 
 @dataclass
 class SybilConfig:

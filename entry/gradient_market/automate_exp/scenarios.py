@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import List, Callable, Dict, Any
 
 from common.enums import PoisonType
-from common.gradient_market_configs import AppConfig
+from common.gradient_market_configs import AppConfig, SybilDrowningConfig, SybilConfig
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
 
 
@@ -349,23 +349,57 @@ def use_adaptive_attack(
 # --- Helper to apply fixed Golden Training & Tuned Defense HPs ---
 
 
-def use_drowning_attack(mimicry_rounds: int, drift_factor: float) -> Callable[[AppConfig], AppConfig]:
+# def use_drowning_attack(mimicry_rounds: int, drift_factor: float) -> Callable[[AppConfig], AppConfig]:
+#     """
+#     Returns a modifier to enable the Targeted Drowning (Centroid Poisoning) attack.
+#     It also disables other attack types to prevent interference.
+#     """
+#
+#     def modifier(config: AppConfig) -> AppConfig:
+#         # Activate the drowning attack with specified parameters
+#         adv_cfg = config.adversary_seller_config.drowning_attack
+#         adv_cfg.is_active = True
+#         adv_cfg.mimicry_rounds = mimicry_rounds
+#         adv_cfg.drift_factor = drift_factor
+#
+#         # Deactivate other attacks to ensure the experiment is isolated
+#         config.adversary_seller_config.poisoning.type = PoisonType.NONE
+#         config.adversary_seller_config.sybil.is_sybil = False
+#         config.adversary_seller_config.adaptive_attack.is_active = False
+#         return config
+#
+#     return modifier
+
+def use_drowning_attack(
+        target_victim_id: str = "bn_0",
+        attack_strength: float = 1.0
+) -> Callable[[AppConfig], AppConfig]:
     """
-    Returns a modifier to enable the Targeted Drowning (Centroid Poisoning) attack.
-    It also disables other attack types to prevent interference.
+    Enables the Targeted Drowning Attack via the SybilCoordinator.
     """
 
     def modifier(config: AppConfig) -> AppConfig:
-        # Activate the drowning attack with specified parameters
-        adv_cfg = config.adversary_seller_config.drowning_attack
-        adv_cfg.is_active = True
-        adv_cfg.mimicry_rounds = mimicry_rounds
-        adv_cfg.drift_factor = drift_factor
+        if not hasattr(config.adversary_seller_config, 'sybil'):
+            config.adversary_seller_config.sybil = SybilConfig()
 
-        # Deactivate other attacks to ensure the experiment is isolated
+        # 1. Enable Sybil coordination
+        config.adversary_seller_config.sybil.is_sybil = True
+
+        # 2. Set the attack strategy to "drowning"
+        config.adversary_seller_config.sybil.gradient_default_mode = "drowning"
+
+        # 3. Configure the drowning attack parameters
+        drowning_cfg = SybilDrowningConfig(
+            target_victim_id=target_victim_id,
+            attack_strength=attack_strength
+        )
+        if not config.adversary_seller_config.sybil.strategy_configs:
+            config.adversary_seller_config.sybil.strategy_configs = {}
+        config.adversary_seller_config.sybil.strategy_configs['drowning'] = drowning_cfg
+
+        # 4. This attack does not use standard model poisoning
         config.adversary_seller_config.poisoning.type = PoisonType.NONE
-        config.adversary_seller_config.sybil.is_sybil = False
-        config.adversary_seller_config.adaptive_attack.is_active = False
+
         return config
 
     return modifier

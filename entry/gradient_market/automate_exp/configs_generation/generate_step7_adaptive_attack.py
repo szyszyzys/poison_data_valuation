@@ -65,6 +65,7 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
         tuned_defense_params = get_tuned_defense_params(
             defense_name=defense_name,
             model_config_name=model_cfg_name,
+            attack_state="with_attack",
             default_attack_type_for_tuning="backdoor"
         )
         print(f"-- Processing Defense: {defense_name}")

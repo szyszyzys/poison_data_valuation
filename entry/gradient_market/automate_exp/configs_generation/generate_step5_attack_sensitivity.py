@@ -8,10 +8,9 @@ from typing import List
 
 # --- Imports ---
 from config_common_utils import (
-    TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
+    NUM_SEEDS_PER_CONFIG,
     DEFAULT_ADV_RATE, DEFAULT_POISON_RATE,
-    IMAGE_DEFENSES, create_fixed_params_modifier, get_tuned_defense_params,
-)
+    IMAGE_DEFENSES, create_fixed_params_modifier, get_tuned_defense_params, )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_config, \
     use_image_backdoor_attack, use_label_flipping_attack
@@ -52,18 +51,21 @@ def generate_attack_sensitivity_scenarios() -> List[Scenario]:
     current_defenses = IMAGE_DEFENSES
 
     for defense_name in current_defenses:
-        # Loop through attack types *first* to get the correct tuned HPs
+
+        # --- START FIX: Loop over attack_type *first* ---
         for attack_type in ATTACK_TYPES:
             print(f"-- Processing Defense: {defense_name} (for {attack_type} attack) --")
 
             tuned_defense_params = get_tuned_defense_params(
                 defense_name=defense_name,
                 model_config_name=model_cfg_name,
-                default_attack_type_for_tuning="backdoor"
+                attack_state="with_attack",  # It's always "with_attack" here
+                explicit_attack_type=attack_type  # <-- This is the key
             )
-
+            if not tuned_defense_params:  # <-- Check for None
+                print(f"  SKIPPING: No tuned params found for {defense_name}_{model_cfg_name}_{attack_type}")
+                continue
             # 4. Create the fixed_params modifier using these specific HPs
-            #    This correctly passes model_cfg_name to the (fixed) helper
             fixed_params_modifier = create_fixed_params_modifier(
                 modality, tuned_defense_params, model_cfg_name, apply_noniid=True
             )

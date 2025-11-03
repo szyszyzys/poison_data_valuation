@@ -2,7 +2,7 @@
 # --- 1. USER ACTION: Define Golden Training HPs (from Step 1 IID Tune) ---
 # ==============================================================================
 # --- CRITICAL: FILL THESE WITH YOUR ACTUAL RESULTS ---
-from typing import Dict, Any, Callable
+from typing import Dict, Any, Callable, Optional
 
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig
@@ -98,46 +98,44 @@ TUNED_DEFENSE_PARAMS = {
 def get_tuned_defense_params(
         defense_name: str,
         model_config_name: str,
-        attack_state: str = 'attack',
+        attack_state: str,
+        # NEW: This allows Step 5 to be specific
+        explicit_attack_type: Optional[str] = None,
         default_attack_type_for_tuning: str = "backdoor"
-) -> Dict[str, Any]:
+) -> Optional[Dict[str, Any]]:  # <-- Return Optional
     """
     Intelligently retrieves the correct tuned defense parameters from the
     global TUNED_DEFENSE_PARAMS dictionary.
-
-    It constructs the specific key (e.g., 'fltrust_cifar10_cnn_backdoor')
-    and handles the 'fedavg' and 'no_attack' cases.
     """
 
-    # FedAvg is simple: it has no parameters.
     if defense_name == "fedavg":
         return {"aggregation.method": "fedavg"}
 
-    # For a "no_attack" run, we still need the defense's HPs
-    # (e.g., clip_norm). We'll use the HPs that were tuned
-    # against the default attack (e.g., 'backdoor') as the
-    # representative settings for that defense.
-    if attack_state == "no_attack":
-        attack_type = default_attack_type_for_tuning
-    else:  # "with_attack"
-        # This step4 script only tests one attack modifier
-        # (defined in SENSITIVITY_SETUP), so we use the default.
-        attack_type = default_attack_type_for_tuning
+    # --- THIS IS THE NEW, CORRECTED LOGIC ---
+    attack_type_key = default_attack_type_for_tuning  # Start with the default
+
+    if explicit_attack_type:
+        # If Step 5 or 12 passes "backdoor" or "labelflip", use it.
+        attack_type_key = explicit_attack_type
+    elif attack_state == "no_attack":
+        # For a no_attack run (like in Step 4), use the default.
+        attack_type_key = default_attack_type_for_tuning
+    # If attack_state is "with_attack" and no explicit_type,
+    # it will also (correctly) use the default.
+    # --- END NEW LOGIC ---
 
     # Build the specific key
-    tuned_params_key = f"{defense_name}_{model_config_name}_{attack_type}"
+    tuned_params_key = f"{defense_name}_{model_config_name}_{attack_type_key}"
 
     if tuned_params_key not in TUNED_DEFENSE_PARAMS:
         print(f"!!!!!!!!!! FATAL WARNING !!!!!!!!!!!")
         print(f"  Could not find tuned params for key: '{tuned_params_key}'")
-        print(f"  This is required for the experiment to run.")
         print(f"  Please check your TUNED_DEFENSE_PARAMS in config_common_utils.py")
-        # Fallback to the simple key to avoid a hard crash,
-        # but the HPs will be wrong and may cause NaNs.
-        return TUNED_DEFENSE_PARAMS.get(defense_name, {})
+
+        # --- FIX 2: Return None. Do NOT fall back. ---
+        return None
 
     return TUNED_DEFENSE_PARAMS[tuned_params_key]
-
 
 # This helper list can now be simplified
 ALL_DEFENSES = ["fedavg", "fltrust", "martfl", "skymask"]
