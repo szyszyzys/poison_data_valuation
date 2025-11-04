@@ -12,18 +12,15 @@ logger = logging.getLogger(__name__)
 
 # --- Parsers from your Step 1 Analyzer ---
 HPARAM_REGEX = re.compile(r"opt_(?P<optimizer>\w+)_lr_(?P<lr>[\d\.]+)_epochs_(?P<epochs>\d+)")
-SEED_REGEX_1 = re.compile(r"run_\d+_seed_(\d+)")  # e.g., run_1_seed_43
-SEED_REGEX_2 = re.compile(r".*_seed-(\d+)")  # e.g., ds-texas100_..._seed-42
+SEED_REGEX_1 = re.compile(r"run_\d+_seed_(\d+)")
+SEED_REGEX_2 = re.compile(r".*_seed-(\d+)")
 DATA_SETTING_REGEX = re.compile(r".*_(?P<data_setting>iid|noniid)$")
-
-# --- MODIFIED to find step1 *or* step2.5 ---
 EXP_NAME_REGEX = re.compile(
-    r"(?P<base_name>step(1|2.5)_.+?)(_(?P<data_setting_exp>iid|noniid))?$"
+    r"(?P<base_name>step(1|2.5|3|4|5)_.+?)(_(?P<data_setting_exp>iid|noniid))?$"
 )
 
 
 def parse_hp_from_name(name: str) -> Dict[str, Any]:
-    """Parses 'opt_Adam_lr_0.001_epochs_5'"""
     match = HPARAM_REGEX.match(name)
     if not match:
         return {}
@@ -37,7 +34,6 @@ def parse_hp_from_name(name: str) -> Dict[str, Any]:
 
 
 def parse_sub_exp_name(name: str) -> Dict[str, str]:
-    """Parses 'ds-purchase100_model-mlp_agg-fedavg'"""
     params = {}
     try:
         parts = name.split('_')
@@ -52,7 +48,6 @@ def parse_sub_exp_name(name: str) -> Dict[str, str]:
 
 
 def parse_seed_from_name(name: str) -> int:
-    """Parses seed from 'run_1_seed_43' or '..._seed-42'"""
     for regex in [SEED_REGEX_1, SEED_REGEX_2]:
         match = regex.match(name)
         if match:
@@ -69,13 +64,12 @@ def parse_seed_from_name(name: str) -> int:
 
 
 def parse_exp_context(name: str) -> Dict[str, str]:
-    """Parses 'step1_tune_..._mlp_iid' or 'step2.5_find_hps_...'"""
     match = EXP_NAME_REGEX.match(name)
     if match:
         data = match.groupdict()
         return {
             "base_name": data.get("base_name") or "unknown_base",
-            "data_setting": data.get("data_setting_exp")  # Can be None
+            "data_setting": data.get("data_setting_exp")
         }
     ds_match = DATA_SETTING_REGEX.match(name)
     if ds_match:
@@ -137,11 +131,12 @@ def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
 
                 current_path = current_path.parent
 
-            # --- This is the key check ---
-            # Only keep results from the Step 2.5 runs
-            if "step2.5_find_hps" not in record["base_name"]:
+            # --- THIS IS THE FIX for TypeError ---
+            # Check for None *before* checking the content of the string
+            if record["base_name"] is None or "step2.5_find_hps" not in record["base_name"]:
                 logger.debug(f"Skipping non-Step2.5 file: {metrics_file}")
                 continue
+            # --- END FIX ---
 
             if record["optimizer"] is None:
                 logger.warning(f"Could not find HP folder (opt_...) for {metrics_file}. Skipping.")
@@ -193,25 +188,22 @@ def analyze_sensitivity(raw_df: pd.DataFrame, results_dir: Path):
         return
 
     # --- 1. Add 'defense' and 'attack_state' columns ---
-    # Your parser names the defense 'agg'
     raw_df['defense'] = raw_df['agg']
-    # We know all Step 2.5 runs are "with_attack"
-    raw_df['attack_state'] = 'with_attack'
-    raw_df['dataset'] = raw_df['ds']  # Rename 'ds' to 'dataset' for consistency
+    raw_df['attack_state'] = 'with_attack'  # All Step 2.5 runs are "with_attack"
+    raw_df['dataset'] = raw_df['ds']
 
     # --- 2. Aggregate across seeds ---
     group_cols = ["scenario", "defense", "attack_state", "dataset", "modality",
                   "optimizer", "lr", "epochs"]
-
-    # Check which columns are available to group by
     available_group_cols = [col for col in group_cols if col in raw_df.columns]
 
-    numeric_cols = ["acc", "asr"]  # Use the metric names from your JSON
+    # Use metric names from your JSON ('acc' and 'asr')
+    # Your example JSON only has 'acc', but attacked runs MUST have 'asr'
+    numeric_cols = ["acc", "asr"]
     raw_df[numeric_cols] = raw_df[numeric_cols].apply(pd.to_numeric, errors='coerce')
-    raw_df['asr'] = raw_df['asr'].fillna(0.0)
+    raw_df['asr'] = raw_df['asr'].fillna(0.0)  # Fill benign/missing ASR with 0
     raw_df = raw_df.dropna(subset=['acc'])
 
-    # Rename for the script
     raw_df = raw_df.rename(columns={"acc": "test_acc", "asr": "backdoor_asr"})
     numeric_cols = ["test_acc", "backdoor_asr"]
 
@@ -332,8 +324,16 @@ def main():
 
     try:
         raw_results_df = find_all_results(results_path)
-        if not raw_results_df.empty:
-            analyze_sensitivity(raw_results_df, results_path)
+
+        # --- THIS IS THE FIX for AttributeError ---
+        # Check if the LIST is empty, not if the DATAFRAME is empty
+        if not raw_results_df:
+            # --- END FIX ---
+            logger.warning("No valid Step 2.5 results found to analyze.")
+        else:
+            # Convert list of dicts to DataFrame *before* passing to analyze
+            df = pd.DataFrame(raw_results_df)
+            analyze_sensitivity(df, results_path)
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}", exc_info=True)
 
