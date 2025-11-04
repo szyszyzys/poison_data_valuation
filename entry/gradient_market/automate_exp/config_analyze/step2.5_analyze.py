@@ -160,13 +160,13 @@ def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
 # === 1. USER ACTION REQUIRED: FILL IN YOUR IID BASELINES ===
 # ==============================================================================
 IID_BASELINES = {
-    "Texas100": 0.6250,  # <-- EXAMPLE (Fill with your value)
-    "Purchase100": 0.6002,  # <-- EXAMPLE (Fill with your value)
-    "CIFAR10": 0.8248,  # <-- EXAMPLE (Fill with your value)
-    "CIFAR100": 0.5536,  # <-- EXAMPLE (Fill with your value)
-    "TREC": 0.7985,  # <-- EXAMPLE (Fill with your value)
+    "texas100": 0.6250,
+    "purchase100": 0.6002,
+    "cifar10": 0.8248,
+    "cifar100": 0.5536,
+    "trec": 0.7985,
 }
-USABLE_THRESHOLD = 0.0
+USABLE_THRESHOLD = 0.90
 
 
 # ==============================================================================
