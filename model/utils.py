@@ -103,12 +103,12 @@ def train_local_model(model: nn.Module,
                 if use_amp:
                     scaler.scale(loss).backward()
                     scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+                    # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
                     scaler.step(optimizer)
                     scaler.update()
                 else:
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+                    # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
                     optimizer.step()
 
                 batch_losses_all.append(loss.item())

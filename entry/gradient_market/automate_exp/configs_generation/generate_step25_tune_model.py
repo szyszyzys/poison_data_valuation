@@ -68,23 +68,23 @@ DEFAULT_DEFENSE_HPS = {
 
 # --- All Models/Datasets Combinations (Copied from Step 3) ---
 TUNING_TARGETS = [
-    # {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Texas100",
-    #  "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_texas100_baseline",
-    #  "dataset_modifier": lambda cfg: cfg,
-    #  "attack_modifier": use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL)},
+    {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Texas100",
+     "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_texas100_baseline",
+     "dataset_modifier": lambda cfg: cfg,
+     "attack_modifier": use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL)},
     {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Purchase100",
      "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_purchase100_baseline",
      "dataset_modifier": lambda cfg: cfg,
      "attack_modifier": use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL)},
-    # {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR10",
-    #  "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar10_cnn",
-    #  "dataset_modifier": use_cifar10_config, "attack_modifier": use_image_backdoor_attack},
+    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR10",
+     "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar10_cnn",
+     "dataset_modifier": use_cifar10_config, "attack_modifier": use_image_backdoor_attack},
     {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR100",
      "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar100_cnn",
      "dataset_modifier": use_cifar100_config, "attack_modifier": use_image_backdoor_attack},
-    # {"modality_name": "text", "base_config_factory": get_base_text_config, "dataset_name": "TREC",
-    #  "model_config_param_key": "experiment.text_model_config_name", "model_config_name": "textcnn_trec_baseline",
-    #  "dataset_modifier": use_trec_config, "attack_modifier": use_text_backdoor_attack},
+    {"modality_name": "text", "base_config_factory": get_base_text_config, "dataset_name": "TREC",
+     "model_config_param_key": "experiment.text_model_config_name", "model_config_name": "textcnn_trec_baseline",
+     "dataset_modifier": use_trec_config, "attack_modifier": use_text_backdoor_attack},
 ]
 
 
@@ -169,7 +169,7 @@ def generate_training_hp_scenarios() -> List[Scenario]:
                 grid["aggregation.skymask.sm_model_type"] = [model_struct]
 
             scenarios.append(Scenario(
-                name=f"step2.5_find_hps_{defense_name}_{modality}_{target['dataset_name']}",
+                name=f"step2.5_find_hps_{defense_name}_{modality}_{target['dataset_name']}_nolocalclip",
                 base_config_factory=target["base_config_factory"],
                 modifiers=[setup_modifier_func, target["dataset_modifier"]],
                 parameter_grid=grid
@@ -180,7 +180,7 @@ def generate_training_hp_scenarios() -> List[Scenario]:
 # --- Main Execution Block (copied from Step 4) ---
 if __name__ == "__main__":
     base_output_dir = "./configs_generated_benchmark"
-    output_dir = Path(base_output_dir) / "step2.5_find_usable_hps"  # New directory
+    output_dir = Path(base_output_dir) / "step2.5_find_usable_hps_nolocalclip"  # New directory
     generator = ExperimentGenerator(str(output_dir))
 
     scenarios_to_generate = generate_training_hp_scenarios()
