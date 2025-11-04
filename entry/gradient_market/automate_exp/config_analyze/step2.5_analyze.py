@@ -181,7 +181,7 @@ def analyze_sensitivity(raw_df: pd.DataFrame, results_dir: Path):
         logger.warning("No data to analyze.")
         return
 
-    if IID_BASELINES.get("CIFAR10", 0.0) == 0.0:
+    if IID_BASELINES.get("cifar10", 0.0) == 0.0:
         logger.error("=" * 80)
         logger.error("STOP: You must fill in the 'IID_BASELINES' dictionary at the top of this script.")
         logger.error("=" * 80)
