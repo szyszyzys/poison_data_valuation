@@ -170,7 +170,7 @@ if __name__ == "__main__":
     ]
 
     # --- Output Directory for Configs ---
-    output_dir = "./configs_generated/step1_fedavg_tuning_new1"
+    output_dir = "./configs_generated/step1_fedavg_tuning_nolocalclip"
     generator = ExperimentGenerator(output_dir)
 
     all_tuning_scenarios = []
@@ -232,7 +232,7 @@ if __name__ == "__main__":
 
                     # 2. CREATE THE UNIQUE SAVE PATH
                     # This is the path your *results* will be saved to.
-                    unique_save_path = f"./new_results/{scenario.name}/opt_{optimizer}_lr_{lr}_epochs_{epochs}"
+                    unique_save_path = f"./new_results_nolocalclip/{scenario.name}/opt_{optimizer}_lr_{lr}_epochs_{epochs}"
 
                     # 3. Add this unique path to the new grid
                     new_grid["experiment.save_path"] = [unique_save_path]
