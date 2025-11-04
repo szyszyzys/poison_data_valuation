@@ -166,7 +166,7 @@ IID_BASELINES = {
     "CIFAR100": 0.5536,  # <-- EXAMPLE (Fill with your value)
     "TREC": 0.7985,  # <-- EXAMPLE (Fill with your value)
 }
-USABLE_THRESHOLD = 0.90
+USABLE_THRESHOLD = 0.0
 
 
 # ==============================================================================
