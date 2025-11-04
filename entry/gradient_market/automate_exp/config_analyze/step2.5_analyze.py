@@ -263,11 +263,11 @@ def analyze_sensitivity(raw_df: pd.DataFrame, results_dir: Path):
     attack_hp_df = hp_agg_df  # All rows are "with_attack"
 
     dataset_to_model_map = {
-        "Texas100": "mlp_texas100_baseline",
-        "Purchase100": "mlp_purchase100_baseline",
-        "CIFAR10": "cifar10_cnn",
-        "CIFAR100": "cifar100_cnn",
-        "TREC": "textcnn_trec_baseline",
+        "texas100": "mlp_texas100_baseline",
+        "purchase100": "mlp_purchase100_baseline",
+        "cifar10": "cifar10_cnn",
+        "cifar100": "cifar100_cnn",
+        "trec": "textcnn_trec_baseline",
     }
 
     # Find the best row for each group
