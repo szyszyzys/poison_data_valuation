@@ -29,7 +29,7 @@ from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGener
     BackdoorTextGenerator, BackdoorTabularGenerator
 from common.enums import ImageTriggerType, ImageTriggerLocation, PoisonType
 from common.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, BackdoorTextConfig, SybilConfig, \
-    RuntimeDataConfig, TrainingConfig, BackdoorTabularConfig
+    RuntimeDataConfig, TrainingConfig, BackdoorTabularConfig, SybilDrowningConfig
 from common.utils import unflatten_tensor, flatten_tensor
 from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.seller.seller import BaseSeller
