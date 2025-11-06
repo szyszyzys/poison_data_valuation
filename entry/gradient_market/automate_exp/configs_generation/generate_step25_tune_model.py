@@ -173,7 +173,7 @@ def generate_training_hp_scenarios() -> List[Scenario]:
                 grid["aggregation.skymask.sm_model_type"] = [model_struct]
 
             scenarios.append(Scenario(
-                name=f"step2.5_find_hps_{defense_name}_{modality}_{target['dataset_name']}_nolocalclip",
+                name=f"step2.5_find_hps_{defense_name}_{modality}_{target['dataset_name']}",
                 base_config_factory=target["base_config_factory"],
                 modifiers=[setup_modifier_func, target["dataset_modifier"]],
                 parameter_grid=grid
