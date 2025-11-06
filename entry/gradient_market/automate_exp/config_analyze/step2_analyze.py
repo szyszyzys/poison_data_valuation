@@ -7,7 +7,7 @@ import pathlib
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-EXPERIMENT_PATTERN = "step2_validate_fedavg_*"
+EXPERIMENT_PATTERN = "new_step2_validate_fedavg_*"
 
 
 # ---

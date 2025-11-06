@@ -16,7 +16,7 @@ SEED_REGEX_1 = re.compile(r"run_\d+_seed_(\d+)")
 SEED_REGEX_2 = re.compile(r".*_seed-(\d+)")
 DATA_SETTING_REGEX = re.compile(r".*_(?P<data_setting>iid|noniid)$")
 EXP_NAME_REGEX = re.compile(
-    r"(?P<base_name>step(1|2.5|3|4|5)_.+?)(_(?P<data_setting_exp>iid|noniid))?$"
+    r"(?P<base_name>(?:step|new_step)[\w\.-]+?)(_(?P<data_setting_exp>iid|noniid))?$"
 )
 
 
@@ -69,10 +69,10 @@ def parse_exp_context(name: str) -> Dict[str, str]:
     return {}
 
 
-# --- This is your robust find_all_results function ---
-def find_all_results(results_dir: Path, clip_mode: str) -> List[Dict[str, Any]]:
+def find_all_results(results_dir: Path, clip_mode: str, exp_filter: str) -> List[Dict[str, Any]]:
     logger.info(f"🔍 Scanning recursively for results in: {results_dir}...")
     logger.info(f"   Filtering by --clip_mode: '{clip_mode}'")
+    logger.info(f"   Filtering by --exp_filter: must contain '{exp_filter}'") # New log
     metrics_files = list(results_dir.rglob("final_metrics.json"))
 
     if not metrics_files:
@@ -125,8 +125,10 @@ def find_all_results(results_dir: Path, clip_mode: str) -> List[Dict[str, Any]]:
 
                 current_path = current_path.parent
 
-            if record.get("base_name") is None or "step2.5_find_hps" not in record["base_name"]:
-                logger.debug(f"Skipping non-Step2.5 file: {metrics_file}")
+            # === MODIFIED ===
+            # Use the 'exp_filter' parameter instead of a hardcoded string
+            if record.get("base_name") is None or exp_filter not in record["base_name"]:
+                logger.debug(f"Skipping file: 'base_name' ({record.get('base_name')}) does not contain '{exp_filter}'")
                 continue
 
             if clip_mode != "all" and record["clip_setting"] != clip_mode:
@@ -166,7 +168,7 @@ USABLE_THRESHOLD = 0.90
 
 # ==============================================================================
 
-# --- This is the analysis function from analyze_step4.py ---
+# --- This is the analysis function from analyze_step4.py (Unchanged) ---
 def analyze_sensitivity(raw_df: pd.DataFrame, results_dir: Path, dataset_filter: Optional[str] = None):
     """
     Analyzes the raw results to calculate sensitivity AND
@@ -336,7 +338,7 @@ def main():
         default="./results",
         help="The root directory where all experiment results are stored (default: ./results)"
     )
-    # --- ADDED ARGUMENTS ---
+    # --- MODIFIED ARGUMENTS ---
     parser.add_argument(
         "--clip_mode",
         type=str,
@@ -350,7 +352,14 @@ def main():
         default=None,
         help="Filter for a single dataset (e.g., 'texas100') to show a detailed HP breakdown."
     )
-    # --- END ADDED ---
+    # --- NEW ARGUMENT ---
+    parser.add_argument(
+        "--exp_filter",
+        type=str,
+        default="step2.5_find_hps",
+        help="A string that must be present in the experiment base name to be included (e.g., 'step2.5_find_hps' or 'new_step2_validate')."
+    )
+    # --- END MODIFIED ---
 
     args = parser.parse_args()
     results_path = Path(args.results_dir).resolve()
@@ -364,14 +373,15 @@ def main():
     pd.set_option('display.width', 1000)
 
     try:
-        # Pass the new args to the finder function
-        raw_results_df = find_all_results(results_path, args.clip_mode)
+        # === MODIFIED ===
+        # Pass the new 'exp_filter' arg to the finder function
+        raw_results_df = find_all_results(results_path, args.clip_mode, args.exp_filter)
 
         if not raw_results_df:
-            logger.warning("No valid Step 2.5 results found to analyze.")
+            logger.warning(f"No valid results found matching filter: --exp_filter='{args.exp_filter}'")
         else:
             df = pd.DataFrame(raw_results_df)
-            # Pass the new arg to the analysis function
+            # Pass the dataset arg to the analysis function
             analyze_sensitivity(df, results_path, args.dataset)
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}", exc_info=True)
