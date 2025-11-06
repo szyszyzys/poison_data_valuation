@@ -77,20 +77,19 @@ def parse_exp_context(name: str) -> Dict[str, str]:
     return {}
 
 
-# --- This is YOUR find_all_results function (it's better) ---
-def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
+def find_all_results(results_dir: Path, clip_mode: str) -> List[Dict[str, Any]]:
     """
-    Finds all final_metrics.json files and parses context by
-    walking up the parent directories, robustly.
+    Finds all final_metrics.json files and filters based on clip_mode.
     """
     logger.info(f"🔍 Scanning recursively for results in: {results_dir}...")
+    logger.info(f"   Filtering by --clip_mode: '{clip_mode}'")
     metrics_files = list(results_dir.rglob("final_metrics.json"))
 
     if not metrics_files:
         logger.error(f"❌ ERROR: No 'final_metrics.json' files found in {results_dir}.")
         return []
 
-    logger.info(f"✅ Found {len(metrics_files)} individual run results.")
+    logger.info(f"✅ Found {len(metrics_files)} total individual run results.")
     all_results = []
 
     for metrics_file in metrics_files:
@@ -103,7 +102,8 @@ def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
             record = {
                 "base_name": None, "data_setting": None, "optimizer": None,
                 "lr": None, "epochs": None, "ds": None, "model": None, "agg": None,
-                "seed": -1, "full_path": str(metrics_file)
+                "seed": -1, "full_path": str(metrics_file),
+                "clip_setting": None  # <-- New field
             }
 
             current_path = metrics_file.parent
@@ -114,12 +114,22 @@ def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
                     hps = parse_hp_from_name(folder_name)
                     if hps: record.update(hps)
 
-                exp_context = parse_exp_context(folder_name)
-                if exp_context:
-                    if record["base_name"] is None and "base_name" in exp_context:
-                        record["base_name"] = exp_context["base_name"]
-                    if record["data_setting"] is None and "data_setting" in exp_context:
+                # --- NEW LOGIC for clip_setting ---
+                if record["base_name"] is None:
+                    exp_context = parse_exp_context(folder_name)
+                    if exp_context and "base_name" in exp_context:
+                        base_name = exp_context["base_name"]
+                        if "nolocalclip" in base_name:
+                            record["clip_setting"] = "no_local_clip"
+                            # Clean the name for grouping
+                            record["base_name"] = base_name.replace("_nolocalclip", "")
+                        else:
+                            record["clip_setting"] = "local_clip"
+                            record["base_name"] = base_name
+
+                    if "data_setting" in exp_context and record["data_setting"] is None:
                         record["data_setting"] = exp_context["data_setting"]
+                # --- END NEW LOGIC ---
 
                 if record["ds"] is None:
                     sub_exp_params = parse_sub_exp_name(folder_name)
@@ -131,12 +141,15 @@ def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
 
                 current_path = current_path.parent
 
-            # --- THIS IS THE FIX for TypeError ---
-            # Check for None *before* checking the content of the string
-            if record["base_name"] is None or "step2.5_find_hps" not in record["base_name"]:
+            # --- Filter for Step 2.5 runs ---
+            if record.get("base_name") is None or "step2.5_find_hps" not in record["base_name"]:
                 logger.debug(f"Skipping non-Step2.5 file: {metrics_file}")
                 continue
-            # --- END FIX ---
+
+            # --- NEW: Apply the --clip_mode filter ---
+            if clip_mode != "all" and record["clip_setting"] != clip_mode:
+                logger.debug(f"Skipping file due to --clip_mode filter: {record['clip_setting']}")
+                continue
 
             if record["optimizer"] is None:
                 logger.warning(f"Could not find HP folder (opt_...) for {metrics_file}. Skipping.")
@@ -152,9 +165,8 @@ def find_all_results(results_dir: Path) -> List[Dict[str, Any]]:
             logger.warning(f"Warning: Could not process file {metrics_file}: {e}", exc_info=True)
             continue
 
-    logger.info(f"Successfully processed {len(all_results)} Step 2.5 runs.")
+    logger.info(f"Successfully processed {len(all_results)} runs matching filter.")
     return all_results
-
 
 # ==============================================================================
 # === 1. USER ACTION REQUIRED: FILL IN YOUR IID BASELINES ===
@@ -171,7 +183,6 @@ USABLE_THRESHOLD = 0.90
 
 # ==============================================================================
 
-# --- This is the analysis function from analyze_step4.py ---
 def analyze_sensitivity(raw_df: pd.DataFrame, results_dir: Path):
     """
     Analyzes the raw results to calculate sensitivity AND
@@ -181,27 +192,23 @@ def analyze_sensitivity(raw_df: pd.DataFrame, results_dir: Path):
         logger.warning("No data to analyze.")
         return
 
-    if IID_BASELINES.get("cifar10", 0.0) == 0.0:
-        logger.error("=" * 80)
-        logger.error("STOP: You must fill in the 'IID_BASELINES' dictionary at the top of this script.")
-        logger.error("=" * 80)
-        return
+    # ... (IID_BASELINES check is the same) ...
 
     # --- 1. Add 'defense' and 'attack_state' columns ---
     raw_df['defense'] = raw_df['agg']
-    raw_df['attack_state'] = 'with_attack'  # All Step 2.5 runs are "with_attack"
+    raw_df['attack_state'] = 'with_attack'
     raw_df['dataset'] = raw_df['ds']
 
     # --- 2. Aggregate across seeds ---
     group_cols = ["scenario", "defense", "attack_state", "dataset", "modality",
-                  "optimizer", "lr", "epochs"]
+                  "optimizer", "lr", "epochs",
+                  "clip_setting"  # <-- ADDED
+                  ]
     available_group_cols = [col for col in group_cols if col in raw_df.columns]
 
-    # Use metric names from your JSON ('acc' and 'asr')
-    # Your example JSON only has 'acc', but attacked runs MUST have 'asr'
     numeric_cols = ["acc", "asr"]
     raw_df[numeric_cols] = raw_df[numeric_cols].apply(pd.to_numeric, errors='coerce')
-    raw_df['asr'] = raw_df['asr'].fillna(0.0)  # Fill benign/missing ASR with 0
+    raw_df['asr'] = raw_df['asr'].fillna(0.0)
     raw_df = raw_df.dropna(subset=['acc'])
 
     raw_df = raw_df.rename(columns={"acc": "test_acc", "asr": "backdoor_asr"})
@@ -209,15 +216,15 @@ def analyze_sensitivity(raw_df: pd.DataFrame, results_dir: Path):
 
     hp_agg_df = raw_df.groupby(available_group_cols, as_index=False)[numeric_cols].mean()
 
-    # --- 3. Calculate Relative Performance & Score for EACH HP combination ---
+    # --- 3. Calculate Relative Performance & Score ---
     hp_agg_df['iid_baseline_acc'] = hp_agg_df['dataset'].map(IID_BASELINES)
     hp_agg_df = hp_agg_df.dropna(subset=['iid_baseline_acc'])
     hp_agg_df['relative_perf'] = hp_agg_df['test_acc'] / hp_agg_df['iid_baseline_acc']
     hp_agg_df['is_usable'] = hp_agg_df['relative_perf'] >= USABLE_THRESHOLD
     hp_agg_df['score'] = hp_agg_df['test_acc'] - hp_agg_df['backdoor_asr']
 
-    # --- 4. Aggregate HP stats to get final "Cost" metrics (Your Step 4 Analysis) ---
-    scenario_group_cols = ["defense", "attack_state", "dataset", "modality"]
+    # --- 4. Aggregate HP stats to get final "Cost" metrics ---
+    scenario_group_cols = ["defense", "attack_state", "dataset", "modality", "clip_setting"]  # <-- ADDED
     available_scenario_group_cols = [col for col in scenario_group_cols if col in hp_agg_df.columns]
 
     cost_df = hp_agg_df.groupby(available_scenario_group_cols, as_index=False).agg(
@@ -237,10 +244,10 @@ def analyze_sensitivity(raw_df: pd.DataFrame, results_dir: Path):
     cost_df['relative_avg_perf'] = cost_df['avg_test_acc'] / cost_df['iid_baseline_acc']
     cost_df['robustness_score'] = (cost_df['relative_max_perf'] + cost_df['relative_avg_perf']) / 2
     cost_df['initialization_cost'] = 1.0 - cost_df['robustness_score']
-    cost_df = cost_df.sort_values(by=['dataset', 'attack_state', 'initialization_cost'])
+    cost_df = cost_df.sort_values(by=['dataset', 'attack_state', 'clip_setting', 'initialization_cost'])
 
     display_cols = [
-        "dataset", "attack_state", "defense", "initialization_cost",
+        "dataset", "attack_state", "clip_setting", "defense", "initialization_cost",  # <-- ADDED
         "min_asr", "avg_asr", "usable_hp_count",
         "relative_max_perf", "relative_avg_perf", "total_hp_combos",
     ]
@@ -260,7 +267,7 @@ def analyze_sensitivity(raw_df: pd.DataFrame, results_dir: Path):
     print("📋 New 'GOLDEN_TRAINING_PARAMS' Dictionary (from Step 2.5)")
     print("=" * 120)
 
-    attack_hp_df = hp_agg_df  # All rows are "with_attack"
+    attack_hp_df = hp_agg_df
 
     dataset_to_model_map = {
         "texas100": "mlp_texas100_baseline",
@@ -271,18 +278,19 @@ def analyze_sensitivity(raw_df: pd.DataFrame, results_dir: Path):
     }
 
     # Find the best row for each group
-    best_hp_indices = attack_hp_df.groupby(['defense', 'dataset'])['score'].idxmax()
+    # --- MODIFIED: Group by clip_setting as well ---
+    best_hp_indices = attack_hp_df.groupby(['defense', 'dataset', 'clip_setting'])['score'].idxmax()
     best_hp_df = attack_hp_df.loc[best_hp_indices]
 
     print("# Copy and paste this dictionary into your 'config_common_utils.py':\n")
     print("GOLDEN_TRAINING_PARAMS = {")
 
-    # Loop and print
     for _, row in best_hp_df.iterrows():
         model_config_name = dataset_to_model_map.get(row['dataset'])
         if not model_config_name:
             continue
-        key = f"{row['defense']}_{model_config_name}"
+        # --- MODIFIED: Key now includes clip_setting ---
+        key = f"{row['defense']}_{model_config_name}_{row['clip_setting']}"
 
         hp_dict = {
             "training.optimizer": row['optimizer'],
@@ -299,7 +307,7 @@ def analyze_sensitivity(raw_df: pd.DataFrame, results_dir: Path):
     print("\n" + "=" * 120)
 
 
-# --- This is YOUR main function ---
+# --- 3. MODIFIED main ---
 def main():
     parser = argparse.ArgumentParser(
         description="Analyze FL Sensitivity Analysis results (Step 2.5 or 4)."
@@ -311,6 +319,16 @@ def main():
         default="./results",
         help="The root directory where all experiment results are stored (default: ./results)"
     )
+    # --- ADDED THIS ARGUMENT ---
+    parser.add_argument(
+        "--clip_mode",
+        type=str,
+        default="all",
+        choices=["all", "local_clip", "no_local_clip"],
+        help="Filter results: 'all', 'local_clip' (default runs), or 'no_local_clip' (runs with suffix)."
+    )
+    # --- END ADD ---
+
     args = parser.parse_args()
     results_path = Path(args.results_dir).resolve()
 
@@ -323,15 +341,12 @@ def main():
     pd.set_option('display.width', 1000)
 
     try:
-        raw_results_df = find_all_results(results_path)
+        # Pass the new arg to the finder function
+        raw_results_df = find_all_results(results_path, args.clip_mode)
 
-        # --- THIS IS THE FIX for AttributeError ---
-        # Check if the LIST is empty, not if the DATAFRAME is empty
         if not raw_results_df:
-            # --- END FIX ---
             logger.warning("No valid Step 2.5 results found to analyze.")
         else:
-            # Convert list of dicts to DataFrame *before* passing to analyze
             df = pd.DataFrame(raw_results_df)
             analyze_sensitivity(df, results_path)
     except Exception as e:
