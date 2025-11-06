@@ -2,20 +2,16 @@
 
 import copy
 import sys
-from pathlib import Path
-from typing import List, Dict, Any, Callable
+from typing import Callable
 
 # --- (Imports) ---
-from entry.gradient_market.automate_exp.base_configs import (
-    get_base_image_config, get_base_text_config
-)
-from entry.gradient_market.automate_exp.configs_generation.config_common_utils import GOLDEN_TRAINING_PARAMS
+from entry.gradient_market.automate_exp.configs_generation.config_common_utils import GOLDEN_TRAINING_PARAMS, \
+    NUM_SEEDS_PER_CONFIG
 from entry.gradient_market.automate_exp.scenarios import (
-    Scenario, use_cifar10_config, use_image_backdoor_attack, use_label_flipping_attack, use_cifar100_config,
-    use_trec_config, use_text_backdoor_attack
+    Scenario
 )
 from entry.gradient_market.automate_exp.tbl_new import get_base_tabular_config, use_tabular_backdoor_with_trigger, \
-    TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL, PURCHASE100_TARGET_LABEL, PURCHASE100_TRIGGER
+    TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL
 
 try:
     from common.gradient_market_configs import AppConfig, PoisonType
@@ -32,10 +28,8 @@ TUNED_DEFENSE_PARAMS = {
 }
 
 # --- Attack Parameters to Test (One benign, one strong attack) --- ⚔️
-ATTACK_ADV_RATES_TO_SWEEP = [0.3]  # 0% attackers, 30% attackers
-ATTACK_POISON_RATES_TO_SWEEP = [1.0]    # 100% poison rate for a clear signal
-
-NUM_SEEDS_PER_CONFIG = 3
+ATTACK_ADV_RATES_TO_SWEEP = [0.0, 0.3]  # 0% attackers, 30% attackers
+ATTACK_POISON_RATES_TO_SWEEP = [0.1, 0.3, 0.5, 0.7, 1.0]  # 100% poison rate for a clear signal
 
 # --- Valuation Settings (OFF) ---
 VALUATION_PARAMS = {
@@ -46,20 +40,20 @@ VALUATION_PARAMS = {
 
 # --- Define ALL Model/Dataset combinations for validation ---
 VALIDATION_COMBOS = [
-    {
-        "modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR10",
-        "model_structure": "flexiblecnn",  # <-- ADDED
-        "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar10_cnn",
-        "attack_modifier": use_image_backdoor_attack, "dataset_modifier": use_cifar10_config,
-        "sm_model_type": "flexiblecnn"
-    },
-    {
-        "modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR100",
-        "model_structure": "flexiblecnn",  # <-- ADDED
-        "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar100_cnn",
-        "attack_modifier": use_image_backdoor_attack, "dataset_modifier": use_cifar100_config,
-        "sm_model_type": "flexiblecnn"
-    },
+    # {
+    #     "modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR10",
+    #     "model_structure": "flexiblecnn",  # <-- ADDED
+    #     "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar10_cnn",
+    #     "attack_modifier": use_image_backdoor_attack, "dataset_modifier": use_cifar10_config,
+    #     "sm_model_type": "flexiblecnn"
+    # },
+    # {
+    #     "modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR100",
+    #     "model_structure": "flexiblecnn",  # <-- ADDED
+    #     "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar100_cnn",
+    #     "attack_modifier": use_image_backdoor_attack, "dataset_modifier": use_cifar100_config,
+    #     "sm_model_type": "flexiblecnn"
+    # },
     {
         "modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Texas100",
         "model_structure": "mlp",  # <-- ADDED
@@ -67,22 +61,23 @@ VALIDATION_COMBOS = [
         "attack_modifier": use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL),
         "dataset_modifier": lambda cfg: cfg, "sm_model_type": "mlp"
     },
-    {
-        "modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Purchase100",
-        "model_structure": "mlp",  # <-- ADDED
-        "model_config_param_key": "experiment.tabular_model_config_name",
-        "model_config_name": "mlp_purchase100_baseline",
-        "attack_modifier": use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL),
-        "dataset_modifier": lambda cfg: cfg, "sm_model_type": "mlp"
-    },
-    {
-        "modality_name": "text", "base_config_factory": get_base_text_config, "dataset_name": "TREC",
-        "model_structure": "textcnn",  # <-- ADDED
-        "model_config_param_key": "experiment.text_model_config_name", "model_config_name": "textcnn_trec_baseline",
-        "attack_modifier": use_text_backdoor_attack, "dataset_modifier": use_trec_config,
-        "sm_model_type": "textcnn"
-    },
+    # {
+    #     "modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Purchase100",
+    #     "model_structure": "mlp",  # <-- ADDED
+    #     "model_config_param_key": "experiment.tabular_model_config_name",
+    #     "model_config_name": "mlp_purchase100_baseline",
+    #     "attack_modifier": use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL),
+    #     "dataset_modifier": lambda cfg: cfg, "sm_model_type": "mlp"
+    # },
+    # {
+    #     "modality_name": "text", "base_config_factory": get_base_text_config, "dataset_name": "TREC",
+    #     "model_structure": "textcnn",  # <-- ADDED
+    #     "model_config_param_key": "experiment.text_model_config_name", "model_config_name": "textcnn_trec_baseline",
+    #     "attack_modifier": use_text_backdoor_attack, "dataset_modifier": use_trec_config,
+    #     "sm_model_type": "textcnn"
+    # },
 ]
+
 
 # --- Function to apply Golden Training Parameters ONLY ---
 def apply_benchmark_setup(config: AppConfig, model_config_name: str, dataset_modifier: Callable,
@@ -114,7 +109,7 @@ def apply_benchmark_setup(config: AppConfig, model_config_name: str, dataset_mod
 # --- Main Execution Block ---
 if __name__ == "__main__":
 
-    output_dir = "./configs_generated/step2_attack_validation"  # New directory
+    output_dir = "./configs_generated_new/step2_attack_validation"  # New directory
     generator = ExperimentGenerator(output_dir)
     all_benchmark_scenarios = []
 
@@ -130,8 +125,9 @@ if __name__ == "__main__":
         # ONLY test FedAvg
         defense_name, fixed_defense_params = "fedavg", TUNED_DEFENSE_PARAMS["fedavg"]
 
-        scenario_name = f"step2_validate_{defense_name}_{modality}_{combo_config['dataset_name']}_{combo_config['model_structure']}"
+        scenario_name = f"new_step2_validate_{defense_name}_{modality}_{combo_config['dataset_name']}_{combo_config['model_structure']}"
         print(f"  - Defining scenario for {defense_name}: {scenario_name}")
+
 
         # Define the setup modifier lambda
         def create_setup_modifier(current_combo_config):
@@ -142,7 +138,9 @@ if __name__ == "__main__":
                     current_combo_config["dataset_modifier"],
                     current_combo_config["attack_modifier"]
                 )
+
             return setup_modifier_inner
+
 
         current_setup_modifier = create_setup_modifier(combo_config)
 
@@ -154,7 +152,7 @@ if __name__ == "__main__":
             combo_config["model_config_param_key"]: [model_name],
             "n_samples": [NUM_SEEDS_PER_CONFIG],
             "experiment.global_rounds": [100],
-            "experiment.use_early_stopping": [True], # Can be True for this check
+            "experiment.use_early_stopping": [True],  # Can be True for this check
             "experiment.patience": [10],
 
             # Fixed defense parameters (FedAvg)
