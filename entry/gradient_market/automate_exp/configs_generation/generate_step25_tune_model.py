@@ -184,7 +184,7 @@ def generate_training_hp_scenarios() -> List[Scenario]:
 # --- Main Execution Block (copied from Step 4) ---
 if __name__ == "__main__":
     base_output_dir = "./configs_generated_benchmark"
-    output_dir = Path(base_output_dir) / "step2.5_find_usable_hps_nolocalclip"  # New directory
+    output_dir = Path(base_output_dir) / "step2.5_find_usable_hps"  # New directory
     generator = ExperimentGenerator(str(output_dir))
 
     scenarios_to_generate = generate_training_hp_scenarios()
