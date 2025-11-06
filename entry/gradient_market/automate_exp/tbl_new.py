@@ -32,7 +32,7 @@ def get_base_tabular_config() -> AppConfig:
         experiment=ExperimentConfig(
             dataset_name="Texas100",
             model_structure="mlp",
-            global_rounds=80,
+            global_rounds=500,
             n_sellers=10,
             adv_rate=0.0,
             device="cuda" if torch.cuda.is_available() else "cpu",

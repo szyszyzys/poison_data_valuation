@@ -11,7 +11,7 @@ def get_base_image_config() -> AppConfig:
     return AppConfig(
         experiment=ExperimentConfig(
             dataset_name="CelebA", model_structure="lenet",
-            global_rounds=200, n_sellers=10, adv_rate=0.0,
+            global_rounds=500, n_sellers=10, adv_rate=0.0,
             device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="image",
             evaluations=["clean", "backdoor"],
         ),
@@ -50,7 +50,7 @@ def get_base_text_config() -> AppConfig:
     return AppConfig(
         experiment=ExperimentConfig(
             dataset_name="AG_NEWS", model_structure="text_cnn",
-            global_rounds=200, n_sellers=10, adv_rate=0.0,
+            global_rounds=500, n_sellers=10, adv_rate=0.0,
             device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="text",
             evaluations=["clean", "backdoor"]
         ),
