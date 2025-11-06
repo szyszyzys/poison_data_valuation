@@ -68,6 +68,8 @@ TUNING_TARGETS_STEP3 = [
      "dataset_modifier": use_trec_config, "backdoor_attack_modifier": use_text_backdoor_attack,
      "labelflip_attack_modifier": use_label_flipping_attack},
 ]
+
+
 # --- generate_defense_tuning_scenarios (Same as before) ---
 def generate_defense_tuning_scenarios() -> List[Scenario]:
     """Generates configs to tune defense HPs under fixed attacks."""
@@ -84,41 +86,59 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
             attack_modifier = target[attack_modifier_key]
             print(f"  -- Attack Type: {attack_type}")
 
-            # Modifier to apply Golden HPs and Fixed Attack Settings
-            def create_setup_modifier(
-                    current_modifier=attack_modifier,
-                    current_model_cfg_name=model_cfg_name  # <-- BIND THE VARIABLE HERE
-            ):
-                # Closure to capture the correct attack modifier
-                def modifier(config: AppConfig) -> AppConfig:
-                    training_params = GOLDEN_TRAINING_PARAMS.get(current_model_cfg_name)
-                    if training_params:
-                        for key, value in training_params.items():
-                            set_nested_attr(config, key, value)
-                    else:
-                        print(f"  WARNING: No Golden HPs found for model '{current_model_cfg_name}'!")
-
-                    config.experiment.adv_rate = DEFAULT_ADV_RATE
-                    config = current_modifier(config)  # Sets attack type (backdoor/labelflip)
-                    set_nested_attr(config, "adversary_seller_config.poisoning.poison_rate", DEFAULT_POISON_RATE)
-                    config.adversary_seller_config.sybil.is_sybil = False
-                    set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
-                    set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
-                    config.valuation.run_influence = False
-                    config.valuation.run_loo = False
-                    config.valuation.run_kernelshap = False
-                    return config
-                return modifier
-
-            setup_modifier_func = create_setup_modifier()
-
             current_defenses = IMAGE_DEFENSES if modality == "image" else TEXT_TABULAR_DEFENSES
             for defense_name in current_defenses:
                 if defense_name == "fedavg": continue
                 if defense_name not in TUNING_GRIDS: continue
 
-                defense_grid_to_sweep = TUNING_GRIDS[defense_name]
                 print(f"    - Defense: {defense_name}")
+
+                # === BUG FIX START ===
+                # The modifier MUST be created INSIDE the defense loop
+                # to get the correct defense-specific golden HPs.
+                def create_setup_modifier(
+                        current_modifier=attack_modifier,
+                        current_model_cfg_name=model_cfg_name,
+                        current_defense_name=defense_name  # <-- BIND THE DEFENSE NAME
+                ):
+                    # Closure to capture the correct attack modifier AND defense
+                    def modifier(config: AppConfig) -> AppConfig:
+
+                        # Build the defense-specific key from Step 2.5
+                        # NOTE: This assumes you are using the 'local_clip' results.
+                        # If you have 'no_local_clip', you'd need to adjust this.
+                        golden_hp_key = f"{current_defense_name}_{current_model_cfg_name}_local_clip"
+
+                        training_params = GOLDEN_TRAINING_PARAMS.get(golden_hp_key)
+
+                        if training_params:
+                            for key, value in training_params.items():
+                                set_nested_attr(config, key, value)
+                        else:
+                            print(f"  WARNING: No Golden HPs found for key '{golden_hp_key}'!")
+                            # You might want to exit here if this is critical
+                            # sys.exit(f"Missing critical HPs for {golden_hp_key}")
+
+                        # Apply fixed attack settings
+                        config.experiment.adv_rate = DEFAULT_ADV_RATE
+                        config = current_modifier(config)  # Sets attack type (backdoor/labelflip)
+                        set_nested_attr(config, "adversary_seller_config.poisoning.poison_rate", DEFAULT_POISON_RATE)
+                        config.adversary_seller_config.sybil.is_sybil = False
+
+                        # Apply data and valuation settings
+                        set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
+                        set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
+                        config.valuation.run_influence = False
+                        config.valuation.run_loo = False
+                        config.valuation.run_kernelshap = False
+                        return config
+
+                    return modifier
+
+                setup_modifier_func = create_setup_modifier()
+                # === BUG FIX END ===
+
+                defense_grid_to_sweep = TUNING_GRIDS[defense_name]
 
                 base_grid = {
                     target["model_config_param_key"]: [model_cfg_name],
@@ -202,7 +222,7 @@ if __name__ == "__main__":
             # Join parts to make the folder name
             hp_suffix = "_".join(hp_parts)
             if not hp_suffix:
-                hp_suffix = "default_hps" # Fallback
+                hp_suffix = "default_hps"  # Fallback
 
             # --- Create a new temporary scenario for this single config ---
 
@@ -220,8 +240,8 @@ if __name__ == "__main__":
             temp_scenario = Scenario(
                 name=temp_scenario_name,
                 base_config_factory=scenario.base_config_factory,
-                modifiers=scenario.modifiers, # Modifiers are already applied, but good to keep
-                parameter_grid=current_grid   # This grid has no lists, only single values
+                modifiers=scenario.modifiers,  # Modifiers are already applied, but good to keep
+                parameter_grid=current_grid  # This grid has no lists, only single values
             )
 
             # Generate the single config file
@@ -233,7 +253,6 @@ if __name__ == "__main__":
 
         print(f"-> Generated {task_configs} configs for {scenario.name} base")
         all_generated_configs += task_configs
-
 
     print(f"\n✅ Step 3 (Defense Tuning) config generation complete!")
     print(f"Total configurations generated: {all_generated_configs}")
