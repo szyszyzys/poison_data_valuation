@@ -20,22 +20,27 @@ def parse_path_info(filepath):
         path = pathlib.Path(filepath)
         parts = path.parts
 
-        scenario_name = parts[-4]
-        scenario_match = re.match(r'step2_validate_(\w+)_(\w+)_([a-zA-Z0-9]+)_(\w+)', scenario_name)
+        # === MODIFIED ===
+        # scenario_name is one level deeper due to the 'default_hps' folder
+        scenario_name = parts[-5]
+        # Regex updated to include 'new_' prefix
+        scenario_match = re.match(r'new_step2_validate_(\w+)_(\w+)_([a-zA-Z0-9]+)_(\w+)', scenario_name)
+        # === END MODIFIED ===
+
         if not scenario_match:
             print(f"Warning: Skipping path with unexpected scenario format: {scenario_name}")
             return None
 
         defense, modality, dataset, model = scenario_match.groups()
 
+        # === MODIFIED ===
+        # hp_suffix is at index -3
         hp_suffix = parts[-3]
+        # === END MODIFIED ===
 
-        # --- THIS IS THE FIX ---
         # The regex [\\d\\.p]+ matches digits, literal dots, and the letter 'p'.
-        # It correctly stops at the underscore '_'.
         adv_match = re.search(r'adv-([\d\.p]+)', hp_suffix)
         poison_match = re.search(r'poison-([\d\.p]+)', hp_suffix)
-        # --- END FIX ---
 
         # Handle benign case where adv_rate is 0 and poison_rate might be 0
         if adv_match:
@@ -56,7 +61,11 @@ def parse_path_info(filepath):
         if adv_rate == 0.0:
             poison_rate = 0.0  # Treat as benign regardless of poison_rate string
 
+        # === MODIFIED ===
+        # run_info is at index -2
         run_info = parts[-2]
+        # === END MODIFIED ===
+
         run_match = re.match(r'run_(\d+)_seed_(\d+)', run_info)
         if not run_match:
             print(f"Warning: Skipping path with unexpected run format: {run_info}")
@@ -99,14 +108,17 @@ def load_metrics(filepath):
 def main():
     """Main analysis function."""
 
-    # Use a flexible wildcard "*" to match the complex HP string
+    # === MODIFIED ===
+    # Use wildcards to match the full path: <scenario>/default_hps/<hp_string>/<run_folder>
     search_path = os.path.join(
         BASE_RESULTS_DIR,
         EXPERIMENT_PATTERN,
-        "*",  # Flexible pattern
-        "run_*_seed_*",
+        "*",  # Matches 'default_hps'
+        "*",  # Matches 'ds-texas100_model-mlp_agg-fedavg_...'
+        "run_*_seed_*",  # Matches 'run_0_seed_42'
         "final_metrics.json"
     )
+    # === END MODIFIED ===
 
     print(f"🔍 Searching for results in: {search_path}\n")
     all_files = glob.glob(search_path)
