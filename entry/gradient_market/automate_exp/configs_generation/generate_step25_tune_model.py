@@ -117,7 +117,8 @@ def generate_training_hp_scenarios() -> List[Scenario]:
             # We bind the *default* defense params
             def create_setup_modifier_sens(
                     current_defense_name=defense_name,
-                    current_defense_params=default_defense_params
+                    current_defense_params=default_defense_params,
+                    current_attack_modifier=attack_modifier  # <-- 1. BIND THE ATTACK MODIFIER
             ):
                 def modifier(config: AppConfig) -> AppConfig:
                     # Apply Default Defense HPs
@@ -127,7 +128,11 @@ def generate_training_hp_scenarios() -> List[Scenario]:
 
                     # Apply Attack State (ALWAYS "with_attack")
                     config.experiment.adv_rate = DEFAULT_ADV_RATE
-                    config = attack_modifier(config)  # Use the correct attack
+
+                    # --- 2. USE THE BOUND VARIABLE ---
+                    config = current_attack_modifier(config)  # Use the correct, bound attack
+                    # --- END FIX ---
+
                     set_nested_attr(config, "adversary_seller_config.poisoning.poison_rate", DEFAULT_POISON_RATE)
                     print(f"    Applied Attack: {DEFAULT_ADV_RATE * 100}% rate, {DEFAULT_POISON_RATE * 100}% poison")
 
@@ -147,7 +152,6 @@ def generate_training_hp_scenarios() -> List[Scenario]:
                     return config
 
                 return modifier
-
             setup_modifier_func = create_setup_modifier_sens()
 
             # Base grid contains FIXED elements + LISTS for HP sweep
