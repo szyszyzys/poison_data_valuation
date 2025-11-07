@@ -10,7 +10,7 @@ def get_base_image_config() -> AppConfig:
     """Creates the default, base AppConfig for IMAGE-based experiments."""
     return AppConfig(
         experiment=ExperimentConfig(
-            dataset_name="CelebA", model_structure="lenet",
+            dataset_name="CelebA", model_structure="cnn",
             global_rounds=500, n_sellers=10, adv_rate=0.0,
             device="cuda" if torch.cuda.is_available() else "cpu", dataset_type="image",
             evaluations=["clean", "backdoor"],
