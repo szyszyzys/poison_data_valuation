@@ -16,7 +16,7 @@ from config_common_utils import (
 # Base Configs & Modifiers (Update path if needed)
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config  # Example
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_config, \
-    use_image_backdoor_attack  # Example
+    use_image_backdoor_attack,use_cifar100_config # Example
 
 # Import needed attack modifiers
 # ## USER ACTION ##: Ensure this import path is correct
@@ -46,15 +46,25 @@ LOCAL_EPOCHS_TO_SWEEP = [1, 2, 5]
 # --- Focus Setup for Sensitivity Analysis ---
 # ## USER ACTION ##: Choose one representative setup (model/dataset) for this analysis
 # Using a single, well-understood case makes the analysis clearer.
+# SENSITIVITY_SETUP = {
+#     "modality_name": "image",
+#     "base_config_factory": get_base_image_config,
+#     "dataset_name": "CIFAR10",  # lowercase
+#     "model_config_param_key": "experiment.image_model_config_name",
+#     "model_config_name": "cifar10_cnn",  # lowercase, use your best model
+#     "dataset_modifier": use_cifar10_config,
+#     "attack_modifier": use_image_backdoor_attack  # Standard attack for 'with_attack' state
+# }
 SENSITIVITY_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "CIFAR10",  # lowercase
+    "dataset_name": "CIFAR100",  #
     "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar10_cnn",  # lowercase, use your best model
-    "dataset_modifier": use_cifar10_config,
+    "model_config_name": "cifar100_cnn",  # <-- CHANGED
+    "dataset_modifier": use_cifar100_config,  # <-- CHANGED
     "attack_modifier": use_image_backdoor_attack  # Standard attack for 'with_attack' state
 }
+
 
 # --- Attack States to Test ---
 ATTACK_STATES = ["no_attack", "with_attack"]
