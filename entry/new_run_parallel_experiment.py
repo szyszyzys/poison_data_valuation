@@ -395,7 +395,7 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
         # This will be "ds-cifar10_model-lenet..."
         run_details_folder_name = original_base_save_path.name
         # This will be "results/step3_tune_..."
-        scenario_path = original_base_save_path.parent
+        scenario_path = original_base_save_path
 
         # 2. Build the HP folder name (Same logic as my previous answer)
         hp_parts = []
@@ -437,6 +437,7 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
         # --- END OF NEW ROBUST FIX ---
 
         run_save_path.mkdir(parents=True, exist_ok=True)
+        print(run_save_path)
 
         # --- Locking and Cleanup Logic (Same as before) ---
         lock_file = run_save_path / ".lock"

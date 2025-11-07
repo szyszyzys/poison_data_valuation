@@ -107,7 +107,7 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
                         # Build the defense-specific key from Step 2.5
                         # NOTE: This assumes you are using the 'local_clip' results.
                         # If you have 'no_local_clip', you'd need to adjust this.
-                        golden_hp_key = f"{current_defense_name}_{current_model_cfg_name}_local_clip"
+                        golden_hp_key = f"{current_model_cfg_name}"
 
                         training_params = GOLDEN_TRAINING_PARAMS.get(golden_hp_key)
 
@@ -231,7 +231,7 @@ if __name__ == "__main__":
 
             # Set the unique save path for the *results*
             # This is the path your run_parallel.py will use
-            unique_save_path = f"./results/{scenario.name}/{hp_suffix}"
+            unique_save_path = f"./results_new/{scenario.name}/{hp_suffix}"
             current_grid["experiment.save_path"] = [unique_save_path]
 
             # Set the unique name for the *config file*

@@ -12,7 +12,7 @@ GOLDEN_TRAINING_PARAMS = {
     # --- IMAGE MODELS ---
     "cifar10_cnn": {
         # Best: 0.8248 acc
-        "training.optimizer": "Adam", "training.learning_rate": 0.001, "training.local_epochs": 5,
+        "training.optimizer": "Adam", "training.learning_rate": 0.001, "training.local_epochs": 2,
         "training.momentum": 0.0, "training.weight_decay": 0.0,
     },
     "cifar10_resnet18": {
@@ -34,20 +34,20 @@ GOLDEN_TRAINING_PARAMS = {
 
     # --- TABULAR MODELS ---
     "mlp_texas100_baseline": {
-        "training.optimizer": "Adam", "training.learning_rate": 0.0001, "training.local_epochs": 5,
+        "training.optimizer": "Adam", "training.learning_rate": 0.001, "training.local_epochs": 5,
         "training.momentum": 0.0, "training.weight_decay": 0.0,
     },
     "mlp_purchase100_baseline": {
         # Best: 0.6002 acc
-        "training.optimizer": "Adam", "training.learning_rate": 0.0005, "training.local_epochs": 5,
+        "training.optimizer": "Adam", "training.learning_rate": 0.001, "training.local_epochs": 5,
         "training.momentum": 0.0, "training.weight_decay": 0.0,
     },
 
     # --- TEXT MODELS ---
     "textcnn_trec_baseline": {
         # Best: 0.7985 acc
-        "training.optimizer": "SGD", "training.learning_rate": 0.05, "training.local_epochs": 5,
-        "training.momentum": 0.9, "training.weight_decay": 0.0001
+        "training.optimizer": "Adam", "training.learning_rate": 0.001, "training.local_epochs": 2,
+        "training.momentum": 0.0, "training.weight_decay": 0.0
     }
 }
 
