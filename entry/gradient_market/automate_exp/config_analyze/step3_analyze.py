@@ -252,4 +252,141 @@ def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path):
 
     # --- 4. Display Final Table of Best HPs ---
     display_cols = scenario_group_cols + hp_cols + [
-        'mean_test_acc', 'std_test_acc', 'mean_backdoor_asr', 'std_backdoor_asr',
+        'mean_test_acc', 'std_test_acc', 'mean_backdoor_asr', 'std_backdoor_asr', 'score', 'num_success_runs'
+    ]
+    display_cols = [col for col in display_cols if col in best_df.columns]
+
+    print("\n" + "=" * 120)
+    print(f"🏆 Best Defense Hyperparameters Found (Ranked by: '{RANKING_METRIC}')")
+    print("(This table shows the single best HP combination for each scenario found in the data)")
+    print("=" * 120)
+
+    with pd.option_context('display.max_rows', None,
+                           'display.max_columns', None,
+                           'display.width', 1000,
+                           'display.float_format', '{:,.4f}'.format):
+        print(best_df[display_cols].to_string(index=False))
+
+    # --- 5. Save Full Aggregated Results & Best Results ---
+    output_csv_all = results_dir / "step3_defense_tuning_all_aggregated.csv"
+    output_csv_best = results_dir / "step3_defense_tuning_best_hps.csv"
+    try:
+        # Save the full aggregated results (not just the best)
+        agg_df.sort_values(by=scenario_group_cols + ['score'],
+                           ascending=[True] * len(scenario_group_cols) + [False]).to_csv(output_csv_all, index=False,
+                                                                                         float_format="%.5f")
+        logger.info(f"\n✅ Full aggregated tuning results saved to: {output_csv_all}")
+
+        # Save just the best HPs
+        best_df[display_cols].to_csv(output_csv_best, index=False, float_format="%.5f")
+        logger.info(f"✅ Best hyperparameters saved to: {output_csv_best}")
+    except Exception as e:
+        logger.warning(f"\n⚠️ Could not save aggregated results to CSV: {e}")
+
+    print("\n" + "=" * 120)
+    print(
+        "Analysis complete. Use the 'Best Hyperparameters' table to update TUNED_DEFENSE_PARAMS in config_common_utils.py")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Analyze FL Defense Tuning results (Step 3) to find best HPs."
+    )
+    parser.add_argument(
+        "results_dir",
+        type=str,
+        help="The ROOT results directory containing the Step 3 run folders (e.g., './results/')"
+    )
+    # --- NEW OPTIONAL ARGUMENTS ---
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        help="Optional: Filter results for a specific dataset (e.g., 'CIFAR10')."
+    )
+    parser.add_argument(
+        "--defense",
+        type=str,
+        default=None,
+        help="Optional: Filter results for a specific defense (e.g., 'fltrust')."
+    )
+    parser.add_argument(
+        "--attack_type",
+        type=str,
+        default=None,
+        help="Optional: Filter results for a specific attack type (e.g., 'backdoor')."
+    )
+    # --- END NEW ARGUMENTS ---
+
+    args = parser.parse_args()
+
+    results_path = Path(args.results_dir).resolve()
+
+    if not results_path.exists():
+        logger.error(f"❌ ERROR: The directory '{results_path}' does not exist.")
+        logger.error("Please provide a valid path to the results directory.")
+        return
+
+    try:
+        # --- 1. Run the full analysis and save CSVs ---
+        raw_results_df = find_all_tuning_results(results_path)
+        analyze_defense_tuning(raw_results_df, results_path)
+
+        # --- 2. If filters are provided, show detailed results for that slice ---
+        filters_applied = bool(args.dataset or args.defense or args.attack_type)
+
+        if filters_applied:
+            logger.info("--- Detailed Analysis for Specific Filters ---")
+
+            # Read from the CSV we just created
+            agg_csv_path = results_path / "step3_defense_tuning_all_aggregated.csv"
+            if not agg_csv_path.exists():
+                logger.error(f"Could not find aggregated file: {agg_csv_path}")
+                return
+
+            agg_df = pd.read_csv(agg_csv_path)
+
+            # Apply filters
+            if args.dataset:
+                agg_df = agg_df[agg_df['dataset'].str.lower() == args.dataset.lower()]
+            if args.defense:
+                agg_df = agg_df[agg_df['defense'].str.lower() == args.defense.lower()]
+            if args.attack_type:
+                # Use user's 'attack_type' argument
+                agg_df = agg_df[agg_df['attack_type'].str.lower() == args.attack_type.lower()]
+
+            if agg_df.empty:
+                logger.warning("No aggregated data matches the provided filters.")
+            else:
+                # --- Display logic from inspect_defense.py ---
+                df_to_print = agg_df.sort_values(by='score', ascending=False)
+                # Drop columns that are all NaN *for this slice*
+                df_to_print = df_to_print.dropna(axis=1, how='all')
+
+                # Dynamically find HP columns
+                known_cols = [
+                    'scenario', 'defense', 'attack_type', 'modality', 'dataset', 'model_suffix',
+                    'mean_test_acc', 'std_test_acc', 'mean_backdoor_asr', 'std_backdoor_asr',
+                    'num_success_runs', 'score'
+                ]
+                hp_cols = [col for col in df_to_print.columns if col not in known_cols and not col.startswith('raw_')]
+                display_cols = hp_cols + ['mean_test_acc', 'std_test_acc', 'mean_backdoor_asr', 'std_backdoor_asr',
+                                          'score', 'num_success_runs']
+                display_cols = [col for col in display_cols if col in df_to_print.columns]
+
+                print("\n" + "=" * 120)
+                print(
+                    f"🔍 Detailed Results for: Dataset='{args.dataset or 'Any'}', Defense='{args.defense or 'Any'}', Attack='{args.attack_type or 'Any'}'")
+                print(f"(Ranked by: '{RANKING_METRIC}')")
+                print("=" * 120)
+                with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', 1000,
+                                       'display.float_format', '{:,.4f}'.format):
+                    print(df_to_print[display_cols].to_string(index=False))
+                print("=" * 120)
+
+    except Exception as e:
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+
+if __name__ == "__main__":
+    main()
