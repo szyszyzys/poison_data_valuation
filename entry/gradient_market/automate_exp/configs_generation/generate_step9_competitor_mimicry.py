@@ -15,7 +15,7 @@ from config_common_utils import (
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_config, \
-    use_competitor_mimicry_attack
+    use_competitor_mimicry_attack, use_cifar100_config
 
 try:
     from common.gradient_market_configs import AppConfig, PoisonType
@@ -34,12 +34,12 @@ OBSERVATION_ROUNDS = 5
 MIMICRY_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "CIFAR10",
+    "dataset_name": "CIFAR100",
     "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar10_cnn",
-    "dataset_modifier": use_cifar10_config,
+    "model_config_name": "cifar100_cnn",
+    "dataset_modifier": use_cifar100_config,
 }
-DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl"]
+DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl", "skymask"]
 
 
 # === THIS IS THE CORRECTED FUNCTION ===

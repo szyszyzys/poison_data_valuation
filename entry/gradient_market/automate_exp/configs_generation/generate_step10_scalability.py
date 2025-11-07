@@ -1,21 +1,19 @@
 # FILE: generate_step10_scalability.py
 
-import sys
 import copy
+import sys
 from pathlib import Path
-from typing import List, Callable, Dict, Any
+from typing import List
 
 # --- Imports ---
 from config_common_utils import (
     GOLDEN_TRAINING_PARAMS,  # <-- ADDED
-    TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
-    IMAGE_DEFENSES, TEXT_TABULAR_DEFENSES, ALL_DEFENSES,
+    NUM_SEEDS_PER_CONFIG,
     # create_fixed_params_modifier,  <-- REMOVED
-    enable_valuation, get_tuned_defense_params
+    get_tuned_defense_params
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
-from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_config, \
-    use_image_backdoor_attack
+from entry.gradient_market.automate_exp.scenarios import Scenario, use_image_backdoor_attack, use_cifar100_config
 
 try:
     from common.gradient_market_configs import AppConfig, PoisonType
@@ -32,10 +30,10 @@ FIXED_ATTACK_POISON_RATE = 0.5
 SCALABILITY_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "cifar10",
+    "dataset_name": "cifar100",
     "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar10_cnn",
-    "dataset_modifier": use_cifar10_config,
+    "model_config_name": "cifar100_cnn",
+    "dataset_modifier": use_cifar100_config,
     "attack_modifier": use_image_backdoor_attack
 }
 DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl", "skymask"]

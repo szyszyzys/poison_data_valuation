@@ -14,7 +14,8 @@ from config_common_utils import (
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.config_generator import set_nested_attr, ExperimentGenerator
-from entry.gradient_market.automate_exp.scenarios import use_cifar10_config, Scenario, use_drowning_attack
+from entry.gradient_market.automate_exp.scenarios import use_cifar10_config, Scenario, use_drowning_attack, \
+    use_cifar100_config
 
 # ... (Constants are all correct) ...
 FIXED_ADV_RATE = 0.3
@@ -23,12 +24,12 @@ ATTACK_STRENGTH = 1.0
 DROWNING_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "CIFAR10",
+    "dataset_name": "CIFAR100",
     "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar10_cnn",
-    "dataset_modifier": use_cifar10_config,
+    "model_config_name": "cifar100_cnn",
+    "dataset_modifier": use_cifar100_config,
 }
-DEFENSES_TO_TEST = ["martfl", "fltrust"]
+DEFENSES_TO_TEST = ["martfl", "fltrust", "skymask"]
 
 
 # === THIS IS THE CORRECTED FUNCTION ===

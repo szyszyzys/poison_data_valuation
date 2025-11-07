@@ -8,7 +8,7 @@ from typing import List
 # --- Imports ---
 # Common Utils (Update path if needed)
 from config_common_utils import (
-    TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
+    NUM_SEEDS_PER_CONFIG,
     DEFAULT_ADV_RATE,  # Use default adversary rate
     IMAGE_DEFENSES,
     # create_fixed_params_modifier,  <-- REMOVED BUGGY HELPER
@@ -17,7 +17,8 @@ from config_common_utils import (
 )
 # Base Configs & Modifiers (Update path if needed)
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config  # Example
-from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_config, use_adaptive_attack  # Example
+from entry.gradient_market.automate_exp.scenarios import Scenario, use_adaptive_attack, \
+    use_cifar100_config  # Example
 
 # Import needed attack modifiers
 try:
@@ -35,10 +36,10 @@ EXPLORATION_ROUNDS = 30
 ADAPTIVE_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "CIFAR10",
+    "dataset_name": "CIFAR100",
     "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar10_cnn",
-    "dataset_modifier": use_cifar10_config,
+    "model_config_name": "cifar100_cnn",
+    "dataset_modifier": use_cifar100_config,
 }
 
 

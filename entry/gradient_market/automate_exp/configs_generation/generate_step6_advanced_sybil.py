@@ -12,8 +12,7 @@ from config_common_utils import (
     get_tuned_defense_params, GOLDEN_TRAINING_PARAMS
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
-from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_config, \
-    use_image_backdoor_attack
+from entry.gradient_market.automate_exp.scenarios import Scenario, use_image_backdoor_attack, use_cifar100_config
 
 try:
     from common.gradient_market_configs import AppConfig, PoisonType
@@ -38,10 +37,10 @@ SYBIL_TEST_CONFIG = {
 SYBIL_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "CIFAR10",
+    "dataset_name": "CIFAR100",
     "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar10_cnn",
-    "dataset_modifier": use_cifar10_config,
+    "model_config_name": "cifar100_cnn",
+    "dataset_modifier": use_cifar100_config,
     "attack_modifier": use_image_backdoor_attack
 }
 
