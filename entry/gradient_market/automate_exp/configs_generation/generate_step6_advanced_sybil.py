@@ -3,13 +3,13 @@
 import copy
 import sys
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List
 
 # --- Imports ---
 from config_common_utils import (
-    TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
-    DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, IMAGE_DEFENSES, create_fixed_params_modifier,
-    enable_valuation, use_sybil_attack_strategy, get_tuned_defense_params
+    NUM_SEEDS_PER_CONFIG,
+    DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, IMAGE_DEFENSES, enable_valuation, use_sybil_attack_strategy,
+    get_tuned_defense_params, GOLDEN_TRAINING_PARAMS
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_config, \
@@ -50,6 +50,7 @@ FIXED_ATTACK_ADV_RATE = DEFAULT_ADV_RATE
 FIXED_ATTACK_POISON_RATE = DEFAULT_POISON_RATE
 
 
+# === THIS IS THE CORRECTED FUNCTION ===
 def generate_advanced_sybil_scenarios() -> List[Scenario]:
     """Generates base scenarios for comparing different Sybil strategies."""
     print("\n--- Generating Step 6: Advanced Sybil Comparison Scenarios ---")
@@ -59,16 +60,49 @@ def generate_advanced_sybil_scenarios() -> List[Scenario]:
     current_defenses = IMAGE_DEFENSES
 
     for defense_name in current_defenses:
+        # 2. Get Tuned HPs (from Step 3)
         tuned_defense_params = get_tuned_defense_params(
             defense_name=defense_name,
             model_config_name=model_cfg_name,
+            attack_state='with_attack',
             default_attack_type_for_tuning="backdoor"
         )
         print(f"-- Processing Defense: {defense_name}")
 
-        fixed_params_modifier = create_fixed_params_modifier(
-            modality, tuned_defense_params, model_cfg_name, apply_noniid=True
-        )
+        # 3. Create the setup modifier INSIDE the loop
+        def create_setup_modifier(
+                current_defense_name=defense_name,
+                current_model_cfg_name=model_cfg_name,
+                current_tuned_params=tuned_defense_params
+        ):
+            def modifier(config: AppConfig) -> AppConfig:
+                # --- Apply Golden Training HPs (from Step 2.5) ---
+                golden_hp_key = f"{current_defense_name}_{current_model_cfg_name}_local_clip"
+                training_params = GOLDEN_TRAINING_PARAMS.get(golden_hp_key)
+                if training_params:
+                    for key, value in training_params.items():
+                        set_nested_attr(config, key, value)
+                else:
+                    print(f"  WARNING: No Golden HPs found for key '{golden_hp_key}'!")
+                    # sys.exit(f"Missing critical HPs for {golden_hp_key}")
+
+                # --- Apply Tuned Defense HPs (from Step 3) ---
+                if current_tuned_params:
+                    for key, value in current_tuned_params.items():
+                        set_nested_attr(config, key, value)
+                else:
+                    print(f"  WARNING: No Tuned HPs found for {current_defense_name}!")
+                    # sys.exit(f"Missing critical Tuned HPs for {current_defense_name}")
+
+                # --- Apply other fixed settings ---
+                set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
+                set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
+                return config
+
+            return modifier
+
+        # 4. Create the modifier function
+        setup_modifier_func = create_setup_modifier()
 
         # Base Grid (fixed parts)
         base_grid = {
@@ -86,17 +120,16 @@ def generate_advanced_sybil_scenarios() -> List[Scenario]:
             print(f"  - Strategy: {strategy_name}")
             scenario_name = f"step6_adv_sybil_{strategy_name}_{defense_name}"
 
-            # --- We add a custom key to store sweep info for the main loop ---
             current_grid = base_grid.copy()
-            current_grid["_strategy_name"] = [strategy_name] # Store strategy name
+            current_grid["_strategy_name"] = [strategy_name]  # Store strategy name
             if strategy_params_sweep:
                 current_grid["_sweep_params"] = [strategy_params_sweep]
             else:
                 current_grid["_sweep_params"] = [None]
 
-            # Valuation is enabled for ALL runs in this step
+            # 5. Build the modifier list with the FIXED function
             current_modifiers = [
-                fixed_params_modifier,
+                setup_modifier_func,  # <-- Use the new, correct modifier
                 SYBIL_SETUP["dataset_modifier"],
                 SYBIL_SETUP["attack_modifier"],
                 lambda config: enable_valuation(
@@ -119,8 +152,9 @@ def generate_advanced_sybil_scenarios() -> List[Scenario]:
     return scenarios
 
 
-# --- Main Execution Block (FIXED) ---
+# --- Main Execution Block (This was already correct, no changes needed) ---
 if __name__ == "__main__":
+    # (Your main block is perfect)
     base_output_dir = "./configs_generated_benchmark"
     output_dir = Path(base_output_dir) / "step6_advanced_sybil"
     generator = ExperimentGenerator(str(output_dir))
@@ -130,48 +164,32 @@ if __name__ == "__main__":
 
     print("\n--- Generating Configuration Files for Step 6 ---")
 
-    # --- Manual Loop REQUIRED for unique save paths & strategy logic ---
     for scenario in scenarios_to_generate:
         print(f"\nProcessing scenario base: {scenario.name}")
         task_configs = 0
 
-        # Get the static grid params
         static_grid = {k: v for k, v in scenario.parameter_grid.items() if k.startswith("_") == False}
-
-        # Get our custom strategy keys
         strategy_name = scenario.parameter_grid["_strategy_name"][0]
         sweep_params = scenario.parameter_grid["_sweep_params"][0]
-
-        # Base suffix for save path (constant for this scenario)
         base_hp_suffix = f"adv_{FIXED_ATTACK_ADV_RATE}_poison_{FIXED_ATTACK_POISON_RATE}"
 
-        # --- Sub-loop: Iterate over any swept parameters (like blend_alpha) ---
-
-        # Case 1: Strategy with parameters to sweep (e.g., oracle_blend)
         if sweep_params:
             sweep_key, sweep_values = next(iter(sweep_params.items()))
-            config_key_path = f"adversary_seller_config.sybil.{sweep_key}" # e.g., ...sybil.blend_alpha
+            config_key_path = f"adversary_seller_config.sybil.{sweep_key}"
 
             for sweep_value in sweep_values:
                 current_grid = static_grid.copy()
-
-                # Set the swept parameter
                 current_grid[config_key_path] = [sweep_value]
-
-                # Create unique path: .../adv_0.3_poison_0.5_blend_alpha_0.1
                 hp_suffix = f"{base_hp_suffix}_{sweep_key}_{sweep_value}"
 
-                # --- Create temporary scenario for this specific config ---
                 temp_scenario = Scenario(
                     name=f"{scenario.name}/{hp_suffix}",
                     base_config_factory=scenario.base_config_factory,
-                    # Apply all modifiers, including the one to enable Sybil
                     modifiers=scenario.modifiers + [use_sybil_attack_strategy(strategy=strategy_name)],
                     parameter_grid=current_grid
                 )
                 temp_scenario.parameter_grid["experiment.save_path"] = [f"./results/{scenario.name}/{hp_suffix}"]
 
-                # Generate
                 base_config = temp_scenario.base_config_factory()
                 modified_base_config = copy.deepcopy(base_config)
                 for modifier in temp_scenario.modifiers:
@@ -179,30 +197,23 @@ if __name__ == "__main__":
 
                 num_gen = generator.generate(modified_base_config, temp_scenario)
                 task_configs += num_gen
-
-        # Case 2: Strategy with no params (e.g., mimic) OR baseline
         else:
             current_grid = static_grid.copy()
-            hp_suffix = base_hp_suffix # Path is just .../adv_0.3_poison_0.5
+            hp_suffix = base_hp_suffix
 
-            # --- Create temporary scenario ---
             temp_scenario = Scenario(
                 name=f"{scenario.name}/{hp_suffix}",
                 base_config_factory=scenario.base_config_factory,
-                modifiers=scenario.modifiers, # Base modifiers
+                modifiers=scenario.modifiers,
                 parameter_grid=current_grid
             )
             temp_scenario.parameter_grid["experiment.save_path"] = [f"./results/{scenario.name}/{hp_suffix}"]
 
-            # --- Apply strategy-specific logic ---
             if strategy_name == "baseline_no_sybil":
-                # Do NOT add the sybil modifier. Set is_sybil to False.
                 temp_scenario.parameter_grid["adversary_seller_config.sybil.is_sybil"] = [False]
             else:
-                # Add the modifier for this strategy (e.g., "mimic")
                 temp_scenario.modifiers.append(use_sybil_attack_strategy(strategy=strategy_name))
 
-            # Generate
             base_config = temp_scenario.base_config_factory()
             modified_base_config = copy.deepcopy(base_config)
             for modifier in temp_scenario.modifiers:

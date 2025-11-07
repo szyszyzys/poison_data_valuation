@@ -10,7 +10,7 @@ from typing import List
 from config_common_utils import (
     NUM_SEEDS_PER_CONFIG,
     DEFAULT_ADV_RATE, DEFAULT_POISON_RATE,
-    IMAGE_DEFENSES, create_fixed_params_modifier, get_tuned_defense_params, )
+    IMAGE_DEFENSES, get_tuned_defense_params, GOLDEN_TRAINING_PARAMS, )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_config, \
     use_image_backdoor_attack, use_label_flipping_attack
@@ -51,34 +51,62 @@ def generate_attack_sensitivity_scenarios() -> List[Scenario]:
     current_defenses = IMAGE_DEFENSES
 
     for defense_name in current_defenses:
-
-        # --- START FIX: Loop over attack_type *first* ---
         for attack_type in ATTACK_TYPES:
             print(f"-- Processing Defense: {defense_name} (for {attack_type} attack) --")
 
+            # 1. Get the T tuned HPs for this defense/attack combo (from Step 3)
             tuned_defense_params = get_tuned_defense_params(
                 defense_name=defense_name,
                 model_config_name=model_cfg_name,
-                attack_state="with_attack",  # It's always "with_attack" here
-                explicit_attack_type=attack_type  # <-- This is the key
+                attack_state="with_attack",
+                explicit_attack_type=attack_type
             )
-            if not tuned_defense_params:  # <-- Check for None
+            if not tuned_defense_params:
                 print(f"  SKIPPING: No tuned params found for {defense_name}_{model_cfg_name}_{attack_type}")
                 continue
-            # 4. Create the fixed_params modifier using these specific HPs
-            fixed_params_modifier = create_fixed_params_modifier(
-                modality, tuned_defense_params, model_cfg_name, apply_noniid=True
-            )
 
-            # 5. Get the attack modifier function
+            # 2. Get the attack modifier function
             attack_modifier_key = f"{attack_type}_attack_modifier"
             if attack_modifier_key not in SENSITIVITY_SETUP_STEP5:
                 print(f"  SKIPPING: No attack modifier function found for {attack_type}")
                 continue
             attack_modifier = SENSITIVITY_SETUP_STEP5[attack_modifier_key]
-            print(f"  -- Attack Type: {attack_type}")
 
-            # Base grid - DOES NOT include the sweep
+            # 3. Create the setup modifier function *inside the loop*
+            #    This correctly binds all the HPs
+            def create_setup_modifier(
+                    current_defense_name=defense_name,
+                    current_model_cfg_name=model_cfg_name,
+                    current_tuned_params=tuned_defense_params
+            ):
+                def modifier(config: AppConfig) -> AppConfig:
+                    golden_hp_key = f"{current_defense_name}_{current_model_cfg_name}_local_clip"
+                    training_params = GOLDEN_TRAINING_PARAMS.get(golden_hp_key)
+                    if training_params:
+                        for key, value in training_params.items():
+                            set_nested_attr(config, key, value)
+                    else:
+                        print(f"  WARNING: No Golden HPs found for key '{golden_hp_key}'!")
+                        # This is a critical error, you might want to uncomment the next line
+                        # sys.exit(f"Missing critical HPs for {golden_hp_key}")
+
+                    # --- Apply Tuned Defense HPs (from Step 3) ---
+                    for key, value in current_tuned_params.items():
+                        set_nested_attr(config, key, value)
+
+                    # --- Apply other fixed settings ---
+                    set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
+                    set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
+                    config.valuation.run_influence = False
+                    config.valuation.run_loo = False
+                    config.valuation.run_kernelshap = False
+                    return config
+
+                return modifier
+
+            setup_modifier_func = create_setup_modifier()
+
+            # 4. Base grid - DOES NOT include the sweep
             base_grid = {
                 SENSITIVITY_SETUP_STEP5["model_config_param_key"]: [model_cfg_name],
                 "experiment.dataset_name": [SENSITIVITY_SETUP_STEP5["dataset_name"]],
@@ -93,7 +121,7 @@ def generate_attack_sensitivity_scenarios() -> List[Scenario]:
             scenarios.append(Scenario(
                 name=f"step5_atk_sens_adv_{defense_name}_{attack_type}_{modality}",
                 base_config_factory=SENSITIVITY_SETUP_STEP5["base_config_factory"],
-                modifiers=[fixed_params_modifier, SENSITIVITY_SETUP_STEP5["dataset_modifier"], attack_modifier],
+                modifiers=[setup_modifier_func, SENSITIVITY_SETUP_STEP5["dataset_modifier"], attack_modifier],
                 parameter_grid=grid_adv
             ))
 
@@ -103,15 +131,16 @@ def generate_attack_sensitivity_scenarios() -> List[Scenario]:
             scenarios.append(Scenario(
                 name=f"step5_atk_sens_poison_{defense_name}_{attack_type}_{modality}",
                 base_config_factory=SENSITIVITY_SETUP_STEP5["base_config_factory"],
-                modifiers=[fixed_params_modifier, SENSITIVITY_SETUP_STEP5["dataset_modifier"], attack_modifier],
+                modifiers=[setup_modifier_func, SENSITIVITY_SETUP_STEP5["dataset_modifier"], attack_modifier],
                 parameter_grid=grid_poison
             ))
 
     return scenarios
 
 
-# --- Main Execution Block (FIXED) ---
+# --- Main Execution Block (This was already correct, no changes needed) ---
 if __name__ == "__main__":
+    # (Your main block is perfect)
     base_output_dir = "./configs_generated_benchmark"
     output_dir = Path(base_output_dir) / "step5_attack_sensitivity"
     generator = ExperimentGenerator(str(output_dir))

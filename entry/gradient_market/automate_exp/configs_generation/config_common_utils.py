@@ -99,7 +99,6 @@ def get_tuned_defense_params(
         defense_name: str,
         model_config_name: str,
         attack_state: str,
-        # NEW: This allows Step 5 to be specific
         explicit_attack_type: Optional[str] = None,
         default_attack_type_for_tuning: str = "backdoor"
 ) -> Optional[Dict[str, Any]]:  # <-- Return Optional
@@ -175,42 +174,6 @@ def disable_all_attacks(config: AppConfig) -> AppConfig:
     config.buyer_attack_config.attack_type = "none"
 
     return config
-
-
-# --- Helper to apply fixed Golden Training & Tuned Defense HPs ---
-def create_fixed_params_modifier(
-        modality: str,
-        defense_params: Dict[str, Any],
-        model_config_name: str,
-        apply_noniid: bool = True  # Flag to control data distribution
-) -> Callable[[AppConfig], AppConfig]:
-    def modifier(config: AppConfig) -> AppConfig:
-        # 1. Apply Golden Training HPs
-        training_params = GOLDEN_TRAINING_PARAMS.get(model_config_name)
-        if training_params:
-            for key, value in training_params.items():
-                set_nested_attr(config, key, value)
-        # 2. Apply Tuned Defense HPs
-        for key, value in defense_params.items():
-            set_nested_attr(config, key, value)
-        # 3. Set SkyMask model type if needed
-        if defense_params.get("aggregation.method") == "skymask":
-            model_struct = "resnet18" if "resnet" in model_config_name else "flexiblecnn"
-            set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
-        # 4. Ensure Correct Data Distribution
-        if apply_noniid:
-            set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
-            set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
-        else:  # Apply IID
-            set_nested_attr(config, f"data.{modality}.strategy", "iid")
-            # Remove alpha if it exists from base config
-            if hasattr(config.data, modality) and hasattr(getattr(config.data, modality), 'dirichlet_alpha'):
-                delattr(getattr(config.data, modality), 'dirichlet_alpha')
-
-        return config
-
-    return modifier
-
 
 # --- Valuation Config Helper ---
 def enable_valuation(config: AppConfig, influence: bool = True, loo: bool = False, kernelshap: bool = False,

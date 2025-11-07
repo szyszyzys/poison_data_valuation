@@ -6,20 +6,17 @@ from pathlib import Path
 from typing import List, Callable, Dict, Any
 
 # --- Imports ---
-# Common Utils (Update path if needed)
 from config_common_utils import (
-    GOLDEN_TRAINING_PARAMS, TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
-    # DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, # AdvRate swept here
+    GOLDEN_TRAINING_PARAMS,  # <-- ADDED
+    TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
     IMAGE_DEFENSES, TEXT_TABULAR_DEFENSES, ALL_DEFENSES,
-    create_fixed_params_modifier,  # Use the standard helper
+    # create_fixed_params_modifier,  <-- REMOVED
     enable_valuation, get_tuned_defense_params
 )
-# Base Configs & Modifiers (Update path if needed)
-from entry.gradient_market.automate_exp.base_configs import get_base_image_config # Example
+from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_config, \
-    use_competitor_mimicry_attack  # Example
-# Import needed attack modifiers
-# ## USER ACTION ##: Ensure these import paths are correct
+    use_competitor_mimicry_attack
+
 try:
     from common.gradient_market_configs import AppConfig, PoisonType
     from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
@@ -28,74 +25,24 @@ except ImportError as e:
     sys.exit(1)
 # --- End Imports ---
 
-## Purpose
-# Evaluate defense robustness against Competitor Mimicry attacks.
-# This experiment tests how well TUNED defenses handle adversaries specifically
-# trying to steal market share (increase selection rate) from a target seller
-# by submitting similar gradients. This focuses on economic sabotage rather than
-# global model poisoning. Uses GOLDEN training parameters. 🎭
-
-# --- Attack Parameters to Sweep ---
-# Sweep the adversary rate to see how multiple mimics amplify the effect
-ADV_RATES_TO_SWEEP = [0.1, 0.2, 0.3, 0.4] # Percentage of sellers engaging in mimicry
-
-# --- Mimicry Attack Settings ---
-# ## USER ACTION ##: Confirm these settings
-MIMICRY_STRATEGY = "noisy_copy" # Strategy used by mimics
-TARGET_SELLER_ID = "bn_0" # Target the first benign seller (often high quality)
+# ... (Constants are all correct) ...
+ADV_RATES_TO_SWEEP = [0.1, 0.2, 0.3, 0.4]
+MIMICRY_STRATEGY = "noisy_copy"
+TARGET_SELLER_ID = "bn_0"
 NOISE_SCALE = 0.03
 OBSERVATION_ROUNDS = 5
-
-# --- Focus Setup for Mimicry Analysis ---
-# ## USER ACTION ##: Choose one representative setup (model/dataset)
 MIMICRY_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "CIFAR10", # lowercase
+    "dataset_name": "CIFAR10",
     "model_config_param_key": "experiment.image_model_config_name",
     "model_config_name": "cifar10_cnn",
     "dataset_modifier": use_cifar10_config,
-    # No base poisoning attack modifier needed, mimicry IS the attack behavior
 }
+DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl"]
 
-# --- Defenses to Test ---
-# Focus on defenses that might be vulnerable to similarity-based attacks
-DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl"] # SkyMask less relevant?
 
-# --- Helper to apply fixed Golden Training & Tuned Defense HPs ---
-# (And ensure NO other seller attacks interfere)
-def create_fixed_params_modifier_mimicry(
-    modality: str,
-    defense_params: Dict[str, Any],
-    model_config_name: str
-) -> Callable[[AppConfig], AppConfig]:
-    def modifier(config: AppConfig) -> AppConfig:
-        # 1. Apply Golden Training HPs
-        training_params = GOLDEN_TRAINING_PARAMS.get(modality)
-        if training_params:
-            for key, value in training_params.items(): set_nested_attr(config, key, value)
-        # 2. Apply Tuned Defense HPs
-        for key, value in defense_params.items(): set_nested_attr(config, key, value)
-        # 3. Set SkyMask model type if needed
-        if defense_params.get("aggregation.method") == "skymask":
-            model_struct = "resnet18" if "resnet" in model_config_name else "flexiblecnn"
-            set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
-        # 4. Ensure Non-IID Seller data
-        set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
-        set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
-        # --- 5. Explicitly Disable Other Seller Attacks ---
-        # AdvRate is set in the grid, but ensure poisoning/sybil/adaptive off
-        config.adversary_seller_config.poisoning.type = PoisonType.NONE
-        config.adversary_seller_config.sybil.is_sybil = False
-        if hasattr(config.adversary_seller_config, 'adaptive_attack'): config.adversary_seller_config.adaptive_attack.is_active = False
-        # Ensure buyer attack is off
-        config.buyer_attack_config.is_active = False
-        return config
-    return modifier
-
-# ==============================================================================
-# --- MAIN CONFIG GENERATION FUNCTION ---
-# ==============================================================================
+# === THIS IS THE CORRECTED FUNCTION ===
 def generate_competitor_mimicry_scenarios() -> List[Scenario]:
     """Generates scenarios testing tuned defenses against competitor mimicry."""
     print("\n--- Generating Step 9: Competitor Mimicry Scenarios ---")
@@ -104,21 +51,53 @@ def generate_competitor_mimicry_scenarios() -> List[Scenario]:
     model_cfg_name = MIMICRY_SETUP["model_config_name"]
 
     for defense_name in DEFENSES_TO_TEST:
+        # Get Tuned HPs (from Step 3)
         tuned_defense_params = get_tuned_defense_params(
             defense_name=defense_name,
             model_config_name=model_cfg_name,
+            attack_state="with_attack",  # Use default
             default_attack_type_for_tuning="backdoor"
         )
         print(f"-- Processing Defense: {defense_name}")
+        if not tuned_defense_params:
+            print(f"  SKIPPING: No Tuned HPs found for {defense_name}")
+            continue
 
-        # 1. Create modifier for Golden Training + Tuned Defense HPs + No Other Attacks
-        fixed_params_modifier = create_fixed_params_modifier_mimicry(
-            modality,
-            tuned_defense_params,
-            model_cfg_name
-        )
+        # === FIX 2: Create the setup modifier INSIDE the loop ===
+        def create_setup_modifier(
+                current_defense_name=defense_name,
+                current_model_cfg_name=model_cfg_name,
+                current_tuned_params=tuned_defense_params
+        ):
+            def modifier(config: AppConfig) -> AppConfig:
+                # 1. Apply Golden Training HPs (from Step 2.5)
+                golden_hp_key = f"{current_defense_name}_{current_model_cfg_name}_local_clip"
+                training_params = GOLDEN_TRAINING_PARAMS.get(golden_hp_key)
+                if training_params:
+                    for key, value in training_params.items():
+                        set_nested_attr(config, key, value)
+                else:
+                    print(f"  WARNING: No Golden HPs found for key '{golden_hp_key}'!")
 
-        # 2. Create the mimicry attack modifier with specific settings
+                # 2. Apply Tuned Defense HPs (from Step 3)
+                for key, value in current_tuned_params.items():
+                    set_nested_attr(config, key, value)
+
+                # 3. Apply other fixed settings
+                set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
+                set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
+
+                # 4. Explicitly Disable Other Seller Attacks
+                config.adversary_seller_config.poisoning.type = PoisonType.NONE
+                config.adversary_seller_config.sybil.is_sybil = False
+                config.buyer_attack_config.is_active = False
+                return config
+
+            return modifier
+
+        setup_modifier_func = create_setup_modifier()
+
+        # 2. Create the mimicry attack modifier
         mimicry_modifier = use_competitor_mimicry_attack(
             target_seller_id=TARGET_SELLER_ID,
             strategy=MIMICRY_STRATEGY,
@@ -126,14 +105,14 @@ def generate_competitor_mimicry_scenarios() -> List[Scenario]:
             observation_rounds=OBSERVATION_ROUNDS
         )
 
-        # 3. Define the parameter grid (Sweeps adv_rate)
+        # 3. Define the parameter grid (FIXED, no sweeps)
         grid = {
             MIMICRY_SETUP["model_config_param_key"]: [model_cfg_name],
             "experiment.dataset_name": [MIMICRY_SETUP["dataset_name"]],
             "n_samples": [NUM_SEEDS_PER_CONFIG],
-            "experiment.use_early_stopping": [True], # Keep early stopping
+            "experiment.use_early_stopping": [True],
             "experiment.patience": [10],
-            "experiment.adv_rate": ADV_RATES_TO_SWEEP, # Sweep adversary rate
+            # adv_rate will be set by the main loop
         }
 
         # 4. Create the Scenario
@@ -143,9 +122,9 @@ def generate_competitor_mimicry_scenarios() -> List[Scenario]:
             name=scenario_name,
             base_config_factory=MIMICRY_SETUP["base_config_factory"],
             modifiers=[
-                fixed_params_modifier, # Sets Golden Train, Tuned Def, Non-IID, No Other Atk
+                setup_modifier_func,  # <-- Use the new, correct modifier
                 MIMICRY_SETUP["dataset_modifier"],
-                mimicry_modifier, # Enables the specific mimicry attack
+                mimicry_modifier,
                 lambda config: enable_valuation(
                     config,
                     influence=True,
@@ -154,13 +133,14 @@ def generate_competitor_mimicry_scenarios() -> List[Scenario]:
                     kernelshap=False
                 )
             ],
-            parameter_grid=grid # Grid sweeps adv_rate
+            parameter_grid=grid  # Grid does NOT sweep adv_rate
         )
         scenarios.append(scenario)
 
     return scenarios
 
-# --- Main Execution Block ---
+
+# --- Main Execution Block (FIXED) ---
 if __name__ == "__main__":
     base_output_dir = "./configs_generated_benchmark"
     output_dir = Path(base_output_dir) / "step9_competitor_mimicry"
@@ -170,18 +150,47 @@ if __name__ == "__main__":
     all_generated_configs = 0
 
     print("\n--- Generating Configuration Files for Step 9 ---")
-    # --- Standard Generator Loop ---
+
+    # === FIX 1: Manual loop to set unique save path for each adv_rate ===
     for scenario in scenarios_to_generate:
         print(f"\nProcessing scenario base: {scenario.name}")
-        base_config = scenario.base_config_factory()
-        modified_base_config = copy.deepcopy(base_config)
-        # Apply modifiers (sets golden train, tuned defense, mimicry attack, valuation)
-        for modifier in scenario.modifiers:
-             modified_base_config = modifier(modified_base_config)
-        # Generator expands the parameter grid (the adv_rate sweep)
-        num_gen = generator.generate(modified_base_config, scenario)
-        all_generated_configs += num_gen
-        print(f"-> Generated {num_gen} configs for {scenario.name}")
+        task_configs = 0
+
+        # Get the static grid
+        static_grid = scenario.parameter_grid.copy()
+
+        # Loop through each adv_rate
+        for adv_rate in ADV_RATES_TO_SWEEP:
+
+            # 1. Create the specific grid for this combination
+            current_grid = static_grid.copy()
+            current_grid["experiment.adv_rate"] = [adv_rate]
+
+            # 2. Define unique output path
+            hp_suffix = f"adv_rate_{adv_rate}"
+            unique_save_path = f"./results/{scenario.name}/{hp_suffix}"
+            current_grid["experiment.save_path"] = [unique_save_path]
+            temp_scenario_name = f"{scenario.name}/{hp_suffix}"
+
+            # 3. Create a temporary Scenario
+            temp_scenario = Scenario(
+                name=temp_scenario_name,
+                base_config_factory=scenario.base_config_factory,
+                modifiers=scenario.modifiers,
+                parameter_grid=current_grid
+            )
+
+            # 4. Generate the config
+            base_config = temp_scenario.base_config_factory()
+            modified_base_config = copy.deepcopy(base_config)
+            for modifier in temp_scenario.modifiers:
+                modified_base_config = modifier(modified_base_config)
+
+            num_gen = generator.generate(modified_base_config, temp_scenario)
+            task_configs += num_gen
+
+        print(f"-> Generated {task_configs} configs for {scenario.name} base")
+        all_generated_configs += task_configs
 
     print(f"\n✅ Step 9 (Competitor Mimicry Analysis) config generation complete!")
     print(f"Total configurations generated: {all_generated_configs}")
@@ -190,5 +199,4 @@ if __name__ == "__main__":
     print(f"1. CRITICAL: Ensure GOLDEN_TRAINING_PARAMS & TUNED_DEFENSE_PARAMS are correct.")
     print(f"2. Implement/Verify the CompetitorMimicrySeller logic.")
     print(f"3. Run experiments: python run_parallel.py --configs_dir {output_dir}")
-    print(f"4. Analyze results: Plot Selection Rate and Valuation Score (Influence/LOO)")
-    print(f"   of the target seller ('{TARGET_SELLER_ID}') and the average mimicry attacker vs. 'adv_rate' for each defense.")
+    print(f"4. Analyze results.")
