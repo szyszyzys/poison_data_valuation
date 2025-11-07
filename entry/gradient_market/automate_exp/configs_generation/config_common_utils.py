@@ -68,32 +68,31 @@ TUNED_DEFENSE_PARAMS = {
     "fedavg_mlp_texas100_baseline_labelflip": {'aggregation.method': 'fedavg'},
     "fedavg_textcnn_trec_baseline_backdoor": {'aggregation.method': 'fedavg'},
     "fedavg_textcnn_trec_baseline_labelflip": {'aggregation.method': 'fedavg'},
-    "fltrust_cifar100_cnn_backdoor": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 5.0},
-    "fltrust_cifar100_cnn_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 3.0},
-    "fltrust_cifar10_cnn_backdoor": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 3.0},
-    "fltrust_cifar10_cnn_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 3.0},
-    "fltrust_mlp_purchase100_baseline_backdoor": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 5.0},
-    "fltrust_mlp_purchase100_baseline_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 3.0},
+    "fltrust_cifar100_cnn_backdoor": {'aggregation.method': 'fltrust'},
+    "fltrust_cifar100_cnn_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 1.0},
+    "fltrust_cifar10_cnn_backdoor": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 1.0},
+    "fltrust_cifar10_cnn_labelflip": {'aggregation.method': 'fltrust'},
+    "fltrust_mlp_purchase100_baseline_backdoor": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 1.0},
+    "fltrust_mlp_purchase100_baseline_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 1.0},
     "fltrust_mlp_texas100_baseline_backdoor": {'aggregation.method': 'fltrust'},
-    "fltrust_mlp_texas100_baseline_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 5.0},
+    "fltrust_mlp_texas100_baseline_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 1.0},
     "fltrust_textcnn_trec_baseline_backdoor": {'aggregation.method': 'fltrust'},
-    "fltrust_textcnn_trec_baseline_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 5.0},
-    "martfl_cifar100_cnn_backdoor": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 3},
-    "martfl_cifar100_cnn_labelflip": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 3},
-    "martfl_cifar10_cnn_backdoor": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 5.0, 'aggregation.martfl.max_k': 3},
-    "martfl_cifar10_cnn_labelflip": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 3},
-    "martfl_mlp_purchase100_baseline_backdoor": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 3},
-    "martfl_mlp_purchase100_baseline_labelflip": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 10.0, 'aggregation.martfl.max_k': 3},
+    "fltrust_textcnn_trec_baseline_labelflip": {'aggregation.method': 'fltrust', 'aggregation.clip_norm': 1.0},
+    "martfl_cifar100_cnn_backdoor": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 5.0, 'aggregation.martfl.max_k': 3},
+    "martfl_cifar100_cnn_labelflip": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 10},
+    "martfl_cifar10_cnn_backdoor": {'aggregation.method': 'martfl'},
+    "martfl_cifar10_cnn_labelflip": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 10},
+    "martfl_mlp_purchase100_baseline_backdoor": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 5.0, 'aggregation.martfl.max_k': 3},
+    "martfl_mlp_purchase100_baseline_labelflip": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 10},
     "martfl_mlp_texas100_baseline_backdoor": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 20.0, 'aggregation.martfl.max_k': 10},
-    "martfl_mlp_texas100_baseline_labelflip": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 5.0, 'aggregation.martfl.max_k': 3},
-    "martfl_textcnn_trec_baseline_backdoor": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 5.0, 'aggregation.martfl.max_k': 3},
-    "martfl_textcnn_trec_baseline_labelflip": {'aggregation.method': 'martfl', 'aggregation.clip_norm': 5.0, 'aggregation.martfl.max_k': 3},
-    "skymask_cifar100_cnn_backdoor": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 50, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.5},
-    "skymask_cifar100_cnn_labelflip": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 50, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.5},
-    "skymask_cifar10_cnn_backdoor": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 20, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.5},
-    "skymask_cifar10_cnn_labelflip": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 50, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.5},
+    "martfl_mlp_texas100_baseline_labelflip": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 10},
+    "martfl_textcnn_trec_baseline_backdoor": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 10},
+    "martfl_textcnn_trec_baseline_labelflip": {'aggregation.method': 'martfl', 'aggregation.martfl.max_k': 10},
+    "skymask_cifar100_cnn_backdoor": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 50, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.9},
+    "skymask_cifar100_cnn_labelflip": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 50, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.9},
+    "skymask_cifar10_cnn_backdoor": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 50, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.9},
+    "skymask_cifar10_cnn_labelflip": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 50, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.9},
 }
-
 
 def get_tuned_defense_params(
         defense_name: str,
@@ -144,7 +143,7 @@ TEXT_TABULAR_DEFENSES = ["fedavg", "fltrust", "martfl"]  # Exclude SkyMask
 # ==============================================================================
 # --- 3. Define Shared Parameters & Modifiers ---
 # ==============================================================================
-NUM_SEEDS_PER_CONFIG = 1
+NUM_SEEDS_PER_CONFIG = 3
 DEFAULT_ADV_RATE = 0.3
 DEFAULT_POISON_RATE = 0.5  # Match defense tuning
 
