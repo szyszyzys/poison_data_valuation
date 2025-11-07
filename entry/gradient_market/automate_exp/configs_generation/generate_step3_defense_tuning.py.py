@@ -107,7 +107,7 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
                         # Build the defense-specific key from Step 2.5
                         # NOTE: This assumes you are using the 'local_clip' results.
                         # If you have 'no_local_clip', you'd need to adjust this.
-                        golden_hp_key = f"{current_defense_name}_{current_model_cfg_name}_local_clip"
+                        golden_hp_key = f"{current_defense_name}_{current_model_cfg_name}"
 
                         training_params = GOLDEN_TRAINING_PARAMS.get(golden_hp_key)
 
