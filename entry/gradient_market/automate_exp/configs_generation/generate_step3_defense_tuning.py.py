@@ -231,7 +231,7 @@ if __name__ == "__main__":
 
             # Set the unique save path for the *results*
             # This is the path your run_parallel.py will use
-            unique_save_path = f"./results/{scenario.name}/{hp_suffix}"
+            unique_save_path = f"./results_new/{scenario.name}/{hp_suffix}"
             current_grid["experiment.save_path"] = [unique_save_path]
 
             # Set the unique name for the *config file*
