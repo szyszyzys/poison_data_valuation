@@ -161,7 +161,10 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
 
             if not scenario_info or ("defense" not in scenario_info):
                 continue # Must have valid scenario info
-
+            # Only include results where the model_suffix ends with '_new'
+            if not scenario_info.get("model_suffix", "").endswith("_new"):
+                continue
+            # ## END NEW FILTER ##
             try:
                 # Try parsing seed from folder name, e.g., 'run_0_seed_42' -> 42
                 seed = int(seed_dir_name.split('_')[-1])
