@@ -48,7 +48,8 @@ class KernelSHAPEvaluator:
             original_model: torch.nn.Module,
             all_gradients: Dict[str, List[torch.Tensor]],
             coalition: List[str],  # List of seller IDs in the coalition
-            round_number: int
+            round_number: int,
+            buyer_gradient: Optional[List[torch.Tensor]]  # ✅ --- 5. ACCEPT IT HERE ---
     ) -> float:
         """
         Simulates an aggregation and update for *only* the sellers
@@ -74,8 +75,8 @@ class KernelSHAPEvaluator:
         agg_grad, _, _, _ = self.aggregator.aggregate(
             global_epoch=round_number,
             seller_updates=coalition_gradients,
-            root_gradient=None,
-            buyer_data_loader=None
+            root_gradient=buyer_gradient,  # ✅ --- 6. THE FINAL FIX ---
+            buyer_data_loader=self.buyer_loader # <-- Also pass the loader!
         )
 
         # 4. Simulate applying the gradient
@@ -106,9 +107,11 @@ class KernelSHAPEvaluator:
             self,
             round_number: int,
             current_global_model: torch.nn.Module,
-            seller_gradients: Dict[str, List[torch.Tensor]]
+            seller_gradients: Dict[str, List[torch.Tensor]],
+            buyer_gradient: Optional[List[torch.Tensor]]  # ✅ --- 1. ACCEPT IT HERE ---
     ) -> Dict[str, Dict[str, Any]]:
 
+        logging.info("Starting KernelSHAP (Linear Model) evaluation...")
         logging.info("Starting KernelSHAP (Linear Model) evaluation...")
         seller_ids = list(seller_gradients.keys())
         num_sellers = len(seller_ids)
@@ -123,14 +126,16 @@ class KernelSHAPEvaluator:
         # Coalition 1: Empty set
         X_coalitions.append(np.zeros(num_sellers))
         y_performance.append(self._get_performance_for_coalition(
-            current_global_model, seller_gradients, [], round_number
+            current_global_model, seller_gradients, [], round_number,
+            buyer_gradient  # ✅ --- 2. PASS IT HERE ---
         ))
         sample_weights.append(self._get_kernelshap_weights(0, num_sellers))
 
         # Coalition 2: Grand coalition (all sellers)
         X_coalitions.append(np.ones(num_sellers))
         y_performance.append(self._get_performance_for_coalition(
-            current_global_model, seller_gradients, seller_ids, round_number
+            current_global_model, seller_gradients, seller_ids, round_number,
+            buyer_gradient  # ✅ --- 3. PASS IT HERE ---
         ))
         sample_weights.append(self._get_kernelshap_weights(num_sellers, num_sellers))
 
@@ -149,7 +154,8 @@ class KernelSHAPEvaluator:
 
             # Get performance and weight
             perf = self._get_performance_for_coalition(
-                current_global_model, seller_gradients, coalition_sids, round_number
+                current_global_model, seller_gradients, coalition_sids, round_number,
+                buyer_gradient  # ✅ --- 4. PASS IT HERE ---
             )
             weight = self._get_kernelshap_weights(z_prime_size, num_sellers)
 
