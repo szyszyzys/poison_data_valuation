@@ -103,7 +103,7 @@ def generate_main_summary_scenarios() -> List[Scenario]:
             ):
                 def modifier(config: AppConfig) -> AppConfig:
                     # 1. Apply Golden Training HPs (from Step 2.5)
-                    golden_hp_key = f"{current_defense_name}_{current_model_cfg_name}_local_clip"
+                    golden_hp_key = f"{current_model_cfg_name}"
                     training_params = GOLDEN_TRAINING_PARAMS.get(golden_hp_key)
                     if training_params:
                         for key, value in training_params.items():

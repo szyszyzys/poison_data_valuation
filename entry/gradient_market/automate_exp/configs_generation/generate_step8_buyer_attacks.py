@@ -8,7 +8,7 @@ from typing import List
 from config_common_utils import (
     GOLDEN_TRAINING_PARAMS,  # <-- ADDED
     NUM_SEEDS_PER_CONFIG,
-    get_tuned_defense_params,
+    get_tuned_defense_params, enable_valuation,
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_buyer_dos_attack, \
@@ -80,7 +80,7 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
         ):
             def modifier(config: AppConfig) -> AppConfig:
                 # --- Apply Golden Training HPs (from Step 2.5) ---
-                golden_hp_key = f"{current_defense_name}_{current_model_cfg_name}_local_clip"
+                golden_hp_key = f"{current_model_cfg_name}"
                 training_params = GOLDEN_TRAINING_PARAMS.get(golden_hp_key)
                 if training_params:
                     for key, value in training_params.items():
