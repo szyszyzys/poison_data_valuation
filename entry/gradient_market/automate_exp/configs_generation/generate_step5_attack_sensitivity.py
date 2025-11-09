@@ -80,7 +80,7 @@ def generate_attack_sensitivity_scenarios() -> List[Scenario]:
                     current_tuned_params=tuned_defense_params
             ):
                 def modifier(config: AppConfig) -> AppConfig:
-                    golden_hp_key = f"{current_defense_name}_{current_model_cfg_name}_local_clip"
+                    golden_hp_key = f"{current_defense_name}_{current_model_cfg_name}_{attack_type}"
                     training_params = GOLDEN_TRAINING_PARAMS.get(golden_hp_key)
                     if training_params:
                         for key, value in training_params.items():
