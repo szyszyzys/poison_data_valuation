@@ -1,9 +1,12 @@
 import copy
 import logging
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional  # ✅ 1. Import Optional
 
 import torch
 from torch.utils.data import DataLoader
+
+# Import the Aggregator type hint
+from marketplace.market_mechanism.aggregator import Aggregator
 
 
 class RoundBasedLOOEvaluator:
@@ -52,7 +55,8 @@ class RoundBasedLOOEvaluator:
             self,
             original_model: torch.nn.Module,
             seller_gradients: Dict[str, List[torch.Tensor]],
-            round_number: int
+            round_number: int,
+            buyer_gradient: Optional[List[torch.Tensor]]  # ✅ 2. Accept buyer_gradient here
     ) -> float:
         """
         Simulates a full aggregation and update, then returns the
@@ -70,10 +74,9 @@ class RoundBasedLOOEvaluator:
         agg_grad, _, _, _ = self.aggregator.aggregate(
             global_epoch=round_number,
             seller_updates=seller_gradients,
-            # We pass a (potentially empty) dict of gradients, so we
-            # don't need the buyer/root gradients for this simulation.
-            root_gradient=None,
-            buyer_data_loader=None
+            # This is the critical fix. Pass the buyer_gradient, not None.
+            root_gradient=buyer_gradient,  # ✅ 3. THE FIX: Pass gradient here
+            buyer_data_loader=self.buyer_loader  # ✅ 4. Pass the real loader
         )
 
         # 3. Simulate applying the gradient
@@ -96,7 +99,8 @@ class RoundBasedLOOEvaluator:
             self,
             round_number: int,
             current_global_model: torch.nn.Module,
-            seller_gradients: Dict[str, List[torch.Tensor]]
+            seller_gradients: Dict[str, List[torch.Tensor]],
+            buyer_gradient: Optional[List[torch.Tensor]]  # ✅ 5. Accept buyer_gradient
     ) -> Dict[str, Dict[str, Any]]:
         """
         Performs the full LOO evaluation for the current round.
@@ -114,7 +118,8 @@ class RoundBasedLOOEvaluator:
         baseline_performance = self._get_post_update_performance(
             current_global_model,
             seller_gradients,
-            round_number
+            round_number,
+            buyer_gradient=buyer_gradient  # ✅ 6. Pass gradient down
         )
 
         logging.debug(f"LOO Baseline Performance: {baseline_performance:.2f}%")
@@ -136,7 +141,8 @@ class RoundBasedLOOEvaluator:
                 loo_performance = self._get_post_update_performance(
                     current_global_model,
                     loo_gradients,
-                    round_number
+                    round_number,
+                    buyer_gradient=buyer_gradient  # ✅ 7. Pass gradient down
                 )
 
             # Marginal contribution = (Value with all) - (Value without seller)
