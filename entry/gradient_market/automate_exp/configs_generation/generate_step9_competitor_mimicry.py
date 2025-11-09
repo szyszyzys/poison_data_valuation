@@ -82,6 +82,9 @@ def generate_competitor_mimicry_scenarios() -> List[Scenario]:
                 # 2. Apply Tuned Defense HPs (from Step 3)
                 for key, value in current_tuned_params.items():
                     set_nested_attr(config, key, value)
+                if current_defense_name == "skymask":
+                    model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
+                    set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 
                 # 3. Apply other fixed settings
                 set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")

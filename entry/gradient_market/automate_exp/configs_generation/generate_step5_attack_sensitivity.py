@@ -90,6 +90,9 @@ def generate_attack_sensitivity_scenarios() -> List[Scenario]:
                         print(f"  WARNING: No Golden HPs found for key '{golden_hp_key}'!")
                         # This is a critical error, you might want to uncomment the next line
                         # sys.exit(f"Missing critical HPs for {golden_hp_key}")
+                    if current_defense_name == "skymask":
+                        model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
+                        set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 
                     # --- Apply Tuned Defense HPs (from Step 3) ---
                     for key, value in current_tuned_params.items():

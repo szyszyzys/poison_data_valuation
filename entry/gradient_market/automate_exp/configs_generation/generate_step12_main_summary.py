@@ -7,7 +7,7 @@ from typing import List
 
 # --- Imports ---
 from config_common_utils import (
-    TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
+    NUM_SEEDS_PER_CONFIG,
     DEFAULT_ADV_RATE, DEFAULT_POISON_RATE,
     IMAGE_DEFENSES, TEXT_TABULAR_DEFENSES,
     # create_fixed_params_modifier,  <-- REMOVED
@@ -110,6 +110,9 @@ def generate_main_summary_scenarios() -> List[Scenario]:
                             set_nested_attr(config, key, value)
                     else:
                         print(f"  WARNING: No Golden HPs found for key '{golden_hp_key}'!")
+                    if current_defense_name == "skymask":
+                        model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
+                        set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 
                     # 2. Apply Tuned Defense HPs (from Step 3)
                     for key, value in current_tuned_params.items():

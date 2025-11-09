@@ -92,6 +92,9 @@ def generate_advanced_sybil_scenarios() -> List[Scenario]:
                 else:
                     print(f"  WARNING: No Tuned HPs found for {current_defense_name}!")
                     # sys.exit(f"Missing critical Tuned HPs for {current_defense_name}")
+                if current_defense_name == "skymask":
+                    model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
+                    set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 
                 # --- Apply other fixed settings ---
                 set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
