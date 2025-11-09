@@ -473,7 +473,7 @@ class MartFLParams:
 class SkymaskParams:
     """Parameters specific to the Skymask aggregator."""
     clip: bool = True
-    sm_model_type: str = 'None'
+    sm_model_type: str = 'cnn'
     mask_epochs: int = 20
     mask_lr: float = 1e-4
     mask_clip: float = 1.0

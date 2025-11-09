@@ -954,8 +954,7 @@ class SybilCoordinator:
             client_state.selection_rate = sum(client_state.selection_history) / len(client_state.selection_history)
             client_state.rounds_participated += 1
 
-            if (client_state.rounds_participated >= self.sybil_cfg.benign_rounds and
-                    client_state.selection_rate > self.sybil_cfg.detection_threshold):
+            if self.start_atk:
                 client_state.phase = "attack"
             else:
                 client_state.phase = "benign"

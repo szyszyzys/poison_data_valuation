@@ -100,7 +100,7 @@ class SkymaskAggregator(BaseAggregator):
         # 2. Determine the correct model type
         if self.sm_model_type == 'None' or self.sm_model_type is None or self.sm_model_type == '':
             # Always use dynamic for flexibility - it auto-adapts to any architecture
-            net_type = None  # <--- FIX
+            sm_model_type = 'flexiblecnn'  # ✅ --- THIS IS THE FIX ---
             logger.warning(f"sm_model_type not set. Using 'dynamic' which auto-adapts to model architecture.")
         else:
             sm_model_type = self.sm_model_type
