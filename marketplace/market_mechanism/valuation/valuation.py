@@ -125,7 +125,10 @@ class ValuationManager:
             try:
                 logging.info(f"Running periodic LOO evaluation for round {round_number}...")
                 loo_scores = self.loo_evaluator.evaluate_round(
-                    round_number, current_global_model, seller_gradients
+                    round_number,
+                    current_global_model,
+                    seller_gradients,
+                    buyer_gradient=buyer_gradient
                 )
                 # Merge results
                 for sid, scores in loo_scores.items():
