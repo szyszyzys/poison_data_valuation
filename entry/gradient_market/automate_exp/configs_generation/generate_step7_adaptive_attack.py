@@ -136,7 +136,7 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
                         lambda config: enable_valuation(
                             config,
                             influence=True,
-                            loo=False,
+                            loo=True,
                             loo_freq=10,
                             kernelshap=False
                         )

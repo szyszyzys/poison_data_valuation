@@ -1,7 +1,7 @@
 # Add these imports at the top of your valuation.py file
 import copy
 import logging
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 import numpy as np
 import torch

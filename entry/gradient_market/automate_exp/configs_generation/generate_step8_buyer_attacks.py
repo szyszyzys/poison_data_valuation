@@ -101,10 +101,6 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
                 config.adversary_seller_config.poisoning.type = PoisonType.NONE
                 config.adversary_seller_config.sybil.is_sybil = False
 
-                # --- Turn off valuation ---
-                config.valuation.run_influence = False
-                config.valuation.run_loo = False
-                config.valuation.run_kernelshap = False
                 return config
 
             return modifier
@@ -134,7 +130,15 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
                 modifiers=[
                     setup_modifier_func,  # <-- Use the new, correct modifier
                     BUYER_ATTACK_SETUP["dataset_modifier"],
-                    buyer_attack_modifier
+                    buyer_attack_modifier,
+                    lambda config: enable_valuation(
+                        config,
+                        influence=True,
+                        loo=True,
+                        loo_freq=10,
+                        kernelshap=False
+                    )
+
                 ],
                 parameter_grid=grid
             )
