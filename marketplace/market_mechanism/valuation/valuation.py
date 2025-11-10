@@ -138,13 +138,18 @@ class ValuationManager:
                 logging.error(f"LOO evaluator failed in round {round_number}: {e}", exc_info=True)
                 # Continue without LOO scores
         if self.kernelshap_evaluator and (round_number > 0 and round_number % self.val_cfg.kernelshap_frequency == 0):
-            logging.info(f"Running periodic KernelSHAP evaluation for round {round_number}...")
-            kernelshap_scores = self.kernelshap_evaluator.evaluate_round(
-                round_number, current_global_model, seller_gradients
-            )
-            # Merge results
-            for sid, scores in kernelshap_scores.items():
-                if sid in final_seller_valuations:
-                    final_seller_valuations[sid].update(scores)
-
+            try:  # <-- RECOMMEND ADDING THIS
+                logging.info(f"Running periodic KernelSHAP evaluation for round {round_number}...")
+                kernelshap_scores = self.kernelshap_evaluator.evaluate_round(
+                    round_number,
+                    current_global_model,
+                    seller_gradients,
+                    buyer_gradient=buyer_gradient  # <-- THIS IS THE FIX
+                )
+                # Merge results
+                for sid, scores in kernelshap_scores.items():
+                    if sid in final_seller_valuations:
+                        final_seller_valuations[sid].update(scores)
+            except Exception as e: # <-- RECOMMEND ADDING THIS
+                logging.error(f"KernelSHAP evaluator failed in round {round_number}: {e}", exc_info=True)
         return final_seller_valuations, final_aggregate_metrics
