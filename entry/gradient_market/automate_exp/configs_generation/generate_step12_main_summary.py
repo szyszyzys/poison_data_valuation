@@ -22,7 +22,7 @@ from entry.gradient_market.automate_exp.scenarios import (
     use_text_backdoor_attack
 )
 from entry.gradient_market.automate_exp.tbl_new import TEXAS100_TRIGGER, use_tabular_backdoor_with_trigger, \
-    TEXAS100_TARGET_LABEL, get_base_tabular_config
+    TEXAS100_TARGET_LABEL, get_base_tabular_config, PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL
 
 try:
     from common.gradient_market_configs import AppConfig, PoisonType
@@ -35,32 +35,31 @@ except ImportError as e:
 # ... (Constants are all correct) ...
 STANDARD_SYBIL_STRATEGY = "mimic"
 STANDARD_ATTACK_MODIFIERS = {
-    "image": [use_image_backdoor_attack, use_sybil_attack_strategy(STANDARD_SYBIL_STRATEGY)],
+    "image": [use_image_backdoor_attack],
     "tabular": [use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL),
-                use_sybil_attack_strategy(STANDARD_SYBIL_STRATEGY)],
-    "text": [use_text_backdoor_attack, use_sybil_attack_strategy(STANDARD_SYBIL_STRATEGY)],
+                ],
+    "text": [use_text_backdoor_attack],
 }
 FIXED_ATTACK_ADV_RATE = DEFAULT_ADV_RATE
 FIXED_ATTACK_POISON_RATE = DEFAULT_POISON_RATE
 MAIN_SUMMARY_TARGETS = [
-    {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "texas100",
+    {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Texas100",
      "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_texas100_baseline",
-     "dataset_modifier": lambda cfg: cfg},
-    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "cifar10",
+     "dataset_modifier": lambda cfg: cfg,
+     "attack_modifier": use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL)},
+    {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Purchase100",
+     "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_purchase100_baseline",
+     "dataset_modifier": lambda cfg: cfg,
+     "attack_modifier": use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL)},
+    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR10",
      "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar10_cnn",
-     "dataset_modifier": use_cifar10_config},
-    # {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "cifar10",
-    #  "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar10_resnet18",
-    #  "dataset_modifier": use_cifar10_config},
-    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "cifar100",
+     "dataset_modifier": use_cifar10_config, "attack_modifier": use_image_backdoor_attack},
+    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR100",
      "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar100_cnn",
-     "dataset_modifier": use_cifar100_config},
-    # {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "cifar100",
-    #  "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar100_resnet18",
-    #  "dataset_modifier": use_cifar100_config},
-    {"modality_name": "text", "base_config_factory": get_base_text_config, "dataset_name": "trec",
+     "dataset_modifier": use_cifar100_config, "attack_modifier": use_image_backdoor_attack},
+    {"modality_name": "text", "base_config_factory": get_base_text_config, "dataset_name": "TREC",
      "model_config_param_key": "experiment.text_model_config_name", "model_config_name": "textcnn_trec_baseline",
-     "dataset_modifier": use_trec_config},
+     "dataset_modifier": use_trec_config, "attack_modifier": use_text_backdoor_attack},
 ]
 
 
