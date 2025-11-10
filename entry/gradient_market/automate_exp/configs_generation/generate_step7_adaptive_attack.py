@@ -30,7 +30,7 @@ except ImportError as e:
 # --- End Imports ---
 
 # ... (Constants are all correct) ...
-ADAPTIVE_MODES_TO_TEST = ["gradient_manipulation", "data_manipulation"]
+ADAPTIVE_MODES_TO_TEST = ["gradient_manipulation", "data_poisoning"]
 ADAPTIVE_THREAT_MODELS_TO_TEST = ["black_box", "gradient_inversion", "oracle"]
 EXPLORATION_ROUNDS = 30
 ADAPTIVE_SETUP = {
@@ -105,8 +105,8 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
             for adaptive_mode in ADAPTIVE_MODES_TO_TEST:
                 print(f"    -- Adaptive Mode: {adaptive_mode}")
 
-                if threat_model != "black_box" and adaptive_mode == "data_manipulation":
-                    print(f"       Skipping data_manipulation for {threat_model} (N/A)")
+                if threat_model != "black_box" and adaptive_mode == "data_poisoning":
+                    print(f"       Skipping data_poisoning for {threat_model} (N/A)")
                     continue
 
                 adaptive_modifier = use_adaptive_attack(
