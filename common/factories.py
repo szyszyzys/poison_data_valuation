@@ -127,16 +127,11 @@ class SellerFactory:
         if self.cfg.adversary_seller_config.adaptive_attack.is_active:
             logging.info(f"Creating AdaptiveAttackerSeller for {seller_id}")
 
-            # Pass a factory for creating poison generators if needed
-            poison_factory = self._create_poison_generator if self.cfg.adversary_seller_config.adaptive_attack.attack_mode == "data_poisoning" else None
-
             return AdaptiveAttackerSeller(
                 **base_kwargs,
                 adversary_config=self.cfg.adversary_seller_config,
-                poison_generator_factory=poison_factory,
                 **self.runtime_kwargs
             )
-
         # --- UPDATED: Adversary Creation Logic ---
         attack_type = self.cfg.adversary_seller_config.poisoning.type
         AdversaryClass = self.ADVERSARY_CLASS_MAP.get(attack_type)

@@ -1910,7 +1910,7 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
         # Strategy pool based on attack mode
         if self.adv_cfg.attack_mode == "gradient_manipulation":
             self.base_strategies = ["honest", "reduce_norm", "add_noise", "stealthy_blend"]
-        elif self.adv_cfg.attack_mode == "data_manipulation":
+        elif self.adv_cfg.attack_mode == "data_poisoning":
             # Will be dynamically determined based on dataset
             self.base_strategies = ["honest", "subsample_clean"]
             self._add_class_based_strategies()
@@ -2316,7 +2316,7 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
                         base_gradient, self.current_strategy
                     )
 
-            elif self.adv_cfg.attack_mode == "data_manipulation":
+            elif self.adv_cfg.attack_mode == "data_poisoning":
                 # Re-compute gradient on modified data
                 dataset_for_training = self._apply_black_box_data_strategy(self.current_strategy)
                 if dataset_for_training is not self.dataset:
