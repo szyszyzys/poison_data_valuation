@@ -1,6 +1,8 @@
 import argparse
-import sys
+import json
+import re
 from pathlib import Path
+from typing import Dict, Any, List
 import pandas as pd
 import logging
 import matplotlib.pyplot as plt
@@ -11,38 +13,208 @@ from matplotlib.ticker import PercentFormatter
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Define the metric to plot (your 'score')
-METRIC_TO_PLOT = 'score'  # score = mean_test_acc - mean_backdoor_asr
-INPUT_FILE = "step3_defense_tuning_all_aggregated.csv"
+
+# --- Parsing Functions (Copied from your analyze_step3 script) ---
+
+def parse_scenario_name_step3(name: str) -> Dict[str, str]:
+    """ Parses 'step3_tune_fltrust_backdoor_image_cifar10_cifar10_cnn_new' """
+    try:
+        parts = name.split('_')
+        if len(parts) < 7:
+            logger.warning(f"Could not parse scenario name: {name}")
+            return {}
+        return {
+            "defense": parts[2],
+            "attack_type": parts[3],
+            "modality": parts[4],
+            "dataset": parts[5],
+            "model_suffix": "_".join(parts[6:]),  # Handles 'cifar10_cnn_new'
+            "scenario": name,
+        }
+    except Exception as e:
+        logger.warning(f"Error parsing scenario name '{name}': {e}")
+        return {}
 
 
-# --- 1. Heatmap Plotting Function ---
-def create_heatmap(df_slice: pd.DataFrame, dataset: str, attack: str, defense: str):
+def parse_defense_hp_folder_name(name: str) -> Dict[str, Any]:
     """
-    Generates a heatmap for 2-parameter tuning (e.g., MartFL).
+    Parses 'aggregation.martfl.max_k_5_aggregation.clip_norm_10.0'
     """
+    params = {}
+    try:
+        parts = name.split('_')
+        i = 0
+        while i < len(parts):
+            key_parts = []
+            while i < len(parts) and not parts[i].replace('.', '', 1).replace('-', '', 1).isdigit():
+                key_parts.append(parts[i])
+                i += 1
+            param_key = "_".join(key_parts)
+            param_key_short = param_key.split('.')[-1]
+            if not param_key_short:
+                i += 1  # Handle empty key part
+                continue
+            if i < len(parts):
+                raw_value = parts[i]
+                i += 1
+                try:
+                    if '.' in raw_value:
+                        value = float(raw_value)
+                    elif raw_value.lower() == 'none' or raw_value.lower() == 'null':
+                        value = None
+                    else:
+                        value = int(raw_value)
+                    params[param_key_short] = value
+                except ValueError:
+                    params[param_key_short] = raw_value
+            else:
+                pass
+        return params
+    except Exception as e:
+        logger.warning(f"Error parsing HP folder name '{name}': {e}")
+        return {}
+
+
+# --- NEW Core Logic ---
+
+def calculate_msr(selection_df: pd.DataFrame) -> float:
+    """
+    Calculates the Malicious Selection Rate (MSR) from a selection_history_df.
+    """
+    # Filter for only selected sellers
+    selected_sellers = selection_df[selection_df['selected'] == True]
+
+    if selected_sellers.empty:
+        return 0.0  # No sellers were selected
+
+    # Identify malicious sellers (whose IDs start with 'adv_')
+    malicious_selected = selected_sellers['seller_id'].str.startswith('adv_').sum()
+
+    total_selected = len(selected_sellers)
+
+    return malicious_selected / total_selected
+
+
+def find_and_analyze_msr(root_dir: Path) -> pd.DataFrame:
+    """Finds all selection_history.csv files and calculates MSR for each run."""
+    logger.info(f"🔍 Scanning for Step 3 'selection_history.csv' files in: {root_dir}...")
+
+    # Use rglob to find all selection_history.csv files
+    metrics_files = list(root_dir.rglob("step3_tune_*/run_*/selection_history.csv"))
+
+    # Fallback for the newer Step 3 directory structure
+    metrics_files.extend(list(root_dir.rglob("step3_tune_*/*/*/run_*/selection_history.csv")))
+    metrics_files = list(set(metrics_files))  # Remove duplicates
+
+    if not metrics_files:
+        logger.error(f"❌ ERROR: No 'selection_history.csv' files found in {root_dir} matching the Step 3 structure.")
+        return pd.DataFrame()
+
+    logger.info(f"✅ Found {len(metrics_files)} individual run results.")
+
+    all_results = []
+    for metrics_file in metrics_files:
+        try:
+            # --- Robust Path Finding ---
+            current_path = metrics_file.parent
+            scenario_dir = None
+            while current_path != root_dir and current_path != current_path.parent:
+                if current_path.name.startswith("step3_tune_"):
+                    scenario_dir = current_path
+                    break
+                current_path = current_path.parent
+            if scenario_dir is None:
+                logger.warning(f"Could not find scenario dir for {metrics_file}")
+                continue
+
+            relative_path_parts = metrics_file.parent.relative_to(scenario_dir).parts
+            if len(relative_path_parts) < 2:
+                logger.warning(f"Skipping {metrics_file}, unexpected path structure.")
+                continue  # e.g., /hp_folder/run_folder
+
+            hp_dir_name = relative_path_parts[0]
+            seed_dir_name = relative_path_parts[-1]
+            seed_dir = metrics_file.parent
+
+            if not (seed_dir / ".success").exists():
+                logger.debug(f"Skipping failed run: {seed_dir.name}")
+                continue
+
+            scenario_info = parse_scenario_name_step3(scenario_dir.name)
+            hp_info = parse_defense_hp_folder_name(hp_dir_name)
+
+            if not scenario_info or "defense" not in scenario_info:
+                logger.warning(f"Could not parse scenario info from {scenario_dir.name}")
+                continue
+
+            # Load the selection history
+            selection_df = pd.read_csv(metrics_file)
+
+            # --- Calculate MSR ---
+            # For stability, calculate MSR over the last 50% of rounds
+            max_round = selection_df['round'].max()
+            stable_selection_df = selection_df[selection_df['round'] > (max_round / 2)]
+
+            if stable_selection_df.empty:
+                msr = calculate_msr(selection_df)  # Fallback to all rounds
+            else:
+                msr = calculate_msr(stable_selection_df)
+
+            # Store combined record
+            record = {
+                **scenario_info,
+                **hp_info,
+                "msr": msr,
+            }
+            all_results.append(record)
+
+        except Exception as e:
+            logger.warning(f"Could not process file {metrics_file}: {e}", exc_info=False)
+
+    logger.info(f"Successfully processed {len(all_results)} valid runs.")
+    if not all_results: return pd.DataFrame()
+
+    # --- Aggregate across seeds ---
+    df = pd.DataFrame(all_results)
+
+    # Identify HP columns (those parsed)
+    hp_cols = [col for col in df.columns if col not in [
+        'scenario', 'defense', 'attack_type', 'modality', 'dataset', 'model_suffix', 'msr'
+    ] and not col.startswith('raw_')]
+
+    group_cols = ['scenario', 'defense', 'attack_type', 'modality', 'dataset', 'model_suffix'] + hp_cols
+
+    agg_df = df.groupby(group_cols, dropna=False).agg(
+        mean_msr=('msr', 'mean'),
+        std_msr=('msr', 'std'),
+        num_success_runs=('msr', 'count')
+    ).reset_index()
+
+    agg_df['std_msr'] = agg_df['std_msr'].fillna(0)
+
+    return agg_df
+
+
+# --- Visualization Functions (similar to your other script) ---
+def create_msr_heatmap(df_slice: pd.DataFrame, dataset: str, attack: str, defense: str):
     if df_slice.empty:
         return
 
-    # We need exactly two HP columns to make a heatmap
     hp_cols = [col for col in df_slice.columns if col not in [
         'scenario', 'defense', 'attack_type', 'modality', 'dataset', 'model_suffix',
-        'mean_test_acc', 'std_test_acc', 'mean_backdoor_asr', 'std_backdoor_asr',
-        'num_success_runs', 'score', 'hp_folder'
+        'mean_msr', 'std_msr', 'num_success_runs'
     ] and not col.startswith('raw_')]
 
     if len(hp_cols) != 2:
         logger.info(f"Skipping heatmap for {defense} (requires exactly 2 HPs, found {len(hp_cols)}).")
         return
 
-    # Get the two HP columns
     hp_x, hp_y = hp_cols[0], hp_cols[1]
 
-    logger.info(f"Generating heatmap for: {dataset} / {defense} / {attack}...")
+    logger.info(f"Generating MSR heatmap for: {dataset} / {defense} / {attack}...")
 
     try:
-        # Create the pivot table
-        pivot_df = df_slice.pivot(index=hp_y, columns=hp_x, values=METRIC_TO_PLOT)
+        pivot_df = df_slice.pivot(index=hp_y, columns=hp_x, values='mean_msr')
     except Exception as e:
         logger.error(f"Failed to create pivot table for heatmap: {e}")
         return
@@ -50,82 +222,68 @@ def create_heatmap(df_slice: pd.DataFrame, dataset: str, attack: str, defense: s
     plt.figure(figsize=(10, 7))
     sns.set_style("whitegrid")
 
-    # Draw the heatmap
     ax = sns.heatmap(
         pivot_df,
-        annot=True,  # Show the score values
-        fmt=".2f",  # Format to 2 decimal places
-        cmap="Greys",  # Black-and-white colormap
+        annot=True,
+        fmt=".1%",  # <-- Format as percentage
+        cmap="Greys",  # B/W colormap (lower is better, so dark is good)
         linewidths=.5,
-        cbar_kws={'label': f"Score ({METRIC_TO_PLOT})"}
+        cbar_kws={'label': "Malicious Selection Rate (MSR)"}
     )
 
-    ax.set_title(f"Defense Tuning Heatmap: {defense} (on {dataset} / {attack})")
+    ax.set_title(f"MSR Analysis (Filtering): {defense}\n({dataset} / {attack})")
     ax.set_xlabel(hp_x.replace("_", " ").title())
     ax.set_ylabel(hp_y.replace("_", " ").title())
 
-    # Save the figure
-    output_dir = Path("figures") / "step3_heatmaps"
+    output_dir = Path("figures") / "step3_msr_analysis"
     output_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"heatmap_{dataset}_{defense}_{attack}.png"
+    filename = f"msr_heatmap_{dataset}_{defense}_{attack}.png"
     plt.savefig(output_dir / filename, bbox_inches='tight')
     plt.close()
 
 
-# --- 2. Final Comparison Bar Plot Function ---
-def create_comparison_plot(best_df: pd.DataFrame, dataset: str, attack: str):
-    """
-    Generates a grouped bar plot comparing the *best* performance of each
-    defense against the FedAvg baseline for a specific scenario.
-    """
-    if best_df.empty:
+def create_msr_barchart(df_slice: pd.DataFrame, dataset: str, attack: str, defense: str):
+    if df_slice.empty:
         return
 
-    logger.info(f"Generating final comparison plot for: {dataset} / {attack}...")
+    # For 1-HP defenses like FLTrust
+    hp_cols = [col for col in df_slice.columns if col not in [
+        'scenario', 'defense', 'attack_type', 'modality', 'dataset', 'model_suffix',
+        'mean_msr', 'std_msr', 'num_success_runs'
+    ] and not col.startswith('raw_')]
 
-    # "Melt" the dataframe to plot acc and asr side-by-side
-    plot_df = best_df.melt(
-        id_vars=['defense'],
-        value_vars=['mean_test_acc', 'mean_backdoor_asr'],
-        var_name='Metric',
-        value_name='Performance'
-    )
+    if len(hp_cols) != 1:
+        logger.info(f"Skipping barchart for {defense} (requires exactly 1 HP, found {len(hp_cols)}).")
+        return
 
-    # Make metric names prettier
-    plot_df['Metric'] = plot_df['Metric'].map({
-        'mean_test_acc': 'Test Accuracy (Utility)',
-        'mean_backdoor_asr': 'ASR (Robustness)'
-    })
+    hp_x = hp_cols[0]
 
-    plt.figure(figsize=(12, 6))
+    logger.info(f"Generating MSR barchart for: {dataset} / {defense} / {attack} (vs {hp_x})...")
+
+    plt.figure(figsize=(10, 6))
     sns.set_style("whitegrid")
 
+    # We must convert the HP column to string to prevent seaborn
+    # from plotting it as a continuous number line
+    df_slice[hp_x] = df_slice[hp_x].astype(str)
+
     ax = sns.barplot(
-        data=plot_df,
-        x='defense',
-        y='Performance',
-        hue='Metric',
-        palette='Greys_r',  # B/W palette (reversed)
+        data=df_slice,
+        x=hp_x,
+        y='mean_msr',
+        palette='Greys',
         edgecolor='black'
     )
 
-    # Add hatches for B/W
-    hatches = ['/', '\\\\']
-    for i, bar in enumerate(ax.patches):
-        # --- THIS IS THE FIX ---
-        # This correctly alternates the hatch for each metric in the group
-        bar.set_hatch(hatches[i % len(hatches)])
-    ax.set_title(f"Best Defense Performance vs. FedAvg\n({dataset} / {attack})")
-    ax.set_xlabel("Defense")
-    ax.set_ylabel("Performance (%)")
+    ax.set_title(f"MSR vs. {hp_x.title()} (Filtering): {defense}\n({dataset} / {attack})")
+    ax.set_xlabel(hp_x.replace("_", " ").title())
+    ax.set_ylabel("Malicious Selection Rate (MSR)")
     ax.set_ylim(0, 1.05)
     ax.yaxis.set_major_formatter(PercentFormatter(1.0))
-    ax.legend(title="Metric")
 
-    # Save the figure
-    output_dir = Path("figures") / "step3_final_comparison"
+    output_dir = Path("figures") / "step3_msr_analysis"
     output_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"barchart_comparison_{dataset}_{attack}.png"
+    filename = f"msr_barchart_{dataset}_{defense}_{attack}_{hp_x}.png"
     plt.savefig(output_dir / filename, bbox_inches='tight')
     plt.close()
 
@@ -133,72 +291,60 @@ def create_comparison_plot(best_df: pd.DataFrame, dataset: str, attack: str):
 # --- Main function to drive plotting ---
 def main():
     parser = argparse.ArgumentParser(
-        description="Visualize FL Defense Tuning results (Step 3)."
+        description="Analyze Malicious Selection Rate (MSR) from Step 3."
     )
     parser.add_argument(
         "results_dir",
         type=str,
-        help="The ROOT results directory containing the Step 3 run folders (e.g., './results/')"
+        help="The ROOT results directory (e.g., './results/')"
     )
     args = parser.parse_args()
     results_path = Path(args.results_dir).resolve()
 
-    # Load the aggregated CSV file
-    agg_csv_path = results_path / INPUT_FILE
-    if not agg_csv_path.exists():
-        logger.error(f"❌ ERROR: Could not find aggregated file: {agg_csv_path}")
-        logger.error("Please run the `analyze_step3_defense_tuning.py` script first.")
+    if not results_path.exists():
+        logger.error(f"❌ ERROR: The directory '{results_path}' does not exist.")
         return
 
     try:
-        agg_df = pd.read_csv(agg_csv_path)
+        agg_df = find_and_analyze_msr(results_path)
+
+        if agg_df.empty:
+            logger.error("No data was aggregated. Exiting.")
+            return
+
+        # --- Loop and create plots ---
+        scenarios = agg_df[['dataset', 'attack_type', 'modality', 'model_suffix']].drop_duplicates()
+
+        for _, row in scenarios.iterrows():
+            dataset = row['dataset']
+            attack = row['attack_type']
+            model = row['model_suffix']
+
+            # Get the full data for this scenario
+            full_df_slice = agg_df[
+                (agg_df['dataset'] == dataset) &
+                (agg_df['attack_type'] == attack) &
+                (agg_df['model_suffix'] == model)
+                ]
+
+            # --- Generate plots for each defense type ---
+
+            # 1. MartFL (2D Heatmap)
+            martfl_df = full_df_slice[full_df_slice['defense'] == 'martfl']
+            create_msr_heatmap(martfl_df, dataset, attack, 'martfl')
+
+            # 2. FLTrust (1D Barchart)
+            fltrust_df = full_df_slice[full_df_slice['defense'] == 'fltrust']
+            create_msr_barchart(fltrust_df, dataset, attack, 'fltrust')
+
+            # 3. SkyMask (2D Heatmap)
+            skymask_df = full_df_slice[full_df_slice['defense'] == 'skymask']
+            create_msr_heatmap(skymask_df, dataset, attack, 'skymask')
+
+        logger.info("\n✅ All MSR visualizations generated.")
+
     except Exception as e:
-        logger.error(f"Failed to read CSV: {e}")
-        return
-
-    # --- Find the "best" row for each (defense, dataset, attack_type, model) ---
-    group_cols = ['defense', 'attack_type', 'modality', 'dataset', 'model_suffix']
-
-    try:
-        best_df = agg_df.loc[agg_df.groupby(group_cols)['score'].idxmax()]  # <-- THIS IS THE FIX
-    except Exception as e:
-        logger.error(f"Failed to find best scores (is the 'score' column present?): {e}")
-        return
-
-    # --- Loop and create plots ---
-    # We create one set of plots for each (dataset, attack_type) pair
-    scenarios = best_df[['dataset', 'attack_type', 'modality', 'model_suffix']].drop_duplicates()
-
-    for _, row in scenarios.iterrows():
-        dataset = row['dataset']
-        attack = row['attack_type']
-        modality = row['modality']
-        model = row['model_suffix']
-
-        # 1. Get the data for the final bar chart (the "best" HPs)
-        best_df_slice = best_df[
-            (best_df['dataset'] == dataset) &
-            (best_df['attack_type'] == attack) &
-            (best_df['model_suffix'] == model)
-            ]
-
-        # 2. Get the *full* data for the heatmaps (all HPs)
-        full_df_slice = agg_df[
-            (agg_df['dataset'] == dataset) &
-            (agg_df['attack_type'] == attack) &
-            (agg_df['model_suffix'] == model)
-            ]
-
-        # Create the final comparison bar plot
-        create_comparison_plot(best_df_slice, dataset, attack)
-
-        # Create heatmaps for defenses that have 2 HPs (like MartFL)
-        for defense in full_df_slice['defense'].unique():
-            if defense == 'fedavg': continue
-            defense_df = full_df_slice[full_df_slice['defense'] == defense]
-            create_heatmap(defense_df, dataset, attack, defense)
-
-    logger.info("\n✅ All visualizations generated.")
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
