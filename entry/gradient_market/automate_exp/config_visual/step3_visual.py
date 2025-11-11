@@ -95,19 +95,23 @@ def calculate_msr(selection_df: pd.DataFrame) -> float:
     return malicious_selected / total_selected
 
 
+# FILE: visualize_step3.py
+
+# ... (parsing functions) ...
+
 def find_and_analyze_msr(root_dir: Path) -> pd.DataFrame:
     """Finds all selection_history.csv files and calculates MSR for each run."""
     logger.info(f"🔍 Scanning for Step 3 'selection_history.csv' files in: {root_dir}...")
 
-    # Use rglob to find all selection_history.csv files
-    metrics_files = list(root_dir.rglob("step3_tune_*/run_*/selection_history.csv"))
-
-    # Fallback for the newer Step 3 directory structure
-    metrics_files.extend(list(root_dir.rglob("step3_tune_*/*/*/run_*/selection_history.csv")))
-    metrics_files = list(set(metrics_files))  # Remove duplicates
+    # --- THIS IS THE FIX ---
+    # The correct structure is: results/step3_tune_.../hp_folder/run_folder/
+    # This corresponds to: step3_tune_* / * / run_* / selection_history.csv
+    search_pattern = "step3_tune_*/*/run_*/selection_history.csv"
+    metrics_files = list(root_dir.rglob(search_pattern))
+    # --- END FIX ---
 
     if not metrics_files:
-        logger.error(f"❌ ERROR: No 'selection_history.csv' files found in {root_dir} matching the Step 3 structure.")
+        logger.error(f"❌ ERROR: No 'selection_history.csv' files found matching the structure: {search_pattern}")
         return pd.DataFrame()
 
     logger.info(f"✅ Found {len(metrics_files)} individual run results.")
@@ -130,7 +134,7 @@ def find_and_analyze_msr(root_dir: Path) -> pd.DataFrame:
             relative_path_parts = metrics_file.parent.relative_to(scenario_dir).parts
             if len(relative_path_parts) < 2:
                 logger.warning(f"Skipping {metrics_file}, unexpected path structure.")
-                continue  # e.g., /hp_folder/run_folder
+                continue
 
             hp_dir_name = relative_path_parts[0]
             seed_dir_name = relative_path_parts[-1]
