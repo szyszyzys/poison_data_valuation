@@ -157,8 +157,9 @@ def main():
 
     # --- Find the "best" row for each (defense, dataset, attack_type, model) ---
     group_cols = ['defense', 'attack_type', 'modality', 'dataset', 'model_suffix']
+
     try:
-        best_indices = agg_df.loc[agg_df.groupby(group_cols)['score'].idxmax()]
+        best_df = agg_df.loc[agg_df.groupby(group_cols)['score'].idxmax()]  # <-- THIS IS THE FIX
     except Exception as e:
         logger.error(f"Failed to find best scores (is the 'score' column present?): {e}")
         return
