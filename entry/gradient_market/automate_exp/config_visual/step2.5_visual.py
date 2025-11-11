@@ -172,30 +172,32 @@ USABLE_THRESHOLD = 0.90
 
 # ==============================================================================
 
-# --- NEW: Function to prepare the data for plotting ---
-def prepare_plot_data(raw_df: pd.DataFrame) -> pd.DataFrame:
+# --- This is the analysis function from analyze_step4.py (MODIFIED to return DFs) ---
+def analyze_sensitivity(raw_df: pd.DataFrame) -> (pd.DataFrame, pd.DataFrame):
     """
-    Takes the raw dataframe and returns a new dataframe with
-    the 'usable_rate' calculated for each (defense, dataset, clip_setting).
+    Analyzes the raw results to calculate sensitivity AND
+    returns the dataframes needed for plotting and for GOLDEN_TRAINING_PARAMS.
     """
     if raw_df.empty:
         logger.warning("No data to analyze.")
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
     if IID_BASELINES.get("cifar10", 0.0) == 0.0:
         logger.error("STOP: 'IID_BASELINES' dictionary is not filled.")
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
-    # --- 1. Add 'defense' and 'dataset' columns ---
+    # --- 1. Add 'defense' and 'attack_state' columns ---
     raw_df['defense'] = raw_df['agg']
+    raw_df['attack_state'] = 'with_attack'
     raw_df['dataset'] = raw_df['ds']
 
-    # --- 2. Aggregate across seeds (same as your script) ---
+    # --- 2. Aggregate across seeds ---
     group_cols = ["defense", "dataset", "modality", "optimizer", "lr", "epochs", "clip_setting"]
     available_group_cols = [col for col in group_cols if col in raw_df.columns]
 
     numeric_cols = ["acc", "asr"]
     raw_df[numeric_cols] = raw_df[numeric_cols].apply(pd.to_numeric, errors='coerce')
+    raw_df['asr'] = raw_df['asr'].fillna(0.0)
     raw_df = raw_df.dropna(subset=['acc'])
 
     raw_df = raw_df.rename(columns={"acc": "test_acc", "asr": "backdoor_asr"})
@@ -203,87 +205,186 @@ def prepare_plot_data(raw_df: pd.DataFrame) -> pd.DataFrame:
 
     hp_agg_df = raw_df.groupby(available_group_cols, as_index=False)[numeric_cols].mean()
 
-    # --- 3. Calculate 'is_usable' (same as your script) ---
+    # --- 3. Calculate Relative Performance & Score ---
     hp_agg_df['iid_baseline_acc'] = hp_agg_df['dataset'].map(IID_BASELINES)
     hp_agg_df = hp_agg_df.dropna(subset=['iid_baseline_acc'])
     hp_agg_df['relative_perf'] = hp_agg_df['test_acc'] / hp_agg_df['iid_baseline_acc']
     hp_agg_df['is_usable'] = hp_agg_df['relative_perf'] >= USABLE_THRESHOLD
+    hp_agg_df['score'] = hp_agg_df['test_acc'] - hp_agg_df['backdoor_asr']
 
-    # --- 4. Calculate Usable Rate ---
-    # This is the new part for plotting
-    plot_group_cols = ['dataset', 'defense', 'clip_setting']
+    # --- 4. Aggregate HP stats to get final "Cost" metrics (Your Step 4 Analysis) ---
+    scenario_group_cols = ["defense", "attack_state", "dataset", "modality", "clip_setting"]
+    available_scenario_group_cols = [col for col in scenario_group_cols if col in hp_agg_df.columns]
 
-    # Calculate the mean of the 'is_usable' (True/False or 1/0) column
-    usable_rate_df = hp_agg_df.groupby(plot_group_cols, as_index=False)['is_usable'].mean()
+    cost_df = hp_agg_df.groupby(available_scenario_group_cols, as_index=False).agg(
+        max_test_acc=('test_acc', 'max'),
+        avg_test_acc=('test_acc', 'mean'),
+        std_test_acc=('test_acc', 'std'),
+        total_hp_combos=('test_acc', 'count'),
+        min_asr=('backdoor_asr', 'min'),
+        avg_asr=('backdoor_asr', 'mean'),
+        std_asr=('backdoor_asr', 'std')
+    )
+    usable_counts_df = hp_agg_df.groupby(available_scenario_group_cols, as_index=False)['is_usable'].sum().rename(
+        columns={"is_usable": "usable_hp_count"})
+    cost_df = cost_df.merge(usable_counts_df, on=available_scenario_group_cols)
 
-    # Rename for clarity in the plot
-    usable_rate_df = usable_rate_df.rename(columns={'is_usable': 'usable_rate'})
+    # ... (calculate final cost metrics) ...
+    cost_df['iid_baseline_acc'] = cost_df['dataset'].map(IID_BASELINES)
+    cost_df['relative_max_perf'] = cost_df['max_test_acc'] / cost_df['iid_baseline_acc']
+    cost_df['relative_avg_perf'] = cost_df['avg_test_acc'] / cost_df['iid_baseline_acc']
+    cost_df['robustness_score'] = (cost_df['relative_max_perf'] + cost_df['relative_avg_perf']) / 2
+    cost_df['initialization_cost'] = 1.0 - cost_df['robustness_score']
+    cost_df = cost_df.sort_values(by=['dataset', 'attack_state', 'clip_setting', 'initialization_cost'])
 
-    return usable_rate_df
+    # Return both dataframes for plotting and for dictionary generation
+    return cost_df, hp_agg_df
 
 
-# --- NEW: Plotting Function ---
-def create_usability_plot(plot_df: pd.DataFrame, clip_setting: str, output_filename: str):
+# --- This is your original plotting function (renamed) ---
+def create_usability_plot(hp_agg_df: pd.DataFrame, clip_setting: str, output_filename: str):
     """
     Creates a black-and-white bar chart of the usable rate for a specific clip_setting.
     """
-    df_filtered = plot_df[plot_df['clip_setting'] == clip_setting]
+    # 1. Calculate Usable Rate from the hp_agg_df
+    plot_group_cols = ['dataset', 'defense', 'clip_setting']
+    usable_rate_df = hp_agg_df.groupby(plot_group_cols, as_index=False)['is_usable'].mean()
+    usable_rate_df = usable_rate_df.rename(columns={'is_usable': 'usable_rate'})
+
+    # 2. Filter for the specific clip_setting
+    df_filtered = usable_rate_df[usable_rate_df['clip_setting'] == clip_setting]
 
     if df_filtered.empty:
-        logger.warning(f"No data to plot for clip_setting='{clip_setting}'. Skipping plot.")
+        logger.warning(f"No usable_rate data to plot for clip_setting='{clip_setting}'. Skipping plot.")
         return
 
-    logger.info(f"Generating plot for: {clip_setting}...")
-
-    # Set style
+    logger.info(f"Generating usability plot for: {clip_setting}...")
     sns.set_style("whitegrid")
 
     g = sns.catplot(
-        data=df_filtered,
-        x='dataset',
-        y='usable_rate',
-        hue='defense',
-        kind='bar',
-        palette='Greys',  # <-- THIS IS THE FIX
-        edgecolor='black',
-        aspect=1.5
+        data=df_filtered, x='dataset', y='usable_rate', hue='defense',
+        kind='bar', palette='Greys', edgecolor='black', aspect=1.5
     )
 
-    # --- Customization ---
-    # Set Y-axis to percentage
     g.ax.yaxis.set_major_formatter(PercentFormatter(1.0))
-    g.ax.set_ylim(0, 1.05)  # Set Y-axis from 0% to 105%
-
-    # Set titles and labels
+    g.ax.set_ylim(0, 1.05)
     g.set_axis_labels("Dataset", "Usable HP Rate (%)")
     g.fig.suptitle(f"Training HP Usability Rate ({clip_setting.replace('_', ' ').title()})", y=1.03)
-
-    # Adjust legend
     g.legend.set_title("Defense")
 
-    # Save the figure
-    g.fig.savefig(output_filename, bbox_inches='tight')
-    logger.info(f"✅ Plot saved to: {output_filename}")
+    output_dir = Path("figures")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    save_path = output_dir / output_filename
+
+    g.fig.savefig(save_path, bbox_inches='tight')
+    logger.info(f"✅ Plot saved to: {save_path}")
     plt.close(g.fig)
 
 
-# --- NEW: Main function to drive plotting ---
+# --- **** NEW PLOTTING FUNCTION **** ---
+def create_performance_plot(cost_df: pd.DataFrame, clip_setting: str, output_filename: str):
+    """
+    Creates a B/W grouped bar chart comparing the
+    Best-Case Accuracy (max_test_acc) vs. Average ASR (avg_asr)
+    for each defense in a given clip_setting.
+    """
+    # 1. Filter for the specific clip_setting and "with_attack"
+    df_filtered = cost_df[
+        (cost_df['clip_setting'] == clip_setting) &
+        (cost_df['attack_state'] == 'with_attack')
+        ].copy()
+
+    if df_filtered.empty:
+        logger.warning(f"No performance data to plot for clip_setting='{clip_setting}'. Skipping plot.")
+        return
+
+    logger.info(f"Generating performance plot for: {clip_setting}...")
+
+    # 2. "Melt" the dataframe to a long format for Seaborn
+    # We want to plot 'max_test_acc' (best utility) and 'avg_asr' (average robustness)
+    df_melted = df_filtered.melt(
+        id_vars=['dataset', 'defense'],
+        value_vars=['max_test_acc', 'avg_asr'],
+        var_name='Metric',
+        value_name='Performance'
+    )
+
+    # Make metric names prettier for the legend
+    df_melted['Metric'] = df_melted['Metric'].map({
+        'max_test_acc': 'Best-Case Accuracy (Utility)',
+        'avg_asr': 'Average ASR (Robustness)'
+    })
+
+    # 3. Create the plot
+    sns.set_style("whitegrid")
+
+    g = sns.catplot(
+        data=df_melted,
+        x='dataset',
+        y='Performance',
+        hue='defense',
+        col='Metric',  # <-- This creates two separate plots
+        kind='bar',
+        palette='Greys',  # B/W friendly
+        edgecolor='black',
+        aspect=1.2,
+        height=5
+    )
+
+    # 4. Customization
+    g.set_axis_labels("Dataset", "Performance (%)")
+    g.set_titles(col_template="{col_name}")  # Use the clean metric names as titles
+    g.axes[0, 0].yaxis.set_major_formatter(PercentFormatter(1.0))
+    g.axes[0, 1].yaxis.set_major_formatter(PercentFormatter(1.0))
+    g.set(ylim=(0, 1.05))
+
+    # Add hatches for pure B/W differentiation
+    hatches = ['/', '\\\\', 'x', '+']
+
+    for i, ax in enumerate(g.axes.flat):
+        # Calculate number of hue levels (defenses)
+        num_hues = len(df_melted['defense'].unique())
+        num_cats = len(df_melted['dataset'].unique())
+
+        for j, patch in enumerate(ax.patches):
+            # Apply hatches based on hue
+            hatch_index = (j // num_cats) % len(hatches)
+            patch.set_hatch(hatches[hatch_index])
+
+    g.fig.suptitle(f"Defense Performance Trade-off ({clip_setting.replace('_', ' ').title()})", y=1.05)
+    g.add_legend(title="Defense")
+
+    # 5. Save the figure
+    output_dir = Path("figures")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    save_path = output_dir / output_filename
+
+    g.fig.savefig(save_path, bbox_inches='tight')
+    logger.info(f"✅ Plot saved to: {save_path}")
+    plt.close(g.fig)
+
+
+# --- **** MODIFIED MAIN FUNCTION **** ---
 def main():
     parser = argparse.ArgumentParser(
         description="Analyze and VISUALIZE FL Sensitivity Analysis results (Step 2.5)."
     )
     parser.add_argument(
-        "results_dir",
-        type=str,
-        nargs="?",
-        default="./results",
+        "results_dir", type=str, nargs="?", default="./results",
         help="The root directory where all experiment results are stored (default: ./results)"
     )
     parser.add_argument(
-        "--exp_filter",
-        type=str,
-        default="step2.5_find_hps",
+        "--exp_filter", type=str, default="step2.5_find_hps",
         help="A string that must be present in the experiment base name (default: 'step2.5_find_hps')."
+    )
+    parser.add_argument(
+        "--clip_mode", type=str, default="all",
+        choices=["all", "local_clip", "no_local_clip"],
+        help="Filter results: 'all', 'local_clip' (default runs), or 'no_local_clip' (runs with suffix)."
+    )
+    parser.add_argument(
+        "--dataset", type=str, default=None,
+        help="Filter for a single dataset (e.g., 'texas100') to show a detailed HP breakdown."
     )
 
     args = parser.parse_args()
@@ -296,8 +397,8 @@ def main():
     pd.set_option('display.float_format', '{:,.4f}'.format)
 
     try:
-        # --- 1. Load data for BOTH clip settings ---
-        raw_results_all = find_all_results(results_path, clip_mode="all", exp_filter=args.exp_filter)
+        # --- 1. Load data for ALL clip settings ---
+        raw_results_all = find_all_results(results_path, args.clip_mode, args.exp_filter)
 
         if not raw_results_all:
             logger.warning(f"No valid results found matching filter: --exp_filter='{args.exp_filter}'")
@@ -305,31 +406,116 @@ def main():
 
         df_all = pd.DataFrame(raw_results_all)
 
-        # --- 2. Prepare the plotting dataframe ---
-        plot_df = prepare_plot_data(df_all)
+        # --- 2. Run the full analysis ---
+        # This will return the two dataframes we need
+        cost_df, hp_agg_df = analyze_sensitivity(df_all)
 
-        if plot_df.empty:
-            logger.error("❌ Failed to prepare data for plotting.")
+        if cost_df.empty or hp_agg_df.empty:
+            logger.error("❌ Failed to analyze data.")
             return
 
-        # --- 3. Create the plots ---
+        # --- 3. Handle the --dataset "deep dive" request ---
+        if args.dataset:
+            logger.info(f"--- Filtering for dataset: '{args.dataset}' ---")
+            detailed_df = hp_agg_df[hp_agg_df['dataset'].str.lower() == args.dataset.lower()]
+
+            if detailed_df.empty:
+                logger.warning(f"No results found for dataset '{args.dataset}'.")
+                logger.warning(f"Available datasets: {hp_agg_df['dataset'].unique()}")
+                return
+
+            display_cols = [
+                "dataset", "clip_setting", "defense", "optimizer", "lr", "epochs",
+                "test_acc", "backdoor_asr", "score", "is_usable"
+            ]
+            detailed_df = detailed_df.sort_values(by=["clip_setting", "defense", "score"],
+                                                  ascending=[True, True, False])
+
+            print("\n" + "=" * 120)
+            print(f"📊 Detailed HP Sweep Results for: {args.dataset.upper()}")
+            print("=" * 120)
+            print(detailed_df[display_cols].to_string(index=False, na_rep="N/A"))
+            print("\n"
+            S
+            " + " = " * 120)
+
+            else:
+            # --- 4. Print Summary Tables (if not doing a deep dive) ---
+
+            # (Print Initialization Cost table)
+            display_cols = [
+                "dataset", "attack_state", "clip_setting", "defense", "initialization_cost",
+                "min_asr", "avg_asr", "usable_hp_count",
+                "relative_max_perf", "relative_avg_perf", "total_hp_combos",
+            ]
+            display_cols = [col for col in display_cols if col in cost_df.columns]
+            print("\n" + "=" * 120)
+            print(f"📊 Initialization Cost Analysis (Usable Threshold: {USABLE_THRESHOLD * 100}%)")
+            print("=" * 120)
+            print(cost_df[display_cols].to_string(index=False, na_rep="N/A"))
+            print("\n" + "=" * 120)
+
+            # (Print Golden Params dictionary)
+            print("\n" + "=" * 120)
+            print("📋 New 'GOLDEN_TRAINING_PARAMS' Dictionary (from Step 2.5)")
+            print("=" * 120)
+            dataset_to_model_map = {
+                "texas100": "mlp_texas100_baseline",
+                "purchase100": "mlp_purchase100_baseline",
+                "cifar10": "cifar10_cnn",
+                "cifar100": "cifar100_cnn",
+                "trec": "textcnn_trec_baseline",
+            }
+            best_hp_indices = hp_agg_df.groupby(['defense', 'dataset', 'clip_setting'])['score'].idxmax()
+            best_hp_df = hp_agg_df.loc[best_hp_indices]
+            print("# Copy and paste this dictionary into your 'config_common_utils.py':\n")
+            print("GOLDEN_TRAINING_PARAMS = {")
+            for _, row in best_hp_df.iterrows():
+                model_config_name = dataset_to_model_map.get(row['dataset'])
+            if not model_config_name:
+                continue
+            key = f"{row['defense']}_{model_config_name}_{row['clip_setting']}"
+            hp_dict = {
+                "training.optimizer": row['optimizer'],
+                "training.learning_rate": row['lr'],
+                "training.local_epochs": int(row['epochs']),
+            }
+            if row['optimizer'] == 'SGD':
+                hp_dict["training.momentum"] = 0.9
+                hp_dict["training.weight_decay"] = 5e-4
+            print(f'    "{key}": {hp_dict},')
+        print("}")
+        print("\n" + "=" * 120)
+
+        # --- 5. Create the plots ---
+        # (This only runs if --dataset is NOT specified)
         create_usability_plot(
-            plot_df,
+            hp_agg_df,
             clip_setting="local_clip",
             output_filename="step2.5_usability_with_local_clip.png"
         )
-
         create_usability_plot(
-            plot_df,
+            hp_agg_df,
             clip_setting="no_local_clip",
             output_filename="step2.5_usability_no_local_clip.png"
         )
 
-        logger.info("\n✅ Visualization complete.")
+        # --- Call the NEW plotting function ---
+        create_performance_plot(
+            cost_df,
+            clip_setting="local_clip",
+            output_filename="step2.5_performance_with_local_clip.png"
+        )
+        create_performance_plot(
+            cost_df,
+            clip_setting="no_local_clip",
+            output_filename="step2.5_performance_no_local_clip.png"
+        )
 
-    except Exception as e:
-        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+    logger.info("\n✅ Analysis complete.")
 
+except Exception as e:
+logger.error(f"An unexpected error occurred: {e}", exc_info=True)
 
 if __name__ == "__main__":
     main()
