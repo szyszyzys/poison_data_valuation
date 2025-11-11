@@ -35,8 +35,23 @@ class KernelSHAPEvaluator:
         model.eval()
         correct, total = 0, 0
         with torch.no_grad():
-            for data, labels in self.buyer_loader:
+            # Iterate over the whole batch
+            for batch in self.buyer_loader:  # <-- FIX 1
+
+                # --- START FIX 2: Add unpacking logic ---
+                try:
+                    if len(batch) == 3:  # Text data
+                        labels, data, _ = batch
+                    else:  # Image/Tabular
+                        data, labels = batch
+                except Exception as e:
+                    # Log a warning if you have logging imported, otherwise print
+                    print(f"[WARN] KernelSHAP skipping eval batch due to unpack error: {e}")
+                    continue
+
                 data, labels = data.to(self.device), labels.to(self.device)
+                # --- END FIX ---
+
                 outputs = model(data)
                 _, predicted = torch.max(outputs.data, 1)
                 total += labels.size(0)
@@ -76,7 +91,7 @@ class KernelSHAPEvaluator:
             global_epoch=round_number,
             seller_updates=coalition_gradients,
             root_gradient=buyer_gradient,  # ✅ --- 6. THE FINAL FIX ---
-            buyer_data_loader=self.buyer_loader # <-- Also pass the loader!
+            buyer_data_loader=self.buyer_loader  # <-- Also pass the loader!
         )
 
         # 4. Simulate applying the gradient

@@ -55,8 +55,16 @@ class InfluenceEvaluator:
 
         try:
             # 1. Get a single, representative batch from the buyer
-            data, labels = next(iter(self.buyer_loader))
+            batch = next(iter(self.buyer_loader))
+
+            # Apply the same logic as train_local_model
+            if len(batch) == 3:  # Text data
+                labels, data, _ = batch
+            else:  # Image/Tabular
+                data, labels = batch
+
             data, labels = data.to(self.device), labels.to(self.device)
+
         except StopIteration:
             logging.error("Buyer loader is empty, cannot run influence evaluation.")
             return valuations

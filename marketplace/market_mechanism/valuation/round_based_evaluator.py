@@ -42,13 +42,29 @@ class RoundBasedLOOEvaluator:
         model.eval()
         correct = 0
         total = 0
+
         with torch.no_grad():
-            for data, labels in self.buyer_loader:
+            # Iterate over the batch, not the unpacked items
+            for batch in self.buyer_loader:  # <-- FIX 1
+
+                # --- START FIX 2: Add unpacking logic ---
+                try:
+                    if len(batch) == 3:  # Text data
+                        labels, data, _ = batch
+                    else:  # Image/Tabular
+                        data, labels = batch
+                except Exception as e:
+                    logging.warning(f"Skipping batch in performance eval due to unpack error: {e}")
+                    continue
+
                 data, labels = data.to(self.device), labels.to(self.device)
+                # --- END FIX ---
+
                 outputs = model(data)
                 _, predicted = torch.max(outputs.data, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
+
         return (100 * correct / total) if total > 0 else 0.0
 
     def _get_post_update_performance(
