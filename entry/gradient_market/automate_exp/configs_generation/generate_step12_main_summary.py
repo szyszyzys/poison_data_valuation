@@ -72,9 +72,6 @@ def generate_main_summary_scenarios() -> List[Scenario]:
         print(f"-- Processing: {modality} {model_cfg_name}")
 
         current_defenses = IMAGE_DEFENSES if modality == "image" else TEXT_TABULAR_DEFENSES
-        attack_modifiers = STANDARD_ATTACK_MODIFIERS.get(modality, [])
-        if not attack_modifiers:
-            print(f"   WARNING: No standard attack modifiers defined for modality '{modality}'. Skipping attack.")
 
         for defense_name in current_defenses:
             # === FIX 3: Removed the buggy `if defense_name not in ...` check ===
@@ -148,10 +145,11 @@ def generate_main_summary_scenarios() -> List[Scenario]:
             }
 
             all_modifiers = [
-                                setup_modifier_func,  # <-- Use the new, correct modifier
-                                target["dataset_modifier"]
-                            ] + attack_modifiers + [valuation_modifier]
-
+                setup_modifier_func,
+                target["dataset_modifier"],
+                target["attack_modifier"],  # <-- THE FIX
+                valuation_modifier
+            ]
             scenario = Scenario(
                 name=scenario_name,
                 base_config_factory=target["base_config_factory"],
