@@ -8,6 +8,7 @@ import logging
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.ticker import PercentFormatter
+import numpy as np  # <-- 1. THIS IS THE FIRST FIX
 
 # --- Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -90,13 +91,12 @@ def calculate_msr(selection_df: pd.DataFrame) -> float:
     elif 'weight' in selection_df.columns:
         selected_sellers = selection_df[selection_df['weight'] > 0]
     else:
-        logger.warning("Could not find 'selected' or 'weight' column in seller_metrics.csv. MSR will be 0.")
+        logger.warning("Could not find 'selected' or 'weight' column. MSR will be 0.")
         return 0.0
 
     if selected_sellers.empty:
         return 0.0  # No sellers were selected
 
-    # Identify malicious sellers (whose IDs start with 'adv_')
     malicious_selected = selected_sellers['seller_id'].str.startswith('adv_').sum()
     total_selected = len(selected_sellers)
 
@@ -109,10 +109,12 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
     logger.info(f"🔍 Scanning for Step 3 results in: {root_dir}...")
 
     # Find metrics files from the correct (new) Step 3 directory structure
-    metrics_files = list(root_dir.rglob("step3_tune_*/*/*/run_*/final_metrics.json"))
+    search_pattern = "step3_tune_*/*/*/run_*/final_metrics.json"
+    metrics_files = list(root_dir.rglob(search_pattern))
 
     if not metrics_files:
-        logger.error(f"❌ ERROR: No 'final_metrics.json' files found recursively in {root_dir}.")
+        logger.error(
+            f"❌ ERROR: No 'final_metrics.json' files found recursively in {root_dir} matching {search_pattern}.")
         return pd.DataFrame()
 
     logger.info(f"✅ Found {len(metrics_files)} individual run results.")
@@ -120,7 +122,6 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
     all_results = []
     for metrics_file in metrics_files:
         try:
-            # --- Robust Path Finding ---
             current_path = metrics_file.parent
             scenario_dir = None
             while current_path != root_dir and current_path != current_path.parent:
@@ -128,29 +129,34 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
                     scenario_dir = current_path
                     break
                 current_path = current_path.parent
-            if scenario_dir is None: continue
+            if scenario_dir is None:
+                logger.warning(f"Could not find scenario dir for {metrics_file}")
+                continue
 
             relative_path_parts = metrics_file.parent.relative_to(scenario_dir).parts
-            if len(relative_path_parts) < 2: continue
+            if len(relative_path_parts) < 2:
+                logger.warning(f"Skipping {metrics_file}, unexpected path structure.")
+                continue
 
             hp_dir_name = relative_path_parts[0]
             seed_dir_name = relative_path_parts[-1]
             seed_dir = metrics_file.parent
 
             if not (seed_dir / ".success").exists():
+                logger.debug(f"Skipping failed run: {seed_dir.name}")
                 continue
 
             scenario_info = parse_scenario_name_step3(scenario_dir.name)
             hp_info = parse_defense_hp_folder_name(hp_dir_name)
 
             if not scenario_info or ("defense" not in scenario_info):
+                logger.warning(f"Could not parse scenario info from {scenario_dir.name}")
                 continue
 
             # --- NEW: Load MSR Data ---
             msr = np.nan
             seller_metrics_path = metrics_file.parent / "seller_metrics.csv"
             if not seller_metrics_path.exists():
-                # Fallback check for selection_history.csv
                 seller_metrics_path = metrics_file.parent / "selection_history.csv"
 
             if seller_metrics_path.exists():
@@ -159,7 +165,7 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
                 stable_selection_df = selection_df[selection_df['round'] > (max_round / 2)]
 
                 if stable_selection_df.empty:
-                    msr = calculate_msr(selection_df)  # Fallback to all rounds
+                    msr = calculate_msr(selection_df)
                 else:
                     msr = calculate_msr(stable_selection_df)
             else:
@@ -180,7 +186,7 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
                 "seed": int(seed_dir_name.split('_')[-1]) if "run" in seed_dir_name else -1,
                 "test_acc": test_acc,
                 "backdoor_asr": backdoor_asr,
-                "msr": msr  # <-- ADDED MSR
+                "msr": msr
             }
             all_results.append(record)
 
@@ -194,11 +200,13 @@ def find_all_tuning_results(root_dir: Path) -> pd.DataFrame:
 
 
 # --- MODIFIED analyze_defense_tuning ---
-def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path):
+def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path) -> (pd.DataFrame, pd.DataFrame):  # Type hint
     """Aggregates results and finds the best defense HPs."""
     if raw_df.empty:
         logger.warning("No data to analyze.")
-        return pd.DataFrame()  # Return empty DF
+        # --- 2. THIS IS THE SECOND FIX ---
+        return pd.DataFrame(), pd.DataFrame()
+        # --- END FIX ---
 
     hp_cols = [col for col in raw_df.columns if col not in [
         'scenario', 'defense', 'attack_type', 'modality', 'dataset', 'model_suffix',
@@ -214,8 +222,8 @@ def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path):
         std_test_acc=('test_acc', 'std'),
         mean_backdoor_asr=('backdoor_asr', 'mean'),
         std_backdoor_asr=('backdoor_asr', 'std'),
-        mean_msr=('msr', 'mean'),  # <-- ADDED MSR
-        std_msr=('msr', 'std'),  # <-- ADDED MSR
+        mean_msr=('msr', 'mean'),
+        std_msr=('msr', 'std'),
         num_success_runs=('seed', 'count')
     ).reset_index()
 
@@ -239,7 +247,7 @@ def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path):
         best_idx = agg_df.loc[agg_df.groupby(scenario_group_cols)['score'].idxmax()]
     except ValueError as ve:
         logger.error(f"Error finding best HPs, possibly due to empty groups: {ve}")
-        return pd.DataFrame()  # Return empty DF
+        return pd.DataFrame(), pd.DataFrame()  # Return empty DFs
 
     best_df = best_idx.sort_values(by=['modality', 'dataset', 'model_suffix', 'attack_type', 'defense'])
 
@@ -278,7 +286,7 @@ def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path):
     return agg_df, best_df
 
 
-# --- NEW: MSR Heatmap Function ---
+# --- (Visualization Functions are the same) ---
 def create_msr_heatmap(df_slice: pd.DataFrame, dataset: str, attack: str, defense: str):
     if df_slice.empty: return
     hp_cols = [col for col in df_slice.columns if col not in [
@@ -316,7 +324,6 @@ def create_msr_heatmap(df_slice: pd.DataFrame, dataset: str, attack: str, defens
     plt.close()
 
 
-# --- NEW: MSR Barchart Function ---
 def create_msr_barchart(df_slice: pd.DataFrame, dataset: str, attack: str, defense: str):
     if df_slice.empty: return
     hp_cols = [col for col in df_slice.columns if col not in [
@@ -355,7 +362,7 @@ def create_msr_barchart(df_slice: pd.DataFrame, dataset: str, attack: str, defen
 # --- MODIFIED main ---
 def main():
     parser = argparse.ArgumentParser(
-        description="Analyze and Visualize FL Defense Tuning results (Step 3)."
+        description="Analyze Malicious Selection Rate (MSR) from Step 3."
     )
     parser.add_argument(
         "results_dir",
@@ -370,7 +377,6 @@ def main():
         return
 
     try:
-        # --- 1. Run the full analysis (now includes MSR) ---
         raw_results_df = find_all_tuning_results(results_path)
         agg_df, best_df = analyze_defense_tuning(raw_results_df, results_path)
 
@@ -393,17 +399,17 @@ def main():
                 (agg_df['model_suffix'] == model)
                 ]
 
-            # --- Generate plots for each defense's MSR ---
+            # --- Generate plots for each defense type ---
 
-            # MartFL (2D Heatmap)
+            # 1. MartFL (2D Heatmap)
             martfl_df = full_df_slice[full_df_slice['defense'] == 'martfl']
             create_msr_heatmap(martfl_df, dataset, attack, 'martfl')
 
-            # FLTrust (1D Barchart)
+            # 2. FLTrust (1D Barchart)
             fltrust_df = full_df_slice[full_df_slice['defense'] == 'fltrust']
             create_msr_barchart(fltrust_df, dataset, attack, 'fltrust')
 
-            # SkyMask (2D Heatmap)
+            # 3. SkyMask (2D Heatmap)
             skymask_df = full_df_slice[full_df_slice['defense'] == 'skymask']
             create_msr_heatmap(skymask_df, dataset, attack, 'skymask')
 
