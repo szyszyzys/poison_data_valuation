@@ -261,61 +261,91 @@ def analyze_defense_tuning(raw_df: pd.DataFrame, results_dir: Path) -> (pd.DataF
 # --- Visualization Functions (MSR) ---
 def create_msr_heatmap(df_slice: pd.DataFrame, dataset: str, attack: str, defense: str):
     if df_slice.empty: return
-    df_slice = df_slice.dropna(axis=1, how='all')  # Drop empty HP cols
-    hp_cols = [col for col in df_slice.columns if col not in [
-        'scenario', 'defense', 'attack_type', 'modality', 'dataset', 'model_suffix',
-        'mean_msr', 'std_msr', 'num_success_runs', 'mean_test_acc', 'std_test_acc',
-        'mean_backdoor_asr', 'std_backdoor_asr', 'score'
-    ] and not col.startswith('raw_')]
 
-    if len(hp_cols) != 2:
-        logger.info(f"[MSR Plot] Skipping heatmap for {defense} (requires 2 HPs, found {len(hp_cols)}: {hp_cols}).")
+    # --- THIS IS THE FIX ---
+    # Explicitly define which HPs to plot for 2D defenses
+    hp_map = {
+        'martfl': ('clip_norm', 'max_k'),
+        'skymask': ('mask_lr', 'mask_threshold')  # Example: plot 2 of SkyMask's 3 HPs
+        # (You can change 'skymask' to plot other pairs)
+    }
+
+    if defense not in hp_map:
+        logger.info(f"[MSR Plot] Skipping heatmap for {defense} (not in hp_map).")
         return
 
-    hp_x, hp_y = hp_cols[0], hp_cols[1]
-    logger.info(f"Generating MSR heatmap for: {dataset} / {defense} / {attack}...")
+    hp_x, hp_y = hp_map[defense]
 
-    try:
-        pivot_df = df_slice.pivot(index=hp_y, columns=hp_x, values='mean_msr')
-    except Exception as e:
-        logger.error(f"Failed to create MSR pivot table for heatmap: {e}"); return
-
-    plt.figure(figsize=(10, 7))
-    sns.set_style("whitegrid")
-    ax = sns.heatmap(
-        pivot_df, annot=True, fmt=".1%", cmap="Greys", linewidths=.5,
-        cbar_kws={'label': "Malicious Selection Rate (MSR)"}
-    )
-    ax.set_title(f"MSR Analysis (Filtering): {defense}\n({dataset} / {attack})")
-    ax.set_xlabel(hp_x.replace("_", " ").title())
-    ax.set_ylabel(hp_y.replace("_", " ").title())
-
-    output_dir = Path("figures") / "step3_msr_analysis"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"msr_heatmap_{dataset}_{defense}_{attack}.png"
-    plt.savefig(output_dir / filename, bbox_inches='tight')
-    plt.close()
+    # Check if this slice actually swept these HPs
+    if hp_x not in df_slice.columns or hp_y not in df_slice.columns:
+        logger.warning(f"SkiTry to
 
 
+pping
+heatmap
+for {defense}: Data is missing
+HP
+columns
+{hp_x} or {hp_y}
+")
+return
+# --- END FIX ---
+
+logger.info(f"Generating MSR heatmap for: {dataset} / {defense} / {attack}...")
+
+try:
+    # We must fillna for pivoting to work
+    df_slice[hp_x] = df_slice[hp_x].fillna('None')
+    df_slice[hp_y] = df_slice[hp_y].fillna('None')
+    pivot_df = df_slice.pivot(index=hp_y, columns=hp_x, values='mean_msr')
+except Exception as e:
+    logger.error(f"Failed to create MSR pivot table for heatmap: {e}");
+    return
+
+plt.figure(figsize=(10, 7))
+sns.set_style("whitegrid")
+ax = sns.heatmap(
+    pivot_df, annot=True, fmt=".1%", cmap="Greys", linewidths=.5,
+    cbar_kws={'label': "Malicious Selection Rate (MSR)"}
+)
+ax.set_title(f"MSR Analysis (Filtering): {defense}\n({dataset} / {attack})")
+ax.set_xlabel(hp_x.replace("_", " ").title())
+ax.set_ylabel(hp_y.replace("_", " ").title())
+
+output_dir = Path("figures") / "step3_msr_analysis"
+output_dir.mkdir(parents=True, exist_ok=True)
+filename = f"msr_heatmap_{dataset}_{defense}_{attack}.png"
+plt.savefig(output_dir / filename, bbox_inches='tight')
+plt.close()
+
+
+# --- MODIFIED: MSR Barchart Function ---
 def create_msr_barchart(df_slice: pd.DataFrame, dataset: str, attack: str, defense: str):
     if df_slice.empty: return
-    df_slice = df_slice.dropna(axis=1, how='all')  # Drop empty HP cols
-    hp_cols = [col for col in df_slice.columns if col not in [
-        'scenario', 'defense', 'attack_type', 'modality', 'dataset', 'model_suffix',
-        'mean_msr', 'std_msr', 'num_success_runs', 'mean_test_acc', 'std_test_acc',
-        'mean_backdoor_asr', 'std_backdoor_asr', 'score'
-    ] and not col.startswith('raw_')]
 
-    if len(hp_cols) != 1:
-        logger.info(f"[MSR Plot] Skipping barchart for {defense} (requires 1 HP, found {len(hp_cols)}: {hp_cols}).")
+    # --- THIS IS THE FIX ---
+    # Explicitly define which HPs to plot for 1D defenses
+    hp_map = {
+        'fltrust': 'clip_norm'
+    }
+
+    if defense not in hp_map:
+        logger.info(f"[MSR Plot] Skipping barchart for {defense} (not in hp_map).")
         return
 
-    hp_x = hp_cols[0]
+    hp_x = hp_map[defense]
+
+    if hp_x not in df_slice.columns:
+        logger.warning(f"Skipping barchart for {defense}: Data is missing HP column {hp_x}")
+        return
+    # --- END FIX ---
+
     logger.info(f"Generating MSR barchart for: {dataset} / {defense} / {attack} (vs {hp_x})...")
 
     plt.figure(figsize=(10, 6))
     sns.set_style("whitegrid")
-    df_slice[hp_x] = df_slice[hp_x].astype(str)  # Treat HP as categorical
+    # We must fillna and convert to string to treat 'None' as a category
+    df_slice[hp_x] = df_slice[hp_x].fillna('None').astype(str)
 
     ax = sns.barplot(
         data=df_slice, x=hp_x, y='mean_msr', palette='Greys', edgecolor='black'
@@ -355,7 +385,8 @@ def create_asr_heatmap(df_slice: pd.DataFrame, dataset: str, attack: str, defens
     try:
         pivot_df = df_slice.pivot(index=hp_y, columns=hp_x, values='mean_backdoor_asr')
     except Exception as e:
-        logger.error(f"Failed to create ASR pivot table for heatmap: {e}"); return
+        logger.error(f"Failed to create ASR pivot table for heatmap: {e}");
+        return
 
     plt.figure(figsize=(10, 7))
     sns.set_style("whitegrid")
