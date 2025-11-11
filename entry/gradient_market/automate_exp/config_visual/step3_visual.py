@@ -112,8 +112,9 @@ def create_comparison_plot(best_df: pd.DataFrame, dataset: str, attack: str):
     # Add hatches for B/W
     hatches = ['/', '\\\\']
     for i, bar in enumerate(ax.patches):
-        bar.set_hatch(hatches[i // len(best_df['defense'].unique())])
-
+        # --- THIS IS THE FIX ---
+        # This correctly alternates the hatch for each metric in the group
+        bar.set_hatch(hatches[i % len(hatches)])
     ax.set_title(f"Best Defense Performance vs. FedAvg\n({dataset} / {attack})")
     ax.set_xlabel("Defense")
     ax.set_ylabel("Performance (%)")
