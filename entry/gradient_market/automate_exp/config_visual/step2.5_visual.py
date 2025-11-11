@@ -1,11 +1,12 @@
 import argparse
 import json
+import logging
 import re
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-import pandas as pd
-import logging
+from typing import Dict, Any, List
+
 import matplotlib.pyplot as plt
+import pandas as pd
 import seaborn as sns
 from matplotlib.ticker import PercentFormatter
 
@@ -435,11 +436,13 @@ def main():
             print(f"📊 Detailed HP Sweep Results for: {args.dataset.upper()}")
             print("=" * 120)
             print(detailed_df[display_cols].to_string(index=False, na_rep="N/A"))
-            print("\n"
-            S
-            " + " = " * 120)
+            print("\n" + "=" * 120)
+            print(f"📊 Detailed HP Sweep Results for: {args.dataset.upper()}")
+            print("=" * 120)
+            print(detailed_df[display_cols].to_string(index=False, na_rep="N/A"))
+            print("\n" + " = " * 120)
 
-            else:
+        else:
             # --- 4. Print Summary Tables (if not doing a deep dive) ---
 
             # (Print Initialization Cost table)
@@ -472,50 +475,51 @@ def main():
             print("GOLDEN_TRAINING_PARAMS = {")
             for _, row in best_hp_df.iterrows():
                 model_config_name = dataset_to_model_map.get(row['dataset'])
-            if not model_config_name:
-                continue
-            key = f"{row['defense']}_{model_config_name}_{row['clip_setting']}"
-            hp_dict = {
-                "training.optimizer": row['optimizer'],
-                "training.learning_rate": row['lr'],
-                "training.local_epochs": int(row['epochs']),
-            }
-            if row['optimizer'] == 'SGD':
-                hp_dict["training.momentum"] = 0.9
-                hp_dict["training.weight_decay"] = 5e-4
-            print(f'    "{key}": {hp_dict},')
-        print("}")
-        print("\n" + "=" * 120)
+                if not model_config_name:
+                    continue
+                key = f"{row['defense']}_{model_config_name}_{row['clip_setting']}"
+                hp_dict = {
+                    "training.optimizer": row['optimizer'],
+                    "training.learning_rate": row['lr'],
+                    "training.local_epochs": int(row['epochs']),
+                }
+                if row['optimizer'] == 'SGD':
+                    hp_dict["training.momentum"] = 0.9
+                    hp_dict["training.weight_decay"] = 5e-4
+                print(f'    "{key}": {hp_dict},')
+            print("}")
+            print("\n" + "=" * 120)
 
-        # --- 5. Create the plots ---
-        # (This only runs if --dataset is NOT specified)
-        create_usability_plot(
-            hp_agg_df,
-            clip_setting="local_clip",
-            output_filename="step2.5_usability_with_local_clip.png"
-        )
-        create_usability_plot(
-            hp_agg_df,
-            clip_setting="no_local_clip",
-            output_filename="step2.5_usability_no_local_clip.png"
-        )
+            # --- 5. Create the plots ---
+            # (This only runs if --dataset is NOT specified)
+            create_usability_plot(
+                hp_agg_df,
+                clip_setting="local_clip",
+                output_filename="step2.5_usability_with_local_clip.png"
+            )
+            create_usability_plot(
+                hp_agg_df,
+                clip_setting="no_local_clip",
+                output_filename="step2.5_usability_no_local_clip.png"
+            )
 
-        # --- Call the NEW plotting function ---
-        create_performance_plot(
-            cost_df,
-            clip_setting="local_clip",
-            output_filename="step2.5_performance_with_local_clip.png"
-        )
-        create_performance_plot(
-            cost_df,
-            clip_setting="no_local_clip",
-            output_filename="step2.5_performance_no_local_clip.png"
-        )
+            # --- Call the NEW plotting function ---
+            create_performance_plot(
+                cost_df,
+                clip_setting="local_clip",
+                output_filename="step2.5_performance_with_local_clip.png"
+            )
+            create_performance_plot(
+                cost_df,
+                clip_setting="no_local_clip",
+                output_filename="step2.5_performance_no_local_clip.png"
+            )
 
-    logger.info("\n✅ Analysis complete.")
+        logger.info("\n✅ Analysis complete.")
 
-except Exception as e:
-logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
 
 if __name__ == "__main__":
     main()
