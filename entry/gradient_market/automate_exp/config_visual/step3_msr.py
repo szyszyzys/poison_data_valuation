@@ -351,6 +351,48 @@ def create_asr_heatmap(df_slice: pd.DataFrame, dataset: str, attack: str, defens
     plt.close()
 
 
+def create_msr_barchart(df_slice: pd.DataFrame, dataset: str, attack: str, defense: str):
+    if df_slice.empty: return
+
+    # --- THIS IS THE FIX ---
+    # Explicitly define which HPs to plot for 1D defenses
+    hp_map = {
+        'fltrust': 'clip_norm'
+    }
+
+    if defense not in hp_map:
+        logger.info(f"[MSR Plot] Skipping barchart for {defense} (not in hp_map).")
+        return
+
+    hp_x = hp_map[defense]
+
+    if hp_x not in df_slice.columns:
+        logger.warning(f"Skipping barchart for {defense}: Data is missing HP column {hp_x}")
+        return
+    # --- END FIX ---
+
+    logger.info(f"Generating MSR barchart for: {dataset} / {defense} / {attack} (vs {hp_x})...")
+
+    plt.figure(figsize=(10, 6))
+    sns.set_style("whitegrid")
+    # We must fillna and convert to string to treat 'None' as a category
+    df_slice[hp_x] = df_slice[hp_x].fillna('None').astype(str)
+
+    ax = sns.barplot(
+        data=df_slice, x=hp_x, y='mean_msr', palette='Greys', edgecolor='black'
+    )
+    ax.set_title(f"MSR vs. {hp_x.title()} (Filtering): {defense}\n({dataset} / {attack})")
+    ax.set_xlabel(hp_x.replace("_", " ").title())
+    ax.set_ylabel("Malicious Selection Rate (MSR)")
+    ax.set_ylim(0, 1.05)
+    ax.yaxis.set_major_formatter(PercentFormatter(1.0))
+
+    output_dir = Path("figures") / "step3_msr_analysis"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"msr_barchart_{dataset}_{defense}_{attack}_{hp_x}.png"
+    plt.savefig(output_dir / filename, bbox_inches='tight')
+    plt.close()
+
 def create_asr_barchart(df_slice: pd.DataFrame, dataset: str, attack: str, defense: str):
     """ Generates a barchart for ASR vs. 1 defense HP. """
     if df_slice.empty: return
