@@ -94,7 +94,7 @@ def use_tabular_backdoor_with_trigger(
         target_label: int  # <-- ADD THIS ARGUMENT
 ) -> Callable[[AppConfig], AppConfig]:
     """Returns a modifier to enable the tabular backdoor attack with specific trigger conditions."""
-
+    print(f'current trigger condiftion: {trigger_conditions}')
     def modifier(config: AppConfig) -> AppConfig:
         config.adversary_seller_config.poisoning.type = PoisonType.TABULAR_BACKDOOR
 

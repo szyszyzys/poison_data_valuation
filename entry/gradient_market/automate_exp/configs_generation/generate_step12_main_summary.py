@@ -11,7 +11,7 @@ from config_common_utils import (
     DEFAULT_ADV_RATE, DEFAULT_POISON_RATE,
     IMAGE_DEFENSES, TEXT_TABULAR_DEFENSES,
     # create_fixed_params_modifier,  <-- REMOVED
-    enable_valuation, use_sybil_attack_strategy, get_tuned_defense_params,
+    enable_valuation, get_tuned_defense_params,
     GOLDEN_TRAINING_PARAMS  # <-- ADDED
 )
 from entry.gradient_market.automate_exp.base_configs import (
@@ -30,9 +30,7 @@ try:
 except ImportError as e:
     print(f"Error importing necessary modules: {e}")
     sys.exit(1)
-# --- End Imports ---
 
-# ... (Constants are all correct) ...
 STANDARD_SYBIL_STRATEGY = "mimic"
 STANDARD_ATTACK_MODIFIERS = {
     "image": [use_image_backdoor_attack],
