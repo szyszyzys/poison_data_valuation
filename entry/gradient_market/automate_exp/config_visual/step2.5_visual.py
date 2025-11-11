@@ -238,16 +238,15 @@ def create_usability_plot(plot_df: pd.DataFrame, clip_setting: str, output_filen
     # Set style
     sns.set_style("whitegrid")
 
-    # Create the plot
     g = sns.catplot(
         data=df_filtered,
         x='dataset',
         y='usable_rate',
         hue='defense',
         kind='bar',
-        palette='grayscale',  # Creates B/W plot with shades of gray
+        palette='Greys',  # <-- THIS IS THE FIX
         edgecolor='black',
-        aspect=1.5  # Make the plot wider
+        aspect=1.5
     )
 
     # --- Customization ---
