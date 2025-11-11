@@ -193,7 +193,7 @@ def analyze_sensitivity(raw_df: pd.DataFrame) -> (pd.DataFrame, pd.DataFrame):
     raw_df['dataset'] = raw_df['ds']
 
     # --- 2. Aggregate across seeds ---
-    group_cols = ["defense", "dataset", "modality", "optimizer", "lr", "epochs", "clip_setting"]
+    group_cols = ["defense", "attack_state", "dataset", "modality", "optimizer", "lr", "epochs", "clip_setting"]
     available_group_cols = [col for col in group_cols if col in raw_df.columns]
 
     numeric_cols = ["acc", "asr"]
