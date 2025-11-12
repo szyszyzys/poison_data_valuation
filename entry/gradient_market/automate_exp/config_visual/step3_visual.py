@@ -9,9 +9,11 @@ from typing import List, Dict, Any
 # --- Configuration ---
 
 # !IMPORTANT: Set this to your main results directory
-BASE_RESULTS_DIR = "./results"  # Path from your generator script
+# Based on your prompt, your CWD is /scratch/zzs5287/poison_data_valuation
+# and your results are in a 'results' folder inside that.
+BASE_RESULTS_DIR = "./results"
 
-# !NEW: Set your minimum acceptable accuracy threshold here.
+# Set your minimum acceptable accuracy threshold here.
 REASONABLE_ACC_THRESHOLD = 0.70
 
 
@@ -62,7 +64,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
             "model": parts[6],
         }
     except Exception as e:
-        # This catch is now a fallback, as the main filter should prevent this.
         print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
         return {"scenario": scenario_name}
 
@@ -104,41 +105,56 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
 def collect_all_results(base_dir: str) -> pd.DataFrame:
     """
     Walks the results directory and aggregates all run data.
+    This version is robust to nested directory structures.
     """
     all_runs = []
     base_path = Path(base_dir)
-
     print(f"Searching for results in {base_path.resolve()}...")
 
-    for metrics_file in base_path.rglob("final_metrics.json"):
-        try:
-            hp_folder_name = metrics_file.parent.name
-            scenario_name = metrics_file.parent.parent.name
+    # 1. Find all scenario folders
+    scenario_folders = [f for f in base_path.glob("step3_tune_*") if f.is_dir()]
+    if not scenario_folders:
+        print(f"Error: No 'step3_tune_*' directories found directly inside {base_path}.")
+        return pd.DataFrame()
 
-            # === THIS IS THE FIX ===
-            # We only process directories that match our step3 tuning format.
-            # This ignores all other experiment results (like step1, step2, etc.)
-            if not scenario_name.startswith("step3_tune_"):
-                continue
-            # =======================
+    print(f"Found {len(scenario_folders)} scenario base directories.")
 
-            run_hps = parse_hp_suffix(hp_folder_name)
-            run_scenario = parse_scenario_name(scenario_name)
-            run_metrics = load_run_data(metrics_file)
+    # 2. Iterate through each scenario
+    for scenario_path in scenario_folders:
+        scenario_name = scenario_path.name
+        run_scenario = parse_scenario_name(scenario_name)
 
-            if run_metrics:
-                all_runs.append({
-                    **run_scenario,
-                    **run_hps,
-                    **run_metrics,
-                    "hp_suffix": hp_folder_name
-                })
-        except Exception as e:
-            print(f"Error processing path {metrics_file}: {e}")
+        # 3. rglob for metrics *within* that scenario folder
+        for metrics_file in scenario_path.rglob("final_metrics.json"):
+            try:
+                # 4. Find the HP suffix folder.
+                #    It's the folder *immediately* inside the scenario_path
+                #    that is an ancestor of the metrics_file.
+
+                # Get all parent parts relative to the scenario_path
+                relative_parts = metrics_file.parent.relative_to(scenario_path).parts
+                if not relative_parts:
+                    # Metrics file is directly in scenario_path? Unlikely.
+                    continue
+
+                # The hp_suffix folder is the first part of the relative path
+                hp_folder_name = relative_parts[0]
+
+                run_hps = parse_hp_suffix(hp_folder_name)
+                run_metrics = load_run_data(metrics_file)
+
+                if run_metrics:
+                    all_runs.append({
+                        **run_scenario,
+                        **run_hps,
+                        **run_metrics,
+                        "hp_suffix": hp_folder_name
+                    })
+            except Exception as e:
+                print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
 
     if not all_runs:
-        print("Error: No 'final_metrics.json' files were found starting with 'step3_tune_'.")
-        print(f"       Did you set BASE_RESULTS_DIR to '{base_dir}' correctly?")
+        print("Error: No 'final_metrics.json' files were successfully processed.")
         return pd.DataFrame()
 
     return pd.DataFrame(all_runs)
