@@ -9,7 +9,7 @@ from typing import List, Dict, Any
 # --- Configuration ---
 
 # !IMPORTANT: Set this to your main results directory
-BASE_RESULTS_DIR = "./results_new"  # Path from your generator script
+BASE_RESULTS_DIR = "./results"  # Path from your generator script
 
 # !NEW: Set your minimum acceptable accuracy threshold here.
 # Runs below this accuracy will be considered 'unreasonable' and
