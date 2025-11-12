@@ -10,7 +10,7 @@ from typing import List, Dict, Any
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = ".figures/step3_figures"
+FIGURE_OUTPUT_DIR = "./step3_figures"
 
 # Set your minimum acceptable accuracy threshold (e.g., 0.70 for 70%)
 REASONABLE_ACC_THRESHOLD = 0.70
@@ -23,30 +23,36 @@ REASONABLE_BSR_THRESHOLD = 0.50
 
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
-    """Parses the HP suffix folder name into a dictionary."""
+    """
+    (FIXED) Parses the HP suffix folder name using regex.
+    This is robust to underscores in parameter names.
+    """
     hps = {}
-    parts = hp_folder_name.split('_')
-    i = 0
-    while i < len(parts):
-        # Use 'is' to correctly check for None
-        if "max_k" in parts[i]:
-            hps['martfl.max_k'] = int(parts[i + 1])
-            i += 2
-        elif "clip_norm" in parts[i]:
-            # Store None directly, not np.nan, to distinguish from a numeric 0
-            hps['clip_norm'] = None if parts[i + 1] == "None" else float(parts[i + 1])
-            i += 2
-        elif "mask_epochs" in parts[i]:
-            hps['skymask.mask_epochs'] = int(parts[i + 1])
-            i += 2
-        elif "mask_lr" in parts[i]:
-            hps['skymask.mask_lr'] = float(parts[i + 1])
-            i += 2
-        elif "mask_threshold" in parts[i]:
-            hps['skymask.mask_threshold'] = float(parts[i + 1])
-            i += 2
-        else:
-            i += 1
+
+    # Define the regex patterns for each HP we expect, based on the generator script
+    patterns = {
+        'martfl.max_k': r'aggregation\.martfl\.max_k_([0-9]+)',
+        'clip_norm': r'aggregation\.clip_norm_([0-9\.]+|None)',
+        'skymask.mask_epochs': r'aggregation\.skymask\.mask_epochs_([0-9]+)',
+        'skymask.mask_lr': r'aggregation\.skymask\.mask_lr_([0-9\.]+)',
+        'skymask.mask_threshold': r'aggregation\.skymask\.mask_threshold_([0-9\.]+)'
+    }
+
+    for key, pattern in patterns.items():
+        match = re.search(pattern, hp_folder_name)
+        if match:
+            value_str = match.group(1)
+            if value_str == "None":
+                hps[key] = None
+            else:
+                # Try to cast to float (which covers int)
+                try:
+                    hps[key] = float(value_str)
+                    # If it's a whole number, store as int for cleaner grouping
+                    if hps[key] == int(hps[key]):
+                        hps[key] = int(hps[key])
+                except ValueError:
+                    hps[key] = value_str  # Fallback for any other string
     return hps
 
 
@@ -143,7 +149,10 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
         print("Error: No 'final_metrics.json' files were successfully processed.")
         return pd.DataFrame()
 
-    return pd.DataFrame(all_runs)
+    # Convert to DataFrame and fill missing HP columns with NaN
+    # This ensures 'clip_norm' exists for all, even if a defense didn't tune it
+    df = pd.DataFrame(all_runs)
+    return df
 
 
 def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, output_dir: Path):
@@ -158,15 +167,14 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
 
     # --- 1. Plot for Objective 1: Best Performance Trade-off ---
 
-    # !NEW: Logical Sorting for Bar Plot
-    # Create sort keys. 'None' clip_norm is treated as infinity (plots last).
+    # Handle potentially missing clip_norm (though parser fix should prevent this)
+    if 'clip_norm' not in scenario_df.columns:
+        scenario_df['clip_norm'] = np.nan
+
     scenario_df['clip_norm_sort'] = scenario_df['clip_norm'].fillna(np.inf)
 
-    # Find other HP columns to sort by first
     other_hp_cols = [col for col in scenario_df.columns if col.startswith(defense.lower())]
-
     sort_cols = [c for c in other_hp_cols if c != 'clip_norm'] + ['clip_norm_sort']
-    # Filter out any potential extra cols that aren't in the df
     sort_cols = [c for c in sort_cols if c in scenario_df.columns]
 
     if sort_cols:
@@ -186,13 +194,12 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
     )
 
     plt.figure(figsize=(16, 7))
-    # Use the sorted order of hp_suffix from scenario_df
     sns.barplot(
         data=plot_df,
         x='hp_suffix',
         y='Value',
         hue='Metric',
-        order=scenario_df['hp_suffix'].unique()  # This applies the sort
+        order=scenario_df['hp_suffix'].unique()
     )
     plt.title(f'Performance & Selection vs. HPs for {defense} (Scenario: {scenario})')
     plt.ylabel('Rate')
@@ -206,15 +213,11 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
     plt.clf()
 
     # --- 2. Plot for Objective 2: Stableness (Parameter Sensitivity) ---
-    if 'clip_norm' in scenario_df.columns:
+    if 'clip_norm' in scenario_df.columns and not scenario_df['clip_norm'].isnull().all():
 
-        # !NEW: Logical Sorting for Line Plot
-        # Get unique numeric clip_norm values, sorting None (as inf) to the end
         unique_clips = sorted(scenario_df['clip_norm'].fillna(np.inf).unique())
-        # Create string labels, converting inf back to "None (auto)"
         clip_order_labels = [str(c) if c != np.inf else "None (auto)" for c in unique_clips]
 
-        # Create a temporary string version for plotting
         scenario_df['clip_norm_str'] = scenario_df['clip_norm'].fillna("None (auto)")
 
         other_hps = [col for col in scenario_df.columns if col.startswith(defense.lower()) and col != 'clip_norm']
@@ -231,15 +234,24 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
             value_name='Value'
         )
 
+        # Determine the column for faceting (e.g., 'martfl.max_k')
+        facet_col = None
+        if other_hps:
+            # Check for a column that actually has more than one value
+            for col in other_hps:
+                if col in melted_sensitivity.columns and melted_sensitivity[col].nunique() > 1:
+                    facet_col = col
+                    break
+
         g = sns.catplot(
             data=melted_sensitivity,
             x='clip_norm_str',
             y='Value',
             hue='Metric',
-            col=other_hps[0] if other_hps else None,
+            col=facet_col,  # Use the determined facet column
             kind='point',
             palette={'acc': 'blue', 'asr': 'red'},
-            order=clip_order_labels,  # This applies the sort
+            order=clip_order_labels,
             height=5,
             aspect=1.2
         )
@@ -250,6 +262,8 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
         g.fig.savefig(plot_file)
         print(f"Saved plot: {plot_file}")
         plt.clf()
+    else:
+        print(f"Skipping 'clip_norm' stability plot for {defense} (no clip_norm data found).")
 
 
 def main():
@@ -330,8 +344,7 @@ def main():
             'benign_selection_rate',  # Defense Outcome (Fairness)
             'rounds',  # Stability/Efficiency
         ]
-        cols_present = [c for c in cols_to_show if c in group.columns]
-        # Format floats to 4 decimal places for cleaner output
+        cols_present = [c for c in group.columns if c in cols_to_show]
         print(group[cols_present].to_string(index=False, float_format="%.4f"))
 
     # --- Analysis for Objective 2: Stableness (Visualization) ---
@@ -339,7 +352,6 @@ def main():
     print("           Objective 2: Assessing Defense Stability (Plots)")
     print("=" * 80)
 
-    # We use the *original* full dataframe (df) for plotting stability
     for scenario, defense in df[['scenario', 'defense']].drop_duplicates().values:
         plot_defense_comparison(df, scenario, defense, output_dir)
 
