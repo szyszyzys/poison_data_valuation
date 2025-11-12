@@ -12,9 +12,6 @@ from typing import List, Dict, Any
 BASE_RESULTS_DIR = "./results"  # Path from your generator script
 
 # !NEW: Set your minimum acceptable accuracy threshold here.
-# Runs below this accuracy will be considered 'unreasonable' and
-# will be filtered out before selecting the "best" defense.
-# [cite_start]Based on your CIFAR10 run[cite: 1], 0.70 (70%) seems like a reasonable start.
 REASONABLE_ACC_THRESHOLD = 0.70
 
 
@@ -30,8 +27,6 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     parts = hp_folder_name.split('_')
     i = 0
     while i < len(parts):
-        # This is a simple parser. It looks for known prefixes.
-        # Example: 'aggregation.martfl.max_k' becomes 'martfl.max_k'
         if "max_k" in parts[i]:
             hps['martfl.max_k'] = int(parts[i + 1])
             i += 2
@@ -48,7 +43,7 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
             hps['skymask.mask_threshold'] = float(parts[i + 1])
             i += 2
         else:
-            i += 1  # Move to the next part if unrecognized
+            i += 1
     return hps
 
 
@@ -67,6 +62,7 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
             "model": parts[6],
         }
     except Exception as e:
+        # This catch is now a fallback, as the main filter should prevent this.
         print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
         return {"scenario": scenario_name}
 
@@ -77,7 +73,6 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
     """
     run_data = {}
     try:
-        # [cite_start]Load final metrics [cite: 1]
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
         run_data['acc'] = metrics.get('acc', 0)
@@ -85,7 +80,6 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
         run_data['loss'] = metrics.get('loss', 0)
         run_data['rounds'] = metrics.get('completed_rounds', 0)
 
-        # [cite_start]Load marketplace report [cite: 2]
         report_file = metrics_file.parent / "marketplace_report.json"
         if report_file.exists():
             with open(report_file, 'r') as f:
@@ -96,10 +90,8 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
             ben_sellers = [s for s in sellers if s.get('type') == 'benign']
 
             if adv_sellers:
-                # [cite_start]Get avg selection rate for adversaries [cite: 2]
                 run_data['adv_selection_rate'] = pd.Series([s['selection_rate'] for s in adv_sellers]).mean()
             if ben_sellers:
-                # [cite_start]Get avg selection rate for benign sellers [cite: 2]
                 run_data['ben_selection_rate'] = pd.Series([s['selection_rate'] for s in ben_sellers]).mean()
 
         return run_data
@@ -123,6 +115,13 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
             hp_folder_name = metrics_file.parent.name
             scenario_name = metrics_file.parent.parent.name
 
+            # === THIS IS THE FIX ===
+            # We only process directories that match our step3 tuning format.
+            # This ignores all other experiment results (like step1, step2, etc.)
+            if not scenario_name.startswith("step3_tune_"):
+                continue
+            # =======================
+
             run_hps = parse_hp_suffix(hp_folder_name)
             run_scenario = parse_scenario_name(scenario_name)
             run_metrics = load_run_data(metrics_file)
@@ -138,7 +137,8 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
             print(f"Error processing path {metrics_file}: {e}")
 
     if not all_runs:
-        print("Error: No 'final_metrics.json' files were found. Did you set BASE_RESULTS_DIR correctly?")
+        print("Error: No 'final_metrics.json' files were found starting with 'step3_tune_'.")
+        print(f"       Did you set BASE_RESULTS_DIR to '{base_dir}' correctly?")
         return pd.DataFrame()
 
     return pd.DataFrame(all_runs)
@@ -157,9 +157,6 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str):
     print(f"\n--- Visualizing Scenario: {scenario} ---")
 
     # === 1. Plot for Objective 1: Best Performance Trade-off ===
-    # Melt for grouped bar plot
-
-    # Check if 'adv_selection_rate' column exists
     metrics_to_plot = ['acc', 'asr']
     if 'adv_selection_rate' in scenario_df.columns:
         metrics_to_plot.append('adv_selection_rate')
@@ -190,12 +187,9 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str):
     plt.clf()
 
     # === 2. Plot for Objective 2: Stableness (Parameter Sensitivity) ===
-    # This example focuses on 'clip_norm'. You can adapt this for other HPs.
     if 'clip_norm' in scenario_df.columns:
-        # Convert 'None' to a numeric value (e.g., 0) for plotting, or handle as category
         scenario_df['clip_norm'] = scenario_df['clip_norm'].fillna('None (auto)')
 
-        # Determine other HPs to create facets (e.g., 'martfl.max_k')
         other_hps = [col for col in scenario_df.columns if col.startswith(defense.lower()) and col != 'clip_norm']
 
         id_vars = ['clip_norm'] + other_hps
@@ -210,13 +204,12 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str):
             value_name='Value'
         )
 
-        # Use catplot for combined line plots
         g = sns.catplot(
             data=melted_sensitivity,
             x='clip_norm',
             y='Value',
             hue='Metric',
-            col=other_hps[0] if other_hps else None,  # Facet by other HPs
+            col=other_hps[0] if other_hps else None,
             kind='point',
             palette={'acc': 'blue', 'asr': 'red'},
             height=5,
@@ -237,7 +230,6 @@ def main():
     if df.empty:
         return
 
-    # Display all columns
     pd.set_option('display.max_rows', None)
     pd.set_option('display.max_columns', None)
     pd.set_option('display.width', 1000)
@@ -247,18 +239,14 @@ def main():
     print(f" Objective 1: Finding Best HPs (Filtered by acc >= {REASONABLE_ACC_THRESHOLD})")
     print("=" * 80)
 
-    # 1. Apply the user's filter
     reasonable_df = df[df['acc'] >= REASONABLE_ACC_THRESHOLD].copy()
 
     if reasonable_df.empty:
         print(f"\n!WARNING: No runs met the accuracy threshold of {REASONABLE_ACC_THRESHOLD}.")
         print("  Consider lowering the threshold to see any results.")
         print("  Displaying all runs instead, sorted by ASR:")
-        reasonable_df = df.copy()  # Fallback to all runs
+        reasonable_df = df.copy()
 
-    # 2. Sort the *reasonable* runs:
-    #    Primary goal: Lowest ASR
-    #    Secondary goal: Lowest Adversary Selection Rate (if available)
     sort_columns = ['scenario', 'asr']
     sort_ascending = [True, True]
 
@@ -278,14 +266,12 @@ def main():
 
     for name, group in grouped:
         print(f"\n--- SCENARIO: {name} ---")
-        # Define columns to show
         cols_to_show = [
             'hp_suffix',
-            'acc',  # The utility
-            'asr',  # The primary defense metric
-            'adv_selection_rate',  # The secondary defense metric
+            'acc',
+            'asr',
+            'adv_selection_rate',
         ]
-        # Handle missing adv_selection_rate if marketplace_report failed
         cols_present = [c for c in cols_to_show if c in group.columns]
         print(group[cols_present].to_string(index=False))
 
@@ -294,8 +280,6 @@ def main():
     print("           Objective 2: Assessing Defense Stability (Plots)")
     print("=" * 80)
 
-    # We use the *original* full dataframe (df) for plotting stability,
-    # as it's crucial to see the HPs that *caused* the accuracy to drop.
     for scenario, defense in df[['scenario', 'defense']].drop_duplicates().values:
         plot_defense_comparison(df, scenario, defense)
 
