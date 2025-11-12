@@ -61,7 +61,8 @@ def train_local_model(model: nn.Module,
                 data, labels = data.to(device, non_blocking=True), labels.to(device, non_blocking=True)
                 if data.size(0) <= 1:
                     # This is expected if drop_last=False, log at debug level
-                    logging.debug(f"Skipping batch {batch_idx} (size {data.size(0)}) to avoid potential BatchNorm error.")
+                    logging.debug(
+                        f"Skipping batch {batch_idx} (size {data.size(0)}) to avoid potential BatchNorm error.")
                     continue
                 if batch_idx == 0:  # Only log first batch
                     data_stats = data.float()
@@ -81,7 +82,7 @@ def train_local_model(model: nn.Module,
                     logging.error(f"❌ Corrupt data in batch {batch_idx}. Skipping.")
                     continue
 
-                optimizer.zero_grad(set_to_none=True) # set_to_none=True is slightly more memory efficient
+                optimizer.zero_grad(set_to_none=True)  # set_to_none=True is slightly more memory efficient
 
                 # Autocast ONLY wraps the forward pass
                 with autocast(device_type=device.type, enabled=use_amp):
