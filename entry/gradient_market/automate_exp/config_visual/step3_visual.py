@@ -150,6 +150,8 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str):
     if scenario_df.empty:
         print(f"No data found for scenario '{scenario}'")
         return
+    save_dir = 'figures/step3'
+    Path(save_dir).mkdir(parents=True,exist_ok=True)
 
     print(f"\n--- Visualizing Scenario: {scenario} ---")
 
@@ -180,7 +182,7 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str):
     plt.xticks(rotation=20, ha='right')
     plt.legend(title='Metric')
     plt.tight_layout()
-    plot_file = f"plot_{scenario}_performance.png"
+    plot_file = f"{save_dir}/plot_{scenario}_performance.png"
     plt.savefig(plot_file)
     print(f"Saved plot: {plot_file}")
     plt.clf()
@@ -217,8 +219,7 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str):
 
         g.fig.suptitle(f'HP Stability: Sensitivity to "clip_norm" for {defense}', y=1.03)
         g.set_axis_labels('Clip Norm', 'Rate')
-        Path('figures/step3_figures').mkdir(parents=True,exist_ok=True)
-        plot_file = f"figures/step3_figures/plot_{scenario}_stability.png"
+        plot_file = f"{save_dir}/plot_{scenario}_stability.png"
         g.fig.savefig(plot_file)
         print(f"Saved plot: {plot_file}")
         plt.clf()
