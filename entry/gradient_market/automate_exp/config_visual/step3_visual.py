@@ -3,18 +3,20 @@ import json
 import re
 import seaborn as sns
 import matplotlib.pyplot as plt
+import numpy as np
+import os
 from pathlib import Path
 from typing import List, Dict, Any
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
+FIGURE_OUTPUT_DIR = ".figures/step3_figures"
 
 # Set your minimum acceptable accuracy threshold (e.g., 0.70 for 70%)
 REASONABLE_ACC_THRESHOLD = 0.70
 
-# Set your maximum acceptable False Positive Rate (Benign Filter Rate)
-# (e.g., 0.20 means you don't filter more than 20% of good clients)
-REASONABLE_FP_THRESHOLD = 0.20
+# Set your minimum acceptable Benign Selection Rate (e.g., 0.50 for 50%)
+REASONABLE_BSR_THRESHOLD = 0.50
 
 
 # --- End Configuration ---
@@ -26,10 +28,12 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     parts = hp_folder_name.split('_')
     i = 0
     while i < len(parts):
+        # Use 'is' to correctly check for None
         if "max_k" in parts[i]:
             hps['martfl.max_k'] = int(parts[i + 1])
             i += 2
         elif "clip_norm" in parts[i]:
+            # Store None directly, not np.nan, to distinguish from a numeric 0
             hps['clip_norm'] = None if parts[i + 1] == "None" else float(parts[i + 1])
             i += 2
         elif "mask_epochs" in parts[i]:
@@ -74,7 +78,6 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
         run_data['acc'] = metrics.get('acc', 0)
         run_data['asr'] = metrics.get('asr', 0)
         run_data['loss'] = metrics.get('loss', 0)
-        # !NEW: Load the completed rounds
         run_data['rounds'] = metrics.get('completed_rounds', 0)
 
         report_file = metrics_file.parent / "marketplace_report.json"
@@ -87,9 +90,9 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
             ben_sellers = [s for s in sellers if s.get('type') == 'benign']
 
             if adv_sellers:
-                run_data['adv_outlier_rate'] = pd.Series([s['outlier_rate'] for s in adv_sellers]).mean()
+                run_data['adv_selection_rate'] = pd.Series([s['selection_rate'] for s in adv_sellers]).mean()
             if ben_sellers:
-                run_data['benign_outlier_rate'] = pd.Series([s['outlier_rate'] for s in ben_sellers]).mean()
+                run_data['benign_selection_rate'] = pd.Series([s['selection_rate'] for s in ben_sellers]).mean()
 
         return run_data
 
@@ -143,24 +146,37 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     return pd.DataFrame(all_runs)
 
 
-def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str):
+def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, output_dir: Path):
     """Generates plots for a specific scenario to compare HP settings."""
     scenario_df = df[df['scenario'] == scenario].copy()
 
     if scenario_df.empty:
         print(f"No data found for scenario '{scenario}'")
         return
-    save_dir = 'figures/step3'
-    Path(save_dir).mkdir(parents=True,exist_ok=True)
 
     print(f"\n--- Visualizing Scenario: {scenario} ---")
 
-    # === 1. Plot for Objective 1: Best Performance Trade-off ===
+    # --- 1. Plot for Objective 1: Best Performance Trade-off ---
+
+    # !NEW: Logical Sorting for Bar Plot
+    # Create sort keys. 'None' clip_norm is treated as infinity (plots last).
+    scenario_df['clip_norm_sort'] = scenario_df['clip_norm'].fillna(np.inf)
+
+    # Find other HP columns to sort by first
+    other_hp_cols = [col for col in scenario_df.columns if col.startswith(defense.lower())]
+
+    sort_cols = [c for c in other_hp_cols if c != 'clip_norm'] + ['clip_norm_sort']
+    # Filter out any potential extra cols that aren't in the df
+    sort_cols = [c for c in sort_cols if c in scenario_df.columns]
+
+    if sort_cols:
+        scenario_df = scenario_df.sort_values(by=sort_cols)
+
     metrics_to_plot = ['acc', 'asr']
-    if 'adv_outlier_rate' in scenario_df.columns:
-        metrics_to_plot.append('adv_outlier_rate')
-    if 'benign_outlier_rate' in scenario_df.columns:
-        metrics_to_plot.append('benign_outlier_rate')
+    if 'adv_selection_rate' in scenario_df.columns:
+        metrics_to_plot.append('adv_selection_rate')
+    if 'benign_selection_rate' in scenario_df.columns:
+        metrics_to_plot.append('benign_selection_rate')
 
     plot_df = scenario_df.melt(
         id_vars=['hp_suffix'],
@@ -170,30 +186,40 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str):
     )
 
     plt.figure(figsize=(16, 7))
+    # Use the sorted order of hp_suffix from scenario_df
     sns.barplot(
         data=plot_df,
         x='hp_suffix',
         y='Value',
-        hue='Metric'
+        hue='Metric',
+        order=scenario_df['hp_suffix'].unique()  # This applies the sort
     )
-    plt.title(f'Performance & Filtering vs. HPs for {defense} (Scenario: {scenario})')
+    plt.title(f'Performance & Selection vs. HPs for {defense} (Scenario: {scenario})')
     plt.ylabel('Rate')
-    plt.xlabel('Hyperparameter Combination')
+    plt.xlabel('Hyperparameter Combination (Sorted by Value)')
     plt.xticks(rotation=20, ha='right')
     plt.legend(title='Metric')
     plt.tight_layout()
-    plot_file = f"{save_dir}/plot_{scenario}_performance.png"
+    plot_file = output_dir / f"plot_{scenario}_performance.png"
     plt.savefig(plot_file)
     print(f"Saved plot: {plot_file}")
     plt.clf()
 
-    # === 2. Plot for Objective 2: Stableness (Parameter Sensitivity) ===
+    # --- 2. Plot for Objective 2: Stableness (Parameter Sensitivity) ---
     if 'clip_norm' in scenario_df.columns:
-        scenario_df['clip_norm'] = scenario_df['clip_norm'].fillna('None (auto)')
+
+        # !NEW: Logical Sorting for Line Plot
+        # Get unique numeric clip_norm values, sorting None (as inf) to the end
+        unique_clips = sorted(scenario_df['clip_norm'].fillna(np.inf).unique())
+        # Create string labels, converting inf back to "None (auto)"
+        clip_order_labels = [str(c) if c != np.inf else "None (auto)" for c in unique_clips]
+
+        # Create a temporary string version for plotting
+        scenario_df['clip_norm_str'] = scenario_df['clip_norm'].fillna("None (auto)")
 
         other_hps = [col for col in scenario_df.columns if col.startswith(defense.lower()) and col != 'clip_norm']
 
-        id_vars = ['clip_norm'] + other_hps
+        id_vars = ['clip_norm_str'] + other_hps
         if not all(c in scenario_df.columns for c in id_vars):
             print(f"Skipping sensitivity plot for {defense}: missing required columns.")
             return
@@ -207,25 +233,30 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str):
 
         g = sns.catplot(
             data=melted_sensitivity,
-            x='clip_norm',
+            x='clip_norm_str',
             y='Value',
             hue='Metric',
             col=other_hps[0] if other_hps else None,
             kind='point',
             palette={'acc': 'blue', 'asr': 'red'},
+            order=clip_order_labels,  # This applies the sort
             height=5,
             aspect=1.2
         )
 
         g.fig.suptitle(f'HP Stability: Sensitivity to "clip_norm" for {defense}', y=1.03)
         g.set_axis_labels('Clip Norm', 'Rate')
-        plot_file = f"{save_dir}/plot_{scenario}_stability.png"
+        plot_file = output_dir / f"plot_{scenario}_stability.png"
         g.fig.savefig(plot_file)
         print(f"Saved plot: {plot_file}")
         plt.clf()
 
 
 def main():
+    output_dir = Path(FIGURE_OUTPUT_DIR)
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"Plots will be saved to: {output_dir.resolve()}")
+
     df = collect_all_results(BASE_RESULTS_DIR)
 
     if df.empty:
@@ -235,12 +266,12 @@ def main():
     pd.set_option('display.max_columns', None)
     pd.set_option('display.width', 1000)
 
-    # --- Analysis for Objective 1 (Refined): Best Performance with Filtering ---
+    # --- Analysis for Objective 1: Best Performance with Filtering ---
     print("\n" + "=" * 80)
     print(f" Objective 1: Finding Best HPs (Filtered by acc >= {REASONABLE_ACC_THRESHOLD})")
     print("=" * 80)
 
-    # 1. Apply the user's accuracy filter
+    # 1. Apply accuracy filter
     reasonable_acc_df = df[df['acc'] >= REASONABLE_ACC_THRESHOLD].copy()
 
     if reasonable_acc_df.empty:
@@ -248,27 +279,35 @@ def main():
         print("  Falling back to all runs for analysis.")
         reasonable_acc_df = df.copy()
 
-    # 2. Apply the user's False Positive filter
-    if 'benign_outlier_rate' in reasonable_acc_df.columns:
+    # 2. Apply Benign Selection Rate (Fairness) filter
+    if 'benign_selection_rate' in reasonable_acc_df.columns:
         reasonable_final_df = reasonable_acc_df[
-            reasonable_acc_df['benign_outlier_rate'] <= REASONABLE_FP_THRESHOLD
+            reasonable_acc_df['benign_selection_rate'] >= REASONABLE_BSR_THRESHOLD
             ].copy()
 
         if reasonable_final_df.empty:
-            print(f"\n!WARNING: No runs passed the FP threshold of {REASONABLE_FP_THRESHOLD} (after passing accuracy).")
+            print(
+                f"\n!WARNING: No runs passed the BSR threshold of {REASONABLE_BSR_THRESHOLD} (after passing accuracy).")
             print("  Falling back to only accuracy-filtered runs.")
             reasonable_final_df = reasonable_acc_df.copy()
     else:
-        print("\n!WARNING: 'benign_outlier_rate' not found. Skipping False Positive filter.")
+        print("\n!WARNING: 'benign_selection_rate' not found. Skipping Fairness filter.")
         reasonable_final_df = reasonable_acc_df.copy()
 
-    # 3. Sort the *reasonable* runs:
-    sort_columns = ['scenario', 'asr']
+    # 3. Create a unified sort metric
+    reasonable_final_df['sort_metric'] = np.where(
+        reasonable_final_df['attack'] == 'backdoor',
+        reasonable_final_df['asr'],  # Low is good
+        1.0 - reasonable_final_df['acc']  # Low is good (high acc)
+    )
+
+    # 4. Sort the *reasonable* runs:
+    sort_columns = ['scenario', 'sort_metric']
     sort_ascending = [True, True]
 
-    if 'adv_outlier_rate' in reasonable_final_df.columns:
-        sort_columns.append('adv_outlier_rate')
-        sort_ascending.append(False)  # We want this HIGH, so ascending=False
+    if 'adv_selection_rate' in reasonable_final_df.columns:
+        sort_columns.append('adv_selection_rate')
+        sort_ascending.append(True)  # We want LOW adv_selection_rate
 
     df_sorted = reasonable_final_df.sort_values(
         by=sort_columns,
@@ -276,24 +315,24 @@ def main():
     )
 
     print(
-        f"\n--- Best HP Combinations (acc >= {REASONABLE_ACC_THRESHOLD}, benign_filter <= {REASONABLE_FP_THRESHOLD}) ---")
-    print(f"--- Sorted by: 1. ASR (low){', 2. Adv Filter (high)' if 'adv_outlier_rate' in df.columns else ''} ---")
+        f"\n--- Best HP Combinations (acc >= {REASONABLE_ACC_THRESHOLD}, benign_select_rate >= {REASONABLE_BSR_THRESHOLD}) ---")
+    print(f"--- Sorted by: 1. Best Defense (Low ASR or High ACC), 2. Low Adv. Selection ---")
 
     grouped = df_sorted.groupby('scenario')
 
     for name, group in grouped:
         print(f"\n--- SCENARIO: {name} ---")
-        # !NEW: Added 'rounds' to the list
         cols_to_show = [
             'hp_suffix',
             'acc',  # Utility
-            'asr',  # Defense Outcome
-            'adv_outlier_rate',  # Defense Mechanism (Filter Adversaries)
-            'benign_outlier_rate',  # Defense Mechanism (False Positives)
+            'asr',  # Defense Outcome (Backdoor)
+            'adv_selection_rate',  # Defense Outcome (Mechanism)
+            'benign_selection_rate',  # Defense Outcome (Fairness)
             'rounds',  # Stability/Efficiency
         ]
         cols_present = [c for c in cols_to_show if c in group.columns]
-        print(group[cols_present].to_string(index=False))
+        # Format floats to 4 decimal places for cleaner output
+        print(group[cols_present].to_string(index=False, float_format="%.4f"))
 
     # --- Analysis for Objective 2: Stableness (Visualization) ---
     print("\n" + "=" * 80)
@@ -302,9 +341,9 @@ def main():
 
     # We use the *original* full dataframe (df) for plotting stability
     for scenario, defense in df[['scenario', 'defense']].drop_duplicates().values:
-        plot_defense_comparison(df, scenario, defense)
+        plot_defense_comparison(df, scenario, defense, output_dir)
 
-    print("\nAnalysis complete. Check for 'plot_*.png' files.")
+    print("\nAnalysis complete. Check 'step3_figures' folder for plots.")
 
 
 if __name__ == "__main__":
