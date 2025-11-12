@@ -11,6 +11,12 @@ from typing import List, Dict, Any
 # !IMPORTANT: Set this to your main results directory
 BASE_RESULTS_DIR = "./results_new"  # Path from your generator script
 
+# !NEW: Set your minimum acceptable accuracy threshold here.
+# Runs below this accuracy will be considered 'unreasonable' and
+# will be filtered out before selecting the "best" defense.
+# [cite_start]Based on your CIFAR10 run[cite: 1], 0.70 (70%) seems like a reasonable start.
+REASONABLE_ACC_THRESHOLD = 0.70
+
 
 # --- End Configuration ---
 
@@ -71,7 +77,7 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
     """
     run_data = {}
     try:
-        # Load final metrics
+        # [cite_start]Load final metrics [cite: 1]
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
         run_data['acc'] = metrics.get('acc', 0)
@@ -79,7 +85,7 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
         run_data['loss'] = metrics.get('loss', 0)
         run_data['rounds'] = metrics.get('completed_rounds', 0)
 
-        # Load marketplace report
+        # [cite_start]Load marketplace report [cite: 2]
         report_file = metrics_file.parent / "marketplace_report.json"
         if report_file.exists():
             with open(report_file, 'r') as f:
@@ -90,8 +96,10 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
             ben_sellers = [s for s in sellers if s.get('type') == 'benign']
 
             if adv_sellers:
+                # [cite_start]Get avg selection rate for adversaries [cite: 2]
                 run_data['adv_selection_rate'] = pd.Series([s['selection_rate'] for s in adv_sellers]).mean()
             if ben_sellers:
+                # [cite_start]Get avg selection rate for benign sellers [cite: 2]
                 run_data['ben_selection_rate'] = pd.Series([s['selection_rate'] for s in ben_sellers]).mean()
 
         return run_data
@@ -150,9 +158,15 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str):
 
     # === 1. Plot for Objective 1: Best Performance Trade-off ===
     # Melt for grouped bar plot
+
+    # Check if 'adv_selection_rate' column exists
+    metrics_to_plot = ['acc', 'asr']
+    if 'adv_selection_rate' in scenario_df.columns:
+        metrics_to_plot.append('adv_selection_rate')
+
     plot_df = scenario_df.melt(
         id_vars=['hp_suffix'],
-        value_vars=['acc', 'asr', 'adv_selection_rate'],
+        value_vars=metrics_to_plot,
         var_name='Metric',
         value_name='Value'
     )
@@ -228,35 +242,62 @@ def main():
     pd.set_option('display.max_columns', None)
     pd.set_option('display.width', 1000)
 
-    # --- Analysis for Objective 1: Best Performance ---
+    # --- Analysis for Objective 1 (Refined): Best Performance with Filtering ---
     print("\n" + "=" * 80)
-    print("           Objective 1: Finding Best HP per Scenario")
+    print(f" Objective 1: Finding Best HPs (Filtered by acc >= {REASONABLE_ACC_THRESHOLD})")
     print("=" * 80)
 
-    # We want to MINIMIZE ASR and MAXIMIZE ACC
-    # A simple score: acc * (1 - asr). Higher is better.
-    df['tradeoff_score'] = df['acc'] * (1 - df['asr'])
+    # 1. Apply the user's filter
+    reasonable_df = df[df['acc'] >= REASONABLE_ACC_THRESHOLD].copy()
 
-    # Sort to find the best HPs
-    df_sorted = df.sort_values(by=['scenario', 'tradeoff_score'], ascending=[True, False])
+    if reasonable_df.empty:
+        print(f"\n!WARNING: No runs met the accuracy threshold of {REASONABLE_ACC_THRESHOLD}.")
+        print("  Consider lowering the threshold to see any results.")
+        print("  Displaying all runs instead, sorted by ASR:")
+        reasonable_df = df.copy()  # Fallback to all runs
 
-    print("\n--- Best HP Combination per Scenario (sorted by tradeoff_score = acc * (1-asr)) ---")
+    # 2. Sort the *reasonable* runs:
+    #    Primary goal: Lowest ASR
+    #    Secondary goal: Lowest Adversary Selection Rate (if available)
+    sort_columns = ['scenario', 'asr']
+    sort_ascending = [True, True]
 
-    # Group by scenario and show the top-performing HPs
+    if 'adv_selection_rate' in reasonable_df.columns:
+        sort_columns.append('adv_selection_rate')
+        sort_ascending.append(True)
+
+    df_sorted = reasonable_df.sort_values(
+        by=sort_columns,
+        ascending=sort_ascending
+    )
+
+    print(f"\n--- Best HP Combinations (acc >= {REASONABLE_ACC_THRESHOLD}) ---")
+    print(f"--- Sorted by: 1. ASR (low){', 2. Adv Selection (low)' if 'adv_selection_rate' in df.columns else ''} ---")
+
     grouped = df_sorted.groupby('scenario')
 
     for name, group in grouped:
         print(f"\n--- SCENARIO: {name} ---")
-        print(group[['hp_suffix', 'acc', 'asr', 'adv_selection_rate', 'tradeoff_score']].to_string(index=False))
+        # Define columns to show
+        cols_to_show = [
+            'hp_suffix',
+            'acc',  # The utility
+            'asr',  # The primary defense metric
+            'adv_selection_rate',  # The secondary defense metric
+        ]
+        # Handle missing adv_selection_rate if marketplace_report failed
+        cols_present = [c for c in cols_to_show if c in group.columns]
+        print(group[cols_present].to_string(index=False))
 
     # --- Analysis for Objective 2: Stableness (Visualization) ---
     print("\n" + "=" * 80)
     print("           Objective 2: Assessing Defense Stability (Plots)")
     print("=" * 80)
 
-    # Generate plots for each unique scenario
+    # We use the *original* full dataframe (df) for plotting stability,
+    # as it's crucial to see the HPs that *caused* the accuracy to drop.
     for scenario, defense in df[['scenario', 'defense']].drop_duplicates().values:
-        plot_defense_comparison(df_sorted, scenario, defense)
+        plot_defense_comparison(df, scenario, defense)
 
     print("\nAnalysis complete. Check for 'plot_*.png' files.")
 
