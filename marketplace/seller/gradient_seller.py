@@ -94,6 +94,8 @@ class KnockOutStrategy(BaseGradientStrategy):
 
     def manipulate(self, current_grad: torch.Tensor, avg_grad: torch.Tensor) -> torch.Tensor:
         return (1 - self.alpha_knock) * current_grad + self.alpha_knock * avg_grad
+
+
 class DrowningStrategy(BaseGradientStrategy):
     """
     Implements the "Targeted Drowning" attack.
@@ -101,16 +103,17 @@ class DrowningStrategy(BaseGradientStrategy):
     of the benign centroid from a specific victim, making the victim
     appear as an outlier to clustering-based defenses.
     """
+
     def __init__(self, cfg: SybilDrowningConfig):
         super().__init__()
         self.alpha = cfg.attack_strength  # Repulsion strength
         logging.info(f"DrowningStrategy initialized (alpha={self.alpha})")
 
     def manipulate(
-        self,
-        original_malicious_flat: torch.Tensor,
-        g_centroid_benign: torch.Tensor,
-        g_victim_flat: torch.Tensor
+            self,
+            original_malicious_flat: torch.Tensor,
+            g_centroid_benign: torch.Tensor,
+            g_victim_flat: torch.Tensor
     ) -> torch.Tensor:
         """
         Calculates the repulsion gradient.
@@ -123,6 +126,7 @@ class DrowningStrategy(BaseGradientStrategy):
         g_attack_flat = g_centroid_benign - (self.alpha * v_victim_direction)
 
         return g_attack_flat
+
 
 def estimate_byte_size(data: Any) -> int:
     """
@@ -1097,27 +1101,47 @@ class SybilCoordinator:
 
 
 class PoisonedDataset(Dataset):
-    def __init__(self, original_dataset, poison_generator, poison_rate):
+    def __init__(self, original_dataset, poison_generator, poison_rate, data_format='image'):
         self.original_dataset = original_dataset
         self.poison_generator = poison_generator
-        # This pre-selects which indices will be poisoned
-        self.poison_indices = self._select_indices(len(original_dataset), poison_rate)
+        self.data_format = data_format  # Track data format
+
+        if not (0.0 <= poison_rate <= 1.0):
+            raise ValueError("Poison rate must be between 0.0 and 1.0")
+
+        # --- THIS IS THE FIX ---
+        # The logic for _select_indices is now moved directly here.
+        n_poison = int(len(original_dataset) * poison_rate)
+        all_indices = list(range(len(original_dataset)))
+        random.shuffle(all_indices)
+        self.poison_indices = set(all_indices[:n_poison])
+        # -----------------------
 
     def __len__(self):
-        # THE FIX! Always return the full, original length.
+        # Always return the full, original length.
         return len(self.original_dataset)
 
     def __getitem__(self, idx):
         # Get the original data
-        data, target = self.original_dataset[idx]
+        original_sample = self.original_dataset[idx]
 
-        # THE FIX! Check if this *specific index* should be poisoned.
-        if idx in self.poison_indices:
+        # Unpack based on format
+        if self.data_format == 'text':
+            label, data = original_sample
+        else:  # image or tabular
+            data, label = original_sample
+
+        # Check if this specific index should be poisoned.
+        if self.poison_generator and idx in self.poison_indices:
             # If yes, poison it
-            return self.poison_generator.poison(data, target)
+            poisoned_data, poisoned_label = self.poison_generator.apply(data, label)
+            # Ensure label is a tensor for consistency
+            return poisoned_data, torch.tensor(poisoned_label, dtype=torch.long)
         else:
             # If no, return the original data
-            return data, target
+            # Also ensure label is a tensor for consistency
+            return data, torch.tensor(label, dtype=torch.long)
+
 
 class AdvancedPoisoningAdversarySeller(GradientSeller):
     """
@@ -1932,6 +1956,7 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
             if self.threat_model == "gradient_inversion" and 'final_aggregated_gradient_flat' in marketplace_metrics:
                 self.previous_aggregate = marketplace_metrics['final_aggregated_gradient_flat'].clone().detach().cpu()
 
+
 class DrowningAttackerSeller(GradientSeller):
     """
     Stealthy gradient manipulation attack that maintains selection probability
@@ -1995,7 +2020,7 @@ class DrowningAttackerSeller(GradientSeller):
                     original_dataset=self.dataset,
                     poison_generator=malicious_generator,
                     poison_rate=1.0,  # <-- 100% poisoning for the task
-                    data_format=model_type # <-- Pass model_type
+                    data_format=model_type  # <-- Pass model_type
                 )
                 logging.info(f"[{self.seller_id}] Created backdoor dataset.")
 
@@ -2005,7 +2030,7 @@ class DrowningAttackerSeller(GradientSeller):
                     original_dataset=self.dataset,
                     poison_generator=malicious_generator,
                     poison_rate=self.adversary_config.poisoning.poison_rate,
-                    data_format=model_type # <-- Pass model_type
+                    data_format=model_type  # <-- Pass model_type
                 )
                 logging.info(f"[{self.seller_id}] Created targeted poisoning dataset.")
 
@@ -2134,7 +2159,7 @@ class DrowningAttackerSeller(GradientSeller):
 
         logging.debug(f"[{self.seller_id}] Updated stats: mean_norm={self.honest_gradient_stats['mean_norm']:.4f}")
 
-    def _compute_malicious_gradient(self) -> Optional[List[torch.Tensor]]: # <-- FIX: Return Optional
+    def _compute_malicious_gradient(self) -> Optional[List[torch.Tensor]]:  # <-- FIX: Return Optional
         """
         Compute gradient on malicious objective (backdoor, poisoning, etc.).
         This is what we actually want to inject into the aggregate.
@@ -2152,7 +2177,7 @@ class DrowningAttackerSeller(GradientSeller):
             honest_grad, _ = self._compute_local_grad(model, self.dataset)
             if honest_grad:
                 return [-g for g in honest_grad]
-            return None # <-- FIX
+            return None  # <-- FIX
 
         elif self.adv_cfg.attack_type == "targeted_poisoning" and self.poisoned_dataset:
             logging.debug(f"[{self.seller_id}] Computing targeted poisoning gradient...")
@@ -2246,7 +2271,7 @@ class DrowningAttackerSeller(GradientSeller):
             similarity_threshold = self.adv_cfg.similarity_threshold
             if cosine_sim < similarity_threshold:
                 alpha_low, alpha_high = 0.0, alpha
-                for _ in range(10): # Binary search
+                for _ in range(10):  # Binary search
                     alpha_mid = (alpha_low + alpha_high) / 2
                     test_blend = (1 - alpha_mid) * honest_flat + alpha_mid * malicious_flat
                     test_dir = test_blend / (torch.norm(test_blend) + 1e-9)
@@ -2293,13 +2318,13 @@ class DrowningAttackerSeller(GradientSeller):
             logging.info(f"[{self.seller_id}][Mimicry] Round {self.round_counter}: Learning")
             return honest_gradient, stats
 
-        else: # Attack Phase
+        else:  # Attack Phase
             malicious_gradient = self._compute_malicious_gradient()
 
             # --- FIX: Handle failure in malicious gradient computation ---
             if malicious_gradient is None:
                 logging.error(f"[{self.seller_id}] Failed to compute malicious gradient. Aborting attack this round.")
-                return honest_gradient, stats # Submit honest gradient
+                return honest_gradient, stats  # Submit honest gradient
 
             attack_gradient = self._create_stealthy_malicious_gradient(
                 honest_gradient,
