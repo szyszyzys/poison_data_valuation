@@ -217,7 +217,8 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str):
 
         g.fig.suptitle(f'HP Stability: Sensitivity to "clip_norm" for {defense}', y=1.03)
         g.set_axis_labels('Clip Norm', 'Rate')
-        plot_file = f"plot_{scenario}_stability.png"
+        Path('step3_figures').mkdir(parents=True,exist_ok=True)
+        plot_file = f"step3_figures/plot_{scenario}_stability.png"
         g.fig.savefig(plot_file)
         print(f"Saved plot: {plot_file}")
         plt.clf()
