@@ -542,17 +542,37 @@ class AppConfig:
 
         # If attacks are off, ensure adv_rate is zero.
         if poison_cfg.type.value == 'none' and self.experiment.adv_rate > 0:
+            # --- (NEW) Check if this is an intentional non-poisoning attack ---
+            is_sabotage_attack = (sybil_cfg.is_sybil and
+                                  sybil_cfg.gradient_default_mode == 'drowning')
+            pass  # Keep your original logic for now, but see below.
+
+        # --- NEW, CORRECTED CHECK ---
+        # Define known "non-poisoning" Sybil attacks
+        sabotage_strategies = {'drowning'}
+
+        is_sybil = sybil_cfg.is_sybil
+        is_poisoning = poison_cfg.type.value != 'none'
+        is_sabotage = sybil_cfg.gradient_default_mode in sabotage_strategies
+
+        # Warn ONLY if Sybil is on, but it's NOT a poisoning attack
+        # AND it's NOT a known sabotage attack.
+        if is_sybil and not is_poisoning and not is_sabotage:
             logger.warning(
-                f"Poisoning type is 'none', but adv_rate is {self.experiment.adv_rate}. Forcing adv_rate to 0."
+                f"Sybil attack is enabled (strategy: '{sybil_cfg.gradient_default_mode}') "
+                f"but NO poisoning is active. This may be an error "
+                f"(unless this strategy is a non-poisoning evasion attack)."
+            )
+
+        # This is the original check you had, which is also a problem
+        # for the Drowning attack, as adv_rate > 0 but poison is 'none'.
+        if poison_cfg.type.value == 'none' and self.experiment.adv_rate > 0 and not is_sybil:
+            # Only force adv_rate to 0 if it's NOT a Sybil attack.
+            logger.warning(
+                f"Poisoning type is 'none' and not a Sybil attack, but adv_rate is {self.experiment.adv_rate}. "
+                f"Forcing adv_rate to 0."
             )
             self.experiment.adv_rate = 0.0
-
-        # If sybil is on but poisoning is off, issue a warning.
-        if sybil_cfg.is_sybil and poison_cfg.type.value == 'none':
-            logger.warning(
-                "Sybil attack is enabled, but poisoning type is 'none'. Ensure this is intended."
-            )
-
 
 # --- A. Define the Configuration Class ---
 # This is the 'SybilDrowningConfig' your coordinator code was missing.
