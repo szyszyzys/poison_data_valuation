@@ -164,6 +164,8 @@ def generate_drowning_attack_scenarios() -> List[Scenario]:
 
 # In generate_step13_drowning_attack.py
 
+# In generate_step13_drowning_attack.py
+
 if __name__ == "__main__":
     base_output_dir = "./configs_generated_benchmark"
     output_dir = Path(base_output_dir) / "step13_drowning_attack"
@@ -178,28 +180,38 @@ if __name__ == "__main__":
         print(f"\nProcessing scenario base: {scenario.name}")
         task_configs = 0
 
-        # This logic is from your Step 6 file
         static_grid = {k: v for k, v in scenario.parameter_grid.items() if k.startswith("_") == False}
         strategy_name = scenario.parameter_grid["_strategy_name"][0]
         sweep_params = scenario.parameter_grid["_sweep_params"][0]
         base_hp_suffix = f"adv_{FIXED_ADV_RATE}"
 
         if sweep_params:
-            # We must set both victim_id and the swept param
             sweep_key, sweep_values = next(iter(sweep_params.items()))  # e.g., "attack_strength"
 
             # --- THIS IS THE CRITICAL FIX ---
-            # Use the correct path based on your AdversarySellerConfig
-            config_key_path_sweep = f"adversary_seller_config.sybil.strategy_configs.drowning.{sweep_key}"
-            config_key_path_victim = f"adversary_seller_config.sybil.strategy_configs.drowning.victim_id"
+            #
+            # The path is not to a specific key *inside* the drowning config,
+            # but to the 'drowning' entry *itself* within the strategy_configs dict.
+            #
+            config_key_path = "adversary_seller_config.sybil.strategy_configs.drowning"
+            #
             # --- END OF FIX ---
 
             for sweep_value in sweep_values:
                 current_grid = static_grid.copy()
-                # Set the swept value (e.g., attack_strength = 1.0)
-                current_grid[config_key_path_sweep] = [sweep_value]
-                # Set the fixed victim_id
-                current_grid[config_key_path_victim] = [TARGET_VICTIM_ID]
+
+                # --- FIX 2: Create the config dictionary ---
+                # This is the dictionary that your DrowningStrategy expects.
+                drowning_config_dict = {
+                    "victim_id": TARGET_VICTIM_ID,
+                    sweep_key: sweep_value  # e.g., "attack_strength": 1.0
+                }
+
+                # --- FIX 3: Set the entire dictionary object ---
+                # This sets adversary_seller_config.sybil.strategy_configs["drowning"]
+                # to the dictionary we just created.
+                current_grid[config_key_path] = [drowning_config_dict]
+                # --- END OF FIXES ---
 
                 hp_suffix = f"{base_hp_suffix}_{sweep_key}_{sweep_value}"
 
