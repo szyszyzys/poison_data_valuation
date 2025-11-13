@@ -233,11 +233,13 @@ class DrowningAttackConfig:
     mimicry_rounds: int = 10  # Number of rounds to act honestly to build trust
     drift_factor: float = 0.1  # How much to shift the gradient each drift round
 
+
 @dataclass
 class SybilDrowningConfig:
     """Configuration for the Targeted Drowning Attack."""
     target_victim_id: str = "bn_0"
     attack_strength: float = 1.0
+
 
 @dataclass
 class SybilConfig:
@@ -540,39 +542,36 @@ class AppConfig:
         poison_cfg = self.adversary_seller_config.poisoning
         sybil_cfg = self.adversary_seller_config.sybil
 
-        # If attacks are off, ensure adv_rate is zero.
-        if poison_cfg.type.value == 'none' and self.experiment.adv_rate > 0:
-            # --- (NEW) Check if this is an intentional non-poisoning attack ---
-            is_sabotage_attack = (sybil_cfg.is_sybil and
-                                  sybil_cfg.gradient_default_mode == 'drowning')
-            pass  # Keep your original logic for now, but see below.
-
-        # --- NEW, CORRECTED CHECK ---
-        # Define known "non-poisoning" Sybil attacks
-        sabotage_strategies = {'drowning'}
-
-        is_sybil = sybil_cfg.is_sybil
+        # --- Define Attack States ---
         is_poisoning = poison_cfg.type.value != 'none'
-        is_sabotage = sybil_cfg.gradient_default_mode in sabotage_strategies
+        is_sybil = sybil_cfg.is_sybil
+        adv_rate_is_set = self.experiment.adv_rate > 0
 
-        # Warn ONLY if Sybil is on, but it's NOT a poisoning attack
-        # AND it's NOT a known sabotage attack.
-        if is_sybil and not is_poisoning and not is_sabotage:
+        # Define Sybil attacks that are *intentionally* non-poisoning
+        sabotage_strategies = {'drowning'}
+        is_sabotage_attack = is_sybil and sybil_cfg.gradient_default_mode in sabotage_strategies
+
+        # --- Check 1: (The one you asked about) ---
+        # "adv_rate > 0" but "poisoning = none"
+        # This is ONLY a bug if it's NOT a Sybil attack.
+        if adv_rate_is_set and not is_poisoning and not is_sybil:
+            logger.warning(
+                f"Poisoning type is 'none' and not a Sybil attack, but adv_rate is {self.experiment.adv_rate}. "
+                f"Forcing adv_rate to 0."
+            )
+            self.experiment.adv_rate = 0.0
+        # (This check will now correctly do *nothing* for your Drowning attack)
+
+        # --- Check 2: (The one from the previous turn) ---
+        # "is_sybil = True" but "poisoning = none"
+        # This is ONLY a bug if it's NOT a known sabotage attack.
+        if is_sybil and not is_poisoning and not is_sabotage_attack:
             logger.warning(
                 f"Sybil attack is enabled (strategy: '{sybil_cfg.gradient_default_mode}') "
                 f"but NO poisoning is active. This may be an error "
                 f"(unless this strategy is a non-poisoning evasion attack)."
             )
 
-        # This is the original check you had, which is also a problem
-        # for the Drowning attack, as adv_rate > 0 but poison is 'none'.
-        if poison_cfg.type.value == 'none' and self.experiment.adv_rate > 0 and not is_sybil:
-            # Only force adv_rate to 0 if it's NOT a Sybil attack.
-            logger.warning(
-                f"Poisoning type is 'none' and not a Sybil attack, but adv_rate is {self.experiment.adv_rate}. "
-                f"Forcing adv_rate to 0."
-            )
-            self.experiment.adv_rate = 0.0
 
 # --- A. Define the Configuration Class ---
 # This is the 'SybilDrowningConfig' your coordinator code was missing.
