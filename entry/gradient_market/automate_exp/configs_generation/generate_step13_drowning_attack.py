@@ -162,7 +162,8 @@ def generate_drowning_attack_scenarios() -> List[Scenario]:
     return scenarios
 
 
-# --- Main Execution Block (Copied from Step 6) ---
+# In generate_step13_drowning_attack.py
+
 if __name__ == "__main__":
     base_output_dir = "./configs_generated_benchmark"
     output_dir = Path(base_output_dir) / "step13_drowning_attack"
@@ -184,13 +185,14 @@ if __name__ == "__main__":
         base_hp_suffix = f"adv_{FIXED_ADV_RATE}"
 
         if sweep_params:
-            # --- (MODIFIED FOR DROWNING) ---
             # We must set both victim_id and the swept param
             sweep_key, sweep_values = next(iter(sweep_params.items()))  # e.g., "attack_strength"
 
-            # This is the config path for the DrowningStrategy
-            config_key_path_sweep = f"sybil_coordinator.sybil_config.strategy_configs.drowning.{sweep_key}"
-            config_key_path_victim = "sybil_coordinator.sybil_config.strategy_configs.drowning.victim_id"
+            # --- THIS IS THE CRITICAL FIX ---
+            # Use the correct path based on your AdversarySellerConfig
+            config_key_path_sweep = f"adversary_seller_config.sybil.strategy_configs.drowning.{sweep_key}"
+            config_key_path_victim = f"adversary_seller_config.sybil.strategy_configs.drowning.victim_id"
+            # --- END OF FIX ---
 
             for sweep_value in sweep_values:
                 current_grid = static_grid.copy()
@@ -204,7 +206,7 @@ if __name__ == "__main__":
                 temp_scenario = Scenario(
                     name=f"{scenario.name}/{hp_suffix}",
                     base_config_factory=scenario.base_config_factory,
-                    # Add the helper to enable the Sybil coordinator
+                    # This helper function you provided is now called correctly
                     modifiers=scenario.modifiers + [use_sybil_attack_strategy(strategy=strategy_name)],
                     parameter_grid=current_grid
                 )
@@ -218,7 +220,6 @@ if __name__ == "__main__":
                 num_gen = generator.generate(modified_base_config, temp_scenario)
                 task_configs += num_gen
         else:
-            # This logic block won't be hit for drowning, but is good practice
             print(f"  SKIPPING: {strategy_name} has no sweep parameters defined.")
 
         print(f"-> Generated {task_configs} configs for {scenario.name} base")
