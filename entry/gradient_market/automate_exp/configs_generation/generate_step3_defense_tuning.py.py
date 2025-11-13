@@ -37,20 +37,18 @@ TUNING_GRIDS = {
         "aggregation.clip_norm": [5.0, 10.0, None],
     },
     "skymask": {
-        # Test official paper's default epochs
         "aggregation.skymask.mask_epochs": [20],
 
-        # Test your "normal" LRs AGAINST the official paper's massive LRs
-        "aggregation.skymask.mask_lr": [0.01, 1e7, 1e8],
+        # Test paper's LR (0.5) and implementation's LRs (1e7, 1e8)
+        "aggregation.skymask.mask_lr": [0.01, 0.5, 1e7, 1e8],
 
-        # Test the official paper's microscopic clip AGAINST a "normal" clip
-        "aggregation.skymask.mask_clip": [1e-7, 10.0],
+        # Test implementation's clip vs. normal clip vs. no clip
+        "aggregation.skymask.mask_clip": [1e-7, 10.0, None],
 
-        # Thresholds are fine
         "aggregation.skymask.mask_threshold": [0.5, 0.9],
 
-        # Test clipping vs. not clipping the worker gradients
-        "aggregation.clip_norm": [10.0],
+        # Test clipping vs. not clipping the *client* gradients
+        "aggregation.clip_norm": [10.0, None],
     }
 }
 ATTACK_TYPES_TO_TUNE = ["backdoor", "labelflip"]
