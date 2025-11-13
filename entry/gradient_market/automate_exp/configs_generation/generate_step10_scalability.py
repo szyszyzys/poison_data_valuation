@@ -30,7 +30,7 @@ FIXED_ATTACK_POISON_RATE = 0.5
 SCALABILITY_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
-    "dataset_name": "cifar100",
+    "dataset_name": "CIFAR100",
     "model_config_param_key": "experiment.image_model_config_name",
     "model_config_name": "cifar100_cnn",
     "dataset_modifier": use_cifar100_config,
