@@ -239,6 +239,7 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
     plt.clf()
     plt.close('all')  # Close all figures
 
+
 def plot_main_summary_heatmaps(df: pd.DataFrame, output_dir: Path):
     """
     Generates the main summary heatmaps (Figure 1).
@@ -363,7 +364,6 @@ def plot_comparative_valuation_analysis(df: pd.DataFrame, output_dir: Path, data
     """
     print(f"\n--- Plotting Comparative Valuation (Faceted) for {dataset_to_plot} ---")
 
-    # --- Use the same valuation columns as before ---
     val_cols = [
         'sim_to_oracle', 'sim_to_buyer',
         'influence_score', 'loo_score', 'kernelshap_score'
@@ -395,22 +395,24 @@ def plot_comparative_valuation_analysis(df: pd.DataFrame, output_dir: Path, data
     plot_df = plot_df[plot_df['defense'].isin(defense_order)]
 
     # 3. Create the "Valuation vs. Seller Type" plot (LEFT PLOT)
-    # This compares metric accuracy across defenses
+    #    (FIXED to address the deprecation warning)
     g = sns.catplot(
         data=plot_df,
         kind='box',
         x='seller_type',
         y='Score',
-        col='defense',  # <-- This is the key change
+        col='defense',
         row='Valuation Method',
         col_order=defense_order,
         row_order=val_cols,
         palette={'benign': 'g', 'adversary': 'r'},
         order=['benign', 'adversary'],
-        sharey='row',  # Free y-axis for each metric
+        sharey='row',
         height=3,
         aspect=1.2,
-        showfliers=False  # Hide outliers for a cleaner look
+        showfliers=False,
+        hue='seller_type',  # <-- FIX 1 (as per warning)
+        legend=False  # <-- FIX 2 (as per warning)
     )
     g.fig.suptitle(f'Comparative Valuation: Metric Accuracy vs. Seller Type ({dataset_to_plot})', y=1.03)
     g.set_axis_labels('Seller Type', 'Score')
@@ -423,18 +425,18 @@ def plot_comparative_valuation_analysis(df: pd.DataFrame, output_dir: Path, data
     plt.close('all')
 
     # 4. Create the "Valuation vs. Selection Decision" plot (RIGHT PLOT)
-    # This compares defense "agreement"
+    #    (FIXED the typo)
     g = sns.catplot(
         data=plot_df,
         kind='box',
         x='selected',
         y='Score',
-        col='defense',  # <-- This is the key change
-        row='Valaution Method',
+        col='defense',
+        row='Valuation Method',  # <-- FIX 3 (Typo corrected)
         col_order=defense_order,
         row_order=val_cols,
         order=[True, False],
-        sharey='row',  # Free y-axis for each metric
+        sharey='row',
         height=3,
         aspect=1.2,
         showfliers=False
@@ -448,6 +450,7 @@ def plot_comparative_valuation_analysis(df: pd.DataFrame, output_dir: Path, data
     print(f"Saved plot: {plot_file}")
     plt.clf()
     plt.close('all')
+
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
