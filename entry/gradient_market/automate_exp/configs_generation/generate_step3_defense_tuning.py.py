@@ -228,7 +228,8 @@ if __name__ == "__main__":
                 hp_parts.append(f"aggregation.skymask.mask_threshold_{val}")
                 val = hp_combo_dict.get("aggregation.clip_norm", "None")
                 hp_parts.append(f"aggregation.clip_norm_{val}")
-
+                val = hp_combo_dict.get("aggregation.skymask.mask_clip", "None")
+                hp_parts.append(f"aggregation.skymask.mask_clip_{val}")
             # Join parts to make the folder name
             hp_suffix = "_".join(hp_parts)
             if not hp_suffix:
