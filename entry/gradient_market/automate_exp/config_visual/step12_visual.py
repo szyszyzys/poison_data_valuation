@@ -1,12 +1,13 @@
-import pandas as pd
 import json
+import os
 import re
-import seaborn as sns
+from pathlib import Path
+from typing import Dict, Any
+
 import matplotlib.pyplot as plt
 import numpy as np
-import os
-from pathlib import Path
-from typing import List, Dict, Any
+import pandas as pd
+import seaborn as sns
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
@@ -156,6 +157,88 @@ def collect_all_seller_data_for_valuation(base_dir: str) -> pd.DataFrame:
     return pd.concat(all_seller_rows, ignore_index=True)
 
 
+def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_plot: str = 'CIFAR100'):
+    """
+    Generates the main summary barchart for a single dataset (e.g., Figure 1).
+    """
+    print(f"\n--- Plotting Main Summary Barchart (Deep Dive) for {dataset_to_plot} ---")
+
+    metrics_to_plot = [
+        'acc',
+        'asr',
+        'benign_selection_rate',
+        'adv_selection_rate'
+    ]
+
+    # Map to prettier names for the legend
+    metric_rename_map = {
+        'acc': 'Accuracy (Higher is Better)',
+        'asr': 'ASR (Lower is Better)',
+        'benign_selection_rate': 'Benign Select Rate (Higher is Better)',
+        'adv_selection_rate': 'Adversary Select Rate (Lower is Better)'
+    }
+
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+
+    # 1. Filter data for the chosen dataset
+    plot_df = df[df['dataset'] == dataset_to_plot].copy()
+
+    if plot_df.empty:
+        print(f"Warning: No data found for dataset '{dataset_to_plot}'. Skipping barchart.")
+        return
+
+    # 2. "Melt" the DataFrame into a long format suitable for seaborn
+    plot_df = plot_df.melt(
+        id_vars=['defense'],
+        value_vars=metrics_to_plot,
+        var_name='Metric',
+        value_name='Value'
+    )
+
+    # 3. Apply prettier names and convert to percentage
+    plot_df['Metric'] = plot_df['Metric'].map(metric_rename_map)
+    plot_df['Value'] = plot_df['Value'] * 100  # Convert to percentage
+
+    # 4. Create the grouped bar chart
+    plt.figure(figsize=(14, 8))
+    g = sns.catplot(
+        data=plot_df,
+        kind='bar',
+        x='defense',
+        y='Value',
+        hue='Metric',
+        order=defense_order,
+        hue_order=metric_rename_map.values(),
+        palette={'Accuracy (Higher is Better)': 'green',
+                 'ASR (Lower is Better)': 'red',
+                 'Benign Select Rate (Higher is Better)': 'blue',
+                 'Adversary Select Rate (Lower is Better)': 'orange'},
+        height=6,
+        aspect=1.8
+    )
+
+    g.fig.suptitle(f'Main Benchmark: Defense Capabilities vs. Backdoor Attack ({dataset_to_plot})', y=1.03)
+    g.set_axis_labels('Defense Mechanism', 'Percentage (%)')
+    g.ax.yaxis.grid(True, linestyle='--', alpha=0.7)
+
+    # Add annotations (text labels) to each bar
+    for ax in g.axes.flat:
+        for p in ax.patches:
+            ax.annotate(f'{p.get_height():.1f}',
+                        (p.get_x() + p.get_width() / 2., p.get_height()),
+                        ha='center', va='center',
+                        xytext=(0, 5),
+                        textcoords='offset points',
+                        fontsize=8)
+
+    plt.tight_layout()
+
+    plot_file = output_dir / f"plot_main_summary_BARCHART_{dataset_to_plot}.png"
+    plt.savefig(plot_file)
+    print(f"Saved plot: {plot_file}")
+    plt.clf()
+    plt.close('all')  # Close all figures
+
 def plot_main_summary_heatmaps(df: pd.DataFrame, output_dir: Path):
     """
     Generates the main summary heatmaps (Figure 1).
@@ -273,6 +356,99 @@ def plot_valuation_analysis(df: pd.DataFrame, output_dir: Path):
         plt.close(fig)  # Close the figure
 
 
+def plot_comparative_valuation_analysis(df: pd.DataFrame, output_dir: Path, dataset_to_plot: str = 'CIFAR100'):
+    """
+    Generates a comparative valuation analysis plot (faceted by defense)
+    for a single dataset.
+    """
+    print(f"\n--- Plotting Comparative Valuation (Faceted) for {dataset_to_plot} ---")
+
+    # --- Use the same valuation columns as before ---
+    val_cols = [
+        'sim_to_oracle', 'sim_to_buyer',
+        'influence_score', 'loo_score', 'kernelshap_score'
+    ]
+    val_cols = [col for col in val_cols if col in df.columns]
+    if not val_cols:
+        print("No valuation columns found in seller_metrics.csv. Skipping comparative plot.")
+        return
+
+    # 1. Filter data for the chosen dataset
+    plot_df = df[df['dataset'] == dataset_to_plot].copy()
+    if plot_df.empty:
+        print(f"Warning: No data for {dataset_to_plot}. Skipping comparative plot.")
+        return
+
+    # 2. Melt the dataframe to long format
+    plot_df = plot_df.melt(
+        id_vars=['defense', 'seller_type', 'selected', 'round'],
+        value_vars=val_cols,
+        var_name='Valuation Method',
+        value_name='Score'
+    )
+    plot_df = plot_df.dropna(subset=['Score'])
+    if plot_df.empty:
+        print(f"Warning: No valuation data after melting for {dataset_to_plot}. Skipping.")
+        return
+
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+    plot_df = plot_df[plot_df['defense'].isin(defense_order)]
+
+    # 3. Create the "Valuation vs. Seller Type" plot (LEFT PLOT)
+    # This compares metric accuracy across defenses
+    g = sns.catplot(
+        data=plot_df,
+        kind='box',
+        x='seller_type',
+        y='Score',
+        col='defense',  # <-- This is the key change
+        row='Valuation Method',
+        col_order=defense_order,
+        row_order=val_cols,
+        palette={'benign': 'g', 'adversary': 'r'},
+        order=['benign', 'adversary'],
+        sharey='row',  # Free y-axis for each metric
+        height=3,
+        aspect=1.2,
+        showfliers=False  # Hide outliers for a cleaner look
+    )
+    g.fig.suptitle(f'Comparative Valuation: Metric Accuracy vs. Seller Type ({dataset_to_plot})', y=1.03)
+    g.set_axis_labels('Seller Type', 'Score')
+    g.set_titles(col_template="{col_name}", row_template="{row_name}")
+
+    plot_file = output_dir / f"plot_comparative_valuation_vs_SellerType_{dataset_to_plot}.png"
+    plt.savefig(plot_file)
+    print(f"Saved plot: {plot_file}")
+    plt.clf()
+    plt.close('all')
+
+    # 4. Create the "Valuation vs. Selection Decision" plot (RIGHT PLOT)
+    # This compares defense "agreement"
+    g = sns.catplot(
+        data=plot_df,
+        kind='box',
+        x='selected',
+        y='Score',
+        col='defense',  # <-- This is the key change
+        row='Valaution Method',
+        col_order=defense_order,
+        row_order=val_cols,
+        order=[True, False],
+        sharey='row',  # Free y-axis for each metric
+        height=3,
+        aspect=1.2,
+        showfliers=False
+    )
+    g.fig.suptitle(f'Comparative Valuation: Defense Agreement vs. Selection ({dataset_to_plot})', y=1.03)
+    g.set_axis_labels('Was Selected?', 'Score')
+    g.set_titles(col_template="{col_name}", row_template="{row_name}")
+
+    plot_file = output_dir / f"plot_comparative_valuation_vs_Selection_{dataset_to_plot}.png"
+    plt.savefig(plot_file)
+    print(f"Saved plot: {plot_file}")
+    plt.clf()
+    plt.close('all')
+
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
@@ -282,6 +458,7 @@ def main():
     df_heatmap = collect_all_results_for_heatmap(BASE_RESULTS_DIR)
     if not df_heatmap.empty:
         plot_main_summary_heatmaps(df_heatmap, output_dir)
+        plot_main_summary_barchart(df_heatmap, output_dir, dataset_to_plot='CIFAR100')
     else:
         print("Skipping summary heatmaps, no final_metrics data found.")
 
@@ -289,6 +466,7 @@ def main():
     df_seller = collect_all_seller_data_for_valuation(BASE_RESULTS_DIR)
     if not df_seller.empty:
         plot_valuation_analysis(df_seller, output_dir)
+        plot_comparative_valuation_analysis(df_seller, output_dir, dataset_to_plot='CIFAR100')
     else:
         print("Skipping valuation analysis, no seller_metrics data found.")
 
