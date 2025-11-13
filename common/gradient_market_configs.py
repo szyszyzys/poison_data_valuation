@@ -552,3 +552,14 @@ class AppConfig:
             logger.warning(
                 "Sybil attack is enabled, but poisoning type is 'none'. Ensure this is intended."
             )
+
+
+# --- A. Define the Configuration Class ---
+# This is the 'SybilDrowningConfig' your coordinator code was missing.
+@dataclass
+class SybilDrowningConfig:
+    """Config for the Targeted Drowning Attack."""
+    # The seller_id of the benign competitor to target
+    victim_id: str = "bn_0"
+    # The 'alpha' from your paper's formula [cite: 530]
+    attack_strength: float = 1.0

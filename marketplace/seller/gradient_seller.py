@@ -96,38 +96,6 @@ class KnockOutStrategy(BaseGradientStrategy):
         return (1 - self.alpha_knock) * current_grad + self.alpha_knock * avg_grad
 
 
-class DrowningStrategy(BaseGradientStrategy):
-    """
-    Implements the "Targeted Drowning" attack.
-    The goal is to submit a gradient that is on the "opposite" side
-    of the benign centroid from a specific victim, making the victim
-    appear as an outlier to clustering-based defenses.
-    """
-
-    def __init__(self, cfg: SybilDrowningConfig):
-        super().__init__()
-        self.alpha = cfg.attack_strength  # Repulsion strength
-        logging.info(f"DrowningStrategy initialized (alpha={self.alpha})")
-
-    def manipulate(
-            self,
-            original_malicious_flat: torch.Tensor,
-            g_centroid_benign: torch.Tensor,
-            g_victim_flat: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Calculates the repulsion gradient.
-        g_attack = centroid - alpha * (victim - centroid)
-        """
-        # Vector from centroid to victim
-        v_victim_direction = g_victim_flat - g_centroid_benign
-
-        # Calculate attack gradient: opposite side of centroid, scaled by alpha
-        g_attack_flat = g_centroid_benign - (self.alpha * v_victim_direction)
-
-        return g_attack_flat
-
-
 def estimate_byte_size(data: Any) -> int:
     """
     Recursively estimates the size in bytes of potentially complex data structures
@@ -696,6 +664,78 @@ class ClientState:
     role: Optional[str] = "hybrid"  # "attacker", "explorer", or "hybrid"
 
 
+class DrowningContext:
+    def __init__(self,
+                 victim_gradient: torch.Tensor,
+                 benign_centroid: torch.Tensor):
+        self.victim_gradient = victim_gradient
+        self.benign_centroid = benign_centroid
+
+
+# --- C. Define the Base Strategy Class ---
+# Your coordinator imports 'BaseGradientStrategy', so let's define it.
+class BaseGradientStrategy:
+    """Abstract base class for all Sybil gradient manipulation strategies."""
+
+    def manipulate(self,
+                   original_malicious_flat: torch.Tensor,
+                   reference_centroid_flat: torch.Tensor) -> torch.Tensor:
+        """
+        Manipulates a Sybil's gradient based on a reference centroid.
+        This is used for 'mimic', 'pivot', etc.
+        """
+        raise NotImplementedError
+
+
+# --- D. The Drowning Strategy Implementation ---
+class DrowningStrategy(BaseGradientStrategy):
+    """
+    Implements the Targeted Drowning Attack .
+
+    This strategy is unique: it does not 'manipulate' the Sybil's
+    original gradient. Instead, it calculates a *repulsion gradient*
+    that all Sybils assigned to this strategy will submit.
+    """
+
+    def __init__(self, config: SybilDrowningConfig):
+        self.config = config
+        self.victim_id = config.victim_id
+        self.attack_strength = config.attack_strength
+        logging.info(
+            f"[DrowningStrategy] Initialized. "
+            f"Victim: {self.victim_id}, Strength: {self.attack_strength}"
+        )
+
+    def calculate_repulsion_gradient(self,
+                                     context: DrowningContext) -> Optional[torch.Tensor]:
+        """
+        Calculates the single repulsion gradient for all Sybils [cite: 528-532].
+        """
+        if (context.victim_gradient is None or
+                context.benign_centroid is None):
+            logging.warning("[DrowningStrategy] Missing victim or centroid.")
+            return None
+
+        g_victim_flat = context.victim_gradient
+        g_centroid_flat = context.benign_centroid
+
+        # The formula from your paper[cite: 530]:
+        # g_attack = g_centroid - alpha * (g_victim - g_centroid)
+        g_attack_flat = g_centroid_flat - self.attack_strength * \
+                        (g_victim_flat - g_centroid_flat)
+
+        return g_attack_flat
+
+    def manipulate(self, *args, **kwargs) -> torch.Tensor:
+        """
+        This method is not used by the DrowningStrategy, as it replaces
+        the gradient entirely, rather than manipulating it.
+        """
+        raise NotImplementedError(
+            "DrowningStrategy uses calculate_repulsion_gradient, not manipulate."
+        )
+
+
 class SybilCoordinator:
     def __init__(self, sybil_cfg: SybilConfig, aggregator: Aggregator):
         self.sybil_cfg = sybil_cfg
@@ -710,7 +750,7 @@ class SybilCoordinator:
             'pivot': PivotStrategy(),
             'knock_out': KnockOutStrategy(**self.sybil_cfg.strategy_configs.get('knock_out', {})),
             'drowning': DrowningStrategy(
-                self.sybil_cfg.strategy_configs.get('drowning', SybilDrowningConfig())
+                SybilDrowningConfig(**self.sybil_cfg.strategy_configs.get('drowning', {}))
             ),
         }
 
@@ -759,6 +799,44 @@ class SybilCoordinator:
 
         logging.info(
             f"[SybilCoordinator] Applying manipulations for {len(active_sybils)} active Sybils. Strategies: {strategies_in_use}")
+
+        # --- 1.5 (NEW) Pre-calculate Drowning Attack Gradient ---
+        drowning_repulsion_grad: Optional[torch.Tensor] = None
+        if "drowning" in strategies_in_use:
+            # Type-check to ensure we have the right strategy object
+            if isinstance(self.strategies.get('drowning'), DrowningStrategy):
+                drowning_strategy: DrowningStrategy = self.strategies['drowning']
+                victim_id = drowning_strategy.victim_id
+
+                # 1. Find Victim Gradient
+                victim_grad_list = manipulated_gradients.get(victim_id)
+                if not victim_grad_list:
+                    logging.warning(f"[SybilCoordinator] Drowning attack failed: Victim '{victim_id}' not found.")
+                else:
+                    # 2. Find Benign Centroid (EXCLUDING victim)
+                    benign_grads_for_drowning = [
+                        self._ensure_tensor(manipulated_gradients[sid])
+                        for sid in benign_ids
+                        if sid in manipulated_gradients and sid != victim_id
+                    ]
+
+                    if not benign_grads_for_drowning:
+                        logging.warning(f"[SybilCoordinator] Drowning attack failed: No other benign gradients found.")
+                    else:
+                        benign_centroid_flat = torch.mean(torch.stack(benign_grads_for_drowning), dim=0)
+                        victim_grad_flat = self._ensure_tensor(victim_grad_list)
+
+                        # 3. Calculate the Repulsion Gradient
+                        context = DrowningContext(victim_gradient=victim_grad_flat,
+                                                  benign_centroid=benign_centroid_flat)
+                        drowning_repulsion_grad = drowning_strategy.calculate_repulsion_gradient(context)
+
+                        if drowning_repulsion_grad is not None:
+                            logging.info(f"[SybilCoordinator] Calculated Drowning repulsion gradient.")
+                        else:
+                            logging.warning(f"[SybilCoordinator] DrowningStrategy failed to calculate gradient.")
+            else:
+                logging.error("[SybilCoordinator] 'drowning' strategy not correctly configured as DrowningStrategy.")
 
         # --- 2. Calculate Oracle Information (if needed) ---
         oracle_centroid_flat: Optional[torch.Tensor] = None
@@ -822,6 +900,16 @@ class SybilCoordinator:
             original_malicious_flat = self._ensure_tensor(original_malicious_grad_list)
 
             manipulated_grad_flat: Optional[torch.Tensor] = None
+            if strategy_name == "drowning":
+                if drowning_repulsion_grad is not None:
+                    # This Sybil's gradient is REPLACED with the common
+                    # repulsion gradient, regardless of its original payload.
+                    manipulated_grad_flat = drowning_repulsion_grad
+                    logging.debug(f"   Drowning attack gradient REPLACED for {sybil_id}")
+                else:
+                    logging.warning(
+                        f"   Drowning attack for {sybil_id} failed (no repulsion gradient). Submitting original.")
+                    manipulated_grad_flat = original_malicious_flat  # Fallback
 
             # --- Apply Oracle Blend ---
             if strategy_name == "oracle_blend":
@@ -871,7 +959,18 @@ class SybilCoordinator:
 
             # --- Unflatten and Store ---
             if manipulated_grad_flat is not None:
-                manipulated_grad_list = unflatten_tensor(manipulated_grad_flat, original_shapes)
+
+                expected_numel = sum(torch.prod(torch.tensor(s)) for s in original_shapes)
+                if manipulated_grad_flat.numel() != expected_numel:
+                    logging.error(
+                        f"   FATAL: Manipulated gradient for {sybil_id} (strategy '{strategy_name}') "
+                        f"has wrong numel ({manipulated_grad_flat.numel()}) vs expected ({expected_numel}). "
+                        f"Submitting original."
+                    )
+                    manipulated_grad_list = original_malicious_grad_list  # Fallback
+                else:
+                    manipulated_grad_list = unflatten_tensor(manipulated_grad_flat, original_shapes)
+
                 manipulated_gradients[sybil_id] = manipulated_grad_list
                 manipulated_count += 1
                 # Update seller's cache (if available)

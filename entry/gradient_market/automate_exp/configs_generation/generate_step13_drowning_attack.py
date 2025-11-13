@@ -2,7 +2,7 @@
 
 import copy
 from pathlib import Path
-from typing import List, Callable, Dict, Any
+from typing import List, Callable
 
 from common.enums import PoisonType
 from common.gradient_market_configs import AppConfig
@@ -14,10 +14,55 @@ from config_common_utils import (
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.config_generator import set_nested_attr, ExperimentGenerator
-from entry.gradient_market.automate_exp.scenarios import use_cifar10_config, Scenario, use_drowning_attack, \
+from entry.gradient_market.automate_exp.scenarios import Scenario, use_drowning_attack, \
     use_cifar100_config
 
-# ... (Constants are all correct) ...
+
+def use_sybil_drowning_attack(
+        target_victim_id: str,
+        attack_strength: float
+) -> Callable[[AppConfig], AppConfig]:
+    """
+    Returns a modifier that enables the SybilCoordinator with the
+    Targeted Drowning Attack strategy.
+    """
+
+    def modifier(config: AppConfig) -> AppConfig:
+        # 1. Enable the Sybil Coordinator
+        config.sybil_coordinator.is_active = True
+
+        # 2. Tell the coordinator to use 'drowning' as the default strategy
+        #    for all registered Sybil sellers.
+        config.sybil_coordinator.sybil_config.gradient_default_mode = "drowning"
+
+        # 3. Create and set the specific config for the DrowningStrategy.
+        #    This matches the SybilDrowningConfig object we created.
+        drowning_strat_config = {
+            "victim_id": target_victim_id,
+            "attack_strength": attack_strength
+        }
+
+        # 4. Set this config dict in the coordinator's config tree
+        set_nested_attr(
+            config,
+            "sybil_coordinator.sybil_config.strategy_configs.drowning",
+            drowning_strat_config
+        )
+
+        # 5. (CRITICAL) Ensure the "adversaries" (defined by adv_rate)
+        #    are actually Sybils. This tells the system to register
+        #    them with the SybilCoordinator.
+        config.adversary_seller_config.is_sybil = True
+
+        # 6. Disable their "normal" poisoning, as the coordinator
+        #    will be providing their gradient.
+        config.adversary_seller_config.poisoning.type = PoisonType.NONE
+
+        return config
+
+    return modifier
+
+
 FIXED_ADV_RATE = 0.3
 TARGET_VICTIM_ID = "bn_0"
 ATTACK_STRENGTH = 1.0
@@ -91,7 +136,7 @@ def generate_drowning_attack_scenarios() -> List[Scenario]:
         setup_modifier_func = create_setup_modifier()
 
         # 2. Create the drowning attack modifier
-        drowning_modifier = use_drowning_attack(
+        drowning_modifier = use_sybil_drowning_attack(
             target_victim_id=TARGET_VICTIM_ID,
             attack_strength=ATTACK_STRENGTH
         )
