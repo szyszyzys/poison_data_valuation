@@ -1,12 +1,13 @@
-import pandas as pd
 import json
+import os
 import re
-import seaborn as sns
+from pathlib import Path
+from typing import Dict, Any
+
 import matplotlib.pyplot as plt
 import numpy as np
-import os
-from pathlib import Path
-from typing import List, Dict, Any
+import pandas as pd
+import seaborn as sns
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
@@ -57,17 +58,34 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
 
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
-    """Parses the base scenario name."""
+    """
+    (FIXED) Parses the base scenario name using regex to handle
+    underscores in dataset and model names.
+    e.g., 'step3_tune_martfl_labelflip_tabular_Texas100_mlp_texas100_baseline_new'
+    """
     try:
-        parts = scenario_name.split('_')
-        return {
-            "scenario": scenario_name,
-            "defense": parts[2],
-            "attack": parts[3],
-            "modality": parts[4],
-            "dataset": parts[5],
-            "model": parts[6],
-        }
+        # Regex breakdown:
+        # 1. (fedavg|martfl|fltrust|skymask): Captures the defense
+        # 2. ([a-z]+): Captures the attack type (e.g., labelflip)
+        # 3. (image|text|tabular): Captures the modality
+        # 4. (.+?): Non-greedy match for the dataset (e.g., Texas100)
+        # 5. (.+): Greedy match for the model name (e.g., mlp_texas100_baseline)
+        pattern = r'step3_tune_(fedavg|martfl|fltrust|skymask)_([a-z]+)_(image|text|tabular)_(.+?)_(.+)_(new|old)'
+        match = re.search(pattern, scenario_name)
+
+        if match:
+            return {
+                "scenario": scenario_name,
+                "defense": match.group(1),
+                "attack": match.group(2),
+                "modality": match.group(3),
+                "dataset": match.group(4),
+                "model": match.group(5),
+            }
+        else:
+            # Fallback for old names if needed, or just raise error
+            raise ValueError(f"Pattern not matched for: {scenario_name}")
+
     except Exception as e:
         print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
         return {"scenario": scenario_name}
