@@ -131,7 +131,11 @@ def collect_all_seller_data_for_valuation(base_dir: str) -> pd.DataFrame:
 
         for i, metrics_csv in enumerate(seller_metric_files):
             try:
-                seller_df = pd.read_csv(metrics_csv)
+                # --- THIS IS THE FIX ---
+                # Skip bad lines instead of crashing
+                seller_df = pd.read_csv(metrics_csv, on_bad_lines='skip')
+                # ---------------------
+
                 # Add scenario info
                 seller_df['defense'] = run_scenario_base.get('defense')
                 seller_df['dataset'] = run_scenario_base.get('dataset')
@@ -141,6 +145,8 @@ def collect_all_seller_data_for_valuation(base_dir: str) -> pd.DataFrame:
                 )
                 all_seller_rows.append(seller_df)
             except Exception as e:
+                # This will catch other errors, but the 'on_bad_lines'
+                # will handle the tokenizing error.
                 print(f"Error reading {metrics_csv}: {e}")
 
     if not all_seller_rows:

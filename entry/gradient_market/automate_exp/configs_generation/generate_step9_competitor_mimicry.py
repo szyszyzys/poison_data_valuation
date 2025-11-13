@@ -1,21 +1,18 @@
 # FILE: generate_step9_competitor_mimicry.py
 
-import sys
 import copy
+import sys
 from pathlib import Path
-from typing import List, Callable, Dict, Any
+from typing import List
 
 # --- Imports ---
 from config_common_utils import (
-    GOLDEN_TRAINING_PARAMS,  # <-- ADDED
-    TUNED_DEFENSE_PARAMS, NUM_SEEDS_PER_CONFIG,
-    IMAGE_DEFENSES, TEXT_TABULAR_DEFENSES, ALL_DEFENSES,
-    # create_fixed_params_modifier,  <-- REMOVED
+    GOLDEN_TRAINING_PARAMS,
+    NUM_SEEDS_PER_CONFIG,
     enable_valuation, get_tuned_defense_params
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
-from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_config, \
-    use_competitor_mimicry_attack, use_cifar100_config
+from entry.gradient_market.automate_exp.scenarios import Scenario, use_competitor_mimicry_attack, use_cifar100_config
 
 try:
     from common.gradient_market_configs import AppConfig, PoisonType
@@ -42,7 +39,6 @@ MIMICRY_SETUP = {
 DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl", "skymask"]
 
 
-# === THIS IS THE CORRECTED FUNCTION ===
 def generate_competitor_mimicry_scenarios() -> List[Scenario]:
     """Generates scenarios testing tuned defenses against competitor mimicry."""
     print("\n--- Generating Step 9: Competitor Mimicry Scenarios ---")
