@@ -13,7 +13,7 @@ BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./step7_figures"
 
 
-# --- End Configuration ---
+# ---------------------
 
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
@@ -40,13 +40,22 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
             else:
                 mode_label = adaptive_mode
 
+            # --- Create a more readable threat model label ---
+            threat_label_map = {
+                'black_box': '1. Black-Box',
+                'gradient_inversion': '2. Grad-Inversion',
+                'oracle': '3. Oracle'
+            }
+            # Use .get() for a safe fallback
+            threat_label = threat_model_map.get(threat_model, threat_model)
+
             return {
                 "scenario": scenario_name,
                 "threat_model": threat_model,
                 "adaptive_mode": adaptive_mode,
                 "defense": defense,
                 "dataset": dataset,
-                "strategy_label": f"{threat_model} ({mode_label})"
+                "strategy_label": f"{threat_label} ({mode_label})"
             }
         else:
             raise ValueError(f"Pattern not matched for: {scenario_name}")
@@ -134,7 +143,9 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
 def plot_adaptive_comparison(df: pd.DataFrame, defense: str, output_dir: Path):
     """
-    Generates the grouped bar chart comparing adaptive strategies for a single defense.
+    (IMPROVED PLOT)
+    Generates a faceted bar chart comparing adaptive strategies for a single defense.
+    This version is much cleaner and easier to read.
     """
     defense_df = df[df['defense'] == defense].copy()
     if defense_df.empty:
@@ -143,47 +154,65 @@ def plot_adaptive_comparison(df: pd.DataFrame, defense: str, output_dir: Path):
 
     print(f"\n--- Plotting Adaptive Attack Effectiveness for: {defense} ---")
 
-    # --- Logical Sorting for the X-axis ---
-    def get_sort_key(label):
-        if 'black_box (data)' in label: return (0, 0)
-        if 'black_box (grad)' in label: return (1, 0)
-        if 'gradient_inversion' in label: return (2, 0)
-        if 'oracle' in label: return (3, 0)
-        return (4, 0)  # Fallback
+    # Metrics to show as separate plots
+    metrics_to_plot = {
+        'acc': 'Accuracy (Higher is Better)',
+        'asr': 'ASR (Lower is Better)',
+        'adv_selection_rate': 'Attacker Selection Rate (Higher is Better)',
+        'benign_selection_rate': 'Benign Selection Rate (Higher is Better)'
+    }
 
-    unique_labels = defense_df['strategy_label'].unique()
-    sorted_labels = sorted(unique_labels, key=get_sort_key)
-    # --- End Sorting ---
-
-    metrics_to_plot = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate', 'rounds']
-    metrics_to_plot = [m for m in metrics_to_plot if m in defense_df.columns]
+    # Filter to only metrics we have data for
+    metrics_present = [m for m in metrics_to_plot.keys() if m in defense_df.columns]
 
     plot_df = defense_df.melt(
         id_vars=['strategy_label'],
-        value_vars=metrics_to_plot,
+        value_vars=metrics_present,
         var_name='Metric',
         value_name='Value'
     )
 
-    plt.figure(figsize=(16, 7))
-    sns.barplot(
+    # Apply the pretty names
+    plot_df['Metric'] = plot_df['Metric'].map(metrics_to_plot)
+
+    # Use the 'strategy_label' which is already sorted 1, 2, 3
+    sorted_labels = sorted(plot_df['strategy_label'].unique())
+
+    g = sns.catplot(
         data=plot_df,
+        kind='bar',
         x='strategy_label',
         y='Value',
-        hue='Metric',
-        order=sorted_labels  # Apply the logical sort order
+        col='Metric',  # <-- Create a column for each metric
+        col_wrap=2,  # <-- Arrange in a 2x2 grid
+        order=sorted_labels,
+        height=4,
+        aspect=1.2,
+        sharex=True,  # All plots share the same x-axis
+        sharey=False  # Each metric has its own y-axis
     )
-    plt.title(f'Effectiveness of Adaptive Attacks against {defense.upper()} Defense')
-    plt.ylabel('Value')
-    plt.xlabel('Adaptive Attack Strategy')
-    plt.xticks(rotation=10, ha='right')
-    plt.legend(title='Metric')
-    plt.tight_layout()
+
+    g.fig.suptitle(f'Effectiveness of Adaptive Attacks against {defense.upper()} Defense', y=1.03)
+    g.set_axis_labels('Adaptive Attack Strategy', 'Value')
+    g.set_titles(col_template="{col_name}")
+
+    # Add annotations
+    for ax in g.axes.flat:
+        for p in ax.patches:
+            ax.annotate(f'{p.get_height():.3f}',
+                        (p.get_x() + p.get_width() / 2., p.get_height()),
+                        ha='center', va='center',
+                        xytext=(0, 5),
+                        textcoords='offset points',
+                        fontsize=9)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.97])  # Adjust for suptitle
 
     plot_file = output_dir / f"plot_adaptive_effectiveness_{defense}.png"
-    plt.savefig(plot_file)
+    plt.savefig(plot_file, bbox_inches='tight')
     print(f"Saved plot: {plot_file}")
     plt.clf()
+    plt.close('all')
 
 
 def main():
@@ -194,14 +223,22 @@ def main():
     df = collect_all_results(BASE_RESULTS_DIR)
 
     if df.empty:
+        print("No results found. Exiting.")
         return
+
+    # --- THIS IS THE NEW LINE ---
+    csv_output_file = output_dir / "step7_adaptive_results_summary.csv"
+    df.to_csv(csv_output_file, index=False, float_format="%.4f")
+    print(f"\n✅ Successfully saved full analysis data to: {csv_output_file}\n")
+    # ----------------------------
 
     defenses = df['defense'].unique()
 
     for defense in defenses:
-        plot_adaptive_comparison(df, defense, output_dir)
+        if pd.notna(defense):
+            plot_adaptive_comparison(df, defense, output_dir)
 
-    print("\nAnalysis complete. Check 'step7_figures' folder for plots.")
+    print("\nAnalysis complete. Check 'step7_figures' folder for plots and CSV.")
 
 
 if __name__ == "__main__":
