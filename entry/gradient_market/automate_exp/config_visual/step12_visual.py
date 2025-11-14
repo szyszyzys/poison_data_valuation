@@ -233,8 +233,10 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
                         fontsize=8)
 
     # --- THIS IS THE FIX ---
-    # 1. Get the handles and labels from the plot's axis
-    handles, labels = g.ax.get_legend_handles_labels()
+    # 1. Get the handles and labels from the FacetGrid's internal data
+    handles = g._legend_data.values()
+    labels = g._legend_data.keys()
+    # --- END FIX ---
 
     # 2. Add a new legend to the FIGURE, not the axis
     g.fig.legend(
@@ -249,7 +251,6 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
 
     # 3. Adjust the plot to make room for the title and new legend
     g.fig.tight_layout(rect=[0, 0, 1, 0.93])  # Leave 7% space at the top
-    # --- END FIX ---
 
     plot_file = output_dir / f"plot_main_summary_BARCHART_{dataset_to_plot}.png"
 
@@ -259,6 +260,7 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
     print(f"Saved plot: {plot_file}")
     plt.clf()
     plt.close('all')  # Close all figures
+
 
 def plot_main_summary_heatmaps(df: pd.DataFrame, output_dir: Path):
     """
