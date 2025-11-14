@@ -1003,19 +1003,27 @@ class SybilCoordinator:
         self.update_client_states(selected_ids)
 
         # Collect HONEST gradients from selected sellers for pattern learning
-        selected_honest_gradients = {}
+        selected_benign_gradients = {}
         for sid in selected_ids:
-            seller = all_sellers.get(sid)
-            if seller and hasattr(seller, 'get_honest_gradient'):
-                honest_grad = seller.get_honest_gradient()
-                if honest_grad:
-                    selected_honest_gradients[sid] = honest_grad
+            # Check if this ID is for a seller that is NOT a Sybil
+            if sid not in self.clients:
+                seller = all_sellers.get(sid)
+
+                # Get the gradient this benign seller just submitted
+                # (This gradient was cached in the GradientSeller class)
+                if seller and hasattr(seller, 'last_computed_gradient'):
+                    benign_grad = seller.last_computed_gradient
+                    if benign_grad:
+                        # Ensure it's a flat tensor for the pattern analysis
+                        selected_benign_gradients[sid] = self._ensure_tensor(benign_grad)
 
         # Update historical patterns for future rounds
-        if selected_honest_gradients:
-            self.update_historical_patterns(selected_honest_gradients)
-            logging.info(f"   Updated patterns with {len(selected_honest_gradients)} honest gradients")
-
+        if selected_benign_gradients:
+            # Pass the DICTIONARY of flat tensors
+            self.update_historical_patterns(selected_benign_gradients)
+            logging.info(f"   Updated patterns with {len(selected_benign_gradients)} benign gradients")
+        else:
+            logging.warning("   No selected benign gradients found to update historical patterns.")
         # Log sybil performance
         sybil_selected = [sid for sid in selected_ids if sid in self.clients]
         if sybil_selected:
@@ -1070,12 +1078,11 @@ class SybilCoordinator:
         self._analyze_selection_patterns()
 
     def _analyze_selection_patterns(self) -> None:
-        """Analyze stored selected gradients to compute a centroid and average cosine similarity."""
+        """Analyze stored selected gradients to compute a centroid..."""
         all_selected_flat = [
-            grad.flatten()
+            flat_grad  # <-- FIX: grad is ALREADY the flat tensor
             for round_dict in self.selected_history
-            for grad in round_dict.values()
-            if hasattr(grad, 'flatten')  # <-- This line fixes the error
+            for flat_grad in round_dict.values()
         ]
 
         if not all_selected_flat:
