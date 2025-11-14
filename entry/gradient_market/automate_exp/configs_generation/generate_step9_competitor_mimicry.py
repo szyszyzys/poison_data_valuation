@@ -88,7 +88,7 @@ def generate_competitor_mimicry_scenarios() -> List[Scenario]:
 
                 # 4. Explicitly Disable Other Seller Attacks
                 config.adversary_seller_config.poisoning.type = PoisonType.NONE
-                config.adversary_seller_config.sybil.is_sybil = False
+                config.adversary_seller_config.sybil.is_sybil = True
                 config.buyer_attack_config.is_active = False
                 return config
 
