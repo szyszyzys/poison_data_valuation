@@ -11,7 +11,7 @@ from typing import List, Dict, Any
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./step9_figures"
-VICTIM_SELLER_ID = "bn_0"  # The seller being mimicked
+VICTIM_SELLER_ID = "bn_3"  # The seller being mimicked
 
 
 # ---------------------

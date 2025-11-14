@@ -93,7 +93,7 @@ adversary_seller_config:
     drift_factor: 0.1
   mimicry_attack:
     is_active: false
-    target_seller_id: bn_0
+    target_seller_id: bn_3
     observation_rounds: 3
     noise_scale: 0.05
     strategy: noisy_copy

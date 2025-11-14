@@ -34,7 +34,7 @@ except ImportError as e:
 # We follow the Step 6 pattern.
 # We will "sweep" the attack_strength.
 # The victim_id will be set by the 'use_sybil_attack_strategy' helper.
-TARGET_VICTIM_ID = "bn_0"
+TARGET_VICTIM_ID = "bn_3"
 DROWNING_TEST_CONFIG = {
     # The key is the strategy name the coordinator will use.
     "drowning": {

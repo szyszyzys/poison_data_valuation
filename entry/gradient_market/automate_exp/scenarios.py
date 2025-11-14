@@ -371,7 +371,7 @@ def use_adaptive_attack(
 #     return modifier
 
 def use_drowning_attack(
-        target_victim_id: str = "bn_0",
+        target_victim_id: str = "bn_3",
         attack_strength: float = 1.0
 ) -> Callable[[AppConfig], AppConfig]:
     """
@@ -464,7 +464,7 @@ def generate_competitor_mimicry_scenarios() -> List[Scenario]:
             modifiers=[
                 use_cifar10_config,
                 use_competitor_mimicry_attack(
-                    target_seller_id="bn_0",  # Target the first (often high-quality) seller
+                    target_seller_id="bn_3",  # Target the first (often high-quality) seller
                     strategy=strategy,
                     noise_scale=0.03,
                     observation_rounds=5

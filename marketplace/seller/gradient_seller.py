@@ -910,9 +910,8 @@ class SybilCoordinator:
                     logging.warning(
                         f"   Drowning attack for {sybil_id} failed (no repulsion gradient). Submitting original.")
                     manipulated_grad_flat = original_malicious_flat  # Fallback
-
             # --- Apply Oracle Blend ---
-            if strategy_name == "oracle_blend":
+            elif strategy_name == "oracle_blend":
                 if oracle_centroid_flat is not None:
                     alpha = self.sybil_cfg.oracle_blend_alpha  # Get alpha from config
                     manipulated_grad_flat = alpha * original_malicious_flat + (1.0 - alpha) * oracle_centroid_flat

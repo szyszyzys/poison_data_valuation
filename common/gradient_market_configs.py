@@ -15,7 +15,7 @@ logger = logging.getLogger("Configs")
 class MimicryAttackConfig:
     """Configuration for Direct Competitor Mimicry Attack"""
     is_active: bool = False
-    target_seller_id: str = "bn_0"  # Which seller to mimic
+    target_seller_id: str = "bn_3"  # Which seller to mimic
     observation_rounds: int = 3  # How many rounds to observe before attacking
     noise_scale: float = 0.05  # Noise level for noisy_copy strategy
     strategy: str = "noisy_copy"  # Options: "exact_copy", "noisy_copy", "scaled_copy", "averaged_history"
@@ -237,7 +237,7 @@ class DrowningAttackConfig:
 @dataclass
 class SybilDrowningConfig:
     """Configuration for the Targeted Drowning Attack."""
-    target_victim_id: str = "bn_0"
+    target_victim_id: str = "bn_3"
     attack_strength: float = 1.0
 
 
@@ -464,7 +464,7 @@ class MartFLParams:
     initial_baseline: str = "buyer"
     # Specifies the ID used as the baseline anchor in the *first* round
     # (and subsequent rounds if change_base is False).
-    # Common values: "buyer" or a specific client ID like "bn_0".
+    # Common values: "buyer" or a specific client ID like "bn_3".
 
     max_k: int = 10
     # The maximum number of clusters ('k') that the k-means algorithm
@@ -579,6 +579,6 @@ class AppConfig:
 class SybilDrowningConfig:
     """Config for the Targeted Drowning Attack."""
     # The seller_id of the benign competitor to target
-    victim_id: str = "bn_0"
+    victim_id: str = "bn_3"
     # The 'alpha' from your paper's formula [cite: 530]
     attack_strength: float = 1.0

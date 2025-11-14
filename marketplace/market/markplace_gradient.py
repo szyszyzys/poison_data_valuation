@@ -252,8 +252,11 @@ class DataMarketplaceFederated(DataMarketplace):
         attack_log = None
         if self.attacker and self.attacker.should_run(round_number):
             logging.info("\n🔍 Executing privacy attack...")
-            attack_log = self.attacker.execute(round_number, gradients_dict, seller_ids, ground_truth_dict)
-
+            # ---
+            # FIX: Pass the post-manipulation gradients to the attacker
+            # ---
+            attack_log = self.attacker.execute(round_number, final_gradients_to_aggregate, seller_ids,
+                                               ground_truth_dict)
         # ===== PHASE 7: Aggregation =====
         logging.info("\n📊 Starting aggregation and selection...")
 

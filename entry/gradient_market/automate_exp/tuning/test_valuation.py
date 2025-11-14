@@ -169,7 +169,7 @@ def generate_competitor_mimicry_scenarios_with_valuation() -> List[Scenario]:
         valuation_modifier = enable_valuation(influence=True, loo=True, loo_freq=10, kernelshap=False) # LOO needed to see target's value drop
 
         for strategy in MIMICRY_STRATEGIES:
-            mimicry_modifier = use_competitor_mimicry_attack(target_seller_id="bn_0", strategy=strategy, noise_scale=0.03) # Target first benign
+            mimicry_modifier = use_competitor_mimicry_attack(target_seller_id="bn_3", strategy=strategy, noise_scale=0.03) # Target first benign
             grid = {DATASET_CONFIG["model_config_param_key"]: [model_config_name], "experiment.dataset_name": [dataset_name], "experiment.adv_rate": ADV_RATES, "n_samples": [NUM_SEEDS_PER_CONFIG]}
             scenario_name = f"comp_mimicry_{strategy}_{defense_name}_{dataset_name}_{model_config_suffix}"
             scenarios.append(Scenario(name=scenario_name, base_config_factory=DATASET_CONFIG["base_config_factory"], modifiers=[fixed_params_modifier, DATASET_CONFIG["dataset_modifier"], mimicry_modifier, valuation_modifier], parameter_grid=grid)) # Added valuation

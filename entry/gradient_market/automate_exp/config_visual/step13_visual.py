@@ -11,7 +11,7 @@ from typing import List, Dict, Any
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./step13_figures"
-VICTIM_SELLER_ID = "bn_0"  # The seller being targeted
+VICTIM_SELLER_ID = "bn_3"  # The seller being targeted
 
 
 # --- End Configuration ---
@@ -20,7 +20,7 @@ VICTIM_SELLER_ID = "bn_0"  # The seller being targeted
 def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
     """
     Parses the base scenario name
-    e.g., 'step13_drowning_martfl_bn_0'
+    e.g., 'step13_drowning_martfl_bn_3'
     """
     try:
         pattern = r'step13_drowning_(fedavg|martfl|fltrust|skymask)_(bn_[0-9]+)'

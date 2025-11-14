@@ -25,7 +25,7 @@ except ImportError as e:
 # ... (Constants are all correct) ...
 ADV_RATES_TO_SWEEP = [0.1, 0.2, 0.3, 0.4]
 MIMICRY_STRATEGY = "noisy_copy"
-TARGET_SELLER_ID = "bn_0"
+TARGET_SELLER_ID = "bn_3"
 NOISE_SCALE = 0.03
 OBSERVATION_ROUNDS = 5
 MIMICRY_SETUP = {
