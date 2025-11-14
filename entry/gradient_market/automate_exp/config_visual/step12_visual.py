@@ -156,10 +156,13 @@ def collect_all_seller_data_for_valuation(base_dir: str) -> pd.DataFrame:
     return pd.concat(all_seller_rows, ignore_index=True)
 
 
+import matplotlib.patches as mpatches
+
+
 def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_plot: str = 'CIFAR100'):
     """
     Generates the main summary barchart for a single dataset (e.g., Figure 1).
-    (FIXED to place legend at the top)
+    (FIXED to manually create the legend)
     """
     print(f"\n--- Plotting Main Summary Barchart (Deep Dive) for {dataset_to_plot} ---")
 
@@ -177,6 +180,12 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
         'benign_selection_rate': 'Benign Select Rate (Higher is Better)',
         'adv_selection_rate': 'Adversary Select Rate (Lower is Better)'
     }
+
+    # Define the palette
+    palette = {'Accuracy (Higher is Better)': 'green',
+               'ASR (Lower is Better)': 'red',
+               'Benign Select Rate (Higher is Better)': 'blue',
+               'Adversary Select Rate (Lower is Better)': 'orange'}
 
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
@@ -208,10 +217,7 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
         hue='Metric',
         order=defense_order,
         hue_order=metric_rename_map.values(),
-        palette={'Accuracy (Higher is Better)': 'green',
-                 'ASR (Lower is Better)': 'red',
-                 'Benign Select Rate (Higher is Better)': 'blue',
-                 'Adversary Select Rate (Lower is Better)': 'orange'},
+        palette=palette,
         height=6,
         aspect=1.8,
         legend=False  # Tell catplot NOT to draw the legend
@@ -233,9 +239,9 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
                         fontsize=8)
 
     # --- THIS IS THE FIX ---
-    # 1. Get the handles and labels from the FacetGrid's internal data
-    handles = g._legend_data.values()
-    labels = g._legend_data.keys()
+    # 1. Manually create the legend content from our palette
+    handles = [mpatches.Patch(color=palette[label], label=label) for label in metric_rename_map.values()]
+    labels = [label for label in metric_rename_map.values()]
     # --- END FIX ---
 
     # 2. Add a new legend to the FIGURE, not the axis
@@ -254,13 +260,11 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
 
     plot_file = output_dir / f"plot_main_summary_BARCHART_{dataset_to_plot}.png"
 
-    # We still use bbox_inches='tight' as a fallback to catch everything
     plt.savefig(plot_file, bbox_inches='tight')
 
     print(f"Saved plot: {plot_file}")
     plt.clf()
     plt.close('all')  # Close all figures
-
 
 def plot_main_summary_heatmaps(df: pd.DataFrame, output_dir: Path):
     """
