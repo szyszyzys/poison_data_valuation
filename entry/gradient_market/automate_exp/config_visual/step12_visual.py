@@ -241,14 +241,14 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
     g.fig.subplots_adjust(right=0.85)
 
     # --- THIS IS THE FIX ---
-    # Use bbox_inches='tight' to ensure the external legend is saved.
+    # Define plot_file *before* using it in savefig
+    plot_file = output_dir / f"plot_main_summary_BARCHART_{dataset_to_plot}.png"
     plt.savefig(plot_file, bbox_inches='tight')
     # --- END FIX ---
 
     print(f"Saved plot: {plot_file}")
     plt.clf()
     plt.close('all')  # Close all figures
-
 
 def plot_main_summary_heatmaps(df: pd.DataFrame, output_dir: Path):
     """
