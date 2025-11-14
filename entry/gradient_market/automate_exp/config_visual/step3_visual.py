@@ -31,12 +31,12 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
 
     # Define the regex patterns for each HP we expect
     patterns = {
-        'martfl.max_k': r'aggregation\.martfl\.max_k_([0-9]+)',
-        'clip_norm': r'aggregation\.clip_norm_([0-9\.]+|None)',
-        'mask_epochs': r'aggregation\.skymask\.mask_epochs_([0-9]+)',
-        'mask_lr': r'aggregation\.skymask\.mask_lr_([0-9e\.\+]+)',  # Handles 0.01, 0.5, and 1e7
-        'mask_threshold': r'aggregation\.skymask\.mask_threshold_([0-9\.]+)',
-        'mask_clip': r'aggregation\.skymask\.mask_clip_([0-9e\.\-]+)'  # Handles 10.0 and 1e-7
+        'martfl.max_k': r'martfl\.max_k_([0-9]+)',
+        'clip_norm': r'clip_norm_([0-9\.]+|None)',  # Looks for 'clip_norm_...'
+        'mask_epochs': r'mask_epochs_([0-9]+)',
+        'mask_lr': r'mask_lr_([0-9e\.\+]+)',  # Handles 0.01, 0.5, and 1e7
+        'mask_threshold': r'mask_threshold_([0-9\.]+)',
+        'mask_clip': r'mask_clip_([0-9e\.\-]+)'  # Handles 10.0 and 1e-7
     }
 
     for key, pattern in patterns.items():
@@ -75,7 +75,14 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     e.g., 'step3_tune_martfl_labelflip_tabular_Texas100_mlp_texas100_baseline_new'
     """
     try:
-        pattern = r'step3_tune_(fedavg|martfl|fltrust|skymask)_([a-z]+)_(image|text|tabular)_(.+?)_(.+)_(new|old)'
+        # Regex breakdown:
+        # 1. (fedavg|martfl|fltrust|skymask): Captures the defense
+        # 2. ([a-z]+): Captures the attack type (e.g., labelflip)
+        # 3. (image|text|tabular): Captures the modality
+        # 4. (.+?): Non-greedy match for the dataset (e.g., Texas100)
+        # 5. (.+?): Non-greedy match for the model name (e.g., mlp_texas100_baseline)
+        # 6. (_new|_old)?: Makes the suffix optional
+        pattern = r'step3_tune_(fedavg|martfl|fltrust|skymask)_([a-z]+)_(image|text|tabular)_(.+?)_(.+?)(_new|_old)?$'
         match = re.search(pattern, scenario_name)
 
         if match:
@@ -213,10 +220,23 @@ def plot_skymask_deep_dive(df_all: pd.DataFrame, output_dir: Path):
         print("No SkyMask data found for deep-dive plot.")
         return
 
+    # Fill defaults for any missing HPs
+    if 'mask_clip' not in df_sky.columns: df_sky['mask_clip'] = 1.0
+    if 'mask_lr' not in df_sky.columns: df_sky['mask_lr'] = 0.01  # Assume a default
+    if 'mask_epochs' not in df_sky.columns: df_sky['mask_epochs'] = 20  # Assume a default
+    if 'mask_threshold' not in df_sky.columns: df_sky['mask_threshold'] = 0.5  # Assume a default
+    if 'clip_norm' not in df_sky.columns: df_sky['clip_norm'] = 'None'
+
+    # Ensure all HPs are strings for categorical plotting
+    df_sky['mask_lr'] = df_sky['mask_lr'].astype(str)
+    df_sky['mask_clip'] = df_sky['mask_clip'].astype(str)
+    df_sky['mask_epochs'] = df_sky['mask_epochs'].astype(str)
+    df_sky['mask_threshold'] = df_sky['mask_threshold'].astype(str)
+
     # Create a new categorical column to identify the "trick" HPs
     def categorize_hps(row):
-        is_official_lr = row['mask_lr'] in [1e7, 1e8]
-        is_official_clip = row['mask_clip'] == 1e-7
+        is_official_lr = row['mask_lr'] in ['10000000.0', '100000000.0']
+        is_official_clip = row['mask_clip'] == '1e-07'
 
         if is_official_lr and is_official_clip:
             return "Official (Trick HPs)"
@@ -266,6 +286,121 @@ def plot_skymask_deep_dive(df_all: pd.DataFrame, output_dir: Path):
     print(f"Saved SkyMask deep-dive plot: {plot_file}")
     plt.clf()
     plt.close('all')
+
+
+def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, output_dir: Path):
+    """Generates plots for a specific scenario to compare HP settings."""
+    scenario_df = df[df['scenario'] == scenario].copy()
+
+    if scenario_df.empty:
+        print(f"No data found for scenario '{scenario}'")
+        return
+
+    print(f"\n--- Visualizing Scenario: {scenario} ---")
+
+    # --- 1. Plot for Objective 1: Best Performance Trade-off ---
+
+    # Get all HP columns for this defense
+    hp_cols = list(df.filter(regex=f"^{defense}").columns)
+    if 'clip_norm' in df.columns and 'clip_norm' not in hp_cols:
+        hp_cols.append('clip_norm')
+
+    # (FIX) Get HPs from the dataframe columns, not a regex
+    hp_cols_present = [c for c in ['clip_norm', 'max_k', 'mask_epochs', 'mask_lr', 'mask_threshold', 'mask_clip'] if
+                       c in scenario_df.columns]
+    hp_cols_to_plot = [c for c in hp_cols_present if scenario_df[c].nunique() > 1]
+
+    # Create a unique, readable x-axis label from the HPs
+    if not hp_cols_to_plot:
+        scenario_df['hp_label'] = 'default'
+        hp_cols_for_id = ['hp_label']
+    else:
+        # Create a label like "lr:0.01_clip:10.0_..."
+        scenario_df['hp_label'] = scenario_df[hp_cols_to_plot].apply(
+            lambda row: '_'.join([f"{col.split('.')[-1]}:{row[col]}" for col in hp_cols_to_plot]),
+            axis=1
+        )
+        hp_cols_for_id = hp_cols_to_plot + ['hp_label']
+
+    # Sort by the defense_score to make plot readable
+    scenario_df = scenario_df.sort_values(by='defense_score', ascending=False)
+
+    metrics_to_plot = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate']
+    metrics_to_plot = [m for m in metrics_to_plot if m in scenario_df.columns]
+
+    plot_df = scenario_df.melt(
+        id_vars=['hp_label'],
+        value_vars=metrics_to_plot,
+        var_name='Metric',
+        value_name='Value'
+    )
+
+    plt.figure(figsize=(max(16, 0.5 * scenario_df['hp_label'].nunique()), 7))
+    sns.barplot(
+        data=plot_df,
+        x='hp_label',
+        y='Value',
+        hue='Metric',
+        order=scenario_df['hp_label'].unique()  # Use the sorted order
+    )
+    plt.title(f'Performance & Selection vs. HPs for {defense.upper()} (Scenario: {scenario})')
+    plt.ylabel('Rate')
+    plt.xlabel('Hyperparameter Combination (Sorted by Defense Score)')
+    plt.xticks(rotation=25, ha='right', fontsize=9)
+    plt.legend(title='Metric')
+    plt.tight_layout()
+    plot_file = output_dir / f"plot_{scenario}_performance.png"
+    plt.savefig(plot_file)
+    print(f"Saved plot: {plot_file}")
+    plt.clf()
+    plt.close('all')
+
+    # --- 2. Plot for Objective 2: Stableness (Parameter Sensitivity) ---
+    if len(hp_cols_to_plot) >= 2:
+        # We can make a 2D plot
+        x_hp = hp_cols_to_plot[0]
+
+        # (FIX) Convert x_hp to string for categorical plotting
+        scenario_df[x_hp] = scenario_df[x_hp].astype(str)
+
+        y_hp = hp_cols_to_plot[1]
+
+        col_hp = hp_cols_to_plot[2] if len(hp_cols_to_plot) > 2 else None
+
+        metrics_to_plot_grid = ['defense_score', 'acc', 'asr', 'filter_failure']
+
+        plot_df_melted = scenario_df.melt(
+            id_vars=[c for c in [x_hp, y_hp, col_hp] if c is not None],
+            value_vars=metrics_to_plot_grid,
+            var_name='Metric',
+            value_name='Value'
+        )
+
+        g = sns.catplot(
+            data=plot_df_melted,
+            x=x_hp,
+            y='Value',
+            hue=y_hp,
+            col=col_hp,
+            row='Metric',
+            kind='bar',
+            palette='viridis',
+            height=3,
+            aspect=1.2,
+            sharey=False,
+            legend_out=True
+        )
+        g.fig.suptitle(f'HP Stability Analysis for {defense.upper()} ({scenario})', y=1.03)
+        g.set_axis_labels(x_hp, 'Metric Value')
+        g.set_titles(col_template="{col_name}", row_template="{row_name}")
+        plot_file = output_dir / f"plot_{scenario}_stability_grid.png"
+        g.fig.savefig(plot_file)
+        print(f"Saved stability grid plot: {plot_file}")
+        plt.clf()
+        plt.close('all')
+
+    else:
+        print(f"Skipping stability grid plot for {defense} (not enough HPs to compare).")
 
 
 def main():
@@ -348,8 +483,7 @@ def main():
         print(f"\n--- SCENARIO: {name} ---")
 
         # Find HPs for this group
-        hp_cols = list(df.filter(regex=f"^{group['defense'].iloc[0]}").columns)
-        if 'clip_norm' in df.columns: hp_cols.append('clip_norm')
+        hp_cols = ['clip_norm', 'max_k', 'mask_epochs', 'mask_lr', 'mask_threshold', 'mask_clip']
         hp_cols_present = [c for c in hp_cols if c in group.columns and group[c].nunique() > 1]
 
         cols_to_show = hp_cols_present + [
@@ -370,8 +504,7 @@ def main():
     # --- Plot the other defenses (simplified) ---
     for scenario, defense in df[['scenario', 'defense']].drop_duplicates().values:
         if defense != 'skymask':
-            # You can re-enable your old plot_defense_comparison if you like
-            # plot_defense_comparison(df, scenario, defense, output_dir)
+            plot_defense_comparison(df, scenario, defense, output_dir)
             pass
 
     print("\nAnalysis complete. Check 'step3_figures' folder for plots.")
