@@ -159,6 +159,7 @@ def collect_all_seller_data_for_valuation(base_dir: str) -> pd.DataFrame:
 def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_plot: str = 'CIFAR100'):
     """
     Generates the main summary barchart for a single dataset (e.g., Figure 1).
+    (FIXED to place legend at the top)
     """
     print(f"\n--- Plotting Main Summary Barchart (Deep Dive) for {dataset_to_plot} ---")
 
@@ -213,10 +214,11 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
                  'Adversary Select Rate (Lower is Better)': 'orange'},
         height=6,
         aspect=1.8,
-        legend=False  # Tell catplot NOT to draw the legend automatically
+        legend=False  # Tell catplot NOT to draw the legend
     )
 
-    g.fig.suptitle(f'Main Benchmark: Defense Capabilities vs. Backdoor Attack ({dataset_to_plot})', y=1.03)
+    g.fig.suptitle(f'Main Benchmark: Defense Capabilities vs. Backdoor Attack ({dataset_to_plot})',
+                   y=1.05)  # Moved title up
     g.set_axis_labels('Defense Mechanism', 'Percentage (%)')
     g.ax.yaxis.grid(True, linestyle='--', alpha=0.7)
 
@@ -230,21 +232,29 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
                         textcoords='offset points',
                         fontsize=8)
 
-    # --- Manually add the legend ---
-    g.add_legend(
+    # --- THIS IS THE FIX ---
+    # 1. Get the handles and labels from the plot's axis
+    handles, labels = g.ax.get_legend_handles_labels()
+
+    # 2. Add a new legend to the FIGURE, not the axis
+    g.fig.legend(
+        handles=handles,
+        labels=labels,
         title='Metric',
-        bbox_to_anchor=(1.01, 0.5),  # (x, y) - 1.01 is just outside the right edge
-        loc='center left'  # Anchor the legend at its left-center
+        loc='lower center',  # Center the legend
+        bbox_to_anchor=(0.5, 0.95),  # Place it at the top, just below the title
+        ncol=4,  # Make it a single row with 4 columns
+        fontsize='small'
     )
 
-    # --- Adjust the plot to make room ---
-    g.fig.subplots_adjust(right=0.85)
-
-    # --- THIS IS THE FIX ---
-    # Define plot_file *before* using it in savefig
-    plot_file = output_dir / f"plot_main_summary_BARCHART_{dataset_to_plot}.png"
-    plt.savefig(plot_file, bbox_inches='tight')
+    # 3. Adjust the plot to make room for the title and new legend
+    g.fig.tight_layout(rect=[0, 0, 1, 0.93])  # Leave 7% space at the top
     # --- END FIX ---
+
+    plot_file = output_dir / f"plot_main_summary_BARCHART_{dataset_to_plot}.png"
+
+    # We still use bbox_inches='tight' as a fallback to catch everything
+    plt.savefig(plot_file, bbox_inches='tight')
 
     print(f"Saved plot: {plot_file}")
     plt.clf()
