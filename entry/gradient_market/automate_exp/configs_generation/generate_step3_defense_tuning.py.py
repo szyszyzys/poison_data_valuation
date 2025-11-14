@@ -43,7 +43,7 @@ TUNING_GRIDS = {
         "aggregation.skymask.mask_lr": [0.01, 0.5, 1e7],
 
         # Test implementation's clip vs. normal clip vs. no clip
-        "aggregation.skymask.mask_clip": [1e-7, 10.0, None],
+        "aggregation.skymask.mask_clip": [1e-7, 10.0],
 
         "aggregation.skymask.mask_threshold": [0.5, 0.9],
 
