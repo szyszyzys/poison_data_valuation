@@ -13,8 +13,6 @@ BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./step2.5_figures"
 
 # Define the relative 'usability' threshold
-# We'll define "usable" as achieving 90% of the *best possible accuracy*
-# found on that dataset.
 RELATIVE_ACC_THRESHOLD = 0.90
 
 
@@ -143,10 +141,8 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
 def plot_platform_usability_metrics(df: pd.DataFrame, output_dir: Path):
     """
-    Plots the 3 key platform metrics:
-    1. Usability Rate (% of HPs that worked)
-    2. Average Performance (Mean acc of *only* usable runs)
-    3. Stability (Std Dev of acc across *all* runs)
+    (REWRITTEN)
+    Plots the 3 key platform metrics in *separate, more readable files*.
     """
     print("\n--- Plotting Platform Usability Metrics ---")
 
@@ -154,27 +150,75 @@ def plot_platform_usability_metrics(df: pd.DataFrame, output_dir: Path):
         print("No data to plot.")
         return
 
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+
     # 1. Usability Rate
+    print("  Plotting: 1. Usability Rate")
     df_usability = df.groupby(['defense', 'dataset'])['platform_usable'].mean().reset_index()
     df_usability['Value'] = df_usability['platform_usable'] * 100  # Convert to %
-    df_usability['Metric'] = '1. Usability Rate (%) (Higher is Better)'
+
+    g = sns.catplot(
+        data=df_usability, kind='bar', x='defense', y='Value',
+        col='dataset', col_wrap=3, height=4, aspect=1.1,
+        order=defense_order, palette='viridis'
+    )
+    g.fig.suptitle(f"1. Usability Rate (What % of HPs achieved >{RELATIVE_ACC_THRESHOLD * 100}% of max accuracy?)",
+                   y=1.05)
+    g.set_axis_labels("Defense", "Usable HP Combinations (%)")
+    g.set_titles(col_template="{col_name}")
+    g.map_dataframe(annotate_bars)
+    plot_file = output_dir / "plot_platform_1_USABILITY_RATE.png"
+    plt.savefig(plot_file, bbox_inches='tight')
+    plt.clf();
+    plt.close('all')
 
     # 2. Average Performance (of *usable* runs)
+    print("  Plotting: 2. Average Usable Accuracy")
     df_perf = df[df['platform_usable'] == True].groupby(['defense', 'dataset'])['acc'].mean().reset_index()
     df_perf['Value'] = df_perf['acc'] * 100  # Convert to %
-    df_perf['Metric'] = '2. Avg. Usable Accuracy (%) (Higher is Better)'
+
+    g = sns.catplot(
+        data=df_perf, kind='bar', x='defense', y='Value',
+        col='dataset', col_wrap=3, height=4, aspect=1.1,
+        order=defense_order, palette='Greens_d'
+    )
+    g.fig.suptitle(f"2. Avg. Usable Accuracy (Mean accuracy of *only* the usable runs)", y=1.05)
+    g.set_axis_labels("Defense", "Average Accuracy (%)")
+    g.set_titles(col_template="{col_name}")
+    g.map_dataframe(annotate_bars)
+    plot_file = output_dir / "plot_platform_2_AVG_ACCURACY.png"
+    plt.savefig(plot_file, bbox_inches='tight')
+    plt.clf();
+    plt.close('all')
 
     # 3. Stability (Std Dev of *all* runs)
+    print("  Plotting: 3. Accuracy Instability")
     df_stability = df.groupby(['defense', 'dataset'])['acc'].std().reset_index()
     df_stability['Value'] = df_stability['acc'] * 100  # Convert to %
-    df_stability['Metric'] = '3. Accuracy Instability (Std Dev) (Lower is Better)'
 
-    # Combine all 3 metrics into one DataFrame
-    df_final = pd.concat([df_usability, df_perf, df_stability], ignore_index=True)
+    g = sns.catplot(
+        data=df_stability, kind='bar', x='defense', y='Value',
+        col='dataset', col_wrap=3, height=4, aspect=1.1,
+        order=defense_order, palette='Reds_d'
+    )
+    g.fig.suptitle(f"3. Accuracy Instability (Std. Dev. of acc across *all* HP sweeps) - Lower is Better", y=1.05)
+    g.set_axis_labels("Defense", "Accuracy Std. Dev. (pts)")
+    g.set_titles(col_template="{col_name}")
+    g.map_dataframe(annotate_bars)
+    plot_file = output_dir / "plot_platform_3_INSTABILITY.png"
+    plt.savefig(plot_file, bbox_inches='tight')
+    plt.clf();
+    plt.close('all')
 
     # --- Save the analysis CSV ---
+    print("  Saving summary CSV...")
     csv_output_path = output_dir / "step2.5_platform_metrics_summary.csv"
     try:
+        # Combine all 3 metrics into one DataFrame
+        df_usability['Metric'] = '1. Usability Rate (%)'
+        df_perf['Metric'] = '2. Avg. Usable Accuracy (%)'
+        df_stability['Metric'] = '3. Accuracy Instability (Std Dev)'
+        df_final = pd.concat([df_usability, df_perf, df_stability], ignore_index=True)
         # Pivot for a wide, readable CSV
         df_pivot = df_final.pivot_table(index=['dataset', 'defense'], columns='Metric', values='Value')
         df_pivot.to_csv(csv_output_path, float_format="%.2f")
@@ -183,42 +227,17 @@ def plot_platform_usability_metrics(df: pd.DataFrame, output_dir: Path):
         print(f"Could not save CSV: {e}")
     # -----------------------------
 
-    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
-    g = sns.catplot(
-        data=df_final,
-        kind='bar',
-        x='defense',
-        y='Value',
-        col='Metric',
-        row='dataset',
-        order=defense_order,
-        palette='viridis',
-        height=3.5,
-        aspect=1.2,
-        sharex=True,
-        sharey=False  # Each metric has its own scale
-    )
-
-    g.fig.suptitle(f"Platform-Centric Usability (vs. {RELATIVE_ACC_THRESHOLD * 100}% of Max Accuracy)", y=1.03)
-    g.set_axis_labels("Defense", "Value")
-    g.set_titles(col_template="{col_name}", row_template="{row_name}")
-
-    # Add annotations
-    for ax in g.axes.flat:
-        for p in ax.patches:
-            ax.annotate(f'{p.get_height():.1f}',
-                        (p.get_x() + p.get_width() / 2., p.get_height()),
-                        ha='center', va='center',
-                        xytext=(0, 5),
-                        textcoords='offset points',
-                        fontsize=8)
-
-    plot_file = output_dir / "plot_platform_USABILITY_METRICS_relative.png"
-    plt.savefig(plot_file, bbox_inches='tight')
-    print(f"Saved Platform Usability Metrics plot: {plot_file}")
-    plt.clf()
-    plt.close('all')
+def annotate_bars(data, **kwargs):
+    """Helper function to add text labels to bars."""
+    ax = plt.gca()
+    for p in ax.patches:
+        ax.annotate(f'{p.get_height():.1f}',
+                    (p.get_x() + p.get_width() / 2., p.get_height()),
+                    ha='center', va='center',
+                    xytext=(0, 5),
+                    textcoords='offset points',
+                    fontsize=9)
 
 
 def main():
