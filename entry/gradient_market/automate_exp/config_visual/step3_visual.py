@@ -29,12 +29,12 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     """
     hps = {}
 
-    # Define the regex patterns for each HP we expect, based on the generator script
+    # Define the regex patterns for each HP we expect
     patterns = {
         'martfl.max_k': r'aggregation\.martfl\.max_k_([0-9]+)',
         'clip_norm': r'aggregation\.clip_norm_([0-9\.]+|None)',
         'mask_epochs': r'aggregation\.skymask\.mask_epochs_([0-9]+)',
-        'mask_lr': r'aggregation\.skymask\.mask_lr_([0-9e\.\+]+)',  # Handles 0.01 and 1e7
+        'mask_lr': r'aggregation\.skymask\.mask_lr_([0-9e\.\+]+)',  # Handles 0.01, 0.5, and 1e7
         'mask_threshold': r'aggregation\.skymask\.mask_threshold_([0-9\.]+)',
         'mask_clip': r'aggregation\.skymask\.mask_clip_([0-9e\.\-]+)'  # Handles 10.0 and 1e-7
     }
@@ -60,6 +60,11 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
                         hps[clean_key] = val_float
                 except ValueError:
                     hps[clean_key] = value_str  # Fallback
+
+    # Handle the user's default case:
+    # "the ones without the suffix is use the default 1"
+    # We will fill missing HPs with a default value AFTER loading
+
     return hps
 
 
@@ -179,126 +184,88 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
     # --- Create the unified 'defense_score' ---
     # We want HIGH acc and LOW asr
-    # We will use this to find the "best" HP combo
     df['defense_score'] = df['acc'] - df['asr']
+
+    # --- Handle SkyMask Default ---
+    # "the ones without the suffix is use the default 1"
+    # This means 'mask_clip' == NaN should be 1.0 (your default)
+    if 'mask_clip' in df.columns:
+        df['mask_clip'] = df['mask_clip'].fillna(1.0)
+
+    # --- Add Filter Failure Column ---
+    if 'benign_selection_rate' in df.columns and 'adv_selection_rate' in df.columns:
+        df['filter_failure'] = (df['benign_selection_rate'] >= 0.99) & \
+                               (df['adv_selection_rate'] >= 0.99)
+    else:
+        df['filter_failure'] = np.nan
 
     return df
 
 
-def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, output_dir: Path):
-    """Generates plots for a specific scenario to compare HP settings."""
-    scenario_df = df[df['scenario'] == scenario].copy()
+def plot_skymask_deep_dive(df_all: pd.DataFrame, output_dir: Path):
+    """
+    Generates a deep-dive plot for SkyMask to compare official vs. normal HPs.
+    """
+    print("\n--- Generating SkyMask Deep-Dive Analysis Plot ---")
 
-    if scenario_df.empty:
-        print(f"No data found for scenario '{scenario}'")
+    df_sky = df_all[df_all['defense'] == 'skymask'].copy()
+    if df_sky.empty:
+        print("No SkyMask data found for deep-dive plot.")
         return
 
-    print(f"\n--- Visualizing Scenario: {scenario} ---")
+    # Create a new categorical column to identify the "trick" HPs
+    def categorize_hps(row):
+        is_official_lr = row['mask_lr'] in [1e7, 1e8]
+        is_official_clip = row['mask_clip'] == 1e-7
 
-    # --- 1. Plot for Objective 1: Best Performance Trade-off ---
+        if is_official_lr and is_official_clip:
+            return "Official (Trick HPs)"
+        elif is_official_lr and not is_official_clip:
+            return "Partial (High LR, Normal Clip)"
+        elif not is_official_lr and is_official_clip:
+            return "Partial (Normal LR, Trick Clip)"
+        else:
+            return "Normal HPs (No Trick)"
 
-    # Get all HP columns for this defense
-    hp_cols = list(df.filter(regex=f"^{defense}").columns)
-    if 'clip_norm' in df.columns and 'clip_norm' not in hp_cols:
-        hp_cols.append('clip_norm')
-    hp_cols = [c for c in hp_cols if c in scenario_df.columns and scenario_df[c].nunique() > 1]
+    df_sky['hp_type'] = df_sky.apply(categorize_hps, axis=1)
 
-    # Create a unique, readable x-axis label from the HPs
-    if not hp_cols:
-        scenario_df['hp_label'] = 'default'
-        hp_cols = ['hp_label']
-    else:
-        # Create a label like "lr:0.01_clip:10.0_..."
-        scenario_df['hp_label'] = scenario_df[hp_cols].apply(
-            lambda row: '_'.join([f"{col.split('.')[-1]}:{row[col]}" for col in hp_cols]),
-            axis=1
-        )
-
-    # Sort by the defense_score to make plot readable
-    scenario_df = scenario_df.sort_values(by='defense_score', ascending=False)
-
-    metrics_to_plot = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate']
-    metrics_to_plot = [m for m in metrics_to_plot if m in scenario_df.columns]
-
-    plot_df = scenario_df.melt(
-        id_vars=['hp_label'],
-        value_vars=metrics_to_plot,
+    # Melt data for plotting
+    plot_df = df_sky.melt(
+        id_vars=['dataset', 'attack', 'hp_type', 'mask_threshold'],
+        value_vars=['defense_score', 'filter_failure'],
         var_name='Metric',
         value_name='Value'
     )
 
-    plt.figure(figsize=(max(16, 0.5 * scenario_df['hp_label'].nunique()), 7))
-    sns.barplot(
+    g = sns.catplot(
         data=plot_df,
-        x='hp_label',
+        x='hp_type',
         y='Value',
-        hue='Metric',
-        order=scenario_df['hp_label'].unique()  # Use the sorted order
+        hue='mask_threshold',
+        col='attack',
+        row='Metric',
+        kind='bar',
+        palette='viridis',
+        height=4,
+        aspect=1.5,
+        sharey='row',
+        legend_out=True
     )
-    plt.title(f'Performance & Selection vs. HPs for {defense.upper()} (Scenario: {scenario})')
-    plt.ylabel('Rate')
-    plt.xlabel('Hyperparameter Combination (Sorted by Defense Score)')
-    plt.xticks(rotation=25, ha='right', fontsize=9)
-    plt.legend(title='Metric')
-    plt.tight_layout()
-    plot_file = output_dir / f"plot_{scenario}_performance.png"
+
+    g.fig.suptitle("SkyMask Deep-Dive: Official HPs vs. Normal HPs", y=1.03)
+    g.set_axis_labels("HP Category", "Value")
+    g.set_titles(col_template="{col_name} Attack", row_template="{row_name}")
+    g.add_legend(title='Mask Threshold')
+
+    # Rotate x-axis labels
+    for ax in g.axes.flat:
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=15, ha='right')
+
+    plot_file = output_dir / "plot_skymask_deep_dive_analysis.png"
     plt.savefig(plot_file)
-    print(f"Saved plot: {plot_file}")
+    print(f"Saved SkyMask deep-dive plot: {plot_file}")
     plt.clf()
     plt.close('all')
-
-    # --- 2. Plot for Objective 2: Stableness (Parameter Sensitivity) ---
-    # This plots a grid to show how HPs interact
-
-    # This logic is now dynamic
-    hp_cols_for_plot = [c for c in hp_cols if c in scenario_df.columns and scenario_df[c].nunique() > 1]
-    if len(hp_cols_for_plot) >= 2:
-        # We can make a 2D plot
-        x_hp = hp_cols_for_plot[0]
-        y_hp = hp_cols_for_plot[1]
-
-        # Use remaining HPs for columns/rows
-        col_hp = hp_cols_for_plot[2] if len(hp_cols_for_plot) > 2 else None
-        row_hp = hp_cols_for_plot[3] if len(hp_cols_for_plot) > 3 else None
-
-        # Plot defense_score, acc, asr, and filter failure
-        scenario_df['filter_failure'] = (scenario_df['benign_selection_rate'] >= 0.99) & \
-                                        (scenario_df['adv_selection_rate'] >= 0.99)
-
-        metrics_to_plot = ['defense_score', 'acc', 'asr', 'filter_failure']
-
-        plot_df_melted = scenario_df.melt(
-            id_vars=[x_hp, y_hp, col_hp, row_hp],
-            value_vars=metrics_to_plot,
-            var_name='Metric',
-            value_name='Value'
-        )
-
-        g = sns.catplot(
-            data=plot_df_melted,
-            x=x_hp,
-            y='Value',
-            hue=y_hp,
-            col=col_hp,
-            row='Metric',
-            kind='bar',
-            palette='viridis',
-            height=3,
-            aspect=1.2,
-            sharey=False,
-            legend_out=True
-        )
-        g.fig.suptitle(f'HP Stability Analysis for {defense.upper()} ({scenario})', y=1.03)
-        g.set_axis_labels(x_hp, 'Metric Value')
-        g.set_titles(col_template="{col_name}", row_template="{row_name}")
-        plot_file = output_dir / f"plot_{scenario}_stability_grid.png"
-        g.fig.savefig(plot_file)
-        print(f"Saved stability grid plot: {plot_file}")
-        plt.clf()
-        plt.close('all')
-
-    else:
-        print(f"Skipping stability grid plot for {defense} (not enough HPs to compare).")
 
 
 def main():
@@ -323,6 +290,7 @@ def main():
     pd.set_option('display.width', 1000)
 
     # --- Analysis for Objective 1: Best Performance with Filtering ---
+    # (This section is the same as before, but will now use the corrected DataFrame)
     print("\n" + "=" * 80)
     print(f" Objective 1: Finding Best HPs (Filtered by acc >= {REASONABLE_ACC_THRESHOLD})")
     print("=" * 80)
@@ -378,31 +346,33 @@ def main():
 
     for name, group in grouped:
         print(f"\n--- SCENARIO: {name} ---")
-        cols_to_show = [
-            'hp_label',  # Use the new human-readable label
-            'acc',  # Utility
-            'asr',  # Defense Outcome (Backdoor)
-            'adv_selection_rate',  # Defense Outcome (Mechanism)
-            'benign_selection_rate',  # Defense Outcome (Fairness)
-            'rounds',  # Stability/Efficiency
-            'defense_score'  # The score we used to sort
-        ]
+
         # Find HPs for this group
         hp_cols = list(df.filter(regex=f"^{group['defense'].iloc[0]}").columns)
         if 'clip_norm' in df.columns: hp_cols.append('clip_norm')
-        hp_cols = [c for c in hp_cols if c in group.columns]
+        hp_cols_present = [c for c in hp_cols if c in group.columns and group[c].nunique() > 1]
 
-        cols_to_show = hp_cols + cols_to_show
-        cols_present = [c for c in group.columns if c in cols_to_show]
-        print(group[cols_present].to_string(index=False, float_format="%.4f"))
+        cols_to_show = hp_cols_present + [
+            'acc', 'asr', 'adv_selection_rate', 'benign_selection_rate', 'rounds', 'defense_score'
+        ]
+        cols_present_final = [c for c in cols_to_show if c in group.columns]
+
+        print(group[cols_present_final].to_string(index=False, float_format="%.4f"))
 
     # --- Analysis for Objective 2: Stableness (Visualization) ---
     print("\n" + "=" * 80)
     print("           Objective 2: Assessing Defense Stability (Plots)")
     print("=" * 80)
 
+    # --- Call the NEW SkyMask Plot ---
+    plot_skymask_deep_dive(df, output_dir)
+
+    # --- Plot the other defenses (simplified) ---
     for scenario, defense in df[['scenario', 'defense']].drop_duplicates().values:
-        plot_defense_comparison(df, scenario, defense, output_dir)
+        if defense != 'skymask':
+            # You can re-enable your old plot_defense_comparison if you like
+            # plot_defense_comparison(df, scenario, defense, output_dir)
+            pass
 
     print("\nAnalysis complete. Check 'step3_figures' folder for plots.")
 
