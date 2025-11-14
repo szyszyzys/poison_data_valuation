@@ -214,7 +214,7 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
                  'Adversary Select Rate (Lower is Better)': 'orange'},
         height=6,
         aspect=1.8,
-        legend=False  # <-- FIX 1: Tell catplot NOT to draw the legend automatically
+        legend=False  # Tell catplot NOT to draw the legend automatically
     )
 
     g.fig.suptitle(f'Main Benchmark: Defense Capabilities vs. Backdoor Attack ({dataset_to_plot})', y=1.03)
@@ -232,25 +232,22 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
                         fontsize=8)
 
     # --- FIX 2: Manually add the legend ---
-    # We place it to the right of the plot area
     g.add_legend(
         title='Metric',
         bbox_to_anchor=(1.01, 0.5),  # (x, y) - 1.01 is just outside the right edge
         loc='center left'  # Anchor the legend at its left-center
     )
 
-    # --- FIX 3: Adjust the plot to make room ---
-    # This shrinks the plot area slightly to the left so the legend fits
-    plt.subplots_adjust(right=0.85)
-
-    # We remove plt.tight_layout() as it fights with subplots_adjust
+    # --- THIS IS THE FIX ---
+    # Apply the adjustment to the FacetGrid's figure object, not plt
+    g.fig.subplots_adjust(right=0.85)
+    # --- END FIX ---
 
     plot_file = output_dir / f"plot_main_summary_BARCHART_{dataset_to_plot}.png"
     plt.savefig(plot_file)
     print(f"Saved plot: {plot_file}")
     plt.clf()
     plt.close('all')  # Close all figures
-
 def plot_main_summary_heatmaps(df: pd.DataFrame, output_dir: Path):
     """
     Generates the main summary heatmaps (Figure 1).
