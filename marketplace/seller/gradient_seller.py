@@ -1574,7 +1574,7 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
     def __init__(self, seller_id: str, data_config: RuntimeDataConfig,
                  training_config: TrainingConfig, model_factory: Callable[[], nn.Module],
                  adversary_config: AdversarySellerConfig,
-                 model_type: str,  # <-- Added model_type
+                 model_type: str,
                  device: str = "cpu", **kwargs):
 
         super().__init__(seller_id=seller_id, data_config=data_config,
