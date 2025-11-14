@@ -12,8 +12,10 @@ from typing import List, Dict, Any
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./step2.5_figures"
 
-# Define the platform's 'usability' threshold
-PLATFORM_USABLE_ACC_THRESHOLD = 0.70
+# Define the relative 'usability' threshold
+# We'll define "usable" as achieving 90% of the *best possible accuracy*
+# found on that dataset.
+RELATIVE_ACC_THRESHOLD = 0.90
 
 
 # ---------------------
@@ -119,8 +121,22 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
     df = pd.DataFrame(all_runs)
 
-    # Define "Usable" from the platform's (accuracy-only) perspective
-    df['platform_usable'] = (df['acc'] >= PLATFORM_USABLE_ACC_THRESHOLD)
+    # --- THIS IS THE KEY NEW LOGIC ---
+    print("\nCalculating relative 'Platform Usable' thresholds...")
+
+    # 1. Find the "gold standard" (max acc) for each dataset
+    dataset_max_acc = df.groupby('dataset')['acc'].max().to_dict()
+
+    # 2. Create a new column in the df for this max_acc
+    df['dataset_max_acc'] = df['dataset'].map(dataset_max_acc)
+
+    # 3. Define the usability threshold for *each row* relative to its dataset's max
+    df['platform_usable_threshold'] = df['dataset_max_acc'] * RELATIVE_ACC_THRESHOLD
+
+    # 4. Define "Usable" from the platform's (accuracy-only) perspective
+    df['platform_usable'] = (df['acc'] >= df['platform_usable_threshold'])
+
+    print("Done calculating thresholds.")
 
     return df
 
@@ -184,8 +200,7 @@ def plot_platform_usability_metrics(df: pd.DataFrame, output_dir: Path):
         sharey=False  # Each metric has its own scale
     )
 
-    g.fig.suptitle(f"Platform-Centric Usability: Ease of Training (vs. {PLATFORM_USABLE_ACC_THRESHOLD * 100}% Acc)",
-                   y=1.03)
+    g.fig.suptitle(f"Platform-Centric Usability (vs. {RELATIVE_ACC_THRESHOLD * 100}% of Max Accuracy)", y=1.03)
     g.set_axis_labels("Defense", "Value")
     g.set_titles(col_template="{col_name}", row_template="{row_name}")
 
@@ -199,7 +214,7 @@ def plot_platform_usability_metrics(df: pd.DataFrame, output_dir: Path):
                         textcoords='offset points',
                         fontsize=8)
 
-    plot_file = output_dir / "plot_platform_USABILITY_METRICS.png"
+    plot_file = output_dir / "plot_platform_USABILITY_METRICS_relative.png"
     plt.savefig(plot_file, bbox_inches='tight')
     print(f"Saved Platform Usability Metrics plot: {plot_file}")
     plt.clf()
