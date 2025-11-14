@@ -9,211 +9,174 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 # --- Configuration ---
-BASE_RESULTS_DIR = "./results"
+BASE_RESULTS_DIR = "./results"  # <-- Make sure this points to your new results
 FIGURE_OUTPUT_DIR = "./step2.5_figures"
 
-# Set your minimum acceptable accuracy threshold (e.g., 0.70 for 70%)
-REASONABLE_ACC_THRESHOLD = 0.70
-
-# Set your minimum acceptable Benign Selection Rate (e.g., 0.50 for 50%)
-REASONABLE_BSR_THRESHOLD = 0.50
-
-
-# --- End Configuration ---
+# --- Define what "usable" means ---
+# We use a LOW bar here. We just want the model to learn *something*
+# and not be 100% backdoored.
+USABLE_ACC_THRESHOLD = 0.50  # Must be > 50% accurate
+USABLE_ASR_THRESHOLD = 0.95  # Must be < 95% ASR
 
 
-def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
-    """
-    (NEW) Parses the HP suffix folder name (e.g., 'opt_Adam_lr_0.001_epochs_2')
-    """
-    hps = {}
-    pattern = r'opt_(\w+)_lr_([0-9\.]+)_epochs_([0-9]+)'
-    match = re.search(pattern, hp_folder_name)
-
-    if match:
-        hps['optimizer'] = match.group(1)
-        hps['learning_rate'] = float(match.group(2))
-        hps['local_epochs'] = int(match.group(3))
-    else:
-        print(f"Warning: Could not parse HP suffix '{hp_folder_name}'")
-    return hps
+# ----------------------------------
 
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
-    """Parses the base scenario name (e.g., 'step2.5_find_hps_martfl_image_CIFAR10')"""
+    """Parses 'step2.5_find_hps_fedavg_image_CIFAR10'"""
     try:
-        parts = scenario_name.split('_')
-        return {
-            "scenario": scenario_name,
-            "defense": parts[3],
-            "modality": parts[4],
-            "dataset": parts[5],
-        }
+        pattern = r'step2\.5_find_hps_(fedavg|martfl|fltrust|skymask)_(image|text|tabular)_(.+)'
+        match = re.search(pattern, scenario_name)
+
+        if match:
+            return {
+                "scenario_base": scenario_name,
+                "defense": match.group(1),
+                "modality": match.group(2),
+                "dataset": match.group(3),
+            }
+        raise ValueError("Pattern not matched")
     except Exception as e:
         print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
-        return {"scenario": scenario_name}
+        return {"scenario_base": scenario_name}
+
+
+def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
+    """Parses 'opt_Adam_lr_0.001_epochs_2' into a dict."""
+    hps = {}
+    try:
+        opt_match = re.search(r'opt_([A-Za-z]+)', hp_folder_name)
+        lr_match = re.search(r'lr_([0-9\.]+)', hp_folder_name)
+        epochs_match = re.search(r'epochs_([0-9]+)', hp_folder_name)
+
+        if opt_match: hps['optimizer'] = opt_match.group(1)
+        if lr_match: hps['lr'] = float(lr_match.group(1))
+        if epochs_match: hps['epochs'] = int(epochs_match.group(1))
+
+    except Exception as e:
+        print(f"Error parsing HPs from '{hp_folder_name}': {e}")
+    return hps
 
 
 def load_run_data(metrics_file: Path) -> Dict[str, Any]:
-    """
-    Loads key data from final_metrics.json and marketplace_report.json
-    """
+    """Loads key metrics from output files."""
     run_data = {}
     try:
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
         run_data['acc'] = metrics.get('acc', 0)
         run_data['asr'] = metrics.get('asr', 0)
-        run_data['rounds'] = metrics.get('completed_rounds', 0)
-
-        report_file = metrics_file.parent / "marketplace_report.json"
-        if report_file.exists():
-            with open(report_file, 'r') as f:
-                report = json.load(f)
-
-            sellers = report.get('seller_summaries', {}).values()
-            adv_sellers = [s for s in sellers if s.get('type') == 'adversary']
-            ben_sellers = [s for s in sellers if s.get('type') == 'benign']
-
-            if adv_sellers:
-                run_data['adv_selection_rate'] = pd.Series([s['selection_rate'] for s in adv_sellers]).mean()
-            if ben_sellers:
-                run_data['benign_selection_rate'] = pd.Series([s['selection_rate'] for s in ben_sellers]).mean()
-
         return run_data
-
     except Exception as e:
         print(f"Error loading data from {metrics_file.parent}: {e}")
         return {}
 
 
 def collect_all_results(base_dir: str) -> pd.DataFrame:
-    """Walks the results directory and aggregates all run data."""
+    """Walks the Step 2.5 results directory and aggregates all run data."""
     all_runs = []
     base_path = Path(base_dir)
     print(f"Searching for results in {base_path.resolve()}...")
 
-    # Look for 'step2.5_find_hps_*' directories
-    scenario_folders = [f for f in base_path.glob("step2.5_find_hps_*") if f.is_dir()]
+    scenario_folders = list(base_path.glob("step2.5_find_hps_*"))
     if not scenario_folders:
-        print(f"Error: No 'step2.5_find_hps_*' directories found directly inside {base_path}.")
+        print(f"Error: No 'step2.5_find_hps_*' directories found in {base_path}.")
         return pd.DataFrame()
 
     print(f"Found {len(scenario_folders)} scenario base directories.")
 
     for scenario_path in scenario_folders:
-        scenario_name = scenario_path.name
-        run_scenario = parse_scenario_name(scenario_name)
+        if not scenario_path.is_dir(): continue
 
-        for metrics_file in scenario_path.rglob("final_metrics.json"):
-            try:
-                relative_parts = metrics_file.parent.relative_to(scenario_path).parts
-                if not relative_parts:
-                    continue
+        base_scenario_info = parse_scenario_name(scenario_path.name)
 
-                hp_folder_name = relative_parts[0]
+        for hp_path in scenario_path.iterdir():
+            if not hp_path.is_dir(): continue
 
-                run_hps = parse_hp_suffix(hp_folder_name)
-                run_metrics = load_run_data(metrics_file)
+            hp_info = parse_hp_suffix(hp_path.name)
 
-                if run_metrics:
-                    all_runs.append({
-                        **run_scenario,
-                        **run_hps,
-                        **run_metrics,
-                        "hp_suffix": hp_folder_name
-                    })
-            except Exception as e:
-                print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
+            for metrics_file in hp_path.rglob("final_metrics.json"):
+                try:
+                    run_metrics = load_run_data(metrics_file)
+                    if run_metrics:
+                        all_runs.append({
+                            **base_scenario_info,
+                            **hp_info,
+                            **run_metrics
+                        })
+                except Exception as e:
+                    print(f"Error processing file {metrics_file}: {e}")
 
     if not all_runs:
         print("Error: No 'final_metrics.json' files were successfully processed.")
         return pd.DataFrame()
 
     df = pd.DataFrame(all_runs)
+
+    # --- This is the key logic ---
+    df['is_usable'] = (df['acc'] >= USABLE_ACC_THRESHOLD) & \
+                      (df['asr'] <= USABLE_ASR_THRESHOLD)
+
+    # Handle the 'no attack' case (ASR=0)
+    df.loc[df['asr'] == 0.0, 'is_usable'] = (df['acc'] >= USABLE_ACC_THRESHOLD)
+
+    df['defense_score'] = df['acc'] - df['asr']
+
     return df
 
 
-def plot_hp_sensitivity(df: pd.DataFrame, scenario: str, output_dir: Path):
+def plot_usability_rate(df: pd.DataFrame, output_dir: Path):
     """
-    (NEW) Generates heatmap plots for HP sensitivity (Objective 1 & 3).
+    Plots the 'Usability Rate' for each defense.
+    This answers: "How easy is it to get a working model?"
     """
-    scenario_df = df[df['scenario'] == scenario].copy()
-    if scenario_df.empty:
+    print("\n--- Plotting Defense Usability Rate ---")
+
+    if 'is_usable' not in df.columns:
+        print("Error: 'is_usable' column not found. Cannot plot usability.")
         return
 
-    print(f"\n--- Visualizing Sensitivity: {scenario} ---")
+    # Calculate the Usability Rate: (Number of Usable Runs) / (Total Runs)
+    # We group by defense and dataset to see the whole picture
+    usability_df = df.groupby(['defense', 'dataset'])['is_usable'].mean().reset_index()
+    usability_df['Usability Rate'] = usability_df['is_usable'] * 100  # Convert to %
 
-    metrics_to_plot = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate']
-    # Filter out metrics that weren't successfully loaded (e.g., if marketplace report was missing)
-    metrics_to_plot = [m for m in metrics_to_plot if m in scenario_df.columns]
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
-    for metric in metrics_to_plot:
-        # Check if there's any data for this metric
-        if scenario_df[metric].isnull().all():
-            print(f"Skipping heatmap for {metric} (no data).")
-            continue
-
-        g = sns.catplot(
-            data=scenario_df,
-            x='learning_rate',
-            y='local_epochs',
-            col='optimizer',
-            kind='heatmap',
-            height=4,
-            aspect=1.2,
-            # Create a pivot table for the heatmap values
-            # Using median is more robust to a single bad seed than mean
-            pivot_kws={'values': metric, 'aggfunc': 'median'},
-            annot=True,  # Show the values in the cells
-            fmt=".3f"  # Format to 3 decimal places
-        )
-
-        g.fig.suptitle(f'HP Sensitivity for: {metric}\n(Scenario: {scenario})', y=1.05)
-        g.set_axis_labels("Learning Rate", "Local Epochs")
-
-        plot_file = output_dir / f"plot_{scenario}_{metric.upper()}_heatmap.png"
-        g.fig.savefig(plot_file)
-        print(f"Saved plot: {plot_file}")
-        plt.clf()
-
-
-def plot_best_defense_comparison(df_best_by_defense: pd.DataFrame, dataset: str, output_dir: Path):
-    """
-    (NEW) Generates a bar plot comparing the *best* run from each defense (Objective 2).
-    """
-    dataset_df = df_best_by_defense[df_best_by_defense['dataset'] == dataset].copy()
-    if dataset_df.empty:
-        return
-
-    print(f"\n--- Visualizing Best-of Comparison: {dataset} ---")
-
-    metrics_to_plot = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate']
-    metrics_to_plot = [m for m in metrics_to_plot if m in dataset_df.columns]
-
-    plot_df = dataset_df.melt(
-        id_vars=['defense'],
-        value_vars=metrics_to_plot,
-        var_name='Metric',
-        value_name='Value'
-    )
-
-    plt.figure(figsize=(12, 6))
-    sns.barplot(
-        data=plot_df,
+    g = sns.catplot(
+        data=usability_df,
+        kind='bar',
         x='defense',
-        y='Value',
-        hue='Metric'
+        y='Usability Rate',
+        col='dataset',
+        col_wrap=3,
+        height=4,
+        aspect=1.2,
+        order=defense_order,
+        palette='viridis'
     )
-    plt.title(f'Best-of-Defense Performance Comparison (Default HPs)\nDataset: {dataset}')
-    plt.ylabel('Rate')
-    plt.xlabel('Defense')
-    plt.legend(title='Metric')
-    plt.tight_layout()
-    plot_file = output_dir / f"plot_{dataset}_defense_comparison.png"
-    plt.savefig(plot_file)
-    print(f"Saved plot: {plot_file}")
+
+    g.fig.suptitle(
+        f"Defense 'Usability Rate' (HP Sweeps > {USABLE_ACC_THRESHOLD * 100}% Acc & < {USABLE_ASR_THRESHOLD * 100}% ASR)",
+        y=1.03)
+    g.set_axis_labels("Defense", "Usable HP Combinations (%)")
+    g.set_titles(col_template="{col_name}")
+
+    # Add annotations
+    for ax in g.axes.flat:
+        for p in ax.patches:
+            ax.annotate(f'{p.get_height():.1f}%',
+                        (p.get_x() + p.get_width() / 2., p.get_height()),
+                        ha='center', va='center',
+                        xytext=(0, 5),
+                        textcoords='offset points',
+                        fontsize=9)
+
+    plot_file = output_dir / "plot_defense_USABILITY_RATE.png"
+    plt.savefig(plot_file, bbox_inches='tight')
+    print(f"Saved Usability Rate plot: {plot_file}")
     plt.clf()
+    plt.close('all')
 
 
 def main():
@@ -224,82 +187,20 @@ def main():
     df = collect_all_results(BASE_RESULTS_DIR)
 
     if df.empty:
+        print("No results data was loaded. Exiting.")
         return
 
-    pd.set_option('display.max_rows', None)
-    pd.set_option('display.max_columns', None)
-    pd.set_option('display.width', 1000)
+    # --- Save the analysis CSV ---
+    csv_output_path = output_dir / "step2.5_full_results_summary.csv"
+    df.to_csv(csv_output_path, index=False, float_format="%.4f")
+    print(f"\n✅ Successfully saved full analysis data to: {csv_output_path}\n")
+    # -----------------------------
 
-    # --- Analysis for Objective 1 & 3: Easiness and Selection Patterns ---
-    print("\n" + "=" * 80)
-    print("      Objective 1 & 3: Finding Best HPs & Assessing Sensitivity")
-    print("=" * 80)
+    # --- Call the new plotter ---
+    plot_usability_rate(df, output_dir)
+    # ----------------------------
 
-    # 1. Apply filters
-    reasonable_acc_df = df[df['acc'] >= REASONABLE_ACC_THRESHOLD].copy()
-
-    if 'benign_selection_rate' in reasonable_acc_df.columns:
-        reasonable_final_df = reasonable_acc_df[
-            reasonable_acc_df['benign_selection_rate'] >= REASONABLE_BSR_THRESHOLD
-            ].copy()
-    else:
-        print("\n!WARNING: 'benign_selection_rate' not found. Skipping Fairness filter.")
-        reasonable_final_df = reasonable_acc_df.copy()
-
-    # 2. Create sort metric
-    reasonable_final_df['sort_metric'] = np.where(
-        # For this step, we assume all attacks are backdoor (as per the generator)
-        # If you add labelflip, this logic would need to check 'attack' column
-        reasonable_final_df['acc'] > 0,  # Placeholder for 'is_backdoor'
-        reasonable_final_df['asr'],  # Low is good
-        1.0 - reasonable_final_df['acc']  # Low is good (high acc)
-    )
-
-    # 3. Sort to find the *best* HP set for each scenario
-    sort_columns = ['scenario', 'sort_metric']
-    if 'adv_selection_rate' in reasonable_final_df.columns:
-        sort_columns.append('adv_selection_rate')
-
-    df_sorted = reasonable_final_df.sort_values(
-        by=sort_columns,
-        ascending=[True, True, True]
-    )
-
-    # This df contains the single best run for each scenario
-    df_best_by_defense = df_sorted.drop_duplicates(subset='scenario', keep='first')
-
-    print(
-        f"\n--- Best Training HP for each Defense/Dataset (acc >= {REASONABLE_ACC_THRESHOLD}, benign_select >= {REASONABLE_BSR_THRESHOLD}) ---")
-    print(f"--- Sorted by: 1. Low ASR, 2. Low Adv. Selection ---")
-
-    cols_to_show = [
-        'scenario',
-        'hp_suffix',
-        'acc', 'asr',
-        'adv_selection_rate', 'benign_selection_rate',
-        'rounds'
-    ]
-    cols_present = [c for c in df_best_by_defense.columns if c in cols_to_show]
-    print(df_best_by_defense[cols_present].to_string(index=False, float_format="%.4f"))
-
-    # --- Analysis for Objective 2: Best Performance Comparison ---
-    print("\n" + "=" * 80)
-    print("           Objective 2: Best-of-Defense Comparison (Plots)")
-    print("=" * 80)
-
-    for dataset in df_best_by_defense['dataset'].unique():
-        plot_best_defense_comparison(df_best_by_defense, dataset, output_dir)
-
-    # --- Analysis for Objective 1 & 3: Sensitivity (Plots) ---
-    print("\n" + "=" * 80)
-    print("           Objective 1 & 3: HP Sensitivity Heatmaps (Plots)")
-    print("=" * 80)
-
-    # We use the *original* full dataframe (df) for plotting sensitivity
-    for scenario in df['scenario'].unique():
-        plot_hp_sensitivity(df, scenario, output_dir)
-
-    print("\nAnalysis complete. Check 'step2.5_figures' folder for plots.")
+    print("\nAnalysis complete. Check 'step2.5_figures' folder for plots and CSV.")
 
 
 if __name__ == "__main__":
