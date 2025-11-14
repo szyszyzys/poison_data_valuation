@@ -142,9 +142,10 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 def plot_platform_usability_metrics(df: pd.DataFrame, output_dir: Path):
     """
     (REWRITTEN)
-    Plots the 3 key platform metrics in *separate, more readable files*.
+    Plots the 3 key platform metrics in *separate, more readable files*,
+    one for each dataset.
     """
-    print("\n--- Plotting Platform Usability Metrics ---")
+    print("\n--- Plotting Platform Usability Metrics (Split by Dataset) ---")
 
     if df.empty:
         print("No data to plot.")
@@ -152,73 +153,28 @@ def plot_platform_usability_metrics(df: pd.DataFrame, output_dir: Path):
 
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
+    # Calculate the three metrics
     # 1. Usability Rate
-    print("  Plotting: 1. Usability Rate")
     df_usability = df.groupby(['defense', 'dataset'])['platform_usable'].mean().reset_index()
     df_usability['Value'] = df_usability['platform_usable'] * 100  # Convert to %
-
-    g = sns.catplot(
-        data=df_usability, kind='bar', x='defense', y='Value',
-        col='dataset', col_wrap=3, height=4, aspect=1.1,
-        order=defense_order, palette='viridis'
-    )
-    g.fig.suptitle(f"1. Usability Rate (What % of HPs achieved >{RELATIVE_ACC_THRESHOLD * 100}% of max accuracy?)",
-                   y=1.05)
-    g.set_axis_labels("Defense", "Usable HP Combinations (%)")
-    g.set_titles(col_template="{col_name}")
-    g.map_dataframe(annotate_bars)
-    plot_file = output_dir / "plot_platform_1_USABILITY_RATE.png"
-    plt.savefig(plot_file, bbox_inches='tight')
-    plt.clf();
-    plt.close('all')
+    df_usability['Metric'] = '1. Usability Rate (%) (Higher is Better)'
 
     # 2. Average Performance (of *usable* runs)
-    print("  Plotting: 2. Average Usable Accuracy")
     df_perf = df[df['platform_usable'] == True].groupby(['defense', 'dataset'])['acc'].mean().reset_index()
     df_perf['Value'] = df_perf['acc'] * 100  # Convert to %
-
-    g = sns.catplot(
-        data=df_perf, kind='bar', x='defense', y='Value',
-        col='dataset', col_wrap=3, height=4, aspect=1.1,
-        order=defense_order, palette='Greens_d'
-    )
-    g.fig.suptitle(f"2. Avg. Usable Accuracy (Mean accuracy of *only* the usable runs)", y=1.05)
-    g.set_axis_labels("Defense", "Average Accuracy (%)")
-    g.set_titles(col_template="{col_name}")
-    g.map_dataframe(annotate_bars)
-    plot_file = output_dir / "plot_platform_2_AVG_ACCURACY.png"
-    plt.savefig(plot_file, bbox_inches='tight')
-    plt.clf();
-    plt.close('all')
+    df_perf['Metric'] = '2. Avg. Usable Accuracy (%) (Higher is Better)'
 
     # 3. Stability (Std Dev of *all* runs)
-    print("  Plotting: 3. Accuracy Instability")
     df_stability = df.groupby(['defense', 'dataset'])['acc'].std().reset_index()
     df_stability['Value'] = df_stability['acc'] * 100  # Convert to %
+    df_stability['Metric'] = '3. Accuracy Instability (Std Dev) (Lower is Better)'
 
-    g = sns.catplot(
-        data=df_stability, kind='bar', x='defense', y='Value',
-        col='dataset', col_wrap=3, height=4, aspect=1.1,
-        order=defense_order, palette='Reds_d'
-    )
-    g.fig.suptitle(f"3. Accuracy Instability (Std. Dev. of acc across *all* HP sweeps) - Lower is Better", y=1.05)
-    g.set_axis_labels("Defense", "Accuracy Std. Dev. (pts)")
-    g.set_titles(col_template="{col_name}")
-    g.map_dataframe(annotate_bars)
-    plot_file = output_dir / "plot_platform_3_INSTABILITY.png"
-    plt.savefig(plot_file, bbox_inches='tight')
-    plt.clf();
-    plt.close('all')
+    # Combine all 3 metrics into one DataFrame
+    df_final = pd.concat([df_usability, df_perf, df_stability], ignore_index=True)
 
     # --- Save the analysis CSV ---
-    print("  Saving summary CSV...")
     csv_output_path = output_dir / "step2.5_platform_metrics_summary.csv"
     try:
-        # Combine all 3 metrics into one DataFrame
-        df_usability['Metric'] = '1. Usability Rate (%)'
-        df_perf['Metric'] = '2. Avg. Usable Accuracy (%)'
-        df_stability['Metric'] = '3. Accuracy Instability (Std Dev)'
-        df_final = pd.concat([df_usability, df_perf, df_stability], ignore_index=True)
         # Pivot for a wide, readable CSV
         df_pivot = df_final.pivot_table(index=['dataset', 'defense'], columns='Metric', values='Value')
         df_pivot.to_csv(csv_output_path, float_format="%.2f")
@@ -226,6 +182,49 @@ def plot_platform_usability_metrics(df: pd.DataFrame, output_dir: Path):
     except Exception as e:
         print(f"Could not save CSV: {e}")
     # -----------------------------
+
+    # --- NEW PLOTTING LOOP ---
+    # Loop over each dataset and create a separate figure
+    for dataset in df_final['dataset'].unique():
+        print(f"  Plotting all 3 metrics for: {dataset}")
+
+        dataset_df = df_final[df_final['dataset'] == dataset]
+
+        g = sns.catplot(
+            data=dataset_df,
+            kind='bar',
+            x='defense',
+            y='Value',
+            col='Metric',  # Create 3 columns: Usability, Avg Acc, Instability
+            order=defense_order,
+            palette='viridis',
+            height=4,
+            aspect=1.1,
+            sharey=False  # Each metric has its own scale
+        )
+
+        g.fig.suptitle(f"Platform-Centric Usability for {dataset} (vs. {RELATIVE_ACC_THRESHOLD * 100}% of Max Acc)",
+                       y=1.05)
+        g.set_axis_labels("Defense", "Value")
+        g.set_titles(col_template="{col_name}")
+
+        # Add annotations
+        for ax in g.axes.flat:
+            for p in ax.patches:
+                ax.annotate(f'{p.get_height():.1f}',
+                            (p.get_x() + p.get_width() / 2., p.get_height()),
+                            ha='center', va='center',
+                            xytext=(0, 5),
+                            textcoords='offset points',
+                            fontsize=9)
+
+        # Save with the dataset name in the file
+        plot_file = output_dir / f"plot_platform_metrics_{dataset}.png"
+        plt.savefig(plot_file, bbox_inches='tight')
+        plt.clf();
+        plt.close('all')
+
+    print("Done plotting all datasets.")
 
 
 def annotate_bars(data, **kwargs):
