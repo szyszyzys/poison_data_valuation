@@ -13,13 +13,31 @@ BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./step10_figures"
 
 
-# --- End Configuration ---
+# ---------------------
+
+
+def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
+    """Parses the base scenario name (e.g., 'step10_scalability_martfl_CIFAR100')"""
+    try:
+        pattern = r'step10_scalability_(fedavg|martfl|fltrust|skymask)_(.*)'
+        match = re.search(pattern, scenario_name)
+
+        if match:
+            return {
+                "scenario_base": scenario_name,
+                "defense": match.group(1),
+                "dataset": match.group(2)
+            }
+        else:
+            raise ValueError(f"Pattern not matched for: {scenario_name}")
+
+    except Exception as e:
+        print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
+        return {"scenario_base": scenario_name}
 
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
-    """
-    Parses the HP suffix folder name (e.g., 'n_sellers_10')
-    """
+    """ParsES 'n_sellers_10'"""
     hps = {}
     pattern = r'n_sellers_([0-9]+)'
     match = re.search(pattern, hp_folder_name)
@@ -29,27 +47,6 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     else:
         print(f"Warning: Could not parse HP suffix '{hp_folder_name}'")
     return hps
-
-
-def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
-    """Parses the base scenario name (e.g., 'step10_scalability_martfl_cifar100')"""
-    try:
-        pattern = r'step10_scalability_(fedavg|martfl|fltrust|skymask)_(.*)'
-        match = re.search(pattern, scenario_name)
-
-        if match:
-            return {
-                "scenario": scenario_name,
-                "defense": match.group(1),
-                "dataset": match.group(2),
-                "attack": "backdoor"  # Inferred from your generator script
-            }
-        else:
-            raise ValueError(f"Pattern not matched for: {scenario_name}")
-
-    except Exception as e:
-        print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
-        return {"scenario": scenario_name}
 
 
 def load_run_data(metrics_file: Path) -> Dict[str, Any]:
@@ -73,9 +70,14 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
             adv_sellers = [s for s in sellers if s.get('type') == 'adversary']
             ben_sellers = [s for s in sellers if s.get('type') == 'benign']
 
-            run_data['adv_selection_rate'] = np.mean([s['selection_rate'] for s in adv_sellers]) if adv_sellers else 0.0
+            run_data['adv_selection_rate'] = np.mean(
+                [s['selection_rate'] for s in adv_sellers]) if adv_sellers else np.nan
             run_data['benign_selection_rate'] = np.mean(
-                [s['selection_rate'] for s in ben_sellers]) if ben_sellers else 0.0
+                [s['selection_rate'] for s in ben_sellers]) if ben_sellers else np.nan
+
+            # Handle 0-attacker case (adv_selection_rate will be NaN)
+            if not adv_sellers and ben_sellers:
+                run_data['adv_selection_rate'] = 0.0
 
         return run_data
 
@@ -107,6 +109,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                 if not relative_parts:
                     continue
 
+                # This should be the HP folder, e.g., 'n_sellers_10'
                 hp_folder_name = relative_parts[0]
 
                 run_hps = parse_hp_suffix(hp_folder_name)
@@ -129,23 +132,28 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     return df
 
 
-def plot_scalability_lines(df: pd.DataFrame, attack_type: str, output_dir: Path):
+def plot_scalability_lines(df: pd.DataFrame, dataset: str, output_dir: Path):
     """
     Generates the 2x2 multi-panel line plots for scalability.
     """
-    print(f"\n--- Plotting Scalability for {attack_type} attack ---")
+    print(f"\n--- Plotting Scalability for {dataset} ---")
+
+    plot_df = df[df['dataset'] == dataset].copy()
+    if plot_df.empty:
+        print("No data found to plot.")
+        return
 
     metrics_to_plot = [
         'acc', 'asr',
         'benign_selection_rate', 'adv_selection_rate'
     ]
-    metrics_to_plot = [m for m in metrics_to_plot if m in df.columns]
+    metrics_to_plot = [m for m in metrics_to_plot if m in plot_df.columns]
 
     if not metrics_to_plot:
         print("No metrics found to plot.")
         return
 
-    plot_df = df.melt(
+    plot_df = plot_df.melt(
         id_vars=['n_sellers', 'defense'],
         value_vars=metrics_to_plot,
         var_name='Metric',
@@ -155,11 +163,13 @@ def plot_scalability_lines(df: pd.DataFrame, attack_type: str, output_dir: Path)
     # Rename for clearer labels
     plot_df['Metric'] = plot_df['Metric'].replace({
         'acc': '1. Model Accuracy (Utility)',
-        'asr': '2. Attack Success Rate (Defense)',
-        'adv_selection_rate': '3. Attacker Selection (%) (Mechanism)',
-        'benign_selection_rate': '4. Benign Selection (%) (Fairness)',
+        'asr': '2. Attack Success Rate (Robustness)',
+        'benign_selection_rate': '3. Benign Selection Rate (Fairness)',
+        'adv_selection_rate': '4. Attacker Selection Rate (Security)',
     })
     plot_df = plot_df.sort_values(by='Metric')
+
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
     g = sns.relplot(
         data=plot_df,
@@ -174,17 +184,20 @@ def plot_scalability_lines(df: pd.DataFrame, attack_type: str, output_dir: Path)
         aspect=1.2,
         facet_kws={'sharey': False},
         markers=True,
-        dashes=False
+        dashes=False,
+        hue_order=defense_order,
+        style_order=defense_order
     )
 
-    g.fig.suptitle(f'Defense Scalability vs. Marketplace Size ({attack_type.title()} Attack)', y=1.05)
+    g.fig.suptitle(f'Defense Scalability vs. Marketplace Size (Fixed 30% Attack Rate, {dataset})', y=1.05)
     g.set_axis_labels("Number of Sellers (n_sellers)", "Value")
     g.set_titles(col_template="{col_name}")
 
-    plot_file = output_dir / f"plot_scalability_{attack_type.upper()}.png"
+    plot_file = output_dir / f"plot_scalability_fixed_rate_{dataset}.png"
     g.fig.savefig(plot_file)
     print(f"Saved plot: {plot_file}")
     plt.clf()
+    plt.close('all')
 
 
 def main():
@@ -195,12 +208,13 @@ def main():
     df = collect_all_results(BASE_RESULTS_DIR)
 
     if df.empty:
+        print("No results data was loaded. Exiting.")
         return
 
-    # Plot for each attack type found (likely just 'backdoor')
-    for attack in df['attack'].unique():
-        attack_df = df[df['attack'] == attack].copy()
-        plot_scalability_lines(attack_df, attack, output_dir)
+    # Plot for each dataset found (likely just 'CIFAR100')
+    for dataset in df['dataset'].unique():
+        if pd.notna(dataset):
+            plot_scalability_lines(df, dataset, output_dir)
 
     print("\nAnalysis complete. Check 'step10_figures' folder for plots.")
 
