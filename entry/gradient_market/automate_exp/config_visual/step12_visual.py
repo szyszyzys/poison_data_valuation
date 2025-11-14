@@ -200,7 +200,6 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
     plot_df['Value'] = plot_df['Value'] * 100  # Convert to percentage
 
     # 4. Create the grouped bar chart
-    plt.figure(figsize=(14, 8))
     g = sns.catplot(
         data=plot_df,
         kind='bar',
@@ -214,7 +213,8 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
                  'Benign Select Rate (Higher is Better)': 'blue',
                  'Adversary Select Rate (Lower is Better)': 'orange'},
         height=6,
-        aspect=1.8
+        aspect=1.8,
+        legend=False  # <-- FIX 1: Tell catplot NOT to draw the legend automatically
     )
 
     g.fig.suptitle(f'Main Benchmark: Defense Capabilities vs. Backdoor Attack ({dataset_to_plot})', y=1.03)
@@ -231,14 +231,25 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
                         textcoords='offset points',
                         fontsize=8)
 
-    plt.tight_layout()
+    # --- FIX 2: Manually add the legend ---
+    # We place it to the right of the plot area
+    g.add_legend(
+        title='Metric',
+        bbox_to_anchor=(1.01, 0.5),  # (x, y) - 1.01 is just outside the right edge
+        loc='center left'  # Anchor the legend at its left-center
+    )
+
+    # --- FIX 3: Adjust the plot to make room ---
+    # This shrinks the plot area slightly to the left so the legend fits
+    plt.subplots_adjust(right=0.85)
+
+    # We remove plt.tight_layout() as it fights with subplots_adjust
 
     plot_file = output_dir / f"plot_main_summary_BARCHART_{dataset_to_plot}.png"
     plt.savefig(plot_file)
     print(f"Saved plot: {plot_file}")
     plt.clf()
     plt.close('all')  # Close all figures
-
 
 def plot_main_summary_heatmaps(df: pd.DataFrame, output_dir: Path):
     """
