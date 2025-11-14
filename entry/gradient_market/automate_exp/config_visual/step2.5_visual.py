@@ -9,28 +9,46 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 # --- Configuration ---
-BASE_RESULTS_DIR = "./results"  # <-- Make sure this points to your new results
+BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./step2.5_figures"
 
-# --- Define what "usable" means ---
-# We use a LOW bar here. We just want the model to learn *something*
-# and not be 100% backdoored.
-USABLE_ACC_THRESHOLD = 0.50  # Must be > 50% accurate
-USABLE_ASR_THRESHOLD = 0.95  # Must be < 95% ASR
+# This is now the *only* metric for usability
+PLATFORM_USABLE_ACC_THRESHOLD = 0.70
 
 
-# ----------------------------------
+# ---------------------
+
+
+def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
+    """
+    (FIXED) Parses the HP suffix folder name (e.g., 'opt_Adam_lr_0.001_epochs_2')
+    """
+    hps = {}
+    pattern = r'opt_(\w+)_lr_([0-9\.]+)_epochs_([0-9]+)'
+    match = re.search(pattern, hp_folder_name)
+
+    if match:
+        hps['optimizer'] = match.group(1)
+        hps['learning_rate'] = float(match.group(2))
+        hps['local_epochs'] = int(match.group(3))
+    else:
+        print(f"Warning: Could not parse HP suffix '{hp_folder_name}'")
+    return hps
 
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
-    """Parses 'step2.5_find_hps_fedavg_image_CIFAR10'"""
+    """
+    (FIXED) Parses the base scenario name using regex to handle
+    underscores in dataset and model names.
+    e.g., 'step2.5_find_hps_martfl_image_CIFAR100'
+    """
     try:
         pattern = r'step2\.5_find_hps_(fedavg|martfl|fltrust|skymask)_(image|text|tabular)_(.+)'
         match = re.search(pattern, scenario_name)
 
         if match:
             return {
-                "scenario_base": scenario_name,
+                "scenario": scenario_name,
                 "defense": match.group(1),
                 "modality": match.group(2),
                 "dataset": match.group(3),
@@ -38,28 +56,13 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
         raise ValueError("Pattern not matched")
     except Exception as e:
         print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
-        return {"scenario_base": scenario_name}
-
-
-def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
-    """Parses 'opt_Adam_lr_0.001_epochs_2' into a dict."""
-    hps = {}
-    try:
-        opt_match = re.search(r'opt_([A-Za-z]+)', hp_folder_name)
-        lr_match = re.search(r'lr_([0-9\.]+)', hp_folder_name)
-        epochs_match = re.search(r'epochs_([0-9]+)', hp_folder_name)
-
-        if opt_match: hps['optimizer'] = opt_match.group(1)
-        if lr_match: hps['lr'] = float(lr_match.group(1))
-        if epochs_match: hps['epochs'] = int(epochs_match.group(1))
-
-    except Exception as e:
-        print(f"Error parsing HPs from '{hp_folder_name}': {e}")
-    return hps
+        return {"scenario": scenario_name}
 
 
 def load_run_data(metrics_file: Path) -> Dict[str, Any]:
-    """Loads key metrics from output files."""
+    """
+    Loads key data from final_metrics.json
+    """
     run_data = {}
     try:
         with open(metrics_file, 'r') as f:
@@ -73,39 +76,41 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
 
 
 def collect_all_results(base_dir: str) -> pd.DataFrame:
-    """Walks the Step 2.5 results directory and aggregates all run data."""
+    """Walks the results directory and aggregates all run data."""
     all_runs = []
     base_path = Path(base_dir)
     print(f"Searching for results in {base_path.resolve()}...")
 
-    scenario_folders = list(base_path.glob("step2.5_find_hps_*"))
+    scenario_folders = [f for f in base_path.glob("step2.5_find_hps_*") if f.is_dir()]
     if not scenario_folders:
-        print(f"Error: No 'step2.5_find_hps_*' directories found in {base_path}.")
+        print(f"Error: No 'step2.5_find_hps_*' directories found directly inside {base_path}.")
         return pd.DataFrame()
 
     print(f"Found {len(scenario_folders)} scenario base directories.")
 
     for scenario_path in scenario_folders:
-        if not scenario_path.is_dir(): continue
+        scenario_name = scenario_path.name
+        run_scenario = parse_scenario_name(scenario_name)
 
-        base_scenario_info = parse_scenario_name(scenario_path.name)
+        for metrics_file in scenario_path.rglob("final_metrics.json"):
+            try:
+                relative_parts = metrics_file.parent.relative_to(scenario_path).parts
+                if not relative_parts:
+                    continue
 
-        for hp_path in scenario_path.iterdir():
-            if not hp_path.is_dir(): continue
+                hp_folder_name = relative_parts[0]
 
-            hp_info = parse_hp_suffix(hp_path.name)
+                run_hps = parse_hp_suffix(hp_folder_name)
+                run_metrics = load_run_data(metrics_file)
 
-            for metrics_file in hp_path.rglob("final_metrics.json"):
-                try:
-                    run_metrics = load_run_data(metrics_file)
-                    if run_metrics:
-                        all_runs.append({
-                            **base_scenario_info,
-                            **hp_info,
-                            **run_metrics
-                        })
-                except Exception as e:
-                    print(f"Error processing file {metrics_file}: {e}")
+                if run_metrics:
+                    all_runs.append({
+                        **run_scenario,
+                        **run_hps,
+                        **run_metrics,
+                    })
+            except Exception as e:
+                print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
 
     if not all_runs:
         print("Error: No 'final_metrics.json' files were successfully processed.")
@@ -113,33 +118,27 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
     df = pd.DataFrame(all_runs)
 
-    # --- This is the key logic ---
-    df['is_usable'] = (df['acc'] >= USABLE_ACC_THRESHOLD) & \
-                      (df['asr'] <= USABLE_ASR_THRESHOLD)
-
-    # Handle the 'no attack' case (ASR=0)
-    df.loc[df['asr'] == 0.0, 'is_usable'] = (df['acc'] >= USABLE_ACC_THRESHOLD)
-
-    df['defense_score'] = df['acc'] - df['asr']
+    # --- THIS IS THE KEY NEW LOGIC ---
+    # Define "Usable" from the platform's (accuracy-only) perspective
+    df['platform_usable'] = (df['acc'] >= PLATFORM_USABLE_ACC_THRESHOLD)
 
     return df
 
 
-def plot_usability_rate(df: pd.DataFrame, output_dir: Path):
+def plot_platform_usability_rate(df: pd.DataFrame, output_dir: Path):
     """
-    Plots the 'Usability Rate' for each defense.
-    This answers: "How easy is it to get a working model?"
+    Plots the 'Platform Usability Rate' for each defense.
+    This answers: "How easy is it to get a high-accuracy model?"
     """
-    print("\n--- Plotting Defense Usability Rate ---")
+    print("\n--- Plotting Defense 'Platform Usability Rate' (Accuracy Only) ---")
 
-    if 'is_usable' not in df.columns:
-        print("Error: 'is_usable' column not found. Cannot plot usability.")
+    if 'platform_usable' not in df.columns:
+        print("Error: 'platform_usable' column not found. Cannot plot usability.")
         return
 
     # Calculate the Usability Rate: (Number of Usable Runs) / (Total Runs)
-    # We group by defense and dataset to see the whole picture
-    usability_df = df.groupby(['defense', 'dataset'])['is_usable'].mean().reset_index()
-    usability_df['Usability Rate'] = usability_df['is_usable'] * 100  # Convert to %
+    usability_df = df.groupby(['defense', 'dataset'])['platform_usable'].mean().reset_index()
+    usability_df['Platform Usability Rate'] = usability_df['platform_usable'] * 100  # Convert to %
 
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
@@ -147,7 +146,7 @@ def plot_usability_rate(df: pd.DataFrame, output_dir: Path):
         data=usability_df,
         kind='bar',
         x='defense',
-        y='Usability Rate',
+        y='Platform Usability Rate',
         col='dataset',
         col_wrap=3,
         height=4,
@@ -156,9 +155,8 @@ def plot_usability_rate(df: pd.DataFrame, output_dir: Path):
         palette='viridis'
     )
 
-    g.fig.suptitle(
-        f"Defense 'Usability Rate' (HP Sweeps > {USABLE_ACC_THRESHOLD * 100}% Acc & < {USABLE_ASR_THRESHOLD * 100}% ASR)",
-        y=1.03)
+    g.fig.suptitle(f"Defense 'Platform Usability Rate' (HP Sweeps > {PLATFORM_USABLE_ACC_THRESHOLD * 100}% Accuracy)",
+                   y=1.03)
     g.set_axis_labels("Defense", "Usable HP Combinations (%)")
     g.set_titles(col_template="{col_name}")
 
@@ -172,9 +170,9 @@ def plot_usability_rate(df: pd.DataFrame, output_dir: Path):
                         textcoords='offset points',
                         fontsize=9)
 
-    plot_file = output_dir / "plot_defense_USABILITY_RATE.png"
+    plot_file = output_dir / "plot_platform_USABILITY_RATE.png"
     plt.savefig(plot_file, bbox_inches='tight')
-    print(f"Saved Usability Rate plot: {plot_file}")
+    print(f"Saved Platform Usability Rate plot: {plot_file}")
     plt.clf()
     plt.close('all')
 
@@ -197,7 +195,7 @@ def main():
     # -----------------------------
 
     # --- Call the new plotter ---
-    plot_usability_rate(df, output_dir)
+    plot_platform_usability_rate(df, output_dir)
     # ----------------------------
 
     print("\nAnalysis complete. Check 'step2.5_figures' folder for plots and CSV.")
