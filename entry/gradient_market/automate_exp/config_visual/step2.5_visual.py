@@ -12,7 +12,7 @@ from typing import List, Dict, Any
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./step2.5_figures"
 
-# This is now the *only* metric for usability
+# Define the platform's 'usability' threshold
 PLATFORM_USABLE_ACC_THRESHOLD = 0.70
 
 
@@ -21,7 +21,7 @@ PLATFORM_USABLE_ACC_THRESHOLD = 0.70
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     """
-    (FIXED) Parses the HP suffix folder name (e.g., 'opt_Adam_lr_0.001_epochs_2')
+    Parses the HP suffix folder name (e.g., 'opt_Adam_lr_0.001_epochs_2')
     """
     hps = {}
     pattern = r'opt_(\w+)_lr_([0-9\.]+)_epochs_([0-9]+)'
@@ -38,11 +38,10 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     """
-    (FIXED) Parses the base scenario name using regex to handle
-    underscores in dataset and model names.
-    e.g., 'step2.5_find_hps_martfl_image_CIFAR100'
+    Parses the base scenario name (e.g., 'step2.5_find_hps_martfl_image_CIFAR10')
     """
     try:
+        # Use the regex parser to avoid errors with underscores
         pattern = r'step2\.5_find_hps_(fedavg|martfl|fltrust|skymask)_(image|text|tabular)_(.+)'
         match = re.search(pattern, scenario_name)
 
@@ -53,7 +52,9 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
                 "modality": match.group(2),
                 "dataset": match.group(3),
             }
-        raise ValueError("Pattern not matched")
+        else:
+            raise ValueError(f"Pattern not matched for: {scenario_name}")
+
     except Exception as e:
         print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
         return {"scenario": scenario_name}
@@ -118,61 +119,89 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
     df = pd.DataFrame(all_runs)
 
-    # --- THIS IS THE KEY NEW LOGIC ---
     # Define "Usable" from the platform's (accuracy-only) perspective
     df['platform_usable'] = (df['acc'] >= PLATFORM_USABLE_ACC_THRESHOLD)
 
     return df
 
 
-def plot_platform_usability_rate(df: pd.DataFrame, output_dir: Path):
+def plot_platform_usability_metrics(df: pd.DataFrame, output_dir: Path):
     """
-    Plots the 'Platform Usability Rate' for each defense.
-    This answers: "How easy is it to get a high-accuracy model?"
+    Plots the 3 key platform metrics:
+    1. Usability Rate (% of HPs that worked)
+    2. Average Performance (Mean acc of *only* usable runs)
+    3. Stability (Std Dev of acc across *all* runs)
     """
-    print("\n--- Plotting Defense 'Platform Usability Rate' (Accuracy Only) ---")
+    print("\n--- Plotting Platform Usability Metrics ---")
 
-    if 'platform_usable' not in df.columns:
-        print("Error: 'platform_usable' column not found. Cannot plot usability.")
+    if df.empty:
+        print("No data to plot.")
         return
 
-    # Calculate the Usability Rate: (Number of Usable Runs) / (Total Runs)
-    usability_df = df.groupby(['defense', 'dataset'])['platform_usable'].mean().reset_index()
-    usability_df['Platform Usability Rate'] = usability_df['platform_usable'] * 100  # Convert to %
+    # 1. Usability Rate
+    df_usability = df.groupby(['defense', 'dataset'])['platform_usable'].mean().reset_index()
+    df_usability['Value'] = df_usability['platform_usable'] * 100  # Convert to %
+    df_usability['Metric'] = '1. Usability Rate (%) (Higher is Better)'
+
+    # 2. Average Performance (of *usable* runs)
+    df_perf = df[df['platform_usable'] == True].groupby(['defense', 'dataset'])['acc'].mean().reset_index()
+    df_perf['Value'] = df_perf['acc'] * 100  # Convert to %
+    df_perf['Metric'] = '2. Avg. Usable Accuracy (%) (Higher is Better)'
+
+    # 3. Stability (Std Dev of *all* runs)
+    df_stability = df.groupby(['defense', 'dataset'])['acc'].std().reset_index()
+    df_stability['Value'] = df_stability['acc'] * 100  # Convert to %
+    df_stability['Metric'] = '3. Accuracy Instability (Std Dev) (Lower is Better)'
+
+    # Combine all 3 metrics into one DataFrame
+    df_final = pd.concat([df_usability, df_perf, df_stability], ignore_index=True)
+
+    # --- Save the analysis CSV ---
+    csv_output_path = output_dir / "step2.5_platform_metrics_summary.csv"
+    try:
+        # Pivot for a wide, readable CSV
+        df_pivot = df_final.pivot_table(index=['dataset', 'defense'], columns='Metric', values='Value')
+        df_pivot.to_csv(csv_output_path, float_format="%.2f")
+        print(f"\n✅ Successfully saved platform metrics summary to: {csv_output_path}\n")
+    except Exception as e:
+        print(f"Could not save CSV: {e}")
+    # -----------------------------
 
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
     g = sns.catplot(
-        data=usability_df,
+        data=df_final,
         kind='bar',
         x='defense',
-        y='Platform Usability Rate',
-        col='dataset',
-        col_wrap=3,
-        height=4,
-        aspect=1.2,
+        y='Value',
+        col='Metric',
+        row='dataset',
         order=defense_order,
-        palette='viridis'
+        palette='viridis',
+        height=3.5,
+        aspect=1.2,
+        sharex=True,
+        sharey=False  # Each metric has its own scale
     )
 
-    g.fig.suptitle(f"Defense 'Platform Usability Rate' (HP Sweeps > {PLATFORM_USABLE_ACC_THRESHOLD * 100}% Accuracy)",
+    g.fig.suptitle(f"Platform-Centric Usability: Ease of Training (vs. {PLATFORM_USABLE_ACC_THRESHOLD * 100}% Acc)",
                    y=1.03)
-    g.set_axis_labels("Defense", "Usable HP Combinations (%)")
-    g.set_titles(col_template="{col_name}")
+    g.set_axis_labels("Defense", "Value")
+    g.set_titles(col_template="{col_name}", row_template="{row_name}")
 
     # Add annotations
     for ax in g.axes.flat:
         for p in ax.patches:
-            ax.annotate(f'{p.get_height():.1f}%',
+            ax.annotate(f'{p.get_height():.1f}',
                         (p.get_x() + p.get_width() / 2., p.get_height()),
                         ha='center', va='center',
                         xytext=(0, 5),
                         textcoords='offset points',
-                        fontsize=9)
+                        fontsize=8)
 
-    plot_file = output_dir / "plot_platform_USABILITY_RATE.png"
+    plot_file = output_dir / "plot_platform_USABILITY_METRICS.png"
     plt.savefig(plot_file, bbox_inches='tight')
-    print(f"Saved Platform Usability Rate plot: {plot_file}")
+    print(f"Saved Platform Usability Metrics plot: {plot_file}")
     plt.clf()
     plt.close('all')
 
@@ -188,14 +217,8 @@ def main():
         print("No results data was loaded. Exiting.")
         return
 
-    # --- Save the analysis CSV ---
-    csv_output_path = output_dir / "step2.5_full_results_summary.csv"
-    df.to_csv(csv_output_path, index=False, float_format="%.4f")
-    print(f"\n✅ Successfully saved full analysis data to: {csv_output_path}\n")
-    # -----------------------------
-
     # --- Call the new plotter ---
-    plot_platform_usability_rate(df, output_dir)
+    plot_platform_usability_metrics(df, output_dir)
     # ----------------------------
 
     print("\nAnalysis complete. Check 'step2.5_figures' folder for plots and CSV.")
