@@ -477,6 +477,102 @@ def plot_comparative_valuation_analysis(df: pd.DataFrame, output_dir: Path, data
     plt.close('all')
 
 
+def plot_valuation_tradeoff(df: pd.DataFrame, output_dir: Path, dataset_to_plot: str = 'CIFAR100'):
+    """
+    (NEW) Generates the 2-part plot for Section 6.6:
+    1. "Security" (Finding Attackers)
+    2. "Fairness" (Punishing Benign)
+    """
+    print(f"\n--- Plotting Valuation Trade-off (Fig 8) for {dataset_to_plot} ---")
+
+    # --- Use the "best" valuation metrics ---
+    # We'll focus on the ones that work, like influence_score
+    val_cols = ['influence_score', 'loo_score', 'sim_to_oracle']
+    val_cols = [col for col in val_cols if col in df.columns]
+    if not val_cols:
+        print("No high-quality valuation columns found (e.g., influence_score). Skipping.")
+        return
+
+    # 1. Filter data for the chosen dataset
+    plot_df = df[df['dataset'] == dataset_to_plot].copy()
+    if plot_df.empty:
+        print(f"Warning: No data for {dataset_to_plot}. Skipping plot.")
+        return
+
+    plot_df = plot_df.melt(
+        id_vars=['defense', 'seller_type', 'selected'],
+        value_vars=val_cols,
+        var_name='Valuation Method',
+        value_name='Score'
+    )
+    plot_df = plot_df.dropna(subset=['Score'])
+    if plot_df.empty:
+        print(f"Warning: No valuation data after melting for {dataset_to_plot}. Skipping.")
+        return
+
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+    plot_df = plot_df[plot_df['defense'].isin(defense_order)]
+
+    # --- Plot 1: The "Security" Story ---
+    # "Is the metric good at finding attackers?"
+    g = sns.catplot(
+        data=plot_df,
+        kind='box',
+        x='defense',
+        y='Score',
+        hue='seller_type',
+        col='Valuation Method',
+        order=defense_order,
+        hue_order=['benign', 'adversary'],
+        palette={'benign': 'g', 'adversary': 'r'},
+        sharey=False,
+        height=4,
+        aspect=1,
+        showfliers=False
+    )
+    g.fig.suptitle(f'Figure 8a: Valuation Metric Accuracy ({dataset_to_plot})', y=1.05)
+    g.set_axis_labels('Defense', 'Score')
+    g.set_titles(col_template="{col_name}")
+    g.add_legend(title='Seller Type')
+
+    plot_file = output_dir / f"plot_valuation_tradeoff_A_Security_{dataset_to_plot}.png"
+    plt.savefig(plot_file, bbox_inches='tight')
+    print(f"Saved plot: {plot_file}")
+    plt.clf();
+    plt.close('all')
+
+    # --- Plot 2: The "Fairness" Story (Your Idea) ---
+    # "Is the defense PUNISHING good sellers?"
+
+    # *** THIS IS THE KEY: We ONLY look at 'benign' sellers ***
+    plot_df_benign = plot_df[plot_df['seller_type'] == 'benign'].copy()
+
+    g = sns.catplot(
+        data=plot_df_benign,
+        kind='box',
+        x='defense',
+        y='Score',
+        hue='selected',  # <-- Compare Selected vs. Rejected
+        col='Valuation Method',
+        order=defense_order,
+        hue_order=[True, False],
+        palette={True: 'blue', False: 'darkgray'},
+        sharey=False,
+        height=4,
+        aspect=1,
+        showfliers=False
+    )
+    g.fig.suptitle(f'Figure 8b: Valuation Fairness (False Positives) ({dataset_to_plot})', y=1.05)
+    g.set_axis_labels('Defense', 'Score of BENIGN Sellers')
+    g.set_titles(col_template="{col_name}")
+    g.add_legend(title='Was Selected?')
+
+    plot_file = output_dir / f"plot_valuation_tradeoff_B_Fairness_{dataset_to_plot}.png"
+    plt.savefig(plot_file, bbox_inches='tight')
+    print(f"Saved plot: {plot_file}")
+    plt.clf();
+    plt.close('all')
+
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
@@ -498,7 +594,7 @@ def main():
     if not df_seller.empty:
         # Generates the individual plot for each defense/dataset (e.g., for Figure 8)
         plot_valuation_analysis(df_seller, output_dir)
-
+        plot_valuation_tradeoff(df_seller, output_dir, dataset_to_plot='CIFAR100')
         # Generates the comparative faceted plots (for appendix)
         plot_comparative_valuation_analysis(df_seller, output_dir, dataset_to_plot='CIFAR100')
     else:
