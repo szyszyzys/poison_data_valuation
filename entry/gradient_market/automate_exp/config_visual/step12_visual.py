@@ -1,12 +1,13 @@
+import pandas as pd
 import json
+import re
+import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-import pandas as pd
-import re
-import seaborn as sns
 from pathlib import Path
-from typing import Dict, Any
+from typing import List, Dict, Any
+import matplotlib.patches as mpatches  # Ensure this import is at the top
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
@@ -156,9 +157,6 @@ def collect_all_seller_data_for_valuation(base_dir: str) -> pd.DataFrame:
     return pd.concat(all_seller_rows, ignore_index=True)
 
 
-import matplotlib.patches as mpatches
-
-
 def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_plot: str = 'CIFAR100'):
     """
     Generates the main summary barchart for a single dataset (e.g., Figure 1).
@@ -265,6 +263,7 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
     print(f"Saved plot: {plot_file}")
     plt.clf()
     plt.close('all')  # Close all figures
+
 
 def plot_main_summary_heatmaps(df: pd.DataFrame, output_dir: Path):
     """
@@ -483,21 +482,28 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     print(f"Plots will be saved to: {output_dir.resolve()}")
 
-    # --- Figure 1 ---
+    # --- Figure 1 (Main Dashboard) ---
     df_heatmap = collect_all_results_for_heatmap(BASE_RESULTS_DIR)
     if not df_heatmap.empty:
-        # plot_main_summary_heatmaps(df_heatmap, output_dir)
+        # Plot the main barchart for CIFAR100
         plot_main_summary_barchart(df_heatmap, output_dir, dataset_to_plot='CIFAR100')
+        # Plot the heatmaps (for appendix)
+        plot_main_summary_heatmaps(df_heatmap, output_dir)
     else:
-        print("Skipping summary heatmaps, no final_metrics data found.")
+        print("Skipping summary plots, no final_metrics data found.")
 
-    # --- Figure 2 ---
-    # df_seller = collect_all_seller_data_for_valuation(BASE_RESULTS_DIR)
-    # if not df_seller.empty:
-    #     plot_valuation_analysis(df_seller, output_dir)
-    #     plot_comparative_valuation_analysis(df_seller, output_dir, dataset_to_plot='CIFAR100')
-    # else:
-    #     print("Skipping valuation analysis, no seller_metrics data found.")
+    # --- THIS IS THE UPDATED SECTION ---
+    # --- Figure 8 & Appendix (Valuation) ---
+    df_seller = collect_all_seller_data_for_valuation(BASE_RESULTS_DIR)
+    if not df_seller.empty:
+        # Generates the individual plot for each defense/dataset (e.g., for Figure 8)
+        plot_valuation_analysis(df_seller, output_dir)
+
+        # Generates the comparative faceted plots (for appendix)
+        plot_comparative_valuation_analysis(df_seller, output_dir, dataset_to_plot='CIFAR100')
+    else:
+        print("Skipping valuation analysis, no seller_metrics data found.")
+    # --- END UPDATED SECTION ---
 
     print("\nAnalysis complete. Check 'step12_figures' folder for plots.")
 
