@@ -40,12 +40,15 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
             else:
                 mode_label = adaptive_mode
 
-            # --- Create a more readable threat model label ---
-            threat_label_map = {
+            # --- THIS IS THE FIX ---
+            # This dictionary was missing, causing the NameError
+            threat_model_map = {
                 'black_box': '1. Black-Box',
                 'gradient_inversion': '2. Grad-Inversion',
                 'oracle': '3. Oracle'
             }
+            # --- END FIX ---
+
             # Use .get() for a safe fallback
             threat_label = threat_model_map.get(threat_model, threat_model)
 
@@ -114,6 +117,12 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
         scenario_name = scenario_path.name
         run_scenario = parse_scenario_name(scenario_name)
 
+        # If parsing failed, run_scenario won't have 'defense' key
+        # This check prevents the KeyError later
+        if 'defense' not in run_scenario:
+            print(f"  Skipping {scenario_name}, parsing failed.")
+            continue
+
         metrics_files = list(scenario_path.rglob("final_metrics.json"))
 
         if not metrics_files:
@@ -174,6 +183,8 @@ def plot_adaptive_comparison(df: pd.DataFrame, defense: str, output_dir: Path):
 
     # Apply the pretty names
     plot_df['Metric'] = plot_df['Metric'].map(metrics_to_plot)
+    # Get the order for the columns from the map
+    metric_order = [metrics_to_plot[m] for m in metrics_present]
 
     # Use the 'strategy_label' which is already sorted 1, 2, 3
     sorted_labels = sorted(plot_df['strategy_label'].unique())
@@ -186,6 +197,7 @@ def plot_adaptive_comparison(df: pd.DataFrame, defense: str, output_dir: Path):
         col='Metric',  # <-- Create a column for each metric
         col_wrap=2,  # <-- Arrange in a 2x2 grid
         order=sorted_labels,
+        col_order=metric_order,  # <-- Keep the metrics in a consistent 1,2,3,4 order
         height=4,
         aspect=1.2,
         sharex=True,  # All plots share the same x-axis
@@ -231,6 +243,11 @@ def main():
     df.to_csv(csv_output_file, index=False, float_format="%.4f")
     print(f"\n✅ Successfully saved full analysis data to: {csv_output_file}\n")
     # ----------------------------
+
+    # This check prevents the KeyError if the 'defense' column is missing
+    if 'defense' not in df.columns:
+        print("Error: 'defense' column not found in data. Check parsing.")
+        return
 
     defenses = df['defense'].unique()
 
