@@ -1,13 +1,12 @@
 import json
-import os
-import re
-from pathlib import Path
-from typing import Dict, Any
-
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 import pandas as pd
+import re
 import seaborn as sns
+from pathlib import Path
+from typing import Dict, Any
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
@@ -231,23 +230,26 @@ def plot_main_summary_barchart(df: pd.DataFrame, output_dir: Path, dataset_to_pl
                         textcoords='offset points',
                         fontsize=8)
 
-    # --- FIX 2: Manually add the legend ---
+    # --- Manually add the legend ---
     g.add_legend(
         title='Metric',
         bbox_to_anchor=(1.01, 0.5),  # (x, y) - 1.01 is just outside the right edge
         loc='center left'  # Anchor the legend at its left-center
     )
 
-    # --- THIS IS THE FIX ---
-    # Apply the adjustment to the FacetGrid's figure object, not plt
+    # --- Adjust the plot to make room ---
     g.fig.subplots_adjust(right=0.85)
+
+    # --- THIS IS THE FIX ---
+    # Use bbox_inches='tight' to ensure the external legend is saved.
+    plt.savefig(plot_file, bbox_inches='tight')
     # --- END FIX ---
 
-    plot_file = output_dir / f"plot_main_summary_BARCHART_{dataset_to_plot}.png"
-    plt.savefig(plot_file)
     print(f"Saved plot: {plot_file}")
     plt.clf()
     plt.close('all')  # Close all figures
+
+
 def plot_main_summary_heatmaps(df: pd.DataFrame, output_dir: Path):
     """
     Generates the main summary heatmaps (Figure 1).
@@ -468,18 +470,18 @@ def main():
     # --- Figure 1 ---
     df_heatmap = collect_all_results_for_heatmap(BASE_RESULTS_DIR)
     if not df_heatmap.empty:
-        plot_main_summary_heatmaps(df_heatmap, output_dir)
+        # plot_main_summary_heatmaps(df_heatmap, output_dir)
         plot_main_summary_barchart(df_heatmap, output_dir, dataset_to_plot='CIFAR100')
     else:
         print("Skipping summary heatmaps, no final_metrics data found.")
 
     # --- Figure 2 ---
-    df_seller = collect_all_seller_data_for_valuation(BASE_RESULTS_DIR)
-    if not df_seller.empty:
-        plot_valuation_analysis(df_seller, output_dir)
-        plot_comparative_valuation_analysis(df_seller, output_dir, dataset_to_plot='CIFAR100')
-    else:
-        print("Skipping valuation analysis, no seller_metrics data found.")
+    # df_seller = collect_all_seller_data_for_valuation(BASE_RESULTS_DIR)
+    # if not df_seller.empty:
+    #     plot_valuation_analysis(df_seller, output_dir)
+    #     plot_comparative_valuation_analysis(df_seller, output_dir, dataset_to_plot='CIFAR100')
+    # else:
+    #     print("Skipping valuation analysis, no seller_metrics data found.")
 
     print("\nAnalysis complete. Check 'step12_figures' folder for plots.")
 
