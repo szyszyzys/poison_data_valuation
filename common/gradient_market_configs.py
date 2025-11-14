@@ -533,45 +533,45 @@ class AppConfig:
     buyer_attack_config: BuyerAttackConfig = field(default_factory=BuyerAttackConfig)
     valuation: ValuationConfig = field(default_factory=ValuationConfig)
 
-    def __post_init__(self):
-        """
-        Performs validation and adjustments after the config object is created.
-        """
-        logger.info("Performing post-initialization validation on AppConfig...")
-
-        poison_cfg = self.adversary_seller_config.poisoning
-        sybil_cfg = self.adversary_seller_config.sybil
-
-        # --- Define Attack States ---
-        is_poisoning = poison_cfg.type.value != 'none'
-        is_sybil = sybil_cfg.is_sybil
-        adv_rate_is_set = self.experiment.adv_rate > 0
-
-        # Define Sybil attacks that are *intentionally* non-poisoning
-        sabotage_strategies = {'drowning'}
-        is_sabotage_attack = is_sybil and sybil_cfg.gradient_default_mode in sabotage_strategies
-
-        # --- Check 1: (The one you asked about) ---
-        # "adv_rate > 0" but "poisoning = none"
-        # This is ONLY a bug if it's NOT a Sybil attack.
-        if adv_rate_is_set and not is_poisoning and not is_sybil:
-            logger.warning(
-                f"Poisoning type is 'none' and not a Sybil attack, but adv_rate is {self.experiment.adv_rate}. "
-                f"Forcing adv_rate to 0."
-            )
-            self.experiment.adv_rate = 0.0
-        # (This check will now correctly do *nothing* for your Drowning attack)
-
-        # --- Check 2: (The one from the previous turn) ---
-        # "is_sybil = True" but "poisoning = none"
-        # This is ONLY a bug if it's NOT a known sabotage attack.
-        if is_sybil and not is_poisoning and not is_sabotage_attack:
-            logger.warning(
-                f"Sybil attack is enabled (strategy: '{sybil_cfg.gradient_default_mode}') "
-                f"but NO poisoning is active. This may be an error "
-                f"(unless this strategy is a non-poisoning evasion attack)."
-            )
-
+    # def __post_init__(self):
+    #     """
+    #     Performs validation and adjustments after the config object is created.
+    #     """
+    #     logger.info("Performing post-initialization validation on AppConfig...")
+    #
+    #     poison_cfg = self.adversary_seller_config.poisoning
+    #     sybil_cfg = self.adversary_seller_config.sybil
+    #
+    #     # --- Define Attack States ---
+    #     is_poisoning = poison_cfg.type.value != 'none'
+    #     is_sybil = sybil_cfg.is_sybil
+    #     adv_rate_is_set = self.experiment.adv_rate > 0
+    #
+    #     # Define Sybil attacks that are *intentionally* non-poisoning
+    #     sabotage_strategies = {'drowning'}
+    #     is_sabotage_attack = is_sybil and sybil_cfg.gradient_default_mode in sabotage_strategies
+    #
+    #     # --- Check 1: (The one you asked about) ---
+    #     # "adv_rate > 0" but "poisoning = none"
+    #     # This is ONLY a bug if it's NOT a Sybil attack.
+    #     if adv_rate_is_set and not is_poisoning and not is_sybil:
+    #         logger.warning(
+    #             f"Poisoning type is 'none' and not a Sybil attack, but adv_rate is {self.experiment.adv_rate}. "
+    #             f"Forcing adv_rate to 0."
+    #         )
+    #         self.experiment.adv_rate = 0.0
+    #     # (This check will now correctly do *nothing* for your Drowning attack)
+    #
+    #     # --- Check 2: (The one from the previous turn) ---
+    #     # "is_sybil = True" but "poisoning = none"
+    #     # This is ONLY a bug if it's NOT a known sabotage attack.
+    #     if is_sybil and not is_poisoning and not is_sabotage_attack:
+    #         logger.warning(
+    #             f"Sybil attack is enabled (strategy: '{sybil_cfg.gradient_default_mode}') "
+    #             f"but NO poisoning is active. This may be an error "
+    #             f"(unless this strategy is a non-poisoning evasion attack)."
+    #         )
+    #
 
 # --- A. Define the Configuration Class ---
 # This is the 'SybilDrowningConfig' your coordinator code was missing.
