@@ -53,7 +53,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
 def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Walks the entire results directory, parses all runs, and loads all data.
-    (UPDATED to remove ASR)
     """
     all_seller_dfs = []
     all_global_log_dfs = []
@@ -107,10 +106,8 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
             log_file = run_dir / 'training_log.csv'
             if log_file.exists():
                 try:
-                    # --- CHANGE: Only load val_acc ---
                     use_cols = ['round', 'val_acc']
                     df_log = pd.read_csv(log_file, usecols=lambda c: c in use_cols, on_bad_lines='skip')
-                    # --- CHANGE: Only check for val_acc ---
                     if 'val_acc' in df_log.columns:
                         df_log['seed_id'] = seed_id
                         df_log = df_log.assign(**scenario_params)
@@ -133,7 +130,6 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
                     **scenario_params,
                     'seed_id': seed_id,
                     'acc': final_metrics.get('acc', 0),
-                    # --- CHANGE: 'asr' line removed ---
                     'adv_sel_rate': adv_sel_rate,
                     'ben_sel_rate': ben_sel_rate
                 }
@@ -162,9 +158,9 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
 def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 1: The Core Plot
-    Plots Adversary vs. Benign selection rate over time.
+    (UPDATED to save one plot per file)
     """
-    print("Generating Plot 1: Selection Rate Learning Curves...")
+    print("Generating Plot 1: Selection Rate Learning Curves (one per file)...")
 
     if df.empty:
         print("  Skipping Plot 1: The seller time-series DataFrame is empty.")
@@ -176,93 +172,97 @@ def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
     df_plot['rolling_sel_rate'] = df_plot.groupby(group_cols)['selected'] \
                                          .transform(lambda x: x.rolling(3, min_periods=1).mean())
 
-    g = sns.FacetGrid(
-        df_plot,
-        row='defense',
-        col='threat_label',
-        height=3,
-        aspect=1.5,
-        margin_titles=True,
-        sharey=True
-    )
+    defenses = df_plot['defense'].unique()
+    threat_labels = df_plot['threat_label'].unique()
 
-    g.map_dataframe(
-        sns.lineplot,
-        x='round',
-        y='rolling_sel_rate',
-        hue='seller_type',
-        style='adaptive_mode',
-        palette={'Adversary': 'red', 'Benign': 'blue'},
-        lw=2,
-        errorbar=None
-    )
+    for defense in defenses:
+        for threat in threat_labels:
+            df_facet = df_plot[
+                (df_plot['defense'] == defense) & (df_plot['threat_label'] == threat)
+            ]
+            if df_facet.empty:
+                continue
 
-    g.set_axis_labels('Training Round', 'Selection Rate (3-round Avg)')
-    g.set_titles(col_template="{col_name}", row_template="{row_name}")
-    g.add_legend(title='Seller / Mode')
-    g.fig.suptitle('Plot 1: Attacker vs. Benign Selection Rate Over Time', y=1.03)
+            plt.figure(figsize=(10, 6))
+            ax = sns.lineplot(
+                data=df_facet,
+                x='round',
+                y='rolling_sel_rate',
+                hue='seller_type',
+                style='adaptive_mode',
+                palette={'Adversary': 'red', 'Benign': 'blue'},
+                lw=2.5,
+                errorbar=None
+            )
 
-    plot_file = output_dir / "plot1_selection_rate_curves.png"
-    plt.savefig(plot_file, bbox_inches='tight')
-    plt.clf()
-    plt.close('all')
+            ax.set_title(f'Selection Rate: {defense.upper()} vs {threat}')
+            ax.set_xlabel('Training Round')
+            ax.set_ylabel('Selection Rate (3-round Avg)')
+            ax.legend(title='Seller / Mode')
+
+            # Clean threat name for filename
+            threat_filename = threat.replace(' ', '').replace('.', '')
+            plot_file = output_dir / f"plot1_sel_rate_{defense}_{threat_filename}.png"
+            plt.savefig(plot_file, bbox_inches='tight')
+            plt.clf()
+            plt.close('all')
 
 def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 2: Global Accuracy
-    (UPDATED to only plot val_acc)
+    (UPDATED to save one plot per file)
     """
-    print("Generating Plot 2: Global Accuracy Curves...")
+    print("Generating Plot 2: Global Accuracy Curves (one per file)...")
 
     if df.empty:
         print("  Skipping Plot 2: The global time-series DataFrame is empty.")
         return
 
-    # --- CHANGE: No need to melt, as we only have 'val_acc' ---
+    defenses = df['defense'].unique()
+    threat_labels = df['threat_label'].unique()
 
-    g = sns.FacetGrid(
-        df,  # Use the original DataFrame
-        row='defense',
-        col='threat_label',
-        height=3,
-        aspect=1.5,
-        margin_titles=True,
-        sharey=True # Accuracy should be on the same scale
-    )
+    for defense in defenses:
+        for threat in threat_labels:
+            df_facet = df[
+                (df['defense'] == defense) & (df['threat_label'] == threat)
+            ]
+            if df_facet.empty:
+                continue
 
-    g.map_dataframe(
-        sns.lineplot,
-        x='round',
-        y='val_acc', # Plot 'val_acc' directly
-        hue='adaptive_mode',
-        style='adaptive_mode',
-        palette='Greens_d', # Use a green palette for accuracy
-        lw=2,
-        errorbar=None
-    )
+            plt.figure(figsize=(10, 6))
+            ax = sns.lineplot(
+                data=df_facet,
+                x='round',
+                y='val_acc',
+                hue='adaptive_mode',
+                style='adaptive_mode',
+                palette='Greens_d',
+                lw=2.5,
+                errorbar=None
+            )
 
-    g.set_axis_labels('Training Round', 'Global Accuracy')
-    g.set_titles(col_template="{col_name}", row_template="{row_name}")
-    g.add_legend(title='Adaptive Mode')
-    g.fig.suptitle('Plot 2: Global Accuracy Over Time', y=1.03)
+            ax.set_title(f'Global Accuracy: {defense.upper()} vs {threat}')
+            ax.set_xlabel('Training Round')
+            ax.set_ylabel('Global Accuracy')
+            ax.legend(title='Adaptive Mode')
 
-    plot_file = output_dir / "plot2_global_performance_curves.png"
-    plt.savefig(plot_file, bbox_inches='tight')
-    plt.clf()
-    plt.close('all')
+            threat_filename = threat.replace(' ', '').replace('.', '')
+            plot_file = output_dir / f"plot2_global_acc_{defense}_{threat_filename}.png"
+            plt.savefig(plot_file, bbox_inches='tight')
+            plt.clf()
+            plt.close('all')
 
 def plot_final_summary(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 3: The "Final" Plot
-    (UPDATED to remove ASR)
+    (UPDATED to save one figure per *defense*)
     """
-    print("Generating Plot 3: Final Effectiveness Summary...")
+    print("Generating Plot 3: Final Effectiveness Summary (one per defense)...")
 
     if df.empty:
         print("  Skipping Plot 3: The summary DataFrame is empty.")
         return
 
-    # --- CHANGE: Remove 'asr' from value_vars ---
     df_melted = df.melt(
         id_vars=['defense', 'threat_label', 'adaptive_mode', 'seed_id'],
         value_vars=['adv_sel_rate', 'ben_sel_rate', 'acc'],
@@ -270,7 +270,6 @@ def plot_final_summary(df: pd.DataFrame, output_dir: Path):
         value_name='Value'
     )
 
-    # --- CHANGE: Remove 'asr' from metric_map ---
     metric_map = {
         'adv_sel_rate': 'Adversary Selection Rate',
         'ben_sel_rate': 'Benign Selection Rate',
@@ -278,32 +277,80 @@ def plot_final_summary(df: pd.DataFrame, output_dir: Path):
     }
     df_melted['Metric'] = df_melted['Metric'].map(metric_map)
 
-    g = sns.catplot(
-        data=df_melted,
-        kind='bar',
-        x='threat_label',
-        y='Value',
-        col='Metric', # Will now be 3 columns
-        row='defense',
-        hue='adaptive_mode',
-        dodge=True,
-        height=3,
-        aspect=1.2,
-        margin_titles=True,
-        sharey=False,
-        errorbar=('ci', 95)
+    for defense in df['defense'].unique():
+        df_defense = df_melted[df_melted['defense'] == defense]
+        if df_defense.empty:
+            continue
+
+        g = sns.catplot(
+            data=df_defense,
+            kind='bar',
+            x='threat_label',
+            y='Value',
+            col='Metric', # This creates the 3 subplots
+            hue='adaptive_mode',
+            dodge=True,
+            height=4,
+            aspect=1.0,
+            margin_titles=True,
+            sharey=False,
+            errorbar=('ci', 95)
+        )
+
+        g.set_axis_labels('Threat Model', 'Final Value (avg. over seeds)')
+        g.set_titles(col_template="{col_name}")
+        g.fig.suptitle(f'Final Summary for {defense.upper()} Defense', y=1.03)
+
+        for ax in g.axes.flat:
+            for label in ax.get_xticklabels():
+                label.set_rotation(15) # Less rotation needed
+                label.set_ha('right')
+
+        plot_file = output_dir / f"plot3_final_summary_{defense}.png"
+        plt.savefig(plot_file, bbox_inches='tight')
+        plt.clf()
+        plt.close('all')
+
+def plot_martfl_analysis(df: pd.DataFrame, output_dir: Path):
+    """
+    PLOT 4: In-depth analysis for Martfl.
+    Plots gradient norm vs. round, showing selection status.
+    """
+    print("Generating Plot 4: In-Depth Martfl Gradient Norm Analysis...")
+
+    df_martfl = df[df['defense'] == 'martfl'].copy()
+
+    if df_martfl.empty:
+        print("  Skipping Plot 4: No 'martfl' data found.")
+        return
+
+    # Convert 'selected' (0/1) to 'Selected'/'Not Selected' for a clearer legend
+    df_martfl['Selection Status'] = df_martfl['selected'].apply(
+        lambda x: 'Selected' if x == 1 else 'Not Selected'
     )
 
-    g.set_axis_labels('Threat Model', 'Final Value (avg. over seeds)')
+    # Use relplot to create a faceted scatter plot
+    g = sns.relplot(
+        data=df_martfl,
+        x='round',
+        y='gradient_norm',
+        hue='seller_type',
+        style='Selection Status',
+        markers={'Selected': 'o', 'Not Selected': 'X'},
+        palette={'Adversary': 'red', 'Benign': 'blue'},
+        s=50,
+        alpha=0.7,
+        col='threat_label',
+        row='adaptive_mode',
+        height=4,
+        aspect=1.5
+    )
+
+    g.set_axis_labels('Training Round', 'Gradient Norm')
     g.set_titles(col_template="{col_name}", row_template="{row_name}")
-    g.fig.suptitle('Plot 3: Final Experiment Summary (Averaged Over Seeds)', y=1.03)
+    g.fig.suptitle('Plot 4: Martfl Analysis - Gradient Norm vs. Selection Status', y=1.03)
 
-    for ax in g.axes.flat:
-        for label in ax.get_xticklabels():
-            label.set_rotation(25)
-            label.set_ha('right')
-
-    plot_file = output_dir / "plot3_final_summary.png"
+    plot_file = output_dir / "plot4_martfl_norm_analysis.png"
     plt.savefig(plot_file, bbox_inches='tight')
     plt.clf()
     plt.close('all')
@@ -335,16 +382,18 @@ def main():
     df_summary.to_csv(csv_summary, index=False)
     print(f"✅ Saved all summary data to: {csv_summary}")
 
+    # --- Call all plotting functions ---
     plot_selection_rate_curves(df_seller_ts, output_dir)
     plot_global_performance_curves(df_global_ts, output_dir)
     plot_final_summary(df_summary, output_dir)
+    plot_martfl_analysis(df_seller_ts, output_dir) # New in-depth plot
 
     print("\n---")
     print("🔴 IMPORTANT NOTE ON STRATEGY PLOTS:")
     print("   The 'seller_metrics.csv' file does not contain the 'attack_strategy' column.")
     print("   Therefore, we CANNOT generate the 'Strategy Convergence' or 'Stealthy Blend' plots.")
     print("   To get this data, your experiment runner must save the attacker's per-round stats")
-    print("   (from 'self.last_training_stats') into the 'marketplace_report.json' as we discussed previously.")
+    print("   (from 'self.last_training_stats') into the 'marketplace_report.json'.")
     print("---")
 
     print(f"\n✅ Full analysis complete. Check the '{FIGURE_OUTPUT_DIR}' folder.")
