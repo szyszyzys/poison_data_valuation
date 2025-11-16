@@ -45,7 +45,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
                 "threat_label": threat_label
             }
         else:
-            # This is not an error, just a folder we should skip (like 'step8')
             return {"defense": "unknown"}
     except Exception as e:
         print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
@@ -54,7 +53,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
 def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Walks the entire results directory, parses all runs, and loads all data.
-    (UPDATED with on_bad_lines='skip' and stricter folder search)
     """
     all_seller_dfs = []
     all_global_log_dfs = []
@@ -63,7 +61,6 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
     base_path = Path(base_dir)
     print(f"Searching for 'step7_adaptive_*' directories in {base_path.resolve()}...")
 
-    # --- Find all STEP 7 scenario folders first ---
     scenario_folders = list(base_path.glob("step7_adaptive_*"))
     if not scenario_folders:
         print("Error: No 'step7_adaptive_*' directories found in ./results")
@@ -72,13 +69,10 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
     print(f"Found {len(scenario_folders)} 'step7_adaptive_*' base directories.")
 
     for scenario_path in scenario_folders:
-        # Parse the scenario name from the folder itself
         scenario_params = parse_scenario_name(scenario_path.name)
         if "defense" not in scenario_params or scenario_params["defense"] == "unknown":
-            # Skip folders that don't match our pattern
             continue
 
-        # Now, find all completed runs *within* this scenario folder
         marker_files = list(scenario_path.rglob('final_metrics.json'))
         if not marker_files:
             print(f"  No completed runs (no 'final_metrics.json') found in: {scenario_path.name}")
@@ -89,14 +83,12 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
             run_dir = final_metrics_file.parent
             seed_id = f"{scenario_path.name}__{run_dir.name}"
 
-            # 2. Load Time-Series: seller_metrics.csv
+            # Load Time-Series: seller_metrics.csv
             seller_file = run_dir / 'seller_metrics.csv'
-            df_seller = pd.DataFrame() # Keep an empty df in case
+            df_seller = pd.DataFrame()
             if seller_file.exists():
                 try:
-                    # --- FIX 1: Add on_bad_lines='skip' ---
                     df_seller = pd.read_csv(seller_file, on_bad_lines='skip')
-                    # ------------------------------------
 
                     df_seller['seed_id'] = seed_id
                     df_seller = df_seller.assign(**scenario_params)
@@ -105,18 +97,16 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
                     )
                     all_seller_dfs.append(df_seller)
                 except Exception as e:
-                    # Catch other errors, e.g., empty file after skipping
                     if 'EmptyDataError' in str(e):
                          print(f"    Warning: {seller_file} is empty or all lines were bad.")
                     else:
                          print(f"    Error loading {seller_file}: {e}")
 
-            # 3. Load Time-Series: training_log.csv (for global ASR/ACC)
+            # Load Time-Series: training_log.csv
             log_file = run_dir / 'training_log.csv'
             if log_file.exists():
                 try:
                     use_cols = ['round', 'val_acc', 'asr']
-                    # Add on_bad_lines='skip' here too, just in case
                     df_log = pd.read_csv(log_file, usecols=lambda c: c in use_cols, on_bad_lines='skip')
                     if 'val_acc' in df_log.columns and 'asr' in df_log.columns:
                         df_log['seed_id'] = seed_id
@@ -125,7 +115,7 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
                 except Exception as e:
                     print(f"    Error loading {log_file}: {e}")
 
-            # 4. Load Summary Data: final_metrics.json + seller_metrics aggregate
+            # Load Summary Data
             try:
                 with open(final_metrics_file, 'r') as f:
                     final_metrics = json.load(f)
@@ -148,7 +138,6 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
             except Exception as e:
                 print(f"    Error loading {final_metrics_file}: {e}")
 
-    # --- Add safety checks before concatenation ---
     if not all_summary_rows:
         print("\nError: No valid 'step7' data was successfully loaded.")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
@@ -170,28 +159,27 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
 def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 1: The Core Plot
-    (UPDATED with safety check)
+    (UPDATED with fix for TypeError)
     """
     print("Generating Plot 1: Selection Rate Learning Curves...")
 
-    # --- FIX 2: Add empty check ---
     if df.empty:
-        print("  Skipping Plot 1: The seller time-series DataFrame is empty (all seller_metrics.csv files may have failed to load).")
+        print("  Skipping Plot 1: The seller time-series DataFrame is empty.")
         return
-    # --- End Fix ---
 
-    # Calculate rolling average per-seed, per-seller-type
     df_plot = df.copy()
     df_plot = df_plot.sort_values(by=['seed_id', 'seller_type', 'round'])
     group_cols = ['seed_id', 'seller_type', 'defense', 'threat_label', 'adaptive_mode']
     df_plot['rolling_sel_rate'] = df_plot.groupby(group_cols)['selected'] \
                                          .transform(lambda x: x.rolling(3, min_periods=1).mean())
 
+    # --- FIX: Move 'style' mapping to the FacetGrid constructor ---
     g = sns.FacetGrid(
         df_plot,
         row='defense',
         col='threat_label',
         hue='seller_type',
+        style='adaptive_mode',  # <-- MOVED 'style' HERE
         palette={'Adversary': 'red', 'Benign': 'blue'},
         height=3,
         aspect=1.5,
@@ -199,18 +187,18 @@ def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
         sharey=True
     )
 
+    # --- FIX: Remove 'style' from map_dataframe ---
     g.map_dataframe(
         sns.lineplot,
         x='round',
         y='rolling_sel_rate',
-        style='adaptive_mode',
         lw=2,
-        errorbar=None # Turn off CI for speed and clarity
+        errorbar=None
     )
 
     g.set_axis_labels('Training Round', 'Selection Rate (3-round Avg)')
     g.set_titles(col_template="{col_name}", row_template="{row_name}")
-    g.add_legend(title='Seller Type')
+    g.add_legend(title='Seller / Mode') # Updated legend title
     g.fig.suptitle('Plot 1: Attacker vs. Benign Selection Rate Over Time', y=1.03)
 
     plot_file = output_dir / "plot1_selection_rate_curves.png"
@@ -221,15 +209,13 @@ def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
 def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 2: Global ASR and Accuracy
-    (UPDATED with safety check)
+    (UPDATED with fix for TypeError)
     """
     print("Generating Plot 2: Global Performance Curves...")
 
-    # --- FIX 2: Add empty check ---
     if df.empty:
         print("  Skipping Plot 2: The global time-series DataFrame is empty.")
         return
-    # --- End Fix ---
 
     df_melted = df.melt(
         id_vars=['round', 'seed_id', 'defense', 'threat_label', 'adaptive_mode'],
@@ -238,11 +224,13 @@ def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
         value_name='Value'
     )
 
+    # --- FIX: Move 'style' mapping to the FacetGrid constructor ---
     g = sns.FacetGrid(
         df_melted,
         row='defense',
         col='threat_label',
         hue='Metric',
+        style='adaptive_mode',  # <-- MOVED 'style' HERE
         palette={'val_acc': 'green', 'asr': 'purple'},
         height=3,
         aspect=1.5,
@@ -250,18 +238,18 @@ def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
         sharey=False
     )
 
+    # --- FIX: Remove 'style' from map_dataframe ---
     g.map_dataframe(
         sns.lineplot,
         x='round',
         y='Value',
-        style='adaptive_mode',
         lw=2,
-        errorbar=None # Turn off CI for speed and clarity
+        errorbar=None
     )
 
     g.set_axis_labels('Training Round', 'Value')
     g.set_titles(col_template="{col_name}", row_template="{row_name}")
-    g.add_legend(title='Global Metric')
+    g.add_legend(title='Global Metric / Mode') # Updated legend title
     g.fig.suptitle('Plot 2: Global Accuracy and ASR Over Time', y=1.03)
 
     plot_file = output_dir / "plot2_global_performance_curves.png"
@@ -272,15 +260,12 @@ def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
 def plot_final_summary(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 3: The "Final" Plot
-    (UPDATED with safety check)
     """
     print("Generating Plot 3: Final Effectiveness Summary...")
 
-    # --- FIX 2: Add empty check ---
     if df.empty:
         print("  Skipping Plot 3: The summary DataFrame is empty.")
         return
-    # --- End Fix ---
 
     df_melted = df.melt(
         id_vars=['defense', 'threat_label', 'adaptive_mode', 'seed_id'],
@@ -310,7 +295,7 @@ def plot_final_summary(df: pd.DataFrame, output_dir: Path):
         aspect=1.2,
         margin_titles=True,
         sharey=False,
-        errorbar=('ci', 95) # Show 95% confidence intervals
+        errorbar=('ci', 95)
     )
 
     g.set_axis_labels('Threat Model', 'Final Value (avg. over seeds)')
