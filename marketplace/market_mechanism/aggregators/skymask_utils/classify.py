@@ -1,64 +1,68 @@
 import numpy as np
 from sklearn import mixture
 from sklearn.decomposition import PCA
-
+from sklearn.preprocessing import StandardScaler  # <-- Import StandardScaler
 
 def GMM2(mask_list):
     if not mask_list or len(mask_list) < 2:
         print("Warning: GMM requires at least 2 samples. Returning default labels.")
-        return [0] * len(mask_list)  # Mark all as outliers if not enough data
+        return [0] * len(mask_list)
 
-    # Ensure input is a numpy array for sklearn
     try:
-        mask_array = np.array(mask_list)
-        if mask_array.ndim == 1:  # If PCA gets 1D data (e.g., only 1 sample after filtering)
+        mask_array = np.array(mask_list).astype('float64') # <-- Optional: Use float64 for precision
+
+        if mask_array.ndim == 1:
             print("Warning: PCA/GMM input is 1D. Adjusting.")
-            # Handle 1D case: maybe skip PCA or return default
-            # For now, let's assume GMM can handle 1D directly if n_components=1 or handle error
-            # Let's return default for simplicity in this edge case
             return [0] * len(mask_list)
 
-        # Proceed with PCA only if input is suitable
-        if mask_array.shape[1] < 2:  # Check if feature dimension is less than n_components
+        if mask_array.shape[1] < 2:
             print("Warning: Feature dimension < 2. Skipping PCA.")
             newX = mask_array
-            n_components_gmm = min(2, mask_array.shape[0])  # Adjust GMM components based on samples
+            n_components_gmm = min(2, mask_array.shape[0])
         else:
             pca = PCA(n_components=2)
             newX = pca.fit_transform(mask_array)
             n_components_gmm = 2
 
-        # Ensure n_components <= n_samples for GMM
+        # --- FIX 1: Scale the data before GMM ---
+        # GMMs are sensitive to feature scales
+        scaler = StandardScaler()
+        newX = scaler.fit_transform(newX)
+        # ------------------------------------------
+
         n_components_gmm = min(n_components_gmm, newX.shape[0])
         if n_components_gmm < 1:
             print("Warning: Not enough samples for GMM after PCA. Returning defaults.")
             return [0] * len(mask_list)
 
-        gmm = mixture.GaussianMixture(n_components=n_components_gmm, random_state=0).fit(newX)  # Added random_state
+        # --- FIX 2: Add reg_covar ---
+        # This prevents the "ill-defined empirical covariance" error
+        gmm = mixture.GaussianMixture(
+            n_components=n_components_gmm,
+            random_state=0,
+            reg_covar=1e-6  # <-- This is the key fix
+        ).fit(newX)
+        # ----------------------------
+
         y_pred = gmm.predict(newX)
 
-        # --- Post-processing logic ---
-        # If GMM used only 1 component, all predictions will be 0. Interpret appropriately.
         if n_components_gmm == 1:
-            print("GMM ran with 1 component. Interpretation might need adjustment.")
-            # Decide if 1 component means all inliers or requires different handling. Assume inliers for now.
+            print("GMM ran with 1 component. Assuming all inliers.")
             return [1] * len(mask_list)
 
-        # Recalculate benign/mali based on actual predictions
         benign = np.sum(y_pred == 1)
         mali = np.sum(y_pred == 0)
 
-        # Check if the majority class needs flipping - THIS LOGIC IS SUSPICIOUS
-        # The original code flips if the *last* element is 0. This seems arbitrary.
-        # A more common approach is to assume the larger cluster is benign (1).
-        if mali > benign:  # If cluster 0 is larger, flip labels so 1 represents the larger cluster
+        # Your logic to flip labels so 1 is the majority (benign) cluster
+        if mali > benign:
             print("Flipping GMM labels: Assuming larger cluster is benign (1).")
             y_pred = 1 - y_pred  # Flip 0s to 1s and 1s to 0s
 
-        return y_pred.tolist()  # Return as list
+        return y_pred.tolist()
 
     except Exception as e:
         print(f"Error during GMM/PCA: {e}")
-        print(f"Input mask_list shapes: {[m.shape for m in mask_list]}")
-        # Handle error: maybe return all outliers
+        # Print shape of the *array* that failed, not the list
+        if 'mask_array' in locals():
+            print(f"Input mask_array shape: {mask_array.shape}")
         return [0] * len(mask_list)
