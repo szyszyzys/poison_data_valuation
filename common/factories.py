@@ -130,6 +130,7 @@ class SellerFactory:
             return AdaptiveAttackerSeller(
                 **base_kwargs,
                 adversary_config=self.cfg.adversary_seller_config,
+                model_type=self.cfg.experiment.dataset_type,
                 **self.runtime_kwargs
             )
         # --- UPDATED: Adversary Creation Logic ---
