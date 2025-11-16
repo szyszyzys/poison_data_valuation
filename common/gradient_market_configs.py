@@ -314,26 +314,39 @@ class TextPropertySkewParams:
 class AdaptiveAttackConfig:
     """Configuration for the adaptive learning attacker."""
     is_active: bool = False
-    # The primary mode of attack: either manipulate the gradient or poison the data
-    attack_mode: Literal["gradient_manipulation", "data_poisoning"] = "gradient_manipulation"
 
     # --- General Learning Parameters ---
+
+    # Set a valid default and use Literal for type safety
+    threat_model: Literal["black_box", "gradient_inversion", "oracle"] = "black_box"
+
+    # The primary mode of attack
+    attack_mode: Literal["gradient_manipulation", "data_poisoning"] = "gradient_manipulation"
+
     exploration_rounds: int = 20
 
-    # --- Gradient Manipulation Strategies (if mode is 'gradient_manipulation') ---
+    # --- Threat Model Specific ---
+
+    # [FIX] ADDED: Required by Oracle and Gradient Inversion models
+    mimic_strength: float = 0.5
+
+    # --- Gradient Manipulation Strategies ---
+
+    # [FIX] RENAMED "scale_up" to "reduce_norm" to match your class
     gradient_strategies: List[str] = field(
-        default_factory=lambda: ["honest", "scale_up", "add_noise"]
+        default_factory=lambda: ["honest", "reduce_norm", "add_noise", "stealthy_blend"]
     )
-    scale_factor: float = 1.5
+    scale_factor: float = 0.5  # A value < 1.0 matches "reduce_norm"
     noise_level: float = 0.01
 
-    # --- Data Poisoning Strategies (if mode is 'data_poisoning') ---
-    # These map to poison types you already have configured
-    data_strategies: List[str] = field(
-        default_factory=lambda: ["honest", "label_flip"]  # e.g., 'label_flip', 'image_backdoor'
-    )
-    threat_model: str = "None"
+    # --- Data Poisoning Strategies ---
 
+    data_strategies: List[str] = field(
+        default_factory=lambda: ["honest", "subsample_clean"]
+    )
+
+    # [FIX] ADDED: Required by "subsample_clean" strategy
+    subset_ratio: float = 0.5
 
 @dataclass
 class AdversarySellerConfig:
