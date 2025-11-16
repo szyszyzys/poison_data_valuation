@@ -152,14 +152,14 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
 
     return df_seller_timeseries, df_global_timeseries, df_summary
 
-# ========================================================================
+# =================================_=======================================
 # PLOTTING FUNCTIONS
-# ========================================================================
+# =================================_=======================================
 
 def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 1: The Core Plot
-    (UPDATED with fix for TypeError)
+    (UPDATED with FacetGrid fix)
     """
     print("Generating Plot 1: Selection Rate Learning Curves...")
 
@@ -173,32 +173,33 @@ def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
     df_plot['rolling_sel_rate'] = df_plot.groupby(group_cols)['selected'] \
                                          .transform(lambda x: x.rolling(3, min_periods=1).mean())
 
-    # --- FIX: Move 'style' mapping to the FacetGrid constructor ---
+    # --- FIX: Define ONLY grid structure in FacetGrid ---
     g = sns.FacetGrid(
         df_plot,
         row='defense',
         col='threat_label',
-        hue='seller_type',
-        style='adaptive_mode',  # <-- MOVED 'style' HERE
-        palette={'Adversary': 'red', 'Benign': 'blue'},
         height=3,
         aspect=1.5,
         margin_titles=True,
         sharey=True
     )
 
-    # --- FIX: Remove 'style' from map_dataframe ---
+    # --- FIX: Define ALL plot mappings (x, y, hue, style) inside map_dataframe ---
     g.map_dataframe(
         sns.lineplot,
         x='round',
         y='rolling_sel_rate',
+        hue='seller_type',
+        style='adaptive_mode',
+        palette={'Adversary': 'red', 'Benign': 'blue'},
         lw=2,
         errorbar=None
     )
+    # --- End Fix ---
 
     g.set_axis_labels('Training Round', 'Selection Rate (3-round Avg)')
     g.set_titles(col_template="{col_name}", row_template="{row_name}")
-    g.add_legend(title='Seller / Mode') # Updated legend title
+    g.add_legend(title='Seller / Mode') # This will now create a combined legend
     g.fig.suptitle('Plot 1: Attacker vs. Benign Selection Rate Over Time', y=1.03)
 
     plot_file = output_dir / "plot1_selection_rate_curves.png"
@@ -209,7 +210,7 @@ def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
 def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 2: Global ASR and Accuracy
-    (UPDATED with fix for TypeError)
+    (UPDATED with FacetGrid fix)
     """
     print("Generating Plot 2: Global Performance Curves...")
 
@@ -224,32 +225,33 @@ def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
         value_name='Value'
     )
 
-    # --- FIX: Move 'style' mapping to the FacetGrid constructor ---
+    # --- FIX: Define ONLY grid structure in FacetGrid ---
     g = sns.FacetGrid(
         df_melted,
         row='defense',
         col='threat_label',
-        hue='Metric',
-        style='adaptive_mode',  # <-- MOVED 'style' HERE
-        palette={'val_acc': 'green', 'asr': 'purple'},
         height=3,
         aspect=1.5,
         margin_titles=True,
         sharey=False
     )
 
-    # --- FIX: Remove 'style' from map_dataframe ---
+    # --- FIX: Define ALL plot mappings (x, y, hue, style) inside map_dataframe ---
     g.map_dataframe(
         sns.lineplot,
         x='round',
         y='Value',
+        hue='Metric',
+        style='adaptive_mode',
+        palette={'val_acc': 'green', 'asr': 'purple'},
         lw=2,
         errorbar=None
     )
+    # --- End Fix ---
 
     g.set_axis_labels('Training Round', 'Value')
     g.set_titles(col_template="{col_name}", row_template="{row_name}")
-    g.add_legend(title='Global Metric / Mode') # Updated legend title
+    g.add_legend(title='Global Metric / Mode') # This will now create a combined legend
     g.fig.suptitle('Plot 2: Global Accuracy and ASR Over Time', y=1.03)
 
     plot_file = output_dir / "plot2_global_performance_curves.png"
