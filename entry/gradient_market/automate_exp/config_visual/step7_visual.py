@@ -67,12 +67,15 @@ def collect_all_time_series_results(base_dir: str) -> pd.DataFrame:
     print(f"Found {len(scenario_folders)} scenario base directories.")
 
     for scenario_path in scenario_folders:
+        print(f"\n--- Processing Scenario: {scenario_path.name} ---") # DEBUG
         scenario_params = parse_scenario_name(scenario_path.name)
 
         report_files = list(scenario_path.rglob("marketplace_report.json"))
+        print(f"  Found {len(report_files)} marketplace_report.json files.") # DEBUG
 
         for i, report_file in enumerate(report_files):
             seed_id = f"seed_{i}"
+            print(f"    Parsing file: {report_file.relative_to(base_path)}") # DEBUG
             try:
                 with open(report_file, 'r') as f:
                     report_data = json.load(f)
@@ -86,9 +89,20 @@ def collect_all_time_series_results(base_dir: str) -> pd.DataFrame:
 
                 # 2. Parse per-seller history
                 history = report_data.get('seller_history', {})
+                if not history: # DEBUG
+                    print("    ❌ WARNING: 'seller_history' key is missing or empty in this file.")
+                    continue
+
+                print(f"    Found history for {len(history.keys())} sellers.") # DEBUG
+                sellers_processed_count = 0
                 for seller_id, rounds_history in history.items():
                     seller_type = 'Adversary' if seller_id == adv_id else 'Benign'
 
+                    if not rounds_history: # DEBUG
+                         print(f"    WARNING: Seller {seller_id} has an empty history list.")
+                         continue
+
+                    sellers_processed_count += 1
                     for round_stat in rounds_history:
                         all_runs_data.append({
                             **scenario_params,
@@ -101,11 +115,12 @@ def collect_all_time_series_results(base_dir: str) -> pd.DataFrame:
                             'blend_phase': round_stat.get('blend_phase'),
                             'blend_attack_intensity': round_stat.get('blend_attack_intensity')
                         })
+                print(f"    Successfully processed data for {sellers_processed_count} sellers.") # DEBUG
             except Exception as e:
-                print(f"Error parsing {report_file}: {e}")
+                print(f"    ❌ ERROR parsing {report_file}: {e}")
 
     if not all_runs_data:
-        print("Error: No time-series data was successfully processed.")
+        print("\nError: No time-series data was successfully processed (all_runs_data is empty).")
         return pd.DataFrame()
 
     df = pd.DataFrame(all_runs_data)
