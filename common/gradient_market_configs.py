@@ -332,6 +332,7 @@ class AdaptiveAttackConfig:
     data_strategies: List[str] = field(
         default_factory=lambda: ["honest", "label_flip"]  # e.g., 'label_flip', 'image_backdoor'
     )
+    threat_model: str = "None"
 
 
 @dataclass
