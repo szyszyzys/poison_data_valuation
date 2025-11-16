@@ -54,96 +54,109 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
 def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Walks the entire results directory, parses all runs, and loads all data.
+    (UPDATED to be more robust)
     """
     all_seller_dfs = []
     all_global_log_dfs = []
     all_summary_rows = []
 
     base_path = Path(base_dir)
-    print(f"Searching for all completed runs in {base_path.resolve()}...")
+    print(f"Searching for 'step7_adaptive_*' directories in {base_path.resolve()}...")
 
-    # Use rglob to find all 'final_metrics.json' files, which mark a completed run
-    marker_files = list(base_path.rglob('final_metrics.json'))
-    print(f"Found {len(marker_files)} completed runs.")
+    # --- FIX 1: Find all STEP 7 scenario folders first ---
+    scenario_folders = list(base_path.glob("step7_adaptive_*"))
+    if not scenario_folders:
+        print("Error: No 'step7_adaptive_*' directories found in ./results")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    for final_metrics_file in marker_files:
-        run_dir = final_metrics_file.parent
-        seed_id = run_dir.name
+    print(f"Found {len(scenario_folders)} 'step7_adaptive_*' base directories.")
 
-        # 1. Find the scenario parameters by walking up the tree
-        scenario_params = {}
-        for parent in run_dir.parents:
-            if parent.name.startswith('step7_adaptive_'):
-                scenario_params = parse_scenario_name(parent.name)
-                break
-
+    for scenario_path in scenario_folders:
+        # Parse the scenario name from the folder itself
+        scenario_params = parse_scenario_name(scenario_path.name)
         if "defense" not in scenario_params:
-            print(f"Warning: Could not find scenario for run: {run_dir}")
+            print(f"Warning: Could not parse scenario name: {scenario_path.name}")
             continue
 
-        # 2. Load Time-Series: seller_metrics.csv
-        seller_file = run_dir / 'seller_metrics.csv'
-        df_seller = pd.DataFrame() # Keep an empty df in case
-        if seller_file.exists():
+        # Now, find all completed runs *within* this scenario folder
+        marker_files = list(scenario_path.rglob('final_metrics.json'))
+        if not marker_files:
+            print(f"  No completed runs (no 'final_metrics.json') found in: {scenario_path.name}")
+            continue
+
+        print(f"  Found {len(marker_files)} completed runs in: {scenario_path.name}")
+        for final_metrics_file in marker_files:
+            run_dir = final_metrics_file.parent
+            # Create a unique ID from the scenario and the run
+            seed_id = f"{scenario_path.name}__{run_dir.name}"
+
+            # --- We already have scenario_params, no need to walk up ---
+
+            # 2. Load Time-Series: seller_metrics.csv
+            seller_file = run_dir / 'seller_metrics.csv'
+            df_seller = pd.DataFrame() # Keep an empty df in case
+            if seller_file.exists():
+                try:
+                    df_seller = pd.read_csv(seller_file)
+                    df_seller['seed_id'] = seed_id
+                    df_seller = df_seller.assign(**scenario_params)
+                    df_seller['seller_type'] = df_seller['seller_id'].apply(
+                        lambda x: 'Adversary' if str(x).startswith('adv_') else 'Benign'
+                    )
+                    all_seller_dfs.append(df_seller)
+                except Exception as e:
+                    print(f"    Error loading {seller_file}: {e}")
+
+            # 3. Load Time-Series: training_log.csv (for global ASR/ACC)
+            log_file = run_dir / 'training_log.csv'
+            if log_file.exists():
+                try:
+                    use_cols = ['round', 'val_acc', 'asr']
+                    df_log = pd.read_csv(log_file, usecols=lambda c: c in use_cols)
+                    if 'val_acc' in df_log.columns and 'asr' in df_log.columns:
+                        df_log['seed_id'] = seed_id
+                        df_log = df_log.assign(**scenario_params)
+                        all_global_log_dfs.append(df_log)
+                except Exception as e:
+                    print(f"    Error loading {log_file}: {e}")
+
+            # 4. Load Summary Data: final_metrics.json + seller_metrics aggregate
             try:
-                df_seller = pd.read_csv(seller_file)
-                df_seller['seed_id'] = seed_id
-                df_seller = df_seller.assign(**scenario_params)
-                df_seller['seller_type'] = df_seller['seller_id'].apply(
-                    lambda x: 'Adversary' if str(x).startswith('adv_') else 'Benign'
-                )
-                all_seller_dfs.append(df_seller)
+                with open(final_metrics_file, 'r') as f:
+                    final_metrics = json.load(f)
+
+                adv_sel_rate = 0.0
+                ben_sel_rate = 0.0
+                if not df_seller.empty:
+                    adv_sel_rate = df_seller[df_seller['seller_type'] == 'Adversary']['selected'].mean()
+                    ben_sel_rate = df_seller[df_seller['seller_type'] == 'Benign']['selected'].mean()
+
+                summary_row = {
+                    **scenario_params,
+                    'seed_id': seed_id,
+                    'acc': final_metrics.get('acc', 0),
+                    'asr': final_metrics.get('asr', 0),
+                    'adv_sel_rate': adv_sel_rate,
+                    'ben_sel_rate': ben_sel_rate
+                }
+                all_summary_rows.append(summary_row)
             except Exception as e:
-                print(f"Error loading {seller_file}: {e}")
+                print(f"    Error loading {final_metrics_file}: {e}")
 
-        # 3. Load Time-Series: training_log.csv (for global ASR/ACC)
-        log_file = run_dir / 'training_log.csv'
-        if log_file.exists():
-            try:
-                use_cols = ['round', 'val_acc', 'asr']
-                df_log = pd.read_csv(log_file, usecols=lambda c: c in use_cols)
-                if 'val_acc' in df_log.columns and 'asr' in df_log.columns:
-                    df_log['seed_id'] = seed_id
-                    df_log = df_log.assign(**scenario_params)
-                    all_global_log_dfs.append(df_log)
-            except Exception as e:
-                print(f"Error loading {log_file}: {e}")
-
-        # 4. Load Summary Data: final_metrics.json + seller_metrics aggregate
-        try:
-            with open(final_metrics_file, 'r') as f:
-                final_metrics = json.load(f)
-
-            # Calculate overall selection rates from the seller data we loaded
-            adv_sel_rate = 0.0
-            ben_sel_rate = 0.0
-            if not df_seller.empty:
-                adv_sel_rate = df_seller[df_seller['seller_type'] == 'Adversary']['selected'].mean()
-                ben_sel_rate = df_seller[df_seller['seller_type'] == 'Benign']['selected'].mean()
-
-            summary_row = {
-                **scenario_params,
-                'seed_id': seed_id,
-                'acc': final_metrics.get('acc', 0),
-                'asr': final_metrics.get('asr', 0),
-                'adv_sel_rate': adv_sel_rate,
-                'ben_sel_rate': ben_sel_rate
-            }
-            all_summary_rows.append(summary_row)
-        except Exception as e:
-            print(f"Error loading {final_metrics_file}: {e}")
-
-    # --- Concatenate all DataFrames ---
+    # --- FIX 2: Add safety checks before concatenation ---
     if not all_summary_rows:
         print("Error: No data was successfully loaded.")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    df_seller_timeseries = pd.concat(all_seller_dfs, ignore_index=True)
-    df_global_timeseries = pd.concat(all_global_log_dfs, ignore_index=True)
+    df_seller_timeseries = (
+        pd.concat(all_seller_dfs, ignore_index=True) if all_seller_dfs else pd.DataFrame()
+    )
+    df_global_timeseries = (
+        pd.concat(all_global_log_dfs, ignore_index=True) if all_global_log_dfs else pd.DataFrame()
+    )
     df_summary = pd.DataFrame(all_summary_rows)
 
     return df_seller_timeseries, df_global_timeseries, df_summary
-
 # =CAL======================================================================
 # PLOTTING FUNCTIONS
 # ========================================================================
