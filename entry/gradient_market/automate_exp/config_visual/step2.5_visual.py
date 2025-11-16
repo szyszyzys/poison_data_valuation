@@ -192,12 +192,19 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     base_path = Path(base_dir)
     print(f"Searching for results in {base_path.resolve()}...")
 
-    scenario_folders = [f for f in base_path.glob("step2.5_find_hps_*") if f.is_dir()]
+    # --- THIS IS THE MODIFIED LINE ---
+    # It now filters out any folder ending in '_no_clip'
+    scenario_folders = [
+        f for f in base_path.glob("step2.5_find_hps_*")
+        if f.is_dir() and not f.name.endswith("_no_clip")
+    ]
+    # -----------------------------------
+
     if not scenario_folders:
-        print(f"Error: No 'step2.5_find_hps_*' directories found directly inside {base_path}.")
+        print(f"Error: No 'step2.5_find_hps_*' directories (excluding '_no_clip') found directly inside {base_path}.")
         return pd.DataFrame()
 
-    print(f"Found {len(scenario_folders)} scenario base directories.")
+    print(f"Found {len(scenario_folders)} scenario base directories to process.")
 
     for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
@@ -247,7 +254,6 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     print("Done calculating thresholds.")
 
     return df
-
 
 def plot_platform_usability_metrics(df: pd.DataFrame, output_dir: Path):
     """
