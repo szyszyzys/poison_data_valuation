@@ -36,20 +36,7 @@ TUNING_GRIDS = {
         "aggregation.martfl.max_k": [3, 7],
         "aggregation.clip_norm": [5.0, 10.0, None],
     },
-    "skymask": {
-        "aggregation.skymask.mask_epochs": [20],
 
-        # Test paper's LR (0.5) and implementation's LRs (1e7, 1e8)
-        "aggregation.skymask.mask_lr": [0.01, 0.5, 1e7],
-
-        # Test implementation's clip vs. normal clip vs. no clip
-        "aggregation.skymask.mask_clip": [1e-7, 10.0],
-
-        "aggregation.skymask.mask_threshold": [0.5, 0.9],
-
-        # Test clipping vs. not clipping the *client* gradients
-        "aggregation.clip_norm": [10.0],
-    }
 }
 ATTACK_TYPES_TO_TUNE = ["backdoor", "labelflip"]
 TUNING_TARGETS_STEP3 = [
