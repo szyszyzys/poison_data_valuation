@@ -228,11 +228,33 @@ class ServerAttackConfig:
 
 @dataclass
 class DrowningAttackConfig:
-    """Configuration for the Targeted Drowning (Centroid Poisoning) Attack."""
+    """
+    Configuration for the 'stealthy_blend' attack used by AdaptiveAttackerSeller.
+    """
     is_active: bool = False
-    mimicry_rounds: int = 10  # Number of rounds to act honestly to build trust
-    drift_factor: float = 0.1  # How much to shift the gradient each drift round
 
+    # --- Parameters used by AdaptiveAttackerSeller __init__ ---
+
+    # Number of rounds to act honestly and learn honest gradient stats
+    mimicry_rounds: int = 10
+
+    # [THE FIX] The *initial* intensity for the blend attack (will be adapted later)
+    attack_intensity: float = 0.1
+
+    # List of layer names to target (e.g., "fc.weight"). If empty, it targets top 20%.
+    target_layers: List[str] = field(default_factory=list)
+
+    # --- Parameters used by the stealthy_blend strategy ---
+
+    # The type of malicious gradient to compute
+    attack_type: Literal["backdoor", "targeted_poisoning"] = "backdoor"
+
+    # How to blend the malicious gradient with the honest one
+    replacement_strategy: Literal["layer_wise", "global_blend"] = "global_blend"
+
+    # --- Note ---
+    # The 'drift_factor' field from your old config is not used by
+    # the AdaptiveAttackerSeller and has been removed to avoid confusion.
 
 @dataclass
 class SybilDrowningConfig:
