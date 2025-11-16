@@ -1,377 +1,412 @@
-import json
-import os
-import re
-from pathlib import Path
-from typing import Dict, Any
-
-import matplotlib.pyplot as plt
 import pandas as pd
+import json
+import re
 import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+from pathlib import Path
+from typing import List, Dict, Any, Tuple
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./step2.5_figures"
+FIGURE_OUTPUT_DIR = "./step7_full_analysis_figures"
 
-# Define the relative 'usability' threshold
-RELATIVE_ACC_THRESHOLD = 0.90
-
-
+# Regex to parse 'step7_adaptive_black_box_gradient_manipulation_martfl_CIFAR100'
+SCENARIO_PATTERN = re.compile(
+    r'step7_adaptive_([a-z_]+)_([a-z_]+)_([a-zA-Z0-9_]+)_(.*)'
+)
 # ---------------------
 
-
-def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
+def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
     """
-    Parses the HP suffix folder name (e.g., 'opt_Adam_lr_0.001_epochs_2')
-    """
-    hps = {}
-    pattern = r'opt_(\w+)_lr_([0-9\.]+)_epochs_([0-9]+)'
-    match = re.search(pattern, hp_folder_name)
-
-    if match:
-        hps['optimizer'] = match.group(1)
-        hps['learning_rate'] = float(match.group(2))
-        hps['local_epochs'] = int(match.group(3))
-    else:
-        print(f"Warning: Could not parse HP suffix '{hp_folder_name}'")
-    return hps
-
-
-def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
-    """
-    Parses the base scenario name (e.g., 'step2.5_find_hps_martfl_image_CIFAR10')
+    Parses the experiment scenario name from the folder name.
     """
     try:
-        # Use the regex parser to avoid errors with underscores
-        pattern = r'step2\.5_find_hps_(fedavg|martfl|fltrust|skymask)_(image|text|tabular)_(.+)'
-        match = re.search(pattern, scenario_name)
-
+        match = SCENARIO_PATTERN.search(scenario_name)
         if match:
+            threat_model = match.group(1)
+            adaptive_mode = match.group(2)
+            defense = match.group(3)
+            dataset = match.group(4)
+
+            threat_model_map = {
+                'black_box': '1. Black-Box',
+                'gradient_inversion': '2. Grad-Inversion',
+                'oracle': '3. Oracle'
+            }
+            threat_label = threat_model_map.get(threat_model, threat_model)
+
             return {
-                "scenario": scenario_name,
-                "defense": match.group(1),
-                "modality": match.group(2),
-                "dataset": match.group(3),
+                "threat_model": threat_model,
+                "adaptive_mode": adaptive_mode,
+                "defense": defense,
+                "dataset": dataset,
+                "threat_label": threat_label
             }
         else:
-            raise ValueError(f"Pattern not matched for: {scenario_name}")
-
+            return {"defense": "unknown"}
     except Exception as e:
         print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
-        return {"scenario": scenario_name}
+        return {"defense": "unknown"}
 
-
-def plot_platform_usability_metrics_separate_pdfs(df: pd.DataFrame, output_dir: Path):
+def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    (NEW VERSION)
-    Plots the 3 key platform metrics in *separate PDF files*, one for
-    each metric and each dataset, for easier import into reports.
+    Walks the entire results directory, parses all runs, and loads all data.
+    (UPDATED to filter skymask by dataset)
     """
-    print("\n--- Plotting Platform Usability Metrics (Separate PDFs) ---")
+    all_seller_dfs = []
+    all_global_log_dfs = []
+    all_summary_rows = []
 
-    if df.empty:
-        print("No data to plot.")
-        return
-
-    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
-
-    # --- Data aggregation is the same ---
-    # 1. Usability Rate
-    df_usability = df.groupby(['defense', 'dataset'])['platform_usable'].mean().reset_index()
-    df_usability['Value'] = df_usability['platform_usable'] * 100
-    df_usability['Metric'] = '1. Usability Rate (%) (Higher is Better)'
-
-    # 2. Average Performance (of *usable* runs)
-    df_perf = df[df['platform_usable'] == True].groupby(['defense', 'dataset'])['acc'].mean().reset_index()
-    df_perf['Value'] = df_perf['acc'] * 100
-    df_perf['Metric'] = '2. Avg. Usable Accuracy (%) (Higher is Better)'
-
-    # 3. Stability (Std Dev of *all* runs)
-    df_stability = df.groupby(['defense', 'dataset'])['acc'].std().reset_index()
-    df_stability['Value'] = df_stability['acc'] * 100
-    df_stability['Metric'] = '3. Accuracy Instability (Std Dev) (Lower is Better)'
-
-    # Combine all 3 metrics into one DataFrame
-    df_final = pd.concat([df_usability, df_perf, df_stability], ignore_index=True)
-
-    # --- Save the analysis CSV (same as before) ---
-    csv_output_path = output_dir / "step2.5_platform_metrics_summary.csv"
-    try:
-        # Pivot for a wide, readable CSV
-        df_pivot = df_final.pivot_table(index=['dataset', 'defense'], columns='Metric', values='Value')
-        df_pivot.to_csv(csv_output_path, float_format="%.2f")
-        print(f"\n✅ Successfully saved platform metrics summary to: {csv_output_path}\n")
-    except Exception as e:
-        print(f"Could not save CSV: {e}")
-    # -----------------------------
-
-    # --- NEW PLOTTING LOOP: Loop over each dataset AND each metric ---
-
-    all_datasets = df_final['dataset'].unique()
-    all_metrics = df_final['Metric'].unique()
-
-    plot_count = 0
-    for dataset in all_datasets:
-        for metric in all_metrics:
-
-            # Filter data for this specific plot
-            plot_df = df_final[
-                (df_final['dataset'] == dataset) &
-                (df_final['Metric'] == metric)
-                ]
-
-            if plot_df.empty:
-                print(f"  Skipping {dataset} / {metric} (no data)")
-                continue
-
-            # Create a simple "safe" name for the file
-            # e.g., "1. Usability Rate..." -> "1_Usability"
-            safe_metric_name = metric.split(' ')[0].replace('.', '') + "_" + metric.split(' ')[1].replace('.', '')
-
-            print(f"  Plotting: {dataset} - {safe_metric_name}")
-
-            # 1. Create a new, single figure for this plot
-            plt.figure(figsize=(7, 5))  # Good size for a single PDF plot
-
-            # 2. Use sns.barplot on the new figure's axis
-            ax = sns.barplot(
-                data=plot_df,
-                x='defense',
-                y='Value',
-                order=defense_order,
-                palette='viridis'
-            )
-
-            # 3. Set titles and labels
-            ax.set_title(f"{metric}\nDataset: {dataset}", fontsize=14)
-            ax.set_xlabel("Defense", fontsize=12)
-            ax.set_ylabel("Value", fontsize=12)
-
-            # Set y-axis to start at 0
-            ax.set_ylim(bottom=0)
-
-            # 4. Add annotations
-            for p in ax.patches:
-                ax.annotate(f'{p.get_height():.1f}',
-                            (p.get_x() + p.get_width() / 2., p.get_height()),
-                            ha='center', va='center',
-                            xytext=(0, 5),
-                            textcoords='offset points',
-                            fontsize=9)
-
-            # 5. Define the PDF filename
-            plot_file = output_dir / f"plot_{dataset}_{safe_metric_name}.pdf"
-
-            # 6. Save as PDF
-            plt.savefig(plot_file, bbox_inches='tight', format='pdf')
-            plt.clf()
-            plt.close('all')  # Free up memory
-            plot_count += 1
-
-    print(f"\nDone. Generated {plot_count} separate PDF plots.")
-
-
-def load_run_data(metrics_file: Path) -> Dict[str, Any]:
-    """
-    Loads key data from final_metrics.json
-    """
-    run_data = {}
-    try:
-        with open(metrics_file, 'r') as f:
-            metrics = json.load(f)
-        run_data['acc'] = metrics.get('acc', 0)
-        run_data['asr'] = metrics.get('asr', 0)
-        return run_data
-    except Exception as e:
-        print(f"Error loading data from {metrics_file.parent}: {e}")
-        return {}
-
-
-def collect_all_results(base_dir: str) -> pd.DataFrame:
-    """Walks the results directory and aggregates all run data."""
-    all_runs = []
     base_path = Path(base_dir)
-    print(f"Searching for results in {base_path.resolve()}...")
+    print(f"Searching for 'step7_adaptive_*' directories in {base_path.resolve()}...")
 
-    # --- THIS IS THE MODIFIED LINE ---
-    # It now filters out any folder ending in '_no_clip'
-    scenario_folders = [
-        f for f in base_path.glob("step2.5_find_hps_*")
-        if f.is_dir() and not f.name.endswith("_no_clip")
-    ]
-    # -----------------------------------
-
+    scenario_folders = list(base_path.glob("step7_adaptive_*"))
     if not scenario_folders:
-        print(f"Error: No 'step2.5_find_hps_*' directories (excluding '_no_clip') found directly inside {base_path}.")
-        return pd.DataFrame()
+        print("Error: No 'step7_adaptive_*' directories found in ./results")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    print(f"Found {len(scenario_folders)} scenario base directories to process.")
+    print(f"Found {len(scenario_folders)} 'step7_adaptive_*' base directories.")
 
     for scenario_path in scenario_folders:
-        scenario_name = scenario_path.name
-        run_scenario = parse_scenario_name(scenario_name)
+        scenario_params = parse_scenario_name(scenario_path.name)
+        if "defense" not in scenario_params or scenario_params["defense"] == "unknown":
+            continue
 
-        for metrics_file in scenario_path.rglob("final_metrics.json"):
+        # --- NEW FILTER ---
+        # If the defense is 'skymask', check its dataset.
+        if scenario_params.get('defense') == 'skymask':
+            dataset = scenario_params.get('dataset', '').upper()
+            if dataset not in ['CIFAR10', 'CIFAR100']:
+                print(f"  Skipping 'skymask' scenario for dataset: {scenario_params.get('dataset')}")
+                continue # Skip this entire scenario folder
+        # --- END NEW FILTER ---
+
+        marker_files = list(scenario_path.rglob('final_metrics.json'))
+        if not marker_files:
+            print(f"  No completed runs (no 'final_metrics.json') found in: {scenario_path.name}")
+            continue
+
+        print(f"  Found {len(marker_files)} completed runs in: {scenario_path.name}")
+        for final_metrics_file in marker_files:
+            run_dir = final_metrics_file.parent
+            seed_id = f"{scenario_path.name}__{run_dir.name}"
+
+            # Load Time-Series: seller_metrics.csv
+            seller_file = run_dir / 'seller_metrics.csv'
+            df_seller = pd.DataFrame()
+            if seller_file.exists():
+                try:
+                    df_seller = pd.read_csv(seller_file, on_bad_lines='skip')
+
+                    df_seller['seed_id'] = seed_id
+                    df_seller = df_seller.assign(**scenario_params)
+                    df_seller['seller_type'] = df_seller['seller_id'].apply(
+                        lambda x: 'Adversary' if str(x).startswith('adv_') else 'Benign'
+                    )
+                    all_seller_dfs.append(df_seller)
+                except Exception as e:
+                    if 'EmptyDataError' in str(e):
+                         print(f"    Warning: {seller_file} is empty or all lines were bad.")
+                    else:
+                         print(f"    Error loading {seller_file}: {e}")
+
+            # Load Time-Series: training_log.csv (for global ACC only)
+            log_file = run_dir / 'training_log.csv'
+            if log_file.exists():
+                try:
+                    use_cols = ['round', 'val_acc']
+                    df_log = pd.read_csv(log_file, usecols=lambda c: c in use_cols, on_bad_lines='skip')
+                    if 'val_acc' in df_log.columns:
+                        df_log['seed_id'] = seed_id
+                        df_log = df_log.assign(**scenario_params)
+                        all_global_log_dfs.append(df_log)
+                except Exception as e:
+                    print(f"    Error loading {log_file}: {e}")
+
+            # Load Summary Data (without ASR)
             try:
-                relative_parts = metrics_file.parent.relative_to(scenario_path).parts
-                if not relative_parts:
-                    continue
+                with open(final_metrics_file, 'r') as f:
+                    final_metrics = json.load(f)
 
-                hp_folder_name = relative_parts[0]
+                adv_sel_rate = 0.0
+                ben_sel_rate = 0.0
+                if not df_seller.empty:
+                    adv_sel_rate = df_seller[df_seller['seller_type'] == 'Adversary']['selected'].mean()
+                    ben_sel_rate = df_seller[df_seller['seller_type'] == 'Benign']['selected'].mean()
 
-                run_hps = parse_hp_suffix(hp_folder_name)
-                run_metrics = load_run_data(metrics_file)
-
-                if run_metrics:
-                    all_runs.append({
-                        **run_scenario,
-                        **run_hps,
-                        **run_metrics,
-                    })
+                summary_row = {
+                    **scenario_params,
+                    'seed_id': seed_id,
+                    'acc': final_metrics.get('acc', 0),
+                    'adv_sel_rate': adv_sel_rate,
+                    'ben_sel_rate': ben_sel_rate
+                }
+                all_summary_rows.append(summary_row)
             except Exception as e:
-                print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
+                print(f"    Error loading {final_metrics_file}: {e}")
 
-    if not all_runs:
-        print("Error: No 'final_metrics.json' files were successfully processed.")
-        return pd.DataFrame()
+    if not all_summary_rows:
+        print("\nError: No valid 'step7' data was successfully loaded.")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    df = pd.DataFrame(all_runs)
+    df_seller_timeseries = (
+        pd.concat(all_seller_dfs, ignore_index=True) if all_seller_dfs else pd.DataFrame()
+    )
+    df_global_timeseries = (
+        pd.concat(all_global_log_dfs, ignore_index=True) if all_global_log_dfs else pd.DataFrame()
+    )
+    df_summary = pd.DataFrame(all_summary_rows)
 
-    # --- THIS IS THE KEY NEW LOGIC ---
-    print("\nCalculating relative 'Platform Usable' thresholds...")
+    return df_seller_timeseries, df_global_timeseries, df_summary
 
-    # 1. Find the "gold standard" (max acc) for each dataset
-    dataset_max_acc = df.groupby('dataset')['acc'].max().to_dict()
+# ========================================================================
+# PLOTTING FUNCTIONS
+# ========================================================================
 
-    # 2. Create a new column in the df for this max_acc
-    df['dataset_max_acc'] = df['dataset'].map(dataset_max_acc)
-
-    # 3. Define the usability threshold for *each row* relative to its dataset's max
-    df['platform_usable_threshold'] = df['dataset_max_acc'] * RELATIVE_ACC_THRESHOLD
-
-    # 4. Define "Usable" from the platform's (accuracy-only) perspective
-    df['platform_usable'] = (df['acc'] >= df['platform_usable_threshold'])
-
-    print("Done calculating thresholds.")
-
-    return df
-
-def plot_platform_usability_metrics(df: pd.DataFrame, output_dir: Path):
+def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
     """
-    (REWRITTEN)
-    Plots the 3 key platform metrics in *separate, more readable files*,
-    one for each dataset.
+    PLOT 1: The Core Plot
+    (UPDATED to save one plot per file)
     """
-    print("\n--- Plotting Platform Usability Metrics (Split by Dataset) ---")
+    print("Generating Plot 1: Selection Rate Learning Curves (one per file)...")
 
     if df.empty:
-        print("No data to plot.")
+        print("  Skipping Plot 1: The seller time-series DataFrame is empty.")
         return
 
-    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+    df_plot = df.copy()
+    df_plot = df_plot.sort_values(by=['seed_id', 'seller_type', 'round'])
+    group_cols = ['seed_id', 'seller_type', 'defense', 'threat_label', 'adaptive_mode']
+    df_plot['rolling_sel_rate'] = df_plot.groupby(group_cols)['selected'] \
+                                         .transform(lambda x: x.rolling(3, min_periods=1).mean())
 
-    # Calculate the three metrics
-    # 1. Usability Rate
-    df_usability = df.groupby(['defense', 'dataset'])['platform_usable'].mean().reset_index()
-    df_usability['Value'] = df_usability['platform_usable'] * 100  # Convert to %
-    df_usability['Metric'] = '1. Usability Rate (%) (Higher is Better)'
+    defenses = df_plot['defense'].unique()
+    threat_labels = df_plot['threat_label'].unique()
 
-    # 2. Average Performance (of *usable* runs)
-    df_perf = df[df['platform_usable'] == True].groupby(['defense', 'dataset'])['acc'].mean().reset_index()
-    df_perf['Value'] = df_perf['acc'] * 100  # Convert to %
-    df_perf['Metric'] = '2. Avg. Usable Accuracy (%) (Higher is Better)'
+    for defense in defenses:
+        for threat in threat_labels:
+            df_facet = df_plot[
+                (df_plot['defense'] == defense) & (df_plot['threat_label'] == threat)
+            ]
+            if df_facet.empty:
+                continue
 
-    # 3. Stability (Std Dev of *all* runs)
-    df_stability = df.groupby(['defense', 'dataset'])['acc'].std().reset_index()
-    df_stability['Value'] = df_stability['acc'] * 100  # Convert to %
-    df_stability['Metric'] = '3. Accuracy Instability (Std Dev) (Lower is Better)'
+            plt.figure(figsize=(10, 6))
+            ax = sns.lineplot(
+                data=df_facet,
+                x='round',
+                y='rolling_sel_rate',
+                hue='seller_type',
+                style='adaptive_mode',
+                palette={'Adversary': 'red', 'Benign': 'blue'},
+                lw=2.5,
+                errorbar=None
+            )
 
-    # Combine all 3 metrics into one DataFrame
-    df_final = pd.concat([df_usability, df_perf, df_stability], ignore_index=True)
+            ax.set_title(f'Selection Rate: {defense.upper()} vs {threat}')
+            ax.set_xlabel('Training Round')
+            ax.set_ylabel('Selection Rate (3-round Avg)')
+            ax.legend(title='Seller / Mode')
 
-    # --- Save the analysis CSV ---
-    csv_output_path = output_dir / "step2.5_platform_metrics_summary.csv"
-    try:
-        # Pivot for a wide, readable CSV
-        df_pivot = df_final.pivot_table(index=['dataset', 'defense'], columns='Metric', values='Value')
-        df_pivot.to_csv(csv_output_path, float_format="%.2f")
-        print(f"\n✅ Successfully saved platform metrics summary to: {csv_output_path}\n")
-    except Exception as e:
-        print(f"Could not save CSV: {e}")
-    # -----------------------------
+            # Clean threat name for filename
+            threat_filename = threat.replace(' ', '').replace('.', '')
+            plot_file = output_dir / f"plot1_sel_rate_{defense}_{threat_filename}.png"
+            plt.savefig(plot_file, bbox_inches='tight')
+            plt.clf()
+            plt.close('all')
 
-    # --- NEW PLOTTING LOOP ---
-    # Loop over each dataset and create a separate figure
-    for dataset in df_final['dataset'].unique():
-        print(f"  Plotting all 3 metrics for: {dataset}")
+def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
+    """
+    PLOT 2: Global Accuracy
+    (UPDATED to save one plot per file)
+    """
+    print("Generating Plot 2: Global Accuracy Curves (one per file)...")
 
-        dataset_df = df_final[df_final['dataset'] == dataset]
+    if df.empty:
+        print("  Skipping Plot 2: The global time-series DataFrame is empty.")
+        return
+
+    defenses = df['defense'].unique()
+    threat_labels = df['threat_label'].unique()
+
+    for defense in defenses:
+        for threat in threat_labels:
+            df_facet = df[
+                (df['defense'] == defense) & (df['threat_label'] == threat)
+            ]
+            if df_facet.empty:
+                continue
+
+            plt.figure(figsize=(10, 6))
+            ax = sns.lineplot(
+                data=df_facet,
+                x='round',
+                y='val_acc',
+                hue='adaptive_mode',
+                style='adaptive_mode',
+                palette='Greens_d',
+                lw=2.5,
+                errorbar=None
+            )
+
+            ax.set_title(f'Global Accuracy: {defense.upper()} vs {threat}')
+            ax.set_xlabel('Training Round')
+            ax.set_ylabel('Global Accuracy')
+            ax.legend(title='Adaptive Mode')
+
+            threat_filename = threat.replace(' ', '').replace('.', '')
+            plot_file = output_dir / f"plot2_global_acc_{defense}_{threat_filename}.png"
+            plt.savefig(plot_file, bbox_inches='tight')
+            plt.clf()
+            plt.close('all')
+
+def plot_final_summary(df: pd.DataFrame, output_dir: Path):
+    """
+    PLOT 3: The "Final" Plot
+    (UPDATED to save one figure per *defense*)
+    """
+    print("Generating Plot 3: Final Effectiveness Summary (one per defense)...")
+
+    if df.empty:
+        print("  Skipping Plot 3: The summary DataFrame is empty.")
+        return
+
+    df_melted = df.melt(
+        id_vars=['defense', 'threat_label', 'adaptive_mode', 'seed_id'],
+        value_vars=['adv_sel_rate', 'ben_sel_rate', 'acc'],
+        var_name='Metric',
+        value_name='Value'
+    )
+
+    metric_map = {
+        'adv_sel_rate': 'Adversary Selection Rate',
+        'ben_sel_rate': 'Benign Selection Rate',
+        'acc': 'Final Global Accuracy'
+    }
+    df_melted['Metric'] = df_melted['Metric'].map(metric_map)
+
+    for defense in df['defense'].unique():
+        df_defense = df_melted[df_melted['defense'] == defense]
+        if df_defense.empty:
+            continue
 
         g = sns.catplot(
-            data=dataset_df,
+            data=df_defense,
             kind='bar',
-            x='defense',
+            x='threat_label',
             y='Value',
-            col='Metric',  # Create 3 columns: Usability, Avg Acc, Instability
-            order=defense_order,
-            palette='viridis',
+            col='Metric', # This creates the 3 subplots
+            hue='adaptive_mode',
+            dodge=True,
             height=4,
-            aspect=1.1,
-            sharey=False  # Each metric has its own scale
+            aspect=1.0,
+            margin_titles=True,
+            sharey=False,
+            errorbar=('ci', 95)
         )
 
-        g.fig.suptitle(f"Platform-Centric Usability for {dataset} (vs. {RELATIVE_ACC_THRESHOLD * 100}% of Max Acc)",
-                       y=1.05)
-        g.set_axis_labels("Defense", "Value")
+        g.set_axis_labels('Threat Model', 'Final Value (avg. over seeds)')
         g.set_titles(col_template="{col_name}")
+        g.fig.suptitle(f'Final Summary for {defense.upper()} Defense', y=1.03)
 
-        # Add annotations
         for ax in g.axes.flat:
-            for p in ax.patches:
-                ax.annotate(f'{p.get_height():.1f}',
-                            (p.get_x() + p.get_width() / 2., p.get_height()),
-                            ha='center', va='center',
-                            xytext=(0, 5),
-                            textcoords='offset points',
-                            fontsize=9)
+            for label in ax.get_xticklabels():
+                label.set_rotation(15) # Less rotation needed
+                label.set_ha('right')
 
-        # Save with the dataset name in the file
-        plot_file = output_dir / f"plot_platform_metrics_{dataset}.png"
+        plot_file = output_dir / f"plot3_final_summary_{defense}.png"
         plt.savefig(plot_file, bbox_inches='tight')
-        plt.clf();
+        plt.clf()
         plt.close('all')
 
-    print("Done plotting all datasets.")
+def plot_martfl_analysis(df: pd.DataFrame, output_dir: Path):
+    """
+    PLOT 4: In-depth analysis for Martfl.
+    Plots gradient norm vs. round, showing selection status.
+    """
+    print("Generating Plot 4: In-Depth Martfl Gradient Norm Analysis...")
 
+    df_martfl = df[df['defense'] == 'martfl'].copy()
 
-def annotate_bars(data, **kwargs):
-    """Helper function to add text labels to bars."""
-    ax = plt.gca()
-    for p in ax.patches:
-        ax.annotate(f'{p.get_height():.1f}',
-                    (p.get_x() + p.get_width() / 2., p.get_height()),
-                    ha='center', va='center',
-                    xytext=(0, 5),
-                    textcoords='offset points',
-                    fontsize=9)
+    if df_martfl.empty:
+        print("  Skipping Plot 4: No 'martfl' data found.")
+        return
 
+    # Convert 'selected' (0/1) to 'Selected'/'Not Selected' for a clearer legend
+    df_martfl['Selection Status'] = df_martfl['selected'].apply(
+        lambda x: 'Selected' if x == 1 else 'Not Selected'
+    )
+
+    # Use relplot to create a faceted scatter plot
+    g = sns.relplot(
+        data=df_martfl,
+        x='round',
+        y='gradient_norm',
+        hue='seller_type',
+        style='Selection Status',
+        markers={'Selected': 'o', 'Not Selected': 'X'},
+        palette={'Adversary': 'red', 'Benign': 'blue'},
+        s=50,
+        alpha=0.7,
+        col='threat_label',
+        row='adaptive_mode',
+        height=4,
+        aspect=1.5
+    )
+
+    g.set_axis_labels('Training Round', 'Gradient Norm')
+    g.set_titles(col_template="{col_name}", row_template="{row_name}")
+    g.fig.suptitle('Plot 4: Martfl Analysis - Gradient Norm vs. Selection Status', y=1.03)
+
+    plot_file = output_dir / "plot4_martfl_norm_analysis.png"
+    plt.savefig(plot_file, bbox_inches='tight')
+    plt.clf()
+    plt.close('all')
+
+# ========================================================================
+# MAIN EXECUTION
+# ========================================================================
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
-    print(f"Plots will be saved to: {output_dir.resolve()}")
+    print(f"Full analysis figures will be saved to: {output_dir.resolve()}")
 
-    df = collect_all_results(BASE_RESULTS_DIR)
+    df_seller_ts, df_global_ts, df_summary = collect_all_results(BASE_RESULTS_DIR)
 
-    if df.empty:
-        print("No results data was loaded. Exiting.")
+    if df_summary.empty:
+        print("\nNo data was loaded. Exiting.")
         return
 
-    # --- Call the new PDF-generating plotter ---
-    plot_platform_usability_metrics_separate_pdfs(df, output_dir)
-    # ----------------------------------------
+    csv_seller_ts = output_dir / "all_runs_seller_timeseries.csv"
+    df_seller_ts.to_csv(csv_seller_ts, index=False)
+    print(f"\n✅ Saved all seller time-series data to: {csv_seller_ts}")
 
-    print("\nAnalysis complete. Check 'step2.5_figures' folder for plots and CSV.")
+    csv_global_ts = output_dir / "all_runs_global_timeseries.csv"
+    df_global_ts.to_csv(csv_global_ts, index=False)
+    print(f"✅ Saved all global time-series data to: {csv_global_ts}")
 
+    csv_summary = output_dir / "all_runs_summary.csv"
+    df_summary.to_csv(csv_summary, index=False)
+    print(f"✅ Saved all summary data to: {csv_summary}")
+
+    # --- Call all plotting functions ---
+    plot_selection_rate_curves(df_seller_ts, output_dir)
+    plot_global_performance_curves(df_global_ts, output_dir)
+    plot_final_summary(df_summary, output_dir)
+    plot_martfl_analysis(df_seller_ts, output_dir) # New in-depth plot
+
+    print("\n---")
+    print("🔴 IMPORTANT NOTE ON STRATEGY PLOTS:")
+    print("   The 'seller_metrics.csv' file does not contain the 'attack_strategy' column.")
+    print("   Therefore, we CANNOT generate the 'Strategy Convergence' or 'Stealthy Blend' plots.")
+    print("   To get this data, your experiment runner must save the attacker's per-round stats")
+    print("   (from 'self.last_training_stats') into the 'marketplace_report.json'.")
+    print("---")
+
+    print(f"\n✅ Full analysis complete. Check the '{FIGURE_OUTPUT_DIR}' folder.")
 
 if __name__ == "__main__":
     main()
