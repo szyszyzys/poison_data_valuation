@@ -53,6 +53,7 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
 def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Walks the entire results directory, parses all runs, and loads all data.
+    (UPDATED to remove ASR)
     """
     all_seller_dfs = []
     all_global_log_dfs = []
@@ -102,20 +103,22 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
                     else:
                          print(f"    Error loading {seller_file}: {e}")
 
-            # Load Time-Series: training_log.csv
+            # Load Time-Series: training_log.csv (for global ACC only)
             log_file = run_dir / 'training_log.csv'
             if log_file.exists():
                 try:
-                    use_cols = ['round', 'val_acc', 'asr']
+                    # --- CHANGE: Only load val_acc ---
+                    use_cols = ['round', 'val_acc']
                     df_log = pd.read_csv(log_file, usecols=lambda c: c in use_cols, on_bad_lines='skip')
-                    if 'val_acc' in df_log.columns and 'asr' in df_log.columns:
+                    # --- CHANGE: Only check for val_acc ---
+                    if 'val_acc' in df_log.columns:
                         df_log['seed_id'] = seed_id
                         df_log = df_log.assign(**scenario_params)
                         all_global_log_dfs.append(df_log)
                 except Exception as e:
                     print(f"    Error loading {log_file}: {e}")
 
-            # Load Summary Data
+            # Load Summary Data (without ASR)
             try:
                 with open(final_metrics_file, 'r') as f:
                     final_metrics = json.load(f)
@@ -130,7 +133,7 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
                     **scenario_params,
                     'seed_id': seed_id,
                     'acc': final_metrics.get('acc', 0),
-                    'asr': final_metrics.get('asr', 0),
+                    # --- CHANGE: 'asr' line removed ---
                     'adv_sel_rate': adv_sel_rate,
                     'ben_sel_rate': ben_sel_rate
                 }
@@ -152,14 +155,14 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
 
     return df_seller_timeseries, df_global_timeseries, df_summary
 
-# =================================_=======================================
+# ========================================================================
 # PLOTTING FUNCTIONS
-# =================================_=======================================
+# ========================================================================
 
 def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 1: The Core Plot
-    (UPDATED with FacetGrid fix)
+    Plots Adversary vs. Benign selection rate over time.
     """
     print("Generating Plot 1: Selection Rate Learning Curves...")
 
@@ -173,7 +176,6 @@ def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
     df_plot['rolling_sel_rate'] = df_plot.groupby(group_cols)['selected'] \
                                          .transform(lambda x: x.rolling(3, min_periods=1).mean())
 
-    # --- FIX: Define ONLY grid structure in FacetGrid ---
     g = sns.FacetGrid(
         df_plot,
         row='defense',
@@ -184,7 +186,6 @@ def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
         sharey=True
     )
 
-    # --- FIX: Define ALL plot mappings (x, y, hue, style) inside map_dataframe ---
     g.map_dataframe(
         sns.lineplot,
         x='round',
@@ -195,11 +196,10 @@ def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
         lw=2,
         errorbar=None
     )
-    # --- End Fix ---
 
     g.set_axis_labels('Training Round', 'Selection Rate (3-round Avg)')
     g.set_titles(col_template="{col_name}", row_template="{row_name}")
-    g.add_legend(title='Seller / Mode') # This will now create a combined legend
+    g.add_legend(title='Seller / Mode')
     g.fig.suptitle('Plot 1: Attacker vs. Benign Selection Rate Over Time', y=1.03)
 
     plot_file = output_dir / "plot1_selection_rate_curves.png"
@@ -209,50 +209,42 @@ def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
 
 def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
     """
-    PLOT 2: Global ASR and Accuracy
-    (UPDATED with FacetGrid fix)
+    PLOT 2: Global Accuracy
+    (UPDATED to only plot val_acc)
     """
-    print("Generating Plot 2: Global Performance Curves...")
+    print("Generating Plot 2: Global Accuracy Curves...")
 
     if df.empty:
         print("  Skipping Plot 2: The global time-series DataFrame is empty.")
         return
 
-    df_melted = df.melt(
-        id_vars=['round', 'seed_id', 'defense', 'threat_label', 'adaptive_mode'],
-        value_vars=['val_acc', 'asr'],
-        var_name='Metric',
-        value_name='Value'
-    )
+    # --- CHANGE: No need to melt, as we only have 'val_acc' ---
 
-    # --- FIX: Define ONLY grid structure in FacetGrid ---
     g = sns.FacetGrid(
-        df_melted,
+        df,  # Use the original DataFrame
         row='defense',
         col='threat_label',
         height=3,
         aspect=1.5,
         margin_titles=True,
-        sharey=False
+        sharey=True # Accuracy should be on the same scale
     )
 
-    # --- FIX: Define ALL plot mappings (x, y, hue, style) inside map_dataframe ---
     g.map_dataframe(
         sns.lineplot,
         x='round',
-        y='Value',
-        hue='Metric',
+        y='val_acc', # Plot 'val_acc' directly
+        hue='adaptive_mode',
         style='adaptive_mode',
-        palette={'val_acc': 'green', 'asr': 'purple'},
+        palette='Greens_d', # Use a green palette for accuracy
         lw=2,
         errorbar=None
     )
-    # --- End Fix ---
 
-    g.set_axis_labels('Training Round', 'Value')
+    g.set_axis_labels('Training Round', 'Global Accuracy')
     g.set_titles(col_template="{col_name}", row_template="{row_name}")
-    g.add_legend(title='Global Metric / Mode') # This will now create a combined legend
-    g.fig.suptitle('Plot 2: Global Accuracy and ASR Over Time', y=1.03)
+    g.add_legend(title='Adaptive Mode')
+    g.fig.suptitle('Plot 2: Global Accuracy Over Time', y=1.03)
 
     plot_file = output_dir / "plot2_global_performance_curves.png"
     plt.savefig(plot_file, bbox_inches='tight')
@@ -262,6 +254,7 @@ def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
 def plot_final_summary(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 3: The "Final" Plot
+    (UPDATED to remove ASR)
     """
     print("Generating Plot 3: Final Effectiveness Summary...")
 
@@ -269,17 +262,18 @@ def plot_final_summary(df: pd.DataFrame, output_dir: Path):
         print("  Skipping Plot 3: The summary DataFrame is empty.")
         return
 
+    # --- CHANGE: Remove 'asr' from value_vars ---
     df_melted = df.melt(
         id_vars=['defense', 'threat_label', 'adaptive_mode', 'seed_id'],
-        value_vars=['adv_sel_rate', 'ben_sel_rate', 'asr', 'acc'],
+        value_vars=['adv_sel_rate', 'ben_sel_rate', 'acc'],
         var_name='Metric',
         value_name='Value'
     )
 
+    # --- CHANGE: Remove 'asr' from metric_map ---
     metric_map = {
         'adv_sel_rate': 'Adversary Selection Rate',
         'ben_sel_rate': 'Benign Selection Rate',
-        'asr': 'Final Attack Success Rate (ASR)',
         'acc': 'Final Global Accuracy'
     }
     df_melted['Metric'] = df_melted['Metric'].map(metric_map)
@@ -289,7 +283,7 @@ def plot_final_summary(df: pd.DataFrame, output_dir: Path):
         kind='bar',
         x='threat_label',
         y='Value',
-        col='Metric',
+        col='Metric', # Will now be 3 columns
         row='defense',
         hue='adaptive_mode',
         dodge=True,
