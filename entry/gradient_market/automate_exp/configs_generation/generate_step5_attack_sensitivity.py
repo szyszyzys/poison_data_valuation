@@ -124,26 +124,43 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     print(f"Found {len(scenario_folders)} scenario base directories.")
 
     parsed_count = 0
+    metrics_found_count = 0  # --- DEBUG ---
+
     for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
         run_scenario = parse_scenario_name(scenario_name)
 
-        # If parsing failed, run_scenario will be None. We skip this folder.
         if run_scenario is None:
+            # This would have printed a warning from parse_scenario_name
             continue
+
+        # --- DEBUG ---
+        print(f"\nProcessing Scenario: {scenario_name}")
+        print(f"  -> Parsed as: {run_scenario}")
 
         parsed_count += 1
 
-        for metrics_file in scenario_path.rglob("final_metrics.json"):
+        # --- DEBUG ---
+        files_in_scenario = list(scenario_path.rglob("final_metrics.json"))
+        if not files_in_scenario:
+            print(f"  -> !! WARNING: No 'final_metrics.json' files found in {scenario_name}")
+            continue
+
+        for metrics_file in files_in_scenario:
             try:
-                # This logic is confirmed correct by your file path
+                metrics_found_count += 1  # --- DEBUG ---
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
                 if not relative_parts:
+                    print(f"  -> Skipping metric file with no relative path: {metrics_file}")
                     continue
 
-                hp_folder_name = relative_parts[0]  # This will be 'adv_0.0_poison_0.5'
-
+                hp_folder_name = relative_parts[0]
                 run_hps = parse_hp_suffix(hp_folder_name)
+
+                if not run_hps:
+                    print(f"  -> Skipping metric file due to HP parse fail: {hp_folder_name}")
+                    continue
+
                 run_metrics = load_run_data(metrics_file)
 
                 if run_metrics:
@@ -153,10 +170,18 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                         **run_metrics,
                         "hp_suffix": hp_folder_name
                     })
+                else:
+                    print(f"  -> Skipping metric file, load_run_data failed: {metrics_file}")
+
             except Exception as e:
                 print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
 
+    print(f"\n--- DEBUG SUMMARY ---")
     print(f"Successfully parsed {parsed_count} scenario folders.")
+    print(f"Found a total of {metrics_found_count} 'final_metrics.json' files.")
+    print(f"Aggregated {len(all_runs)} total runs into the DataFrame.")
+    print(f"--- END DEBUG ---")
+
     if not all_runs:
         print("Error: No 'final_metrics.json' files were successfully processed.")
         return pd.DataFrame()
