@@ -1,16 +1,17 @@
-import pandas as pd
 import json
+import os
 import re
-import seaborn as sns
+from pathlib import Path
+from typing import Dict, Any
+
 import matplotlib.pyplot as plt
 import numpy as np
-import os
-from pathlib import Path
-from typing import List, Dict, Any
+import pandas as pd
+import seaborn as sns
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./step5_figures"
+FIGURE_OUTPUT_DIR = "./figures/step5_figures"
 
 
 # --- End Configuration ---
@@ -33,16 +34,27 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
 
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
-    """Parses the base scenario name (e.g., 'step5_atk_sens_adv_martfl_backdoor_image')"""
+    """
+    (FIXED) Parses the base scenario name using regex.
+    e.g., 'step5_atk_sens_adv_martfl_backdoor_image_CIFAR100'
+    """
     try:
-        parts = scenario_name.split('_')
-        return {
-            "scenario": scenario_name,
-            "sweep_type": parts[3],  # 'adv' or 'poison'
-            "defense": parts[4],
-            "attack": parts[5],
-            "modality": parts[6],
-        }
+        # --- THIS IS THE ROBUST REGEX ---
+        pattern = r'step5_atk_sens_(adv|poison)_(fedavg|martfl|fltrust|skymask)_(backdoor|labelflip)_(image|text|tabular)_(.+)'
+        match = re.search(pattern, scenario_name)
+
+        if match:
+            return {
+                "scenario": scenario_name,
+                "sweep_type": match.group(1),  # 'adv' or 'poison'
+                "defense": match.group(2),
+                "attack": match.group(3),
+                "modality": match.group(4),
+                "dataset": match.group(5),  # Added dataset
+            }
+        else:
+            raise ValueError(f"Pattern not matched for: {scenario_name}")
+
     except Exception as e:
         print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
         return {"scenario": scenario_name}
@@ -126,19 +138,22 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     return df
 
 
-def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, output_dir: Path):
+def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, dataset: str, output_dir: Path):
     """
-    Generates the multi-panel line plots for robustness.
+    (UPDATED)
+    Generates the multi-panel line plots for robustness, now
+    including 'adv_selection_rate'.
     """
-    print(f"\n--- Plotting Robustness vs. '{x_metric}' (for {attack_type} attack) ---")
+    print(f"\n--- Plotting Robustness vs. '{x_metric}' (for {attack_type} on {dataset}) ---")
 
     # --- THIS IS THE UPDATED METRIC LIST ---
     if attack_type == 'backdoor':
-        # For backdoor, we care about acc, asr, fairness, and stability
-        metrics_to_plot = ['acc', 'asr', 'benign_selection_rate', 'rounds']
+        # For backdoor, we want the full dashboard
+        metrics_to_plot = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate', 'rounds']
     elif attack_type == 'labelflip':
         # For labelflip, 'asr' is not used. 'acc' *is* the defense metric.
-        metrics_to_plot = ['acc', 'benign_selection_rate', 'rounds']
+        # Selection rates are still very important.
+        metrics_to_plot = ['acc', 'benign_selection_rate', 'adv_selection_rate', 'rounds']
     else:
         print(f"Skipping plot for unknown attack type: {attack_type}")
         return
@@ -157,9 +172,20 @@ def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, ou
         value_name='Value'
     )
 
+    # Convert rates to percentages for nicer y-axis
+    rate_metrics = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']
+    plot_df['Value'] = plot_df.apply(
+        lambda row: row['Value'] * 100 if row['Metric'] in rate_metrics else row['Value'],
+        axis=1
+    )
+    # Add (%) to metric names
+    plot_df['Metric'] = plot_df['Metric'].apply(
+        lambda m: f'{m} (%)' if m in rate_metrics else m
+    )
+
     # Calculate grid size, ensuring we have max 2 columns
-    n_metrics = len(metrics_to_plot)
-    col_wrap = 2 if n_metrics > 1 else 1
+    n_metrics = len(plot_df['Metric'].unique())
+    col_wrap = 3 if n_metrics > 2 else 2  # Allow 3 columns for 5-6 plots
 
     g = sns.relplot(
         data=plot_df,
@@ -170,22 +196,23 @@ def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, ou
         col='Metric',
         kind='line',
         col_wrap=col_wrap,  # Use dynamic col_wrap
-        height=4,
-        aspect=1.2,
+        height=3.5,
+        aspect=1.3,
         facet_kws={'sharey': False},
         markers=True,
         dashes=False
     )
 
-    g.fig.suptitle(f'Defense Robustness vs. {x_metric.replace("_", " ").title()} ({attack_type.title()} Attack)',
-                   y=1.05)
+    g.fig.suptitle(f'Defense Robustness vs. {x_metric.replace("_", " ").title()} ({attack_type.title()} on {dataset})',
+                   y=1.08)
     g.set_axis_labels(x_metric.replace("_", " ").title(), "Value")
     g.set_titles(col_template="{col_name}")
 
-    plot_file = output_dir / f"plot_robustness_{attack_type.upper()}_vs_{x_metric}.png"
-    g.fig.savefig(plot_file)
+    plot_file = output_dir / f"plot_robustness_{attack_type}_{dataset}_vs_{x_metric}.pdf"
+    g.fig.savefig(plot_file, bbox_inches='tight', format='pdf')
     print(f"Saved plot: {plot_file}")
     plt.clf()
+    plt.close('all')
 
 
 def main():
@@ -198,24 +225,29 @@ def main():
     if df.empty:
         return
 
-    attack_types = df['attack'].unique()
+    # --- UPDATED LOOP: Iterate over dataset and attack ---
+    for dataset in df['dataset'].unique():
+        for attack in df['attack'].unique():
 
-    for attack in attack_types:
-        attack_df = df[df['attack'] == attack].copy()
+            # Filter for this specific scenario
+            scenario_df = df[(df['dataset'] == dataset) & (df['attack'] == attack)].copy()
 
-        # Plot 1: Sweep vs. Adversary Rate
-        adv_rate_df = attack_df[attack_df['sweep_type'] == 'adv']
-        if not adv_rate_df.empty:
-            plot_sensitivity_lines(adv_rate_df, 'adv_rate', attack, output_dir)
-        else:
-            print(f"No data found for {attack} vs. adv_rate sweep.")
+            if scenario_df.empty:
+                continue
 
-        # Plot 2: Sweep vs. Poison Rate
-        poison_rate_df = attack_df[attack_df['sweep_type'] == 'poison']
-        if not poison_rate_df.empty:
-            plot_sensitivity_lines(poison_rate_df, 'poison_rate', attack, output_dir)
-        else:
-            print(f"No data found for {attack} vs. poison_rate sweep.")
+            # Plot 1: Sweep vs. Adversary Rate
+            adv_rate_df = scenario_df[scenario_df['sweep_type'] == 'adv']
+            if not adv_rate_df.empty:
+                plot_sensitivity_lines(adv_rate_df, 'adv_rate', attack, dataset, output_dir)
+            else:
+                print(f"No data found for {dataset}/{attack} vs. adv_rate sweep.")
+
+            # Plot 2: Sweep vs. Poison Rate
+            poison_rate_df = scenario_df[scenario_df['sweep_type'] == 'poison']
+            if not poison_rate_df.empty:
+                plot_sensitivity_lines(poison_rate_df, 'poison_rate', attack, dataset, output_dir)
+            else:
+                print(f"No data found for {dataset}/{attack} vs. poison_rate sweep.")
 
     print("\nAnalysis complete. Check 'step5_figures' folder for plots.")
 
