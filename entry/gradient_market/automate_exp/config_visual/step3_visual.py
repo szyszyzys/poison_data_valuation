@@ -424,76 +424,100 @@ def main():
         ascending=sort_ascending
     )
 
+    # --- THIS IS THE START OF THE FIX ---
     print(
-        f"\n--- Best HP Combinations (acc >= {REASONABLE_ACC_THRESHOLD}, benign_select_rate >= {REASONABLE_BSR_THRESHOLD}) ---")
+        f"\n--- Generating Best HP Table (acc >= {REASONABLE_ACC_THRESHOLD}, benign_select_rate >= {REASONABLE_BSR_THRESHOLD}) ---")
     print(f"--- Sorted by: 1. Best Defense (Low ASR or High ACC), 2. Low Adv. Selection ---")
 
     grouped = df_sorted.groupby('scenario')
 
-    # --- NEW: List to store the best row from each group ---
     best_rows_list = []
 
     for name, group in grouped:
         if group.empty:
             continue
 
-        # --- NEW: Get the top 1 row (the best) ---
         best_row = group.iloc[0:1].copy()  # Get first row as a DataFrame
 
-        # --- Find HPs for this group (same as before) ---
         hp_cols = ['clip_norm', 'max_k', 'mask_epochs', 'mask_lr', 'mask_threshold', 'mask_clip']
+        # Find HPs that were actually tuned (more than 1 unique value in the *group*)
         hp_cols_present = [c for c in hp_cols if c in group.columns and group[c].nunique() > 1]
 
-        # --- NEW: Create a readable HP string ---
         if hp_cols_present:
-            best_row['Tuned HPs'] = best_row[hp_cols_present].apply(
-                lambda row: ', '.join([f"{col.split('.')[-1]}: {row[col]}" for col in hp_cols_present]),
-                axis=1
-            )
+            # Create a readable string from the HPs of the best row
+            def get_hp_str(row):
+                return ', '.join([f"{col.split('.')[-1]}: {row[col]}" for col in hp_cols_present])
+
+            best_row['Tuned HPs'] = best_row.apply(get_hp_str, axis=1)
         else:
             best_row['Tuned HPs'] = 'default'
 
         best_rows_list.append(best_row)
 
-    # --- NEW: Generate and save the LaTeX table ---
+    # --- Generate and save the LaTeX table ---
     if best_rows_list:
-        # Combine all best rows into one DataFrame
         df_best_hps = pd.concat(best_rows_list, ignore_index=True)
 
-        # Define the columns we want in the final table
         cols_from_scenario = ['defense', 'attack', 'dataset']
         cols_from_hps = ['Tuned HPs']
         cols_from_metrics = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate', 'defense_score']
 
-        # Filter to only columns that actually exist
         final_table_cols = cols_from_scenario + cols_from_hps + cols_from_metrics
         final_table_cols = [c for c in final_table_cols if c in df_best_hps.columns]
 
         df_final_table = df_best_hps[final_table_cols]
 
+        # --- Clean up column names for LaTeX ---
+        clean_col_names = {
+            'defense': 'Defense',
+            'attack': 'Attack',
+            'dataset': 'Dataset',
+            'acc': 'ACC',
+            'asr': 'ASR',
+            'benign_selection_rate': 'Benign Select (%)',
+            'adv_selection_rate': 'Adv. Select (%)',
+            'defense_score': 'Defense Score'
+        }
+
+        # Convert rates to percentage for the table
+        if 'benign_selection_rate' in df_final_table.columns:
+            df_final_table['benign_selection_rate'] *= 100
+        if 'adv_selection_rate' in df_final_table.columns:
+            df_final_table['adv_selection_rate'] *= 100
+
+        df_final_table = df_final_table.rename(columns=clean_col_names)
+
+        # Define the new column order for the table
+        final_col_order = [
+            'Defense', 'Attack', 'Dataset', 'Tuned HPs', 'ACC', 'ASR',
+            'Benign Select (%)', 'Adv. Select (%)', 'Defense Score'
+        ]
+        # Filter to only columns that exist
+        final_col_order = [c for c in final_col_order if c in df_final_table.columns]
+        df_final_table = df_final_table[final_col_order]
+
         # Generate LaTeX string
         latex_table_str = df_final_table.to_latex(
             index=False,
             escape=False,
-            float_format="%.3f",
+            float_format="%.2f",  # Use 2 decimal places for percentages
             caption="Best-case defense performance after hyperparameter tuning, filtered by usability thresholds.",
             label="tab:step3_best_hps",
-            position="H"  # "Here"
+            position="H"
         )
 
-        # Save the table to a file
         table_output_path = output_dir / "step3_best_hps_table.tex"
         with open(table_output_path, 'w') as f:
             f.write(latex_table_str)
 
         print(f"\n✅ Successfully saved LaTeX table of best HPs to: {table_output_path}\n")
 
-        # --- Also print the table to console for review ---
         print("--- Best HP Summary Table (for console) ---")
-        print(df_final_table.to_string(index=False, float_format="%.3f"))
+        print(df_final_table.to_string(index=False, float_format="%.2f"))
 
     else:
         print("\nNo rows met the filtering criteria to generate a table.")
+    # --- THIS IS THE END OF THE FIX ---
 
     # --- Analysis for Objective 2: Stableness (Visualization) ---
     print("\n" + "=" * 80)
@@ -503,10 +527,12 @@ def main():
     # --- Call the NEW SkyMask Plot ---
     plot_skymask_deep_dive(df, output_dir)
 
-    # --- Plot the other defenses (simplified) ---
+    # --- THIS IS THE SECOND FIX ---
+    # Plot the other defenses (simplified) - now includes SkyMask
     for scenario, defense in df[['scenario', 'defense']].drop_duplicates().values:
-        if defense != 'skymask':
-            plot_defense_comparison(df, scenario, defense, output_dir)
+        # The 'if defense != 'skymask'' check is now GONE.
+        plot_defense_comparison(df, scenario, defense, output_dir)
+    # --- END OF SECOND FIX ---
 
     print("\nAnalysis complete. Check 'step3_figures' folder for plots and table.")
 
