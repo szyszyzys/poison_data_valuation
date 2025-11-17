@@ -358,16 +358,70 @@ def main():
     df.to_csv(csv_output_path, index=False, float_format="%.4f")
     print(f"\n✅ Successfully saved full analysis data to: {csv_output_path}\n")
 
+    # --- NEW: Save "Full Detail" LaTeX Table (for Appendix) ---
+    try:
+        # Create a copy for LaTeX, format percentages
+        df_latex_full = df.copy()
+        if 'benign_selection_rate' in df_latex_full.columns:
+            df_latex_full['benign_selection_rate'] *= 100
+        if 'adv_selection_rate' in df_latex_full.columns:
+            df_latex_full['adv_selection_rate'] *= 100
+
+        # Select and rename columns for a readable "full" table
+        hp_cols = ['clip_norm', 'max_k', 'mask_epochs', 'mask_lr', 'mask_threshold', 'mask_clip']
+        metrics_cols = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']
+        full_table_cols = ['defense', 'dataset', 'attack'] + \
+                          [c for c in hp_cols if c in df_latex_full.columns] + \
+                          [c for c in metrics_cols if c in df_latex_full.columns]
+
+        df_latex_full = df_latex_full[full_table_cols]
+
+        latex_full_table_str = df_latex_full.to_latex(
+            index=False, escape=False, float_format="%.2f",
+            caption="Full results of all hyperparameter combinations.",
+            label="tab:step3_full_results",
+            longtable=True  # Use longtable for multi-page tables
+        )
+        table_full_path = output_dir / "step3_full_results_summary.tex"
+        with open(table_full_path, 'w') as f:
+            f.write(latex_full_table_str)
+        print(f"\n✅ Successfully saved 'full detail' LaTeX table to: {table_full_path}\n")
+    except Exception as e:
+        print(f"Error generating full LaTeX table: {e}")
+    # --- END NEW BLOCK ---
+
     pd.set_option('display.max_rows', None)
     pd.set_option('display.max_columns', None)
     pd.set_option('display.width', 1000)
 
-    # --- NEW: Analysis for "Sweep Summary" Table ---
+    # --- Apply Relative Accuracy Filter ---
     print("\n" + "=" * 80)
-    print("           Objective 0: Generating Sweep Summary Table")
+    print(f" Filtering by Relative Accuracy (>{RELATIVE_ACC_THRESHOLD * 100}%)")
     print("=" * 80)
 
-    # Define aggregations
+    df['dataset_max_acc'] = df['dataset'].map(dataset_max_acc_lookup)
+    if df['dataset_max_acc'].isnull().any():
+        print("Warning: Some step3 datasets not in step2.5. Using step3's max as fallback.")
+        step3_max_acc = df.groupby('dataset')['acc'].max().to_dict()
+        df['dataset_max_acc'] = df['dataset_max_acc'].fillna(
+            df['dataset'].map(step3_max_acc)
+        )
+    df['usable_threshold'] = df['dataset_max_acc'] * RELATIVE_ACC_THRESHOLD
+
+    # This is the "usable" dataframe
+    reasonable_acc_df = df[df['acc'] >= df['usable_threshold']].copy()
+    print(f"Total runs: {len(df)}. Runs passing relative ACC filter: {len(reasonable_acc_df)}")
+
+    if reasonable_acc_df.empty:
+        print(f"\n!WARNING: No runs met the relative accuracy threshold. Using all runs for summary tables.")
+        # Fallback to the full dataframe for the summary tables
+        reasonable_acc_df = df.copy()
+
+    # --- Analysis for "Sweep Summary" Table (Objective 0) ---
+    print("\n" + "=" * 80)
+    print("           Objective 0: Generating Sweep Summary Table (from usable runs)")
+    print("=" * 80)
+
     agg_metrics = {
         'hp_suffix': 'nunique',
         'acc': ['min', 'max', 'mean'],
@@ -375,22 +429,21 @@ def main():
         'benign_selection_rate': ['min', 'max', 'mean'],
         'adv_selection_rate': ['min', 'max', 'mean']
     }
-    # Filter to metrics that actually exist in the dataframe
-    agg_metrics = {k: v for k, v in agg_metrics.items() if k in df.columns}
+    agg_metrics = {k: v for k, v in agg_metrics.items() if k in reasonable_acc_df.columns}
 
     if agg_metrics:
-        df_tuning_summary = df.groupby(['defense', 'dataset', 'attack']).agg(agg_metrics)
+        # --- THIS IS THE FIX ---
+        # We now use 'reasonable_acc_df' as the source
+        df_tuning_summary = reasonable_acc_df.groupby(['defense', 'dataset', 'attack']).agg(agg_metrics)
+        # --- END FIX ---
 
-        # Flatten multi-index
         df_tuning_summary.columns = ['_'.join(col).strip() for col in df_tuning_summary.columns.values]
         df_tuning_summary = df_tuning_summary.reset_index()
 
-        # --- Create user-friendly range columns ---
         def create_range_str(row, metric):
             min_val = row.get(f'{metric}_min', np.nan) * 100
             max_val = row.get(f'{metric}_max', np.nan) * 100
-            if pd.isna(min_val):
-                return "N/A"
+            if pd.isna(min_val): return "N/A"
             return f"{min_val:.1f} - {max_val:.1f}"
 
         df_tuning_summary['ACC Range (%)'] = df_tuning_summary.apply(lambda r: create_range_str(r, 'acc'), axis=1)
@@ -398,22 +451,17 @@ def main():
         df_tuning_summary['Benign Select. Range (%)'] = df_tuning_summary.apply(
             lambda r: create_range_str(r, 'benign_selection_rate'), axis=1)
 
-        # Final columns for the table
         final_summary_cols = [
             'defense', 'dataset', 'attack', 'hp_suffix_nunique',
             'ACC Range (%)', 'ASR Range (%)', 'Benign Select. Range (%)'
         ]
-        # Rename for clarity
         df_tuning_summary = df_tuning_summary.rename(columns={'hp_suffix_nunique': 'Num. HPs'})
-
-        # Filter to only columns that were successfully generated
         final_summary_cols = [c for c in final_summary_cols if c in df_tuning_summary.columns]
         df_tuning_summary_final = df_tuning_summary[final_summary_cols]
 
-        # Save to LaTeX
         latex_summary_table_str = df_tuning_summary_final.to_latex(
             index=False, escape=False, float_format="%.1f",
-            caption="Summary of defense performance across all tuned hyperparameters.",
+            caption="Summary of defense performance across all *usable* tuned hyperparameters.",
             label="tab:step3_tuning_summary", position="H"
         )
         table_summary_path = output_dir / "step3_tuning_summary_range.tex"
@@ -428,26 +476,8 @@ def main():
 
     # --- Analysis for "Best HP" Table (Objective 1) ---
     print("\n" + "=" * 80)
-    print(f" Objective 1: Finding Best HPs (Filtered by Relative Accuracy)")
+    print(f" Objective 1: Finding Best HPs (Filtered by Relative Acc & BSR)")
     print("=" * 80)
-
-    # Map max_acc and calculate threshold
-    df['dataset_max_acc'] = df['dataset'].map(dataset_max_acc_lookup)
-    if df['dataset_max_acc'].isnull().any():
-        print("Warning: Some step3 datasets not in step2.5. Using step3's max as fallback.")
-        step3_max_acc = df.groupby('dataset')['acc'].max().to_dict()
-        df['dataset_max_acc'] = df['dataset_max_acc'].fillna(
-            df['dataset'].map(step3_max_acc)
-        )
-    df['usable_threshold'] = df['dataset_max_acc'] * RELATIVE_ACC_THRESHOLD
-
-    # Apply relative accuracy filter
-    reasonable_acc_df = df[df['acc'] >= df['usable_threshold']].copy()
-    print(f"Total runs: {len(df)}. Runs passing relative ACC filter: {len(reasonable_acc_df)}")
-    if reasonable_acc_df.empty:
-        print(f"\n!WARNING: No runs met the relative accuracy threshold.")
-        print("  Falling back to all runs for analysis.")
-        reasonable_acc_df = df.copy()
 
     # Apply Benign Selection Rate (Fairness) filter
     if 'benign_selection_rate' in reasonable_acc_df.columns:
