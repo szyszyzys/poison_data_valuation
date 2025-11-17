@@ -60,11 +60,6 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
                         hps[clean_key] = val_float
                 except ValueError:
                     hps[clean_key] = value_str  # Fallback
-
-    # Handle the user's default case:
-    # "the ones without the suffix is use the default 1"
-    # We will fill missing HPs with a default value AFTER loading
-
     return hps
 
 
@@ -75,13 +70,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     e.g., 'step3_tune_martfl_labelflip_tabular_Texas100_mlp_texas100_baseline_new'
     """
     try:
-        # Regex breakdown:
-        # 1. (fedavg|martfl|fltrust|skymask): Captures the defense
-        # 2. ([a-z]+): Captures the attack type (e.g., labelflip)
-        # 3. (image|text|tabular): Captures the modality
-        # 4. (.+?): Non-greedy match for the dataset (e.g., Texas100)
-        # 5. (.+?): Non-greedy match for the model name (e.g., mlp_texas100_baseline)
-        # 6. (_new|_old)?: Makes the suffix optional
         pattern = r'step3_tune_(fedavg|martfl|fltrust|skymask)_([a-z]+)_(image|text|tabular)_(.+?)_(.+?)(_new|_old)?$'
         match = re.search(pattern, scenario_name)
 
@@ -95,7 +83,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
                 "model": match.group(5),
             }
         else:
-            # Fallback for old names if needed, or just raise error
             raise ValueError(f"Pattern not matched for: {scenario_name}")
 
     except Exception as e:
@@ -130,9 +117,8 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
             if ben_sellers:
                 run_data['benign_selection_rate'] = pd.Series([s['selection_rate'] for s in ben_sellers]).mean()
 
-            # Handle 0-attacker case (adv_selection_rate will be NaN)
             if not adv_sellers and ben_sellers:
-                run_data['adv_selection_rate'] = 0.0  # No adversaries, so 0% selected
+                run_data['adv_selection_rate'] = 0.0
 
         return run_data
 
@@ -147,7 +133,6 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     base_path = Path(base_dir)
     print(f"Searching for results in {base_path.resolve()}...")
 
-    # Find the new folders (and old ones, just in case)
     scenario_folders = list(base_path.glob("step3_tune_*"))
     if not scenario_folders:
         print(f"Error: No 'step3_tune_*' directories found directly inside {base_path}.")
@@ -160,14 +145,12 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
         scenario_name = scenario_path.name
         run_scenario = parse_scenario_name(scenario_name)
 
-        # Look inside the HP-specific folders
         for hp_path in scenario_path.iterdir():
             if not hp_path.is_dir(): continue
 
             hp_folder_name = hp_path.name
             run_hps = parse_hp_suffix(hp_folder_name)
 
-            # Find all seed runs inside
             for metrics_file in hp_path.rglob("final_metrics.json"):
                 try:
                     run_metrics = load_run_data(metrics_file)
@@ -186,20 +169,13 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
         print("Error: No 'final_metrics.json' files were successfully processed.")
         return pd.DataFrame()
 
-    # Convert to DataFrame
     df = pd.DataFrame(all_runs)
 
-    # --- Create the unified 'defense_score' ---
-    # We want HIGH acc and LOW asr
     df['defense_score'] = df['acc'] - df['asr']
 
-    # --- Handle SkyMask Default ---
-    # "the ones without the suffix is use the default 1"
-    # This means 'mask_clip' == NaN should be 1.0 (your default)
     if 'mask_clip' in df.columns:
         df['mask_clip'] = df['mask_clip'].fillna(1.0)
 
-    # --- Add Filter Failure Column ---
     if 'benign_selection_rate' in df.columns and 'adv_selection_rate' in df.columns:
         df['filter_failure'] = (df['benign_selection_rate'] >= 0.99) & \
                                (df['adv_selection_rate'] >= 0.99)
@@ -277,13 +253,10 @@ def plot_skymask_deep_dive(df_all: pd.DataFrame, output_dir: Path):
     g.set_titles(col_template="{col_name} Attack", row_template="{row_name}")
     g.add_legend(title='Mask Threshold')
 
-    # Rotate x-axis labels
     for ax in g.axes.flat:
         ax.set_xticklabels(ax.get_xticklabels(), rotation=15, ha='right')
 
-    # --- MODIFIED FOR PDF ---
     plot_file = output_dir / "plot_skymask_deep_dive_analysis.pdf"
-    # Use g.fig.savefig for catplots
     g.fig.savefig(plot_file, bbox_inches='tight', format='pdf')
     print(f"Saved SkyMask deep-dive plot: {plot_file}")
     plt.clf()
@@ -301,32 +274,19 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
     print(f"\n--- Visualizing Scenario: {scenario} ---")
 
     # --- 1. Plot for Objective 1: Best Performance Trade-off ---
-
-    # Get all HP columns for this defense
-    hp_cols = list(df.filter(regex=f"^{defense}").columns)
-    if 'clip_norm' in df.columns and 'clip_norm' not in hp_cols:
-        hp_cols.append('clip_norm')
-
-    # (FIX) Get HPs from the dataframe columns, not a regex
     hp_cols_present = [c for c in ['clip_norm', 'max_k', 'mask_epochs', 'mask_lr', 'mask_threshold', 'mask_clip'] if
                        c in scenario_df.columns]
     hp_cols_to_plot = [c for c in hp_cols_present if scenario_df[c].nunique() > 1]
 
-    # Create a unique, readable x-axis label from the HPs
     if not hp_cols_to_plot:
         scenario_df['hp_label'] = 'default'
-        hp_cols_for_id = ['hp_label']
     else:
-        # Create a label like "lr:0.01_clip:10.0_..."
         scenario_df['hp_label'] = scenario_df[hp_cols_to_plot].apply(
             lambda row: '_'.join([f"{col.split('.')[-1]}:{row[col]}" for col in hp_cols_to_plot]),
             axis=1
         )
-        hp_cols_for_id = hp_cols_to_plot + ['hp_label']
 
-    # Sort by the defense_score to make plot readable
     scenario_df = scenario_df.sort_values(by='defense_score', ascending=False)
-
     metrics_to_plot = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate']
     metrics_to_plot = [m for m in metrics_to_plot if m in scenario_df.columns]
 
@@ -343,7 +303,7 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
         x='hp_label',
         y='Value',
         hue='Metric',
-        order=scenario_df['hp_label'].unique()  # Use the sorted order
+        order=scenario_df['hp_label'].unique()
     )
     plt.title(f'Performance & Selection vs. HPs for {defense.upper()} (Scenario: {scenario})')
     plt.ylabel('Rate')
@@ -352,7 +312,6 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
     plt.legend(title='Metric')
     plt.tight_layout()
 
-    # --- MODIFIED FOR PDF ---
     plot_file = output_dir / f"plot_{scenario}_performance.pdf"
     plt.savefig(plot_file, bbox_inches='tight', format='pdf')
     print(f"Saved plot: {plot_file}")
@@ -361,16 +320,10 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
 
     # --- 2. Plot for Objective 2: Stableness (Parameter Sensitivity) ---
     if len(hp_cols_to_plot) >= 2:
-        # We can make a 2D plot
         x_hp = hp_cols_to_plot[0]
-
-        # (FIX) Convert x_hp to string for categorical plotting
         scenario_df[x_hp] = scenario_df[x_hp].astype(str)
-
         y_hp = hp_cols_to_plot[1]
-
         col_hp = hp_cols_to_plot[2] if len(hp_cols_to_plot) > 2 else None
-
         metrics_to_plot_grid = ['defense_score', 'acc', 'asr', 'filter_failure']
 
         plot_df_melted = scenario_df.melt(
@@ -398,7 +351,6 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
         g.set_axis_labels(x_hp, 'Metric Value')
         g.set_titles(col_template="{col_name}", row_template="{row_name}")
 
-        # --- MODIFIED FOR PDF ---
         plot_file = output_dir / f"plot_{scenario}_stability_grid.pdf"
         g.fig.savefig(plot_file, bbox_inches='tight', format='pdf')
         print(f"Saved stability grid plot: {plot_file}")
@@ -420,23 +372,19 @@ def main():
         print("No results data was loaded. Exiting.")
         return
 
-    # --- Save the analysis CSV you requested ---
     csv_output_path = output_dir / "step3_full_results_summary.csv"
     df.to_csv(csv_output_path, index=False, float_format="%.4f")
     print(f"\n✅ Successfully saved full analysis data to: {csv_output_path}\n")
-    # -------------------------------------------
 
     pd.set_option('display.max_rows', None)
     pd.set_option('display.max_columns', None)
     pd.set_option('display.width', 1000)
 
     # --- Analysis for Objective 1: Best Performance with Filtering ---
-    # (This section is the same as before, but will now use the corrected DataFrame)
     print("\n" + "=" * 80)
     print(f" Objective 1: Finding Best HPs (Filtered by acc >= {REASONABLE_ACC_THRESHOLD})")
     print("=" * 80)
 
-    # 1. Apply accuracy filter
     reasonable_acc_df = df[df['acc'] >= REASONABLE_ACC_THRESHOLD].copy()
 
     if reasonable_acc_df.empty:
@@ -444,7 +392,6 @@ def main():
         print("  Falling back to all runs for analysis.")
         reasonable_acc_df = df.copy()
 
-    # 2. Apply Benign Selection Rate (Fairness) filter
     if 'benign_selection_rate' in reasonable_acc_df.columns:
         reasonable_final_df = reasonable_acc_df[
             reasonable_acc_df['benign_selection_rate'] >= REASONABLE_BSR_THRESHOLD
@@ -459,20 +406,18 @@ def main():
         print("\n!WARNING: 'benign_selection_rate' not found. Skipping Fairness filter.")
         reasonable_final_df = reasonable_acc_df.copy()
 
-    # 3. Create a unified sort metric (we want to MINIMIZE this)
     reasonable_final_df['sort_metric'] = np.where(
         reasonable_final_df['attack'] == 'backdoor',
         reasonable_final_df['asr'],  # Low is good
         1.0 - reasonable_final_df['acc']  # Low is good (high acc)
     )
 
-    # 4. Sort the *reasonable* runs:
     sort_columns = ['scenario', 'sort_metric']
     sort_ascending = [True, True]
 
     if 'adv_selection_rate' in reasonable_final_df.columns:
         sort_columns.append('adv_selection_rate')
-        sort_ascending.append(True)  # We want LOW adv_selection_rate
+        sort_ascending.append(True)
 
     df_sorted = reasonable_final_df.sort_values(
         by=sort_columns,
@@ -485,19 +430,70 @@ def main():
 
     grouped = df_sorted.groupby('scenario')
 
-    for name, group in grouped:
-        print(f"\n--- SCENARIO: {name} ---")
+    # --- NEW: List to store the best row from each group ---
+    best_rows_list = []
 
-        # Find HPs for this group
+    for name, group in grouped:
+        if group.empty:
+            continue
+
+        # --- NEW: Get the top 1 row (the best) ---
+        best_row = group.iloc[0:1].copy()  # Get first row as a DataFrame
+
+        # --- Find HPs for this group (same as before) ---
         hp_cols = ['clip_norm', 'max_k', 'mask_epochs', 'mask_lr', 'mask_threshold', 'mask_clip']
         hp_cols_present = [c for c in hp_cols if c in group.columns and group[c].nunique() > 1]
 
-        cols_to_show = hp_cols_present + [
-            'acc', 'asr', 'adv_selection_rate', 'benign_selection_rate', 'rounds', 'defense_score'
-        ]
-        cols_present_final = [c for c in cols_to_show if c in group.columns]
+        # --- NEW: Create a readable HP string ---
+        if hp_cols_present:
+            best_row['Tuned HPs'] = best_row[hp_cols_present].apply(
+                lambda row: ', '.join([f"{col.split('.')[-1]}: {row[col]}" for col in hp_cols_present]),
+                axis=1
+            )
+        else:
+            best_row['Tuned HPs'] = 'default'
 
-        print(group[cols_present_final].to_string(index=False, float_format="%.4f"))
+        best_rows_list.append(best_row)
+
+    # --- NEW: Generate and save the LaTeX table ---
+    if best_rows_list:
+        # Combine all best rows into one DataFrame
+        df_best_hps = pd.concat(best_rows_list, ignore_index=True)
+
+        # Define the columns we want in the final table
+        cols_from_scenario = ['defense', 'attack', 'dataset']
+        cols_from_hps = ['Tuned HPs']
+        cols_from_metrics = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate', 'defense_score']
+
+        # Filter to only columns that actually exist
+        final_table_cols = cols_from_scenario + cols_from_hps + cols_from_metrics
+        final_table_cols = [c for c in final_table_cols if c in df_best_hps.columns]
+
+        df_final_table = df_best_hps[final_table_cols]
+
+        # Generate LaTeX string
+        latex_table_str = df_final_table.to_latex(
+            index=False,
+            escape=False,
+            float_format="%.3f",
+            caption="Best-case defense performance after hyperparameter tuning, filtered by usability thresholds.",
+            label="tab:step3_best_hps",
+            position="H"  # "Here"
+        )
+
+        # Save the table to a file
+        table_output_path = output_dir / "step3_best_hps_table.tex"
+        with open(table_output_path, 'w') as f:
+            f.write(latex_table_str)
+
+        print(f"\n✅ Successfully saved LaTeX table of best HPs to: {table_output_path}\n")
+
+        # --- Also print the table to console for review ---
+        print("--- Best HP Summary Table (for console) ---")
+        print(df_final_table.to_string(index=False, float_format="%.3f"))
+
+    else:
+        print("\nNo rows met the filtering criteria to generate a table.")
 
     # --- Analysis for Objective 2: Stableness (Visualization) ---
     print("\n" + "=" * 80)
@@ -511,9 +507,8 @@ def main():
     for scenario, defense in df[['scenario', 'defense']].drop_duplicates().values:
         if defense != 'skymask':
             plot_defense_comparison(df, scenario, defense, output_dir)
-            pass
 
-    print("\nAnalysis complete. Check 'step3_figures' folder for plots.")
+    print("\nAnalysis complete. Check 'step3_figures' folder for plots and table.")
 
 
 if __name__ == "__main__":
