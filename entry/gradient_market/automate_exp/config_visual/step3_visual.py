@@ -56,6 +56,7 @@ def get_step2_5_max_acc_lookup(base_dir: str) -> Dict[str, float]:
     print("--- Loading Step 2.5 data to find 'best' accuracy... ---")
     all_runs = []
     base_path = Path(base_dir)
+    # This correctly searches ALL step2.5 folders to get the true max
     scenario_folders = [f for f in base_path.glob("step2.5_find_hps_*") if f.is_dir()]
 
     if not scenario_folders:
@@ -127,6 +128,7 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     try:
+        # This regex already correctly captures the optional _new suffix
         pattern = r'step3_tune_(fedavg|martfl|fltrust|skymask)_([a-z]+)_(image|text|tabular)_(.+?)_(.+?)(_new|_old)?$'
         match = re.search(pattern, scenario_name)
         if match:
@@ -173,15 +175,26 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
 
 
 def collect_all_results(base_dir: str) -> pd.DataFrame:
-    """Walks the results directory and aggregates all 'step3' run data."""
+    """
+    (UPDATED)
+    Walks the results directory and aggregates all 'step3' run data,
+    but ONLY for folders that end in '_new'.
+    """
     all_runs = []
     base_path = Path(base_dir)
-    print(f"Searching for 'step3' results in {base_path.resolve()}...")
-    scenario_folders = list(base_path.glob("step3_tune_*"))
+    print(f"Searching for 'step3_tune_*_new' results in {base_path.resolve()}...")
+
+    # --- THIS IS THE FIX ---
+    # We now glob for folders ending in '_new'
+    scenario_folders = [f for f in base_path.glob("step3_tune_*_new") if f.is_dir()]
+    # --- END FIX ---
+
     if not scenario_folders:
-        print(f"Error: No 'step3_tune_*' directories found.")
+        # --- Updated error message ---
+        print(f"Error: No 'step3_tune_*_new' directories found.")
         return pd.DataFrame()
-    print(f"Found {len(scenario_folders)} scenario base directories.")
+
+    print(f"Found {len(scenario_folders)} '_new' scenario base directories.")
     for scenario_path in scenario_folders:
         if not scenario_path.is_dir(): continue
         scenario_name = scenario_path.name
@@ -347,7 +360,7 @@ def main():
         return
 
     # --- Step 2 ---
-    # Load the main 'step3' data
+    # Load the main 'step3' data (now filtered to * _new)
     df = collect_all_results(BASE_RESULTS_DIR)
     if df.empty:
         print("No 'step3' results data was loaded. Exiting.")
@@ -378,7 +391,7 @@ def main():
 
         latex_full_table_str = df_latex_full.to_latex(
             index=False, escape=False, float_format="%.2f",
-            caption="Full results of all hyperparameter combinations.",
+            caption="Full results of all hyperparameter combinations (for '_new' runs).",
             label="tab:step3_full_results",
             longtable=True  # Use longtable for multi-page tables
         )
@@ -461,7 +474,7 @@ def main():
 
         latex_summary_table_str = df_tuning_summary_final.to_latex(
             index=False, escape=False, float_format="%.1f",
-            caption="Summary of defense performance across all *usable* tuned hyperparameters.",
+            caption="Summary of defense performance across all *usable* tuned hyperparameters (for '_new' runs).",
             label="tab:step3_tuning_summary", position="H"
         )
         table_summary_path = output_dir / "step3_tuning_summary_range.tex"
@@ -554,7 +567,7 @@ def main():
 
         latex_table_str = df_final_table.to_latex(
             index=False, escape=False, float_format="%.2f",
-            caption="Best-case defense performance after hyperparameter tuning, filtered by relative usability thresholds.",
+            caption="Best-case defense performance after hyperparameter tuning, filtered by relative usability thresholds (for '_new' runs).",
             label="tab:step3_best_hps", position="H"
         )
         table_output_path = output_dir / "step3_best_hps_table.tex"
