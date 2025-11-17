@@ -39,7 +39,6 @@ def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
     """
     try:
         # --- THIS REGEX MUST MATCH ALL YOUR FOLDERS ---
-        # I am guessing you have text/tabular folders.
         pattern = r'step5_atk_sens_(adv|poison)_(fedavg|fltrust|martfl|skymask)_(backdoor|labelflip)_(image|text|tabular)$'
         match = re.search(pattern, scenario_name)
 
@@ -121,23 +120,20 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     print(f"Found {len(scenario_folders)} scenario base directories.")
 
     parsed_count = 0
-    metrics_found_count = 0  # --- DEBUG ---
+    metrics_found_count = 0
 
     for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
         run_scenario = parse_scenario_name(scenario_name)
 
         if run_scenario is None:
-            # This would have printed a warning from parse_scenario_name
             continue
 
-        # --- DEBUG ---
         print(f"\nProcessing Scenario: {scenario_name}")
         print(f"  -> Parsed as: {run_scenario}")
 
         parsed_count += 1
 
-        # --- DEBUG ---
         files_in_scenario = list(scenario_path.rglob("final_metrics.json"))
         if not files_in_scenario:
             print(f"  -> !! WARNING: No 'final_metrics.json' files found in {scenario_name}")
@@ -145,7 +141,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
         for metrics_file in files_in_scenario:
             try:
-                metrics_found_count += 1  # --- DEBUG ---
+                metrics_found_count += 1
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
                 if not relative_parts:
                     print(f"  -> Skipping metric file with no relative path: {metrics_file}")
@@ -189,8 +185,8 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
 def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, dataset: str, output_dir: Path):
     """
-    Generates the multi-panel line plots for robustness,
-    including 'adv_selection_rate'.
+    (REWRITTEN)
+    Generates an *individual PDF plot for each metric*.
     """
     print(f"\n--- Plotting Robustness vs. '{x_metric}' (for {attack_type} on {dataset}) ---")
 
@@ -208,6 +204,7 @@ def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, da
         print(f"No metrics found to plot for {dataset}/{attack} vs {x_metric}.")
         return
 
+    # Melt the dataframe *once*
     plot_df = df.melt(
         id_vars=[x_metric, 'defense'],
         value_vars=metrics_to_plot,
@@ -220,41 +217,62 @@ def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, da
         lambda row: row['Value'] * 100 if row['Metric'] in rate_metrics else row['Value'],
         axis=1
     )
-    plot_df['Metric'] = plot_df['Metric'].apply(
-        lambda m: f'{m} (%)' if m in rate_metrics else m
-    )
 
-    n_metrics = len(plot_df['Metric'].unique())
-    col_wrap = 3 if n_metrics > 2 else 2
+    # --- NEW LOOP: Create one plot per metric ---
+    for metric in metrics_to_plot:
 
-    g = sns.relplot(
-        data=plot_df,
-        x=x_metric,
-        y='Value',
-        hue='defense',
-        style='defense',
-        col='Metric',
-        kind='line',
-        col_wrap=col_wrap,
-        height=3.5,
-        aspect=1.3,
-        facet_kws={'sharey': False},
-        markers=True,
-        dashes=False
-    )
+        # Create a clean metric name for title and filename
+        metric_name_clean = f'{metric} (%)' if metric in rate_metrics else metric
 
-    g.fig.suptitle(f'Defense Robustness vs. {x_metric.replace("_", " ").title()} ({attack_type.title()} on {dataset})',
-                   y=1.08)
-    g.set_axis_labels(x_metric.replace("_", " ").title(), "Value")
-    g.set_titles(col_template="{col_name}")
+        print(f"  -> Plotting metric: {metric_name_clean}")
 
-    # Create a safe filename for the dataset
-    safe_dataset_name = re.sub(r'[^\w]', '', dataset)
-    plot_file = output_dir / f"plot_robustness_{attack_type}_{safe_dataset_name}_vs_{x_metric}.pdf"
-    g.fig.savefig(plot_file, bbox_inches='tight', format='pdf')
-    print(f"Saved plot: {plot_file}")
-    plt.clf()
-    plt.close('all')
+        # Filter the melted dataframe for this metric only
+        metric_df = plot_df[plot_df['Metric'] == metric].copy()
+
+        if metric_df.empty:
+            print(f"    ...No data for metric '{metric}'. Skipping plot.")
+            continue
+
+        # Create a new figure for this plot
+        plt.figure(figsize=(8, 5))
+        ax = sns.lineplot(
+            data=metric_df,
+            x=x_metric,
+            y='Value',
+            hue='defense',
+            style='defense',
+            markers=True,
+            dashes=False
+        )
+
+        title_x = x_metric.replace("_", " ").title()
+        title_dataset = dataset.upper()
+        title_attack = attack_type.title()
+
+        ax.set_title(f'{metric_name_clean} vs. {title_x}\n({title_attack} on {title_dataset})')
+        ax.set_xlabel(title_x)
+        ax.set_ylabel(metric_name_clean)
+
+        # Add grid for readability
+        ax.grid(True, linestyle='--', alpha=0.6)
+
+        # Set y-axis for rates
+        if metric in rate_metrics:
+            ax.set_ylim(-5, 105)  # From -5 to 105 to see 0 and 100 clearly
+
+        # Create a safe filename for the dataset
+        safe_dataset_name = re.sub(r'[^\w]', '', dataset)
+
+        # Create the new, specific filename
+        plot_file_name = f"plot_robustness_{attack_type}_{safe_dataset_name}_vs_{x_metric}_{metric}.pdf"
+        plot_file = output_dir / plot_file_name
+
+        plt.savefig(plot_file, bbox_inches='tight', format='pdf')
+        print(f"    ...Saved plot: {plot_file_name}")
+
+        # Close the plot to free memory
+        plt.clf()
+        plt.close('all')
 
 
 def main():
@@ -288,7 +306,7 @@ def main():
             if not adv_rate_df.empty:
                 plot_sensitivity_lines(adv_rate_df, 'adv_rate', attack, dataset, output_dir)
             else:
-                print(f"No data found for {dataset}/{attack} vs. adv_route sweep.")
+                print(f"No data found for {dataset}/{attack} vs. adv_rate sweep.")
 
             # Plot 2: Sweep vs. Poison Rate
             poison_rate_df = scenario_df[scenario_df['sweep_type'] == 'poison']
