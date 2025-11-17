@@ -10,7 +10,7 @@ from typing import List, Dict, Any
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./step3_figures"
+FIGURE_OUTPUT_DIR = "./figures/step3_figures"
 
 # Set your minimum acceptable accuracy threshold (e.g., 0.70 for 70%)
 REASONABLE_ACC_THRESHOLD = 0.70
