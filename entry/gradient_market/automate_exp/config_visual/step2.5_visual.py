@@ -201,19 +201,19 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
     # --- Metrics 1-4: Calculated as before ---
     df_usability = df.groupby(['defense', 'dataset'])['platform_usable'].mean().reset_index()
     df_usability['Value'] = df_usability['platform_usable'] * 100
-    df_usability['Metric'] = '1. Usability Rate (%) (Higher is Better)'
+    df_usability['Metric'] = 'Usability Rate (%) (Higher is Better)'
 
     df_perf = df[df['platform_usable'] == True].groupby(['defense', 'dataset'])['acc'].mean().reset_index()
     df_perf['Value'] = df_perf['acc'] * 100
-    df_perf['Metric'] = '2. Avg. Usable Accuracy (%) (Higher is Better)'
+    df_perf['Metric'] = 'Avg. Usable Accuracy (%) (Higher is Better)'
 
     df_speed = df[df['platform_usable'] == True].groupby(['defense', 'dataset'])['rounds'].mean().reset_index()
     df_speed['Value'] = df_speed['rounds']
-    df_speed['Metric'] = '3. Avg. Usable Rounds (Lower is Better)'
+    df_speed['Metric'] = 'Avg. Usable Rounds (Lower is Better)'
 
     df_speed_stability = df.groupby(['defense', 'dataset'])['rounds'].std().reset_index()
     df_speed_stability['Value'] = df_speed_stability['rounds']
-    df_speed_stability['Metric'] = '4. Rounds Instability (Std Dev) (Lower is Better)'
+    df_speed_stability['Metric'] = 'Rounds Instability (Std Dev) (Lower is Better)'
 
     # Combine metrics 1-4 for plotting
     df_metrics_1_4 = pd.concat([
@@ -248,11 +248,11 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
     # Re-calculate selection metrics for the CSV
     df_benign_csv = df_selection_raw[['defense', 'dataset', 'Avg. Benign Selection Rate']].copy()
     df_benign_csv['Value'] = df_benign_csv['Avg. Benign Selection Rate'] * 100
-    df_benign_csv['Metric'] = '5. Avg. Benign Selection Rate (%)'
+    df_benign_csv['Metric'] = 'Avg. Benign Selection Rate (%)'
 
     df_adv_csv = df_selection_raw[['defense', 'dataset', 'Avg. Adversary Selection Rate']].copy()
     df_adv_csv['Value'] = df_adv_csv['Avg. Adversary Selection Rate'] * 100
-    df_adv_csv['Metric'] = '6. Avg. Adversary Selection Rate (%)'
+    df_adv_csv['Metric'] = 'Avg. Adversary Selection Rate (%)'
 
     df_final_csv = pd.concat([
         df_metrics_1_4,
