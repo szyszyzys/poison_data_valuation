@@ -273,9 +273,9 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
                 palette='viridis'
             )
 
-            ax.set_title(f"{metric}\nDataset: {dataset}", fontsize: 14)
-            ax.set_xlabel("Defense", fontsize: 12)
-            ax.set_ylabel("Value", fontsize: 12)
+            ax.set_title(f"{metric}\nDataset: {dataset}", fontsize= 14)
+            ax.set_xlabel("Defense", fontsize= 12)
+            ax.set_ylabel("Value", fontsize= 12)
             ax.set_ylim(bottom=0)
 
             # Add annotations
@@ -289,7 +289,7 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
                             ha='center', va='center',
                             xytext=(0, 5),
                             textcoords='offset points',
-                            fontsize: 9)
+                            fontsize=9)
 
             plot_file = output_dir / f"plot_{dataset}_{safe_metric_name}.pdf"
             plt.savefig(plot_file, bbox_inches='tight', format='pdf')
