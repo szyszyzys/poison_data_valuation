@@ -464,9 +464,14 @@ def main():
         df_tuning_summary['Benign Select. Range (%)'] = df_tuning_summary.apply(
             lambda r: create_range_str(r, 'benign_selection_rate'), axis=1)
 
+        # --- FIX 1: Add Adv. Select. Range ---
+        df_tuning_summary['Adv. Select. Range (%)'] = df_tuning_summary.apply(
+            lambda r: create_range_str(r, 'adv_selection_rate'), axis=1)
+
+        # --- FIX 2: Add Adv. Select. Range to the column list ---
         final_summary_cols = [
             'defense', 'dataset', 'attack', 'hp_suffix_nunique',
-            'ACC Range (%)', 'ASR Range (%)', 'Benign Select. Range (%)'
+            'ACC Range (%)', 'ASR Range (%)', 'Benign Select. Range (%)', 'Adv. Select. Range (%)'
         ]
         df_tuning_summary = df_tuning_summary.rename(columns={'hp_suffix_nunique': 'Num. HPs'})
         final_summary_cols = [c for c in final_summary_cols if c in df_tuning_summary.columns]
@@ -568,7 +573,7 @@ def main():
         latex_table_str = df_final_table.to_latex(
             index=False, escape=False, float_format="%.2f",
             caption="Best-case defense performance after hyperparameter tuning, filtered by relative usability thresholds (for '_new' runs).",
-            label="tab:step3_best_hps", position="H"
+            label="tab:step3_best_ps", position="H"
         )
         table_output_path = output_dir / "step3_best_hps_table.tex"
         with open(table_output_path, 'w') as f:
