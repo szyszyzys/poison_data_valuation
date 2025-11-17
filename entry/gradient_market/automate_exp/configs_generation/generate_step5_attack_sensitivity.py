@@ -37,6 +37,7 @@ def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
     """
     (FIXED) Parses the base scenario name.
     It now infers the dataset from the modality (e.g., '_image' -> 'CIFAR100').
+    If the pattern doesn't match, it returns None.
     """
     try:
         # Regex now stops at the modality, as dataset is not in the folder name
@@ -44,18 +45,20 @@ def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
         match = re.search(pattern, scenario_name)
 
         if match:
-            modality = match.group(5)
+            # --- THIS WAS THE BUG ---
+            # It should be match.group(4) for the modality
+            modality = match.group(4)
+            # --- END BUG FIX ---
 
-            # --- NEW LOGIC: Map modality to dataset ---
+            # Map modality to dataset
             if modality == 'image':
                 dataset_name = 'CIFAR100'  # As requested
             elif modality == 'text':
-                dataset_name = 'TREC'  # Assuming from project context
+                dataset_name = 'TREC'
             elif modality == 'tabular':
-                dataset_name = 'Texas100'  # Assuming from project context
+                dataset_name = 'Texas100'
             else:
                 dataset_name = 'unknown'
-            # --- END NEW LOGIC ---
 
             return {
                 "scenario": scenario_name,
@@ -218,7 +221,7 @@ def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, da
     g.set_axis_labels(x_metric.replace("_", " ").title(), "Value")
     g.set_titles(col_template="{col_name}")
 
-    # Create a safe filename for the dataset (e.g., if it was 'unknown')
+    # Create a safe filename for the dataset
     safe_dataset_name = re.sub(r'[^\w]', '', dataset)
     plot_file = output_dir / f"plot_robustness_{attack_type}_{safe_dataset_name}_vs_{x_metric}.pdf"
     g.fig.savefig(plot_file, bbox_inches='tight', format='pdf')
@@ -240,6 +243,7 @@ def main():
 
     # Loop over dataset and attack
     for dataset in df['dataset'].unique():
+        # This check is still good, just in case
         if dataset in ['unknown', 'parse_failed']:
             print(f"Skipping plots for '{dataset}' group (due to parsing errors).")
             continue
