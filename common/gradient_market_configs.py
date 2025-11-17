@@ -228,11 +228,33 @@ class ServerAttackConfig:
 
 @dataclass
 class DrowningAttackConfig:
-    """Configuration for the Targeted Drowning (Centroid Poisoning) Attack."""
+    """
+    Configuration for the 'stealthy_blend' attack used by AdaptiveAttackerSeller.
+    """
     is_active: bool = False
-    mimicry_rounds: int = 10  # Number of rounds to act honestly to build trust
-    drift_factor: float = 0.1  # How much to shift the gradient each drift round
 
+    # --- Parameters used by AdaptiveAttackerSeller __init__ ---
+
+    # Number of rounds to act honestly and learn honest gradient stats
+    mimicry_rounds: int = 10
+
+    # [THE FIX] The *initial* intensity for the blend attack (will be adapted later)
+    attack_intensity: float = 0.1
+
+    # List of layer names to target (e.g., "fc.weight"). If empty, it targets top 20%.
+    target_layers: List[str] = field(default_factory=list)
+
+    # --- Parameters used by the stealthy_blend strategy ---
+
+    # The type of malicious gradient to compute
+    attack_type: Literal["backdoor", "targeted_poisoning"] = "backdoor"
+
+    # How to blend the malicious gradient with the honest one
+    replacement_strategy: Literal["layer_wise", "global_blend"] = "global_blend"
+
+    # --- Note ---
+    # The 'drift_factor' field from your old config is not used by
+    # the AdaptiveAttackerSeller and has been removed to avoid confusion.
 
 @dataclass
 class SybilDrowningConfig:
@@ -314,25 +336,39 @@ class TextPropertySkewParams:
 class AdaptiveAttackConfig:
     """Configuration for the adaptive learning attacker."""
     is_active: bool = False
-    # The primary mode of attack: either manipulate the gradient or poison the data
-    attack_mode: Literal["gradient_manipulation", "data_poisoning"] = "gradient_manipulation"
 
     # --- General Learning Parameters ---
+
+    # Set a valid default and use Literal for type safety
+    threat_model: Literal["black_box", "gradient_inversion", "oracle"] = "black_box"
+
+    # The primary mode of attack
+    attack_mode: Literal["gradient_manipulation", "data_poisoning"] = "gradient_manipulation"
+
     exploration_rounds: int = 20
 
-    # --- Gradient Manipulation Strategies (if mode is 'gradient_manipulation') ---
+    # --- Threat Model Specific ---
+
+    # [FIX] ADDED: Required by Oracle and Gradient Inversion models
+    mimic_strength: float = 0.5
+
+    # --- Gradient Manipulation Strategies ---
+
+    # [FIX] RENAMED "scale_up" to "reduce_norm" to match your class
     gradient_strategies: List[str] = field(
-        default_factory=lambda: ["honest", "scale_up", "add_noise"]
+        default_factory=lambda: ["honest", "reduce_norm", "add_noise", "stealthy_blend"]
     )
-    scale_factor: float = 1.5
+    scale_factor: float = 0.5  # A value < 1.0 matches "reduce_norm"
     noise_level: float = 0.01
 
-    # --- Data Poisoning Strategies (if mode is 'data_poisoning') ---
-    # These map to poison types you already have configured
+    # --- Data Poisoning Strategies ---
+
     data_strategies: List[str] = field(
-        default_factory=lambda: ["honest", "label_flip"]  # e.g., 'label_flip', 'image_backdoor'
+        default_factory=lambda: ["honest", "subsample_clean"]
     )
 
+    # [FIX] ADDED: Required by "subsample_clean" strategy
+    subset_ratio: float = 0.5
 
 @dataclass
 class AdversarySellerConfig:

@@ -1621,7 +1621,7 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
         self.selection_history = []  # For black box UCB
 
         # --- State for "stealthy_blend" (from DrowningAttackerSeller) ---
-        self.blend_cfg = adversary_config.gradient_replacement_attack
+        self.blend_cfg = adversary_config.drowning_attack
         self.blend_phase = "mimicry"  # Separate phase for the blend attack
         self.blend_mimicry_rounds = self.blend_cfg.mimicry_rounds
         self.blend_attack_intensity = self.blend_cfg.attack_intensity

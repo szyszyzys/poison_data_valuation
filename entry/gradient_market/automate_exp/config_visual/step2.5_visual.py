@@ -1,12 +1,12 @@
-import pandas as pd
 import json
-import re
-import seaborn as sns
-import matplotlib.pyplot as plt
-import numpy as np
 import os
+import re
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Dict, Any
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
@@ -60,6 +60,127 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
         return {"scenario": scenario_name}
 
 
+def plot_platform_usability_metrics_separate_pdfs(df: pd.DataFrame, output_dir: Path):
+    """
+    (NEW VERSION)
+    Plots the 3 key platform metrics in *separate PDF files*, one for
+    each metric and each dataset, for easier import into reports.
+
+    (MODIFIED): Only shows 'skymask' for CIFAR10 and CIFAR100 datasets.
+    """
+    print("\n--- Plotting Platform Usability Metrics (Separate PDFs) ---")
+
+    if df.empty:
+        print("No data to plot.")
+        return
+
+    # --- THIS LINE IS REMOVED ---
+    # We no longer need a single, static defense_order here.
+    # defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+
+    # --- Data aggregation is the same ---
+    # 1. Usability Rate
+    df_usability = df.groupby(['defense', 'dataset'])['platform_usable'].mean().reset_index()
+    df_usability['Value'] = df_usability['platform_usable'] * 100
+    df_usability['Metric'] = '1. Usability Rate (%) (Higher is Better)'
+
+    # 2. Average Performance (of *usable* runs)
+    df_perf = df[df['platform_usable'] == True].groupby(['defense', 'dataset'])['acc'].mean().reset_index()
+    df_perf['Value'] = df_perf['acc'] * 100
+    df_perf['Metric'] = '2. Avg. Usable Accuracy (%) (Higher is Better)'
+
+    # 3. Stability (Std Dev of *all* runs)
+    df_stability = df.groupby(['defense', 'dataset'])['acc'].std().reset_index()
+    df_stability['Value'] = df_stability['acc'] * 100
+    df_stability['Metric'] = '3. Accuracy Instability (Std Dev) (Lower is Better)'
+
+    # Combine all 3 metrics into one DataFrame
+    df_final = pd.concat([df_usability, df_perf, df_stability], ignore_index=True)
+
+    # --- Save the analysis CSV (same as before) ---
+    csv_output_path = output_dir / "step2.5_platform_metrics_summary.csv"
+    try:
+        # Pivot for a wide, readable CSV
+        df_pivot = df_final.pivot_table(index=['dataset', 'defense'], columns='Metric', values='Value')
+        df_pivot.to_csv(csv_output_path, float_format="%.2f")
+        print(f"\n✅ Successfully saved platform metrics summary to: {csv_output_path}\n")
+    except Exception as e:
+        print(f"Could not save CSV: {e}")
+    # -----------------------------
+
+    # --- NEW PLOTTING LOOP: Loop over each dataset AND each metric ---
+
+    all_datasets = df_final['dataset'].unique()
+    all_metrics = df_final['Metric'].unique()
+
+    plot_count = 0
+    for dataset in all_datasets:
+
+        # --- NEW LOGIC: Define the order dynamically per dataset ---
+        if dataset in ['CIFAR10', 'CIFAR100']:
+            current_defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+        else:
+            current_defense_order = ['fedavg', 'fltrust', 'martfl']
+        # -----------------------------------------------------------
+
+        for metric in all_metrics:
+
+            # Filter data for this specific plot
+            plot_df = df_final[
+                (df_final['dataset'] == dataset) &
+                (df_final['Metric'] == metric)
+            ]
+
+            if plot_df.empty:
+                print(f"  Skipping {dataset} / {metric} (no data)")
+                continue
+
+            # Create a simple "safe" name for the file
+            # e.g., "1. Usability Rate..." -> "1_Usability"
+            safe_metric_name = metric.split(' ')[0].replace('.', '') + "_" + metric.split(' ')[1].replace('.', '')
+
+            print(f"  Plotting: {dataset} - {safe_metric_name}")
+
+            # 1. Create a new, single figure for this plot
+            plt.figure(figsize=(7, 5)) # Good size for a single PDF plot
+
+            # 2. Use sns.barplot on the new figure's axis
+            ax = sns.barplot(
+                data=plot_df,
+                x='defense',
+                y='Value',
+                order=current_defense_order, # --- MODIFIED: Use dynamic order ---
+                palette='viridis'
+            )
+
+            # 3. Set titles and labels
+            ax.set_title(f"{metric}\nDataset: {dataset}", fontsize=14)
+            ax.set_xlabel("Defense", fontsize=12)
+            ax.set_ylabel("Value", fontsize=12)
+
+            # Set y-axis to start at 0
+            ax.set_ylim(bottom=0)
+
+            # 4. Add annotations
+            for p in ax.patches:
+                ax.annotate(f'{p.get_height():.1f}',
+                            (p.get_x() + p.get_width() / 2., p.get_height()),
+                            ha='center', va='center',
+                            xytext=(0, 5),
+                            textcoords='offset points',
+                            fontsize=9)
+
+            # 5. Define the PDF filename
+            plot_file = output_dir / f"plot_{dataset}_{safe_metric_name}.pdf"
+
+            # 6. Save as PDF
+            plt.savefig(plot_file, bbox_inches='tight', format='pdf')
+            plt.clf()
+            plt.close('all') # Free up memory
+            plot_count += 1
+
+    print(f"\nDone. Generated {plot_count} separate PDF plots.")
+
 def load_run_data(metrics_file: Path) -> Dict[str, Any]:
     """
     Loads key data from final_metrics.json
@@ -82,12 +203,19 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     base_path = Path(base_dir)
     print(f"Searching for results in {base_path.resolve()}...")
 
-    scenario_folders = [f for f in base_path.glob("step2.5_find_hps_*") if f.is_dir()]
+    # --- THIS IS THE MODIFIED LINE ---
+    # It now filters out any folder ending in '_no_clip'
+    scenario_folders = [
+        f for f in base_path.glob("step2.5_find_hps_*")
+        if f.is_dir() and not f.name.endswith("_no_clip")
+    ]
+    # -----------------------------------
+
     if not scenario_folders:
-        print(f"Error: No 'step2.5_find_hps_*' directories found directly inside {base_path}.")
+        print(f"Error: No 'step2.5_find_hps_*' directories (excluding '_no_clip') found directly inside {base_path}.")
         return pd.DataFrame()
 
-    print(f"Found {len(scenario_folders)} scenario base directories.")
+    print(f"Found {len(scenario_folders)} scenario base directories to process.")
 
     for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
@@ -137,7 +265,6 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     print("Done calculating thresholds.")
 
     return df
-
 
 def plot_platform_usability_metrics(df: pd.DataFrame, output_dir: Path):
     """
@@ -250,9 +377,9 @@ def main():
         print("No results data was loaded. Exiting.")
         return
 
-    # --- Call the new plotter ---
-    plot_platform_usability_metrics(df, output_dir)
-    # ----------------------------
+    # --- Call the new PDF-generating plotter ---
+    plot_platform_usability_metrics_separate_pdfs(df, output_dir)
+    # ----------------------------------------
 
     print("\nAnalysis complete. Check 'step2.5_figures' folder for plots and CSV.")
 
