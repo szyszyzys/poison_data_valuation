@@ -1,218 +1,274 @@
-# FILE: generate_step5_attack_sensitivity.py
-# (Imports are the same...)
-
-import copy
-import sys
+import json
+import os
+import re
 from pathlib import Path
-from typing import List
+from typing import Dict, Any, Optional
 
-# --- Imports ---
-from config_common_utils import (
-    NUM_SEEDS_PER_CONFIG,
-    DEFAULT_ADV_RATE, DEFAULT_POISON_RATE,
-    IMAGE_DEFENSES, get_tuned_defense_params, GOLDEN_TRAINING_PARAMS, )
-from entry.gradient_market.automate_exp.base_configs import get_base_image_config
-from entry.gradient_market.automate_exp.scenarios import Scenario, use_image_backdoor_attack, use_label_flipping_attack, \
-    use_cifar100_config
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
 
-try:
-    from common.gradient_market_configs import AppConfig, PoisonType
-    from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
-except ImportError as e:
-    print(f"Error importing necessary modules: {e}")
-    sys.exit(1)
-
-# --- Attack Parameters to Sweep ---
-ADV_RATES_TO_SWEEP = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
-POISON_RATES_TO_SWEEP = [0.0, 0.1, 0.3, 0.5, 0.7, 1.0]
-
-# --- Attack Types to Test ---
-ATTACK_TYPES = ["backdoor", "labelflip"]
-
-# --- Focus Setup for Attack Sensitivity Analysis ---
-SENSITIVITY_SETUP_STEP5 = {
-    "modality_name": "image",
-    "base_config_factory": get_base_image_config,
-    "dataset_name": "CIFAR100",
-    "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar100_cnn",
-    "dataset_modifier": use_cifar100_config,
-    "backdoor_attack_modifier": use_image_backdoor_attack,
-    "labelflip_attack_modifier": use_label_flipping_attack
-}
+# --- Configuration ---
+BASE_RESULTS_DIR = "./results"
+FIGURE_OUTPUT_DIR = "./figures/step5_figures"
 
 
-def generate_attack_sensitivity_scenarios() -> List[Scenario]:
-    """Generates scenarios sweeping attack strength against tuned defenses."""
-    print("\n--- Generating Step 5: Attack Sensitivity Scenarios ---")
-    scenarios = []
-    modality = SENSITIVITY_SETUP_STEP5["modality_name"]
-    model_cfg_name = SENSITIVITY_SETUP_STEP5["model_config_name"]
-    current_defenses = IMAGE_DEFENSES
+# --- End Configuration ---
 
-    for defense_name in current_defenses:
-        for attack_type in ATTACK_TYPES:
-            print(f"-- Processing Defense: {defense_name} (for {attack_type} attack) --")
 
-            # 1. Get the T tuned HPs for this defense/attack combo (from Step 3)
-            tuned_defense_params = get_tuned_defense_params(
-                defense_name=defense_name,
-                model_config_name=model_cfg_name,
-                attack_state="with_attack",
-                explicit_attack_type=attack_type
-            )
-            if not tuned_defense_params:
-                print(f"  SKIPPING: No tuned params found for {defense_name}_{model_cfg_name}_{attack_type}")
-                continue
+def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
+    """
+    Parses the HP suffix folder name (e.g., 'adv_0.1_poison_0.5')
+    """
+    hps = {}
+    pattern = r'adv_([0-9\.]+)_poison_([0-9\.]+)'
+    match = re.search(pattern, hp_folder_name)
 
-            # 2. Get the attack modifier function
-            attack_modifier_key = f"{attack_type}_attack_modifier"
-            if attack_modifier_key not in SENSITIVITY_SETUP_STEP5:
-                print(f"  SKIPPING: No attack modifier function found for {attack_type}")
-                continue
-            attack_modifier = SENSITIVITY_SETUP_STEP5[attack_modifier_key]
+    if match:
+        hps['adv_rate'] = float(match.group(1))
+        hps['poison_rate'] = float(match.group(2))
+    else:
+        print(f"Warning: Could not parse HP suffix '{hp_folder_name}'")
+    return hps
 
-            # 3. Create the setup modifier function *inside the loop*
-            #    This correctly binds all the HPs
-            def create_setup_modifier(
-                    current_defense_name=defense_name,
-                    current_model_cfg_name=model_cfg_name,
-                    current_tuned_params=tuned_defense_params
-            ):
-                def modifier(config: AppConfig) -> AppConfig:
-                    # golden_hp_key = f"{current_defense_name}_{current_model_cfg_name}"
-                    golden_hp_key = f"{current_model_cfg_name}"
-                    training_params = GOLDEN_TRAINING_PARAMS.get(golden_hp_key)
-                    if training_params:
-                        for key, value in training_params.items():
-                            set_nested_attr(config, key, value)
-                    else:
-                        print(f"  WARNING: No Golden HPs found for key '{golden_hp_key}'!")
-                        # This is a critical error, you might want to uncomment the next line
-                        # sys.exit(f"Missing critical HPs for {golden_hp_key}")
-                    if current_defense_name == "skymask":
-                        model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
-                        set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 
-                    # --- Apply Tuned Defense HPs (from Step 3) ---
-                    for key, value in current_tuned_params.items():
-                        set_nested_attr(config, key, value)
+def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
+    """
+    (FIXED) Parses the base scenario name.
+    It now infers the dataset from the modality (e.g., '_image' -> 'CIFAR100').
+    """
+    try:
+        # Regex now stops at the modality, as dataset is not in the folder name
+        pattern = r'step5_atk_sens_(adv|poison)_(fedavg|martfl|fltrust|skymask)_(backdoor|labelflip)_(image|text|tabular)$'
+        match = re.search(pattern, scenario_name)
 
-                    # --- Apply other fixed settings ---
-                    set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
-                    set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
-                    config.valuation.run_influence = False
-                    config.valuation.run_loo = False
-                    config.valuation.run_kernelshap = False
-                    return config
+        if match:
+            modality = match.group(5)
 
-                return modifier
+            # --- NEW LOGIC: Map modality to dataset ---
+            if modality == 'image':
+                dataset_name = 'CIFAR100'  # As requested
+            elif modality == 'text':
+                dataset_name = 'TREC'  # Assuming from project context
+            elif modality == 'tabular':
+                dataset_name = 'Texas100'  # Assuming from project context
+            else:
+                dataset_name = 'unknown'
+            # --- END NEW LOGIC ---
 
-            setup_modifier_func = create_setup_modifier()
-
-            # 4. Base grid - DOES NOT include the sweep
-            base_grid = {
-                SENSITIVITY_SETUP_STEP5["model_config_param_key"]: [model_cfg_name],
-                "experiment.dataset_name": [SENSITIVITY_SETUP_STEP5["dataset_name"]],
-                "n_samples": [NUM_SEEDS_PER_CONFIG],
-                "experiment.use_early_stopping": [True],
-                "experiment.patience": [10],
+            return {
+                "scenario": scenario_name,
+                "sweep_type": match.group(1),
+                "defense": match.group(2),
+                "attack": match.group(3),
+                "modality": modality,
+                "dataset": dataset_name,  # This is now correctly set
             }
-
-            # --- Scenario for varying Adv Rate ---
-            grid_adv = base_grid.copy()
-            grid_adv["sweep_type"] = ["adv_rate"]
-            scenarios.append(Scenario(
-                name=f"step5_atk_sens_adv_{defense_name}_{attack_type}_{modality}",
-                base_config_factory=SENSITIVITY_SETUP_STEP5["base_config_factory"],
-                modifiers=[setup_modifier_func, SENSITIVITY_SETUP_STEP5["dataset_modifier"], attack_modifier],
-                parameter_grid=grid_adv
-            ))
-
-            # --- Scenario for varying Poison Rate ---
-            grid_poison = base_grid.copy()
-            grid_poison["sweep_type"] = ["poison_rate"]
-            scenarios.append(Scenario(
-                name=f"step5_atk_sens_poison_{defense_name}_{attack_type}_{modality}",
-                base_config_factory=SENSITIVITY_SETUP_STEP5["base_config_factory"],
-                modifiers=[setup_modifier_func, SENSITIVITY_SETUP_STEP5["dataset_modifier"], attack_modifier],
-                parameter_grid=grid_poison
-            ))
-
-    return scenarios
-
-
-# --- Main Execution Block (This was already correct, no changes needed) ---
-if __name__ == "__main__":
-    # (Your main block is perfect)
-    base_output_dir = "./configs_generated_benchmark"
-    output_dir = Path(base_output_dir) / "step5_attack_sensitivity"
-    generator = ExperimentGenerator(str(output_dir))
-
-    scenarios_to_generate = generate_attack_sensitivity_scenarios()
-    all_generated_configs = 0
-
-    print("\n--- Generating Configuration Files for Step 5 ---")
-
-    # --- Manual Loop REQUIRED to create unique save paths ---
-    for scenario in scenarios_to_generate:
-        print(f"\nProcessing scenario base: {scenario.name}")
-        task_configs = 0
-
-        # Get the static grid params
-        static_grid = {k: v for k, v in scenario.parameter_grid.items() if k not in
-                       ["experiment.adv_rate", "adversary_seller_config.poisoning.poison_rate", "sweep_type"]}
-
-        sweep_type = scenario.parameter_grid.get("sweep_type", [""])[0]
-
-        # Determine which sweep to perform
-        if sweep_type == "adv_rate":
-            sweep_list = [(adv_rate, DEFAULT_POISON_RATE) for adv_rate in ADV_RATES_TO_SWEEP]
-        elif sweep_type == "poison_rate":
-            sweep_list = [(DEFAULT_ADV_RATE, poison_rate) for poison_rate in POISON_RATES_TO_SWEEP]
         else:
-            print(f"  Skipping {scenario.name}: Unknown sweep_type '{sweep_type}'")
+            # Return None to signal the folder should be ignored
+            print(f"Warning: Could not parse scenario name '{scenario_name}'. Ignoring folder.")
+            return None
+
+    except Exception as e:
+        print(f"Warning: Error parsing scenario name '{scenario_name}': {e}. Ignoring folder.")
+        return None
+
+
+def load_run_data(metrics_file: Path) -> Dict[str, Any]:
+    """
+    Loads key data from final_metrics.json and marketplace_report.json
+    """
+    run_data = {}
+    try:
+        with open(metrics_file, 'r') as f:
+            metrics = json.load(f)
+        run_data['acc'] = metrics.get('acc', 0)
+        run_data['asr'] = metrics.get('asr', 0)
+        run_data['rounds'] = metrics.get('completed_rounds', 0)
+
+        report_file = metrics_file.parent / "marketplace_report.json"
+        if report_file.exists():
+            with open(report_file, 'r') as f:
+                report = json.load(f)
+
+            sellers = report.get('seller_summaries', {}).values()
+            adv_sellers = [s for s in sellers if s.get('type') == 'adversary']
+            ben_sellers = [s for s in sellers if s.get('type') == 'benign']
+
+            run_data['adv_selection_rate'] = np.mean([s['selection_rate'] for s in adv_sellers]) if adv_sellers else 0.0
+            run_data['benign_selection_rate'] = np.mean(
+                [s['selection_rate'] for s in ben_sellers]) if ben_sellers else 0.0
+
+        return run_data
+
+    except Exception as e:
+        print(f"Error loading data from {metrics_file.parent}: {e}")
+        return {}
+
+
+def collect_all_results(base_dir: str) -> pd.DataFrame:
+    """Walks the results directory and aggregates all run data."""
+    all_runs = []
+    base_path = Path(base_dir)
+    print(f"Searching for results in {base_path.resolve()}...")
+
+    scenario_folders = [f for f in base_path.glob("step5_atk_sens_*") if f.is_dir()]
+    if not scenario_folders:
+        print(f"Error: No 'step5_atk_sens_*' directories found directly inside {base_path}.")
+        return pd.DataFrame()
+
+    print(f"Found {len(scenario_folders)} scenario base directories.")
+
+    for scenario_path in scenario_folders:
+        scenario_name = scenario_path.name
+        run_scenario = parse_scenario_name(scenario_name)
+
+        # If parsing failed, run_scenario will be None. We skip this folder.
+        if run_scenario is None:
             continue
 
-        # Loop through each attack strength combination
-        for adv_rate, poison_rate in sweep_list:
+        for metrics_file in scenario_path.rglob("final_metrics.json"):
+            try:
+                relative_parts = metrics_file.parent.relative_to(scenario_path).parts
+                if not relative_parts:
+                    continue
 
-            # 1. Create the specific grid for this combination
-            current_grid = static_grid.copy()
-            current_grid["experiment.adv_rate"] = [adv_rate]
-            current_grid["adversary_seller_config.poisoning.poison_rate"] = [poison_rate]
+                hp_folder_name = relative_parts[0]
 
-            # 2. Define unique output path
-            hp_suffix = f"adv_{adv_rate}_poison_{poison_rate}"
-            unique_save_path = f"./results/{scenario.name}/{hp_suffix}"
-            current_grid["experiment.save_path"] = [unique_save_path]
-            temp_scenario_name = f"{scenario.name}/{hp_suffix}"
+                run_hps = parse_hp_suffix(hp_folder_name)
+                run_metrics = load_run_data(metrics_file)
 
-            # 3. Create a temporary Scenario
-            temp_scenario = Scenario(
-                name=temp_scenario_name,
-                base_config_factory=scenario.base_config_factory,
-                modifiers=scenario.modifiers,
-                parameter_grid=current_grid
-            )
+                if run_metrics:
+                    all_runs.append({
+                        **run_scenario,
+                        **run_hps,
+                        **run_metrics,
+                        "hp_suffix": hp_folder_name
+                    })
+            except Exception as e:
+                print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
 
-            # 4. Generate the config
-            base_config = temp_scenario.base_config_factory()
-            modified_base_config = copy.deepcopy(base_config)
-            for modifier in temp_scenario.modifiers:
-                modified_base_config = modifier(modified_base_config)
+    if not all_runs:
+        print("Error: No 'final_metrics.json' files were successfully processed.")
+        return pd.DataFrame()
 
-            # Handle the 0,0 case (no attack)
-            if adv_rate == 0.0 or poison_rate == 0.0:
-                modified_base_config.adversary_seller_config.poisoning.type = PoisonType.NONE
-                modified_base_config.experiment.adv_rate = 0.0  # Force adv rate to 0 if either is 0
+    df = pd.DataFrame(all_runs)
+    return df
 
-            num_gen = generator.generate(modified_base_config, temp_scenario)
-            task_configs += num_gen
 
-        print(f"-> Generated {task_configs} configs for {scenario.name} base")
-        all_generated_configs += task_configs
+def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, dataset: str, output_dir: Path):
+    """
+    Generates the multi-panel line plots for robustness,
+    including 'adv_selection_rate'.
+    """
+    print(f"\n--- Plotting Robustness vs. '{x_metric}' (for {attack_type} on {dataset}) ---")
 
-    print(f"\n✅ Step 5 (Attack Sensitivity) config generation complete!")
-    print(f"Total configurations generated: {all_generated_configs}")
-    print(f"Configs saved to: {output_dir}")
+    if attack_type == 'backdoor':
+        metrics_to_plot = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate', 'rounds']
+    elif attack_type == 'labelflip':
+        metrics_to_plot = ['acc', 'benign_selection_rate', 'adv_selection_rate', 'rounds']
+    else:
+        print(f"Skipping plot for unknown attack type: {attack_type}")
+        return
+
+    metrics_to_plot = [m for m in metrics_to_plot if m in df.columns]
+
+    if not metrics_to_plot:
+        print(f"No metrics found to plot for {dataset}/{attack} vs {x_metric}.")
+        return
+
+    plot_df = df.melt(
+        id_vars=[x_metric, 'defense'],
+        value_vars=metrics_to_plot,
+        var_name='Metric',
+        value_name='Value'
+    )
+
+    rate_metrics = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']
+    plot_df['Value'] = plot_df.apply(
+        lambda row: row['Value'] * 100 if row['Metric'] in rate_metrics else row['Value'],
+        axis=1
+    )
+    plot_df['Metric'] = plot_df['Metric'].apply(
+        lambda m: f'{m} (%)' if m in rate_metrics else m
+    )
+
+    n_metrics = len(plot_df['Metric'].unique())
+    col_wrap = 3 if n_metrics > 2 else 2
+
+    g = sns.relplot(
+        data=plot_df,
+        x=x_metric,
+        y='Value',
+        hue='defense',
+        style='defense',
+        col='Metric',
+        kind='line',
+        col_wrap=col_wrap,
+        height=3.5,
+        aspect=1.3,
+        facet_kws={'sharey': False},
+        markers=True,
+        dashes=False
+    )
+
+    g.fig.suptitle(f'Defense Robustness vs. {x_metric.replace("_", " ").title()} ({attack_type.title()} on {dataset})',
+                   y=1.08)
+    g.set_axis_labels(x_metric.replace("_", " ").title(), "Value")
+    g.set_titles(col_template="{col_name}")
+
+    # Create a safe filename for the dataset (e.g., if it was 'unknown')
+    safe_dataset_name = re.sub(r'[^\w]', '', dataset)
+    plot_file = output_dir / f"plot_robustness_{attack_type}_{safe_dataset_name}_vs_{x_metric}.pdf"
+    g.fig.savefig(plot_file, bbox_inches='tight', format='pdf')
+    print(f"Saved plot: {plot_file}")
+    plt.clf()
+    plt.close('all')
+
+
+def main():
+    output_dir = Path(FIGURE_OUTPUT_DIR)
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"Plots will be saved to: {output_dir.resolve()}")
+
+    df = collect_all_results(BASE_RESULTS_DIR)
+
+    if df.empty:
+        print("No data loaded. Exiting.")
+        return
+
+    # Loop over dataset and attack
+    for dataset in df['dataset'].unique():
+        if dataset in ['unknown', 'parse_failed']:
+            print(f"Skipping plots for '{dataset}' group (due to parsing errors).")
+            continue
+
+        for attack in df['attack'].unique():
+            if pd.isna(attack):
+                continue
+
+            scenario_df = df[(df['dataset'] == dataset) & (df['attack'] == attack)].copy()
+
+            if scenario_df.empty:
+                continue
+
+            # Plot 1: Sweep vs. Adversary Rate
+            adv_rate_df = scenario_df[scenario_df['sweep_type'] == 'adv']
+            if not adv_rate_df.empty:
+                plot_sensitivity_lines(adv_rate_df, 'adv_rate', attack, dataset, output_dir)
+            else:
+                print(f"No data found for {dataset}/{attack} vs. adv_rate sweep.")
+
+            # Plot 2: Sweep vs. Poison Rate
+            poison_rate_df = scenario_df[scenario_df['sweep_type'] == 'poison']
+            if not poison_rate_df.empty:
+                plot_sensitivity_lines(poison_rate_df, 'poison_rate', attack, dataset, output_dir)
+            else:
+                print(f"No data found for {dataset}/{attack} vs. poison_rate sweep.")
+
+    print("\nAnalysis complete. Check 'step5_figures' folder for plots.")
+
+
+if __name__ == "__main__":
+    main()
