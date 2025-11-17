@@ -35,35 +35,43 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
 
 def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
     """
-    (FIXED) Parses the base scenario name using regex.
-    If the pattern doesn't match, it returns None.
+    (FIXED) Parses the base scenario name...
     """
     try:
-        # Regex makes the final dataset group (and its preceding underscore) optional
-        pattern = r'step5_atk_sens_(adv|poison)_(fedavg|martfl|fltrust|skymask)_(backdoor|labelflip)_(image|text|tabular)(?:_(.+))?'
+        # --- THIS REGEX MUST MATCH ALL YOUR FOLDERS ---
+        # I am guessing you have text/tabular folders.
+        pattern = r'step5_atk_sens_(adv|poison)_(fedavg|fltrust|martfl|skymask)_(backdoor|labelflip)_(image|text|tabular)$'
         match = re.search(pattern, scenario_name)
 
         if match:
-            # Handle the optional dataset
-            dataset_name = match.group(5) if match.group(5) is not None else 'unknown'
+            modality = match.group(4)
+
+            # --- THIS IS THE FIX ---
+            # Add mappings for all your modalities
+            if modality == 'image':
+                dataset_name = 'CIFAR100'
+            elif modality == 'text':
+                dataset_name = 'TREC'  # Or whatever your text dataset is
+            elif modality == 'tabular':
+                dataset_name = 'Texas100'  # Or whatever your tabular dataset is
+            else:
+                dataset_name = 'unknown'  # This should now be impossible
 
             return {
                 "scenario": scenario_name,
                 "sweep_type": match.group(1),
                 "defense": match.group(2),
                 "attack": match.group(3),
-                "modality": match.group(4),
-                "dataset": dataset_name,
+                "modality": modality,
+                "dataset": dataset_name,  # This will now be correct
             }
         else:
-            # --- THIS IS THE FIX ---
-            # Return None to signal the folder should be ignored
+            # If this runs, you'll see a warning.
             print(f"Warning: Could not parse scenario name '{scenario_name}'. Ignoring folder.")
             return None
 
     except Exception as e:
         print(f"Warning: Error parsing scenario name '{scenario_name}': {e}. Ignoring folder.")
-        # --- THIS IS THE FIX ---
         return None
 
 
@@ -112,25 +120,44 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
     print(f"Found {len(scenario_folders)} scenario base directories.")
 
+    parsed_count = 0
+    metrics_found_count = 0  # --- DEBUG ---
+
     for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
         run_scenario = parse_scenario_name(scenario_name)
 
-        # --- THIS IS THE FIX ---
-        # If parsing failed, run_scenario will be None. We skip this folder.
         if run_scenario is None:
+            # This would have printed a warning from parse_scenario_name
             continue
-        # --- END FIX ---
 
-        for metrics_file in scenario_path.rglob("final_metrics.json"):
+        # --- DEBUG ---
+        print(f"\nProcessing Scenario: {scenario_name}")
+        print(f"  -> Parsed as: {run_scenario}")
+
+        parsed_count += 1
+
+        # --- DEBUG ---
+        files_in_scenario = list(scenario_path.rglob("final_metrics.json"))
+        if not files_in_scenario:
+            print(f"  -> !! WARNING: No 'final_metrics.json' files found in {scenario_name}")
+            continue
+
+        for metrics_file in files_in_scenario:
             try:
+                metrics_found_count += 1  # --- DEBUG ---
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
                 if not relative_parts:
+                    print(f"  -> Skipping metric file with no relative path: {metrics_file}")
                     continue
 
                 hp_folder_name = relative_parts[0]
-
                 run_hps = parse_hp_suffix(hp_folder_name)
+
+                if not run_hps:
+                    print(f"  -> Skipping metric file due to HP parse fail: {hp_folder_name}")
+                    continue
+
                 run_metrics = load_run_data(metrics_file)
 
                 if run_metrics:
@@ -140,8 +167,17 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                         **run_metrics,
                         "hp_suffix": hp_folder_name
                     })
+                else:
+                    print(f"  -> Skipping metric file, load_run_data failed: {metrics_file}")
+
             except Exception as e:
                 print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
+
+    print(f"\n--- DEBUG SUMMARY ---")
+    print(f"Successfully parsed {parsed_count} scenario folders.")
+    print(f"Found a total of {metrics_found_count} 'final_metrics.json' files.")
+    print(f"Aggregated {len(all_runs)} total runs into the DataFrame.")
+    print(f"--- END DEBUG ---")
 
     if not all_runs:
         print("Error: No 'final_metrics.json' files were successfully processed.")
@@ -153,8 +189,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
 def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, dataset: str, output_dir: Path):
     """
-    (UPDATED)
-    Generates the multi-panel line plots for robustness, now
+    Generates the multi-panel line plots for robustness,
     including 'adv_selection_rate'.
     """
     print(f"\n--- Plotting Robustness vs. '{x_metric}' (for {attack_type} on {dataset}) ---")
@@ -170,7 +205,7 @@ def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, da
     metrics_to_plot = [m for m in metrics_to_plot if m in df.columns]
 
     if not metrics_to_plot:
-        print("No metrics found to plot.")
+        print(f"No metrics found to plot for {dataset}/{attack} vs {x_metric}.")
         return
 
     plot_df = df.melt(
@@ -213,7 +248,9 @@ def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, da
     g.set_axis_labels(x_metric.replace("_", " ").title(), "Value")
     g.set_titles(col_template="{col_name}")
 
-    plot_file = output_dir / f"plot_robustness_{attack_type}_{dataset}_vs_{x_metric}.pdf"
+    # Create a safe filename for the dataset
+    safe_dataset_name = re.sub(r'[^\w]', '', dataset)
+    plot_file = output_dir / f"plot_robustness_{attack_type}_{safe_dataset_name}_vs_{x_metric}.pdf"
     g.fig.savefig(plot_file, bbox_inches='tight', format='pdf')
     print(f"Saved plot: {plot_file}")
     plt.clf()
@@ -231,9 +268,8 @@ def main():
         print("No data loaded. Exiting.")
         return
 
-    # This loop is now safe, as 'dataset' is guaranteed to exist
+    # Loop over dataset and attack
     for dataset in df['dataset'].unique():
-        # This will group all 'unknown' or 'parse_failed' together
         if dataset in ['unknown', 'parse_failed']:
             print(f"Skipping plots for '{dataset}' group (due to parsing errors).")
             continue
@@ -252,7 +288,7 @@ def main():
             if not adv_rate_df.empty:
                 plot_sensitivity_lines(adv_rate_df, 'adv_rate', attack, dataset, output_dir)
             else:
-                print(f"No data found for {dataset}/{attack} vs. adv_rate sweep.")
+                print(f"No data found for {dataset}/{attack} vs. adv_route sweep.")
 
             # Plot 2: Sweep vs. Poison Rate
             poison_rate_df = scenario_df[scenario_df['sweep_type'] == 'poison']
