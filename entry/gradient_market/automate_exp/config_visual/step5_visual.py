@@ -2,7 +2,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,31 +33,38 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     return hps
 
 
-def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
+def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
     """
     (FIXED) Parses the base scenario name using regex.
-    e.g., 'step5_atk_sens_adv_martfl_backdoor_image_CIFAR100'
+    If the pattern doesn't match, it returns None.
     """
     try:
-        # --- THIS IS THE ROBUST REGEX ---
-        pattern = r'step5_atk_sens_(adv|poison)_(fedavg|martfl|fltrust|skymask)_(backdoor|labelflip)_(image|text|tabular)_(.+)'
+        # Regex makes the final dataset group (and its preceding underscore) optional
+        pattern = r'step5_atk_sens_(adv|poison)_(fedavg|martfl|fltrust|skymask)_(backdoor|labelflip)_(image|text|tabular)(?:_(.+))?'
         match = re.search(pattern, scenario_name)
 
         if match:
+            # Handle the optional dataset
+            dataset_name = match.group(5) if match.group(5) is not None else 'unknown'
+
             return {
                 "scenario": scenario_name,
-                "sweep_type": match.group(1),  # 'adv' or 'poison'
+                "sweep_type": match.group(1),
                 "defense": match.group(2),
                 "attack": match.group(3),
                 "modality": match.group(4),
-                "dataset": match.group(5),  # Added dataset
+                "dataset": dataset_name,
             }
         else:
-            raise ValueError(f"Pattern not matched for: {scenario_name}")
+            # --- THIS IS THE FIX ---
+            # Return None to signal the folder should be ignored
+            print(f"Warning: Could not parse scenario name '{scenario_name}'. Ignoring folder.")
+            return None
 
     except Exception as e:
-        print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
-        return {"scenario": scenario_name}
+        print(f"Warning: Error parsing scenario name '{scenario_name}': {e}. Ignoring folder.")
+        # --- THIS IS THE FIX ---
+        return None
 
 
 def load_run_data(metrics_file: Path) -> Dict[str, Any]:
@@ -109,6 +116,12 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
         scenario_name = scenario_path.name
         run_scenario = parse_scenario_name(scenario_name)
 
+        # --- THIS IS THE FIX ---
+        # If parsing failed, run_scenario will be None. We skip this folder.
+        if run_scenario is None:
+            continue
+        # --- END FIX ---
+
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             try:
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
@@ -146,18 +159,13 @@ def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, da
     """
     print(f"\n--- Plotting Robustness vs. '{x_metric}' (for {attack_type} on {dataset}) ---")
 
-    # --- THIS IS THE UPDATED METRIC LIST ---
     if attack_type == 'backdoor':
-        # For backdoor, we want the full dashboard
         metrics_to_plot = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate', 'rounds']
     elif attack_type == 'labelflip':
-        # For labelflip, 'asr' is not used. 'acc' *is* the defense metric.
-        # Selection rates are still very important.
         metrics_to_plot = ['acc', 'benign_selection_rate', 'adv_selection_rate', 'rounds']
     else:
         print(f"Skipping plot for unknown attack type: {attack_type}")
         return
-    # --- END OF UPDATE ---
 
     metrics_to_plot = [m for m in metrics_to_plot if m in df.columns]
 
@@ -172,20 +180,17 @@ def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, da
         value_name='Value'
     )
 
-    # Convert rates to percentages for nicer y-axis
     rate_metrics = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']
     plot_df['Value'] = plot_df.apply(
         lambda row: row['Value'] * 100 if row['Metric'] in rate_metrics else row['Value'],
         axis=1
     )
-    # Add (%) to metric names
     plot_df['Metric'] = plot_df['Metric'].apply(
         lambda m: f'{m} (%)' if m in rate_metrics else m
     )
 
-    # Calculate grid size, ensuring we have max 2 columns
     n_metrics = len(plot_df['Metric'].unique())
-    col_wrap = 3 if n_metrics > 2 else 2  # Allow 3 columns for 5-6 plots
+    col_wrap = 3 if n_metrics > 2 else 2
 
     g = sns.relplot(
         data=plot_df,
@@ -195,7 +200,7 @@ def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, da
         style='defense',
         col='Metric',
         kind='line',
-        col_wrap=col_wrap,  # Use dynamic col_wrap
+        col_wrap=col_wrap,
         height=3.5,
         aspect=1.3,
         facet_kws={'sharey': False},
@@ -223,13 +228,20 @@ def main():
     df = collect_all_results(BASE_RESULTS_DIR)
 
     if df.empty:
+        print("No data loaded. Exiting.")
         return
 
-    # --- UPDATED LOOP: Iterate over dataset and attack ---
+    # This loop is now safe, as 'dataset' is guaranteed to exist
     for dataset in df['dataset'].unique():
-        for attack in df['attack'].unique():
+        # This will group all 'unknown' or 'parse_failed' together
+        if dataset in ['unknown', 'parse_failed']:
+            print(f"Skipping plots for '{dataset}' group (due to parsing errors).")
+            continue
 
-            # Filter for this specific scenario
+        for attack in df['attack'].unique():
+            if pd.isna(attack):
+                continue
+
             scenario_df = df[(df['dataset'] == dataset) & (df['attack'] == attack)].copy()
 
             if scenario_df.empty:
