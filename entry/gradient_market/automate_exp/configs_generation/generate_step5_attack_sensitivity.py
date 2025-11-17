@@ -35,22 +35,23 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
 
 def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
     """
-    (FIXED) Parses the base scenario name.
+    (FIXED) Parses the base scenario name with a simpler, more robust regex.
     It now infers the dataset from the modality (e.g., '_image' -> 'CIFAR100').
     If the pattern doesn't match, it returns None.
     """
     try:
-        # Regex now stops at the modality, as dataset is not in the folder name
-        pattern = r'step5_atk_sens_(adv|poison)_(fedavg|martfl|fltrust|skymask)_(backdoor|labelflip)_(image|text|tabular)$'
+        # --- THIS IS THE NEW, SIMPLER REGEX ---
+        # It captures the 4 key parts without hard-coding all defense/attack names
+        pattern = r'step5_atk_sens_(\w+)_(\w+)_(\w+)_(\w+)$'
         match = re.search(pattern, scenario_name)
 
         if match:
-            # --- THIS WAS THE BUG ---
-            # It should be match.group(4) for the modality
-            modality = match.group(4)
-            # --- END BUG FIX ---
+            sweep_type = match.group(1)  # adv or poison
+            defense = match.group(2)  # fedavg, fltrust, etc.
+            attack = match.group(3)  # backdoor or labelflip
+            modality = match.group(4)  # image, text, etc.
 
-            # Map modality to dataset
+            # --- NEW LOGIC: Map modality to dataset ---
             if modality == 'image':
                 dataset_name = 'CIFAR100'  # As requested
             elif modality == 'text':
@@ -59,12 +60,13 @@ def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
                 dataset_name = 'Texas100'
             else:
                 dataset_name = 'unknown'
+            # --- END NEW LOGIC ---
 
             return {
                 "scenario": scenario_name,
-                "sweep_type": match.group(1),
-                "defense": match.group(2),
-                "attack": match.group(3),
+                "sweep_type": sweep_type,
+                "defense": defense,
+                "attack": attack,
                 "modality": modality,
                 "dataset": dataset_name,  # This is now correctly set
             }
@@ -243,7 +245,6 @@ def main():
 
     # Loop over dataset and attack
     for dataset in df['dataset'].unique():
-        # This check is still good, just in case
         if dataset in ['unknown', 'parse_failed']:
             print(f"Skipping plots for '{dataset}' group (due to parsing errors).")
             continue
