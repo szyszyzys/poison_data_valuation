@@ -255,8 +255,12 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
                 print(f"  Skipping {dataset} / {metric} (no data)")
                 continue
 
-            # Create a simple "safe" name for the file
-            safe_metric_name = metric.split(' ')[0].replace('.', '') + "_" + metric.split(' ')[1]
+            # --- THIS IS THE FIX ---
+            # A more robust safe name, e.g., "5_Avg_Benign"
+            # It takes the first 3 words, cleans all punctuation, and joins them.
+            safe_parts = [re.sub(r'[^\w]', '', part) for part in metric.split(' ')[:3]]
+            safe_metric_name = '_'.join(safe_parts)
+            # --- END FIX ---
 
             print(f"  Plotting: {dataset} - {safe_metric_name}")
 
@@ -269,9 +273,9 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
                 palette='viridis'
             )
 
-            ax.set_title(f"{metric}\nDataset: {dataset}", fontsize=14)
-            ax.set_xlabel("Defense", fontsize=12)
-            ax.set_ylabel("Value", fontsize=12)
+            ax.set_title(f"{metric}\nDataset: {dataset}", fontsize: 14)
+            ax.set_xlabel("Defense", fontsize: 12)
+            ax.set_ylabel("Value", fontsize: 12)
             ax.set_ylim(bottom=0)
 
             # Add annotations
@@ -285,7 +289,7 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
                             ha='center', va='center',
                             xytext=(0, 5),
                             textcoords='offset points',
-                            fontsize=9)
+                            fontsize: 9)
 
             plot_file = output_dir / f"plot_{dataset}_{safe_metric_name}.pdf"
             plt.savefig(plot_file, bbox_inches='tight', format='pdf')
@@ -294,8 +298,6 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
             plot_count += 1
 
     print(f"\nDone. Generated {plot_count} separate PDF plots.")
-
-
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
