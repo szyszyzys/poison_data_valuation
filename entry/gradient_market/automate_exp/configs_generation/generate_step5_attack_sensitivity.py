@@ -35,30 +35,27 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
 
 def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
     """
-    (FIXED) Parses the base scenario name with a hyper-specific regex
-    that matches the 16 folders.
-    It now infers the dataset from the modality (e.g., '_image' -> 'CIFAR100').
-    If the pattern doesn't match, it returns None.
+    (FIXED) Parses the base scenario name...
     """
     try:
-        # --- THIS IS THE NEW, HYPER-SPECIFIC REGEX ---
-        # It explicitly matches the defenses and attacks you listed.
-        pattern = r'step5_atk_sens_(adv|poison)_(fedavg|fltrust|martfl|skymask)_(backdoor|labelflip)_(image)$'
+        # --- THIS REGEX MUST MATCH ALL YOUR FOLDERS ---
+        # I am guessing you have text/tabular folders.
+        pattern = r'step5_atk_sens_(adv|poison)_(fedavg|fltrust|martfl|skymask)_(backdoor|labelflip)_(image|text|tabular)$'
         match = re.search(pattern, scenario_name)
 
         if match:
-            modality = match.group(4)  # This will be 'image'
+            modality = match.group(4)
 
-            # Map modality to dataset
+            # --- THIS IS THE FIX ---
+            # Add mappings for all your modalities
             if modality == 'image':
-                dataset_name = 'CIFAR100'  # As requested
-            # Add other mappings here if you add text/tabular folders
-            # elif modality == 'text':
-            #     dataset_name = 'TREC'
-            # elif modality == 'tabular':
-            #     dataset_name = 'Texas100'
+                dataset_name = 'CIFAR100'
+            elif modality == 'text':
+                dataset_name = 'TREC'  # Or whatever your text dataset is
+            elif modality == 'tabular':
+                dataset_name = 'Texas100'  # Or whatever your tabular dataset is
             else:
-                dataset_name = 'unknown'
+                dataset_name = 'unknown'  # This should now be impossible
 
             return {
                 "scenario": scenario_name,
@@ -66,10 +63,10 @@ def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
                 "defense": match.group(2),
                 "attack": match.group(3),
                 "modality": modality,
-                "dataset": dataset_name,  # This is now correctly set to CIFAR100
+                "dataset": dataset_name,  # This will now be correct
             }
         else:
-            # Return None to signal the folder should be ignored
+            # If this runs, you'll see a warning.
             print(f"Warning: Could not parse scenario name '{scenario_name}'. Ignoring folder.")
             return None
 
