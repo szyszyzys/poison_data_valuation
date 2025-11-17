@@ -35,40 +35,38 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
 
 def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
     """
-    (FIXED) Parses the base scenario name with a simpler, more robust regex.
+    (FIXED) Parses the base scenario name with a hyper-specific regex
+    that matches the 16 folders.
     It now infers the dataset from the modality (e.g., '_image' -> 'CIFAR100').
     If the pattern doesn't match, it returns None.
     """
     try:
-        # --- THIS IS THE NEW, SIMPLER REGEX ---
-        # It captures the 4 key parts without hard-coding all defense/attack names
-        pattern = r'step5_atk_sens_(\w+)_(\w+)_(\w+)_(\w+)$'
+        # --- THIS IS THE NEW, HYPER-SPECIFIC REGEX ---
+        # It explicitly matches the defenses and attacks you listed.
+        pattern = r'step5_atk_sens_(adv|poison)_(fedavg|fltrust|martfl|skymask)_(backdoor|labelflip)_(image)$'
         match = re.search(pattern, scenario_name)
 
         if match:
-            sweep_type = match.group(1)  # adv or poison
-            defense = match.group(2)  # fedavg, fltrust, etc.
-            attack = match.group(3)  # backdoor or labelflip
-            modality = match.group(4)  # image, text, etc.
+            modality = match.group(4)  # This will be 'image'
 
-            # --- NEW LOGIC: Map modality to dataset ---
+            # Map modality to dataset
             if modality == 'image':
                 dataset_name = 'CIFAR100'  # As requested
-            elif modality == 'text':
-                dataset_name = 'TREC'
-            elif modality == 'tabular':
-                dataset_name = 'Texas100'
+            # Add other mappings here if you add text/tabular folders
+            # elif modality == 'text':
+            #     dataset_name = 'TREC'
+            # elif modality == 'tabular':
+            #     dataset_name = 'Texas100'
             else:
                 dataset_name = 'unknown'
-            # --- END NEW LOGIC ---
 
             return {
                 "scenario": scenario_name,
-                "sweep_type": sweep_type,
-                "defense": defense,
-                "attack": attack,
+                "sweep_type": match.group(1),
+                "defense": match.group(2),
+                "attack": match.group(3),
                 "modality": modality,
-                "dataset": dataset_name,  # This is now correctly set
+                "dataset": dataset_name,  # This is now correctly set to CIFAR100
             }
         else:
             # Return None to signal the folder should be ignored
@@ -125,6 +123,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
     print(f"Found {len(scenario_folders)} scenario base directories.")
 
+    parsed_count = 0
     for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
         run_scenario = parse_scenario_name(scenario_name)
@@ -133,13 +132,16 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
         if run_scenario is None:
             continue
 
+        parsed_count += 1
+
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             try:
+                # This logic is confirmed correct by your file path
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
                 if not relative_parts:
                     continue
 
-                hp_folder_name = relative_parts[0]
+                hp_folder_name = relative_parts[0]  # This will be 'adv_0.0_poison_0.5'
 
                 run_hps = parse_hp_suffix(hp_folder_name)
                 run_metrics = load_run_data(metrics_file)
@@ -154,6 +156,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
             except Exception as e:
                 print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
 
+    print(f"Successfully parsed {parsed_count} scenario folders.")
     if not all_runs:
         print("Error: No 'final_metrics.json' files were successfully processed.")
         return pd.DataFrame()
@@ -263,7 +266,7 @@ def main():
             if not adv_rate_df.empty:
                 plot_sensitivity_lines(adv_rate_df, 'adv_rate', attack, dataset, output_dir)
             else:
-                print(f"No data found for {dataset}/{attack} vs. adv_rate sweep.")
+                print(f"No data found for {dataset}/{attack} vs. adv_route sweep.")
 
             # Plot 2: Sweep vs. Poison Rate
             poison_rate_df = scenario_df[scenario_df['sweep_type'] == 'poison']
