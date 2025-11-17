@@ -281,8 +281,10 @@ def plot_skymask_deep_dive(df_all: pd.DataFrame, output_dir: Path):
     for ax in g.axes.flat:
         ax.set_xticklabels(ax.get_xticklabels(), rotation=15, ha='right')
 
-    plot_file = output_dir / "plot_skymask_deep_dive_analysis.png"
-    plt.savefig(plot_file)
+    # --- MODIFIED FOR PDF ---
+    plot_file = output_dir / "plot_skymask_deep_dive_analysis.pdf"
+    # Use g.fig.savefig for catplots
+    g.fig.savefig(plot_file, bbox_inches='tight', format='pdf')
     print(f"Saved SkyMask deep-dive plot: {plot_file}")
     plt.clf()
     plt.close('all')
@@ -349,8 +351,10 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
     plt.xticks(rotation=25, ha='right', fontsize=9)
     plt.legend(title='Metric')
     plt.tight_layout()
-    plot_file = output_dir / f"plot_{scenario}_performance.png"
-    plt.savefig(plot_file)
+
+    # --- MODIFIED FOR PDF ---
+    plot_file = output_dir / f"plot_{scenario}_performance.pdf"
+    plt.savefig(plot_file, bbox_inches='tight', format='pdf')
     print(f"Saved plot: {plot_file}")
     plt.clf()
     plt.close('all')
@@ -393,8 +397,10 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
         g.fig.suptitle(f'HP Stability Analysis for {defense.upper()} ({scenario})', y=1.03)
         g.set_axis_labels(x_hp, 'Metric Value')
         g.set_titles(col_template="{col_name}", row_template="{row_name}")
-        plot_file = output_dir / f"plot_{scenario}_stability_grid.png"
-        g.fig.savefig(plot_file)
+
+        # --- MODIFIED FOR PDF ---
+        plot_file = output_dir / f"plot_{scenario}_stability_grid.pdf"
+        g.fig.savefig(plot_file, bbox_inches='tight', format='pdf')
         print(f"Saved stability grid plot: {plot_file}")
         plt.clf()
         plt.close('all')
