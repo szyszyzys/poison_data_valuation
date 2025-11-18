@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
@@ -46,10 +46,7 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
 
 def load_run_data(metrics_file: Path) -> List[Dict[str, Any]]:
     """
-    (REWRITTEN)
     Loads key data and returns a LIST of per-seller records.
-    Each record shares the same 'acc' and 'rounds' but has a unique
-    'seller_id' and 'selection_rate'.
     """
     run_records = []
 
@@ -68,7 +65,6 @@ def load_run_data(metrics_file: Path) -> List[Dict[str, Any]]:
     report_file = metrics_file.parent / "marketplace_report.json"
     try:
         if not report_file.exists():
-            # No seller data, just return the global metrics
             return [base_metrics]
 
         with open(report_file, 'r') as f:
@@ -79,29 +75,25 @@ def load_run_data(metrics_file: Path) -> List[Dict[str, Any]]:
             return [base_metrics]
 
         for seller_id, seller_data in sellers.items():
-            # We only care about the distribution of BENIGN sellers
             if seller_data.get('type') == 'benign':
                 record = base_metrics.copy()
                 record['seller_id'] = seller_id
                 record['selection_rate'] = seller_data.get('selection_rate', 0.0)
                 run_records.append(record)
 
-        if not run_records:  # e.g., if there were 0 benign sellers
+        if not run_records:
             return [base_metrics]
 
         return run_records
 
     except Exception as e:
         print(f"Error loading marketplace_report.json: {e}")
-        return [base_metrics]  # Return global data even if report fails
+        return [base_metrics]
 
 
 def collect_all_results(base_dir: str) -> pd.DataFrame:
     """
-    (REWRITTEN)
     Walks the results directory and aggregates all run data.
-    Each experiment run will now produce MULTIPLE rows, one for each
-    benign seller in that run.
     """
     all_seller_runs = []
     base_path = Path(base_dir)
@@ -125,7 +117,6 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
             continue
 
         for metrics_file in metrics_files:  # Loop over seeds
-            # load_run_data now returns a list of seller records
             per_seller_records = load_run_data(metrics_file)
 
             for seller_record in per_seller_records:
@@ -142,10 +133,63 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     return df
 
 
-def plot_buyer_attack_distribution(df: pd.DataFrame, output_dir: Path):
+def load_step2_5_baseline_summary(step2_5_csv_path: Path) -> Tuple[pd.DataFrame, Dict[Tuple, float]]:
     """
-    (NEW) Generates a box plot grid showing the DISTRIBUTION of
-    benign seller selection rates. This highlights outliers.
+    (NEW)
+    Loads the Step 2.5 summary CSV to create a performance baseline
+    and a selection rate lookup.
+    """
+    print(f"\nLoading Step 2.5 Baseline from: {step2_5_csv_path}")
+    df_perf_baseline = pd.DataFrame()
+    baseline_sel_lookup = {}
+
+    if not step2_5_csv_path.exists():
+        print(f"  Warning: {step2_5_csv_path} not found. Cannot add baseline to plots.")
+        return df_perf_baseline, baseline_sel_lookup
+
+    try:
+        df_step2_5 = pd.read_csv(step2_5_csv_path)
+
+        # 1. Create the Performance Baseline DataFrame
+        acc_col = '2. Avg. Usable Accuracy (%) (Higher is Better)'
+        rounds_col = '3. Avg. Usable Rounds (Lower is Better)'
+
+        # Check if necessary columns exist
+        if acc_col in df_step2_5.columns and rounds_col in df_step2_5.columns:
+            df_perf_baseline = df_step2_5[['defense', 'dataset', acc_col, rounds_col]].copy()
+            df_perf_baseline = df_perf_baseline.rename(columns={
+                acc_col: 'acc',
+                rounds_col: 'rounds'
+            })
+            # Convert acc from 83.3 -> 0.833
+            df_perf_baseline['acc'] /= 100.0
+            # Add the 'attack' column to match the step8 data
+            df_perf_baseline['attack'] = '0. Baseline (No Attack)'
+            print(f"  Successfully loaded {len(df_perf_baseline)} performance baseline rows.")
+        else:
+            print(f"  Warning: Could not find '{acc_col}' or '{rounds_col}' in baseline CSV.")
+
+        # 2. Create the Selection Rate Lookup Dictionary
+        sel_col = '5. Avg. Benign Selection Rate (%)'
+        if sel_col in df_step2_5.columns:
+            # Convert from 50.0 -> 0.50
+            df_step2_5[sel_col] /= 100.0
+            baseline_sel_lookup = df_step2_5.set_index(['defense', 'dataset'])[sel_col].to_dict()
+            print(f"  Successfully created baseline selection lookup for {len(baseline_sel_lookup)} defenses.")
+        else:
+            print(f"  Warning: Could not find '{sel_col}' in baseline CSV.")
+
+    except Exception as e:
+        print(f"  Error processing {step2_5_csv_path}: {e}")
+
+    return df_perf_baseline, baseline_sel_lookup
+
+
+def plot_buyer_attack_distribution(df: pd.DataFrame, baseline_sel_lookup: Dict, output_dir: Path):
+    """
+    (UPDATED)
+    Generates an individual PDF box plot for each attack type.
+    Adds a horizontal line for the 'no attack' baseline.
     """
     print("\n--- Plotting Benign Seller Selection Rate Distribution (Fig 1) ---")
 
@@ -153,7 +197,6 @@ def plot_buyer_attack_distribution(df: pd.DataFrame, output_dir: Path):
         print("Skipping: 'selection_rate' column not found.")
         return
 
-    # Define the logical order for columns and rows
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
     attack_order = [
         'dos', 'erosion', 'starvation',
@@ -162,37 +205,58 @@ def plot_buyer_attack_distribution(df: pd.DataFrame, output_dir: Path):
         'oscillating_binary', 'oscillating_random', 'oscillating_drift'
     ]
 
-    # Filter to only known attacks/defenses
     plot_df = df[df['defense'].isin(defense_order) & df['attack'].isin(attack_order)].copy()
 
-    g = sns.catplot(
-        data=plot_df,
-        x='defense',
-        y='selection_rate',
-        col='attack',
-        kind='box',  # Use a box plot to show distribution and outliers
-        order=defense_order,
-        col_order=attack_order,
-        col_wrap=3,  # 3 attacks per row
-        height=4,
-        aspect=1.0,
-        sharey=True
-    )
+    # --- Loop to create individual plots ---
+    for attack in attack_order:
+        attack_df = plot_df[plot_df['attack'] == attack]
+        if attack_df.empty:
+            continue
 
-    g.fig.suptitle('Buyer Attack Impact on Benign Seller Selection Rate (Distribution)', y=1.03)
-    g.set_axis_labels('Seller-Side Defense', 'Benign Selection Rate')
-    g.set_titles(col_template="{col_name}")
+        # Get the dataset for this attack (assumes one dataset per attack tag)
+        dataset = attack_df['dataset'].iloc[0]
 
-    plot_file = output_dir / "plot_buyer_attack_SELECTION_RATES.png"
-    g.fig.savefig(plot_file)
-    print(f"Saved plot: {plot_file}")
-    plt.clf()
+        print(f"  Plotting Selection Rate for: {attack}")
+        plt.figure(figsize=(7, 5))
+        ax = sns.boxplot(
+            data=attack_df,
+            x='defense',
+            y='selection_rate',
+            order=defense_order
+        )
+
+        # --- NEW: Add baseline horizontal lines ---
+        for i, defense in enumerate(defense_order):
+            baseline_val = baseline_sel_lookup.get((defense, dataset))
+            if baseline_val is not None:
+                ax.hlines(
+                    y=baseline_val,
+                    xmin=i-0.4, xmax=i+0.4,
+                    color='red',
+                    linestyle='--',
+                    lw=2,
+                    label='Baseline (No Attack)' if i == 0 else None
+                )
+        if any(baseline_sel_lookup.get((d, dataset)) is not None for d in defense_order):
+             ax.legend()
+        # --- END NEW ---
+
+        ax.set_title(f'Benign Seller Selection Rate (Distribution)\nAttack: {attack}')
+        ax.set_xlabel('Seller-Side Defense')
+        ax.set_ylabel('Benign Selection Rate')
+        ax.set_ylim(-0.05, 1.05) # Set Y-axis 0-1
+
+        plot_file = output_dir / f"plot_buyer_attack_SELECTION_RATES_{attack}.pdf"
+        plt.savefig(plot_file, format='pdf', bbox_inches='tight')
+        plt.clf()
+        plt.close('all')
 
 
-def plot_buyer_attack_performance(df: pd.DataFrame, output_dir: Path):
+def plot_buyer_attack_performance(df: pd.DataFrame, df_perf_baseline: pd.DataFrame, output_dir: Path):
     """
-    (NEW) Generates a bar plot grid showing the impact on
-    global metrics like 'acc' and 'rounds'.
+    (UPDATED)
+    Generates an individual PDF (with 2 subplots) for each attack type.
+    Now includes the '0. Baseline (No Attack)' data.
     """
     print("\n--- Plotting Model Performance & Stability (Fig 2) ---")
 
@@ -202,11 +266,21 @@ def plot_buyer_attack_performance(df: pd.DataFrame, output_dir: Path):
         return
 
     # De-duplicate the dataframe to get one value per run for global metrics
-    plot_df = df.drop_duplicates(subset=['scenario', 'acc', 'rounds'])
+    plot_df = df.drop_duplicates(subset=['scenario', 'acc', 'rounds', 'attack', 'defense'])
 
-    # Define the logical order
+    # --- NEW: Combine with baseline ---
+    # Filter baseline to only datasets in the main df
+    datasets_in_step8 = plot_df['dataset'].unique()
+    df_perf_baseline = df_perf_baseline[df_perf_baseline['dataset'].isin(datasets_in_step8)]
+
+    # Combine the step8 summary and the step2.5 baseline
+    plot_df = pd.concat([plot_df, df_perf_baseline], ignore_index=True)
+    # --- END NEW ---
+
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+    # --- NEW: Add baseline to attack order ---
     attack_order = [
+        '0. Baseline (No Attack)', # <-- NEW
         'dos', 'erosion', 'starvation',
         'class_exclusion_neg', 'class_exclusion_pos',
         'orthogonal_pivot_legacy',
@@ -215,7 +289,6 @@ def plot_buyer_attack_performance(df: pd.DataFrame, output_dir: Path):
 
     plot_df = plot_df[plot_df['defense'].isin(defense_order) & plot_df['attack'].isin(attack_order)].copy()
 
-    # Melt to long format
     plot_df_long = plot_df.melt(
         id_vars=['attack', 'defense'],
         value_vars=metrics_to_plot,
@@ -223,28 +296,43 @@ def plot_buyer_attack_performance(df: pd.DataFrame, output_dir: Path):
         value_name='Value'
     )
 
-    g = sns.catplot(
-        data=plot_df_long,
-        x='defense',
-        y='Value',
-        col='attack',
-        row='Metric',  # New rows for acc vs. rounds
-        kind='bar',
-        order=defense_order,
-        col_order=attack_order,
-        height=3.5,
-        aspect=1.2,
-        sharey=False  # acc and rounds have different scales
-    )
+    # --- Loop to create individual plots ---
+    for attack in attack_order:
+        attack_df = plot_df_long[plot_df_long['attack'] == attack]
+        if attack_df.empty:
+            continue
 
-    g.fig.suptitle('Buyer Attack Impact on Model Performance & Stability', y=1.03)
-    g.set_axis_labels('Seller-Side Defense', 'Value')
-    g.set_titles(row_template="{row_name}", col_template="{col_name}")
+        print(f"  Plotting Performance for: {attack}")
 
-    plot_file = output_dir / "plot_buyer_attack_PERFORMANCE.png"
-    g.fig.savefig(plot_file)
-    print(f"Saved plot: {plot_file}")
-    plt.clf()
+        g = sns.catplot(
+            data=attack_df,
+            x='defense',
+            y='Value',
+            row='Metric',  # This creates the acc/rounds stacking
+            kind='bar',
+            order=defense_order,
+            height=3.5,
+            aspect=1.5,
+            sharey=False  # acc and rounds have different scales
+        )
+
+        g.fig.suptitle(f'Model Performance & Stability\nAttack: {attack}', y=1.05)
+        g.set_axis_labels('Seller-Side Defense', 'Value')
+        g.set_titles(row_template="{row_name}")
+
+        for ax in g.axes.flat:
+            for p in ax.patches:
+                ax.annotate(f'{p.get_height():.2f}',
+                            (p.get_x() + p.get_width() / 2., p.get_height()),
+                            ha='center', va='center',
+                            xytext=(0, 5),
+                            textcoords='offset points',
+                            fontsize=9)
+
+        plot_file = output_dir / f"plot_buyer_attack_PERFORMANCE_{attack}.pdf"
+        g.fig.savefig(plot_file, format='pdf', bbox_inches='tight')
+        plt.clf()
+        plt.close('all')
 
 
 def main():
@@ -252,14 +340,19 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     print(f"Plots will be saved to: {output_dir.resolve()}")
 
+    # 1. Load Step 8 Data
     df = collect_all_results(BASE_RESULTS_DIR)
-
     if df.empty:
+        print("No 'step8' data was loaded. Exiting.")
         return
 
-    # Call the two new plotting functions
-    plot_buyer_attack_distribution(df, output_dir)
-    plot_buyer_attack_performance(df, output_dir)
+    # 2. (NEW) Load Step 2.5 Baseline Data
+    step2_5_csv = Path(FIGURE_OUTPUT_DIR).parent / "step2.5_figures" / "step2.5_platform_metrics_with_selection_summary.csv"
+    df_perf_baseline, baseline_sel_lookup = load_step2_5_baseline_summary(step2_5_csv)
+
+    # 3. Call the two new plotting functions
+    plot_buyer_attack_distribution(df, baseline_sel_lookup, output_dir)
+    plot_buyer_attack_performance(df, df_perf_baseline, output_dir)
 
     print("\nAnalysis complete. Check 'step8_figures' folder for plots.")
 
