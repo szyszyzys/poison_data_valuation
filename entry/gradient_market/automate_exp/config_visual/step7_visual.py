@@ -10,12 +10,15 @@ from typing import List, Dict, Any, Tuple
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step7"
+FIGURE_OUTPUT_DIR = "./figures/step7_full_analysis_figures"
 
 # Regex to parse 'step7_adaptive_black_box_gradient_manipulation_martfl_CIFAR100'
 SCENARIO_PATTERN = re.compile(
     r'step7_adaptive_([a-z_]+)_([a-z_]+)_([a-zA-Z0-9_]+)_(.*)'
 )
+
+# --- Define the round where the attack starts ---
+EXPLORATION_ROUNDS = 30
 # ---------------------
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
@@ -122,9 +125,13 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
 
                 adv_sel_rate = 0.0
                 ben_sel_rate = 0.0
+                # Use the *final* selection rate from the timeseries, not the mean
                 if not df_seller.empty:
-                    adv_sel_rate = df_seller[df_seller['seller_type'] == 'Adversary']['selected'].mean()
-                    ben_sel_rate = df_seller[df_seller['seller_type'] == 'Benign']['selected'].mean()
+                    # Get the last round's data
+                    df_seller_last_round = df_seller[df_seller['round'] == df_seller['round'].max()]
+                    if not df_seller_last_round.empty:
+                        adv_sel_rate = df_seller_last_round[df_seller_last_round['seller_type'] == 'Adversary']['selected'].mean()
+                        ben_sel_rate = df_seller_last_round[df_seller_last_round['seller_type'] == 'Benign']['selected'].mean()
 
                 summary_row = {
                     **scenario_params,
@@ -151,6 +158,70 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
 
     return df_seller_timeseries, df_global_timeseries, df_summary
 
+
+def load_step2_5_baseline(step2_5_csv_path: Path) -> pd.DataFrame:
+    """
+    (NEW)
+    Loads the Step 2.5 summary CSV to extract the 'no attack' baseline.
+    """
+    print(f"\nLoading Step 2.5 Baseline from: {step2_5_csv_path}")
+    if not step2_5_csv_path.exists():
+        print(f"  Warning: {step2_5_csv_path} not found. Cannot add baseline to plots.")
+        return pd.DataFrame()
+
+    try:
+        df_step2_5 = pd.read_csv(step2_5_csv_path)
+
+        # We only care about the Benign Selection Rate (and adv, if it exists)
+        metrics_to_load = {
+            '5. Avg. Benign Selection Rate (%)': 'ben_sel_rate',
+            '6. Avg. Adversary Selection Rate (%)': 'adv_sel_rate'
+        }
+
+        # Pivot to long format
+        df_long = df_step2_5.melt(
+            id_vars=['defense', 'dataset'],
+            value_vars=[col for col in metrics_to_load.keys() if col in df_step2_5.columns],
+            var_name='Metric_Name',
+            value_name='Value'
+        )
+
+        df_long['Value'] /= 100.0 # Convert from 83.3 -> 0.833
+
+        # Rename columns to match the summary_df
+        df_long = df_long.rename(columns={
+            'Metric_Name': 'Metric',
+            'Value': 'Value_mean'
+        })
+        df_long['Metric'] = df_long['Metric'].map(metrics_to_load)
+
+        # --- Add columns to match the step7 data structure ---
+        df_long['threat_label'] = '0. Baseline (No Attack)'
+        df_long['adaptive_mode'] = 'N/A'
+        df_long['seed_id'] = 'step2_5_avg'
+
+        # We need to un-melt it to match the structure of df_summary
+        df_pivot = df_long.pivot_table(
+            index=['defense', 'dataset', 'threat_label', 'adaptive_mode', 'seed_id'],
+            columns='Metric',
+            values='Value_mean'
+        ).reset_index()
+
+        # Add 'acc' - use the '2. Avg. Usable Accuracy (%)'
+        if '2. Avg. Usable Accuracy (%)' in df_step2_5.columns:
+            acc_df = df_step2_5[['defense', 'dataset', '2. Avg. Usable Accuracy (%)']].copy()
+            acc_df = acc_df.rename(columns={'2. Avg. Usable Accuracy (%)': 'acc'})
+            acc_df['acc'] /= 100.0
+            df_pivot = df_pivot.merge(acc_df, on=['defense', 'dataset'], how='left')
+
+        print(f"  Successfully loaded and processed {len(df_pivot)} baseline rows.")
+        return df_pivot
+
+    except Exception as e:
+        print(f"  Error processing {step2_5_csv_path}: {e}")
+        return pd.DataFrame()
+
+
 # ========================================================================
 # PLOTTING FUNCTIONS
 # ========================================================================
@@ -158,7 +229,7 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
 def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 1: The Core Plot
-    (UPDATED to save one plot per file)
+    (UPDATED to add a new 'Selection Advantage' plot)
     """
     print("Generating Plot 1: Selection Rate Learning Curves (one per file)...")
 
@@ -168,21 +239,32 @@ def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
 
     df_plot = df.copy()
     df_plot = df_plot.sort_values(by=['seed_id', 'seller_type', 'round'])
-    group_cols = ['seed_id', 'seller_type', 'defense', 'threat_label', 'adaptive_mode']
-    df_plot['rolling_sel_rate'] = df_plot.groupby(group_cols)['selected'] \
-                                         .transform(lambda x: x.rolling(3, min_periods=1).mean())
+    group_cols = ['seed_id', 'seller_type', 'defense', 'threat_label', 'adaptive_mode', 'round']
 
-    defenses = df_plot['defense'].unique()
-    threat_labels = df_plot['threat_label'].unique()
+    # Calculate rolling mean for each group
+    # We group by seed, type, defense, etc. *and* round, then take the mean.
+    # This averages all 'adv_0', 'adv_1' etc. into one 'Adversary' line per round.
+    df_agg = df_plot.groupby(group_cols)['selected'].mean().reset_index()
+
+    # Now calculate the rolling average over time
+    group_cols_rolling = ['seed_id', 'seller_type', 'defense', 'threat_label', 'adaptive_mode']
+    df_agg['rolling_sel_rate'] = df_agg.groupby(group_cols_rolling)['selected'] \
+                                     .transform(lambda x: x.rolling(3, min_periods=1).mean())
+
+    defenses = df_agg['defense'].unique()
+    threat_labels = df_agg['threat_label'].unique()
 
     for defense in defenses:
         for threat in threat_labels:
-            df_facet = df_plot[
-                (df_plot['defense'] == defense) & (df_plot['threat_label'] == threat)
+            df_facet = df_agg[
+                (df_agg['defense'] == defense) & (df_agg['threat_label'] == threat)
             ]
             if df_facet.empty:
                 continue
 
+            threat_filename = threat.replace(' ', '').replace('.', '')
+
+            # --- PLOT 1a: The Original Plot (Selection Rate) ---
             plt.figure(figsize=(10, 6))
             ax = sns.lineplot(
                 data=df_facet,
@@ -192,25 +274,61 @@ def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
                 style='adaptive_mode',
                 palette={'Adversary': 'red', 'Benign': 'blue'},
                 lw=2.5,
-                errorbar=None
+                errorbar=('ci', 95) # Use confidence interval
             )
-
+            ax.axvline(x=EXPLORATION_ROUNDS, color='grey', linestyle='--', linewidth=2, label='Attack Phase Begins')
             ax.set_title(f'Selection Rate: {defense.upper()} vs {threat}')
             ax.set_xlabel('Training Round')
             ax.set_ylabel('Selection Rate (3-round Avg)')
             ax.legend(title='Seller / Mode')
+            ax.set_ylim(-0.05, 1.05) # Set Y-axis 0-1
 
-            # Clean threat name for filename
-            threat_filename = threat.replace(' ', '').replace('.', '')
             plot_file = output_dir / f"plot1_sel_rate_{defense}_{threat_filename}.png"
             plt.savefig(plot_file, bbox_inches='tight')
-            plt.clf()
-            plt.close('all')
+            plt.clf(); plt.close('all')
+
+            # --- PLOT 1b: The NEW "Advantage" Plot ---
+            # Pivot the data to get 'Adversary' and 'Benign' as columns
+            df_pivot = df_facet.pivot_table(
+                index=['round', 'seed_id', 'defense', 'threat_label', 'adaptive_mode'],
+                columns='seller_type',
+                values='rolling_sel_rate'
+            ).reset_index()
+
+            # Check if both types are present
+            if 'Adversary' not in df_pivot.columns or 'Benign' not in df_pivot.columns:
+                print(f"  Skipping 'Advantage' plot for {defense}/{threat}: missing Adv or Benign data.")
+                continue
+
+            # Calculate the "Advantage"
+            df_pivot['Selection_Advantage'] = df_pivot['Adversary'] - df_pivot['Benign']
+
+            plt.figure(figsize=(10, 6))
+            ax = sns.lineplot(
+                data=df_pivot,
+                x='round',
+                y='Selection_Advantage',
+                hue='adaptive_mode', # Show one line per adaptive mode
+                style='adaptive_mode',
+                lw=2.5,
+                errorbar=('ci', 95)
+            )
+            ax.axvline(x=EXPLORATION_ROUNDS, color='grey', linestyle='--', linewidth=2, label='Attack Phase Begins')
+            ax.axhline(y=0, color='black', linestyle='-', linewidth=1) # Add a line at y=0
+            ax.set_title(f"Attacker's Selection Advantage: {defense.upper()} vs {threat}")
+            ax.set_xlabel('Training Round')
+            ax.set_ylabel('Adv. Rate - Benign Rate (Higher is better for Attacker)')
+            ax.legend(title='Adaptive Mode')
+
+            plot_file = output_dir / f"plot1_sel_ADVANTAGE_{defense}_{threat_filename}.png"
+            plt.savefig(plot_file, bbox_inches='tight')
+            plt.clf(); plt.close('all')
+
 
 def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 2: Global Accuracy
-    (UPDATED to save one plot per file)
+    (UPDATED to add vertical line at EXPLORATION_ROUNDS)
     """
     print("Generating Plot 2: Global Accuracy Curves (one per file)...")
 
@@ -241,6 +359,11 @@ def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
                 errorbar=None
             )
 
+            # --- THIS IS THE NEW LINE ---
+            # Add a vertical line to show when the attack starts
+            ax.axvline(x=EXPLORATION_ROUNDS, color='grey', linestyle='--', linewidth=2, label='Attack Phase Begins')
+            # --- END NEW LINE ---
+
             ax.set_title(f'Global Accuracy: {defense.upper()} vs {threat}')
             ax.set_xlabel('Training Round')
             ax.set_ylabel('Global Accuracy')
@@ -255,7 +378,7 @@ def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
 def plot_final_summary(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 3: The "Final" Plot
-    (UPDATED to save one figure per *defense*)
+    (UPDATED to include baseline and define a clear x-axis order)
     """
     print("Generating Plot 3: Final Effectiveness Summary (one per defense)...")
 
@@ -270,12 +393,25 @@ def plot_final_summary(df: pd.DataFrame, output_dir: Path):
         value_name='Value'
     )
 
+    # Convert to percentage
+    df_melted['Value'] *= 100
+
     metric_map = {
-        'adv_sel_rate': 'Adversary Selection Rate',
-        'ben_sel_rate': 'Benign Selection Rate',
-        'acc': 'Final Global Accuracy'
+        'adv_sel_rate': 'Adversary Selection Rate (%)',
+        'ben_sel_rate': 'Benign Selection Rate (%)',
+        'acc': 'Final Global Accuracy (%)'
     }
     df_melted['Metric'] = df_melted['Metric'].map(metric_map)
+
+    # --- NEW: Define logical order for the x-axis ---
+    x_order = [
+        '0. Baseline (No Attack)',
+        '1. Black-Box',
+        '2. Grad-Inversion',
+        '3. Oracle'
+    ]
+    # Filter to only those that are actually in the data
+    x_order = [x for x in x_order if x in df_melted['threat_label'].unique()]
 
     for defense in df['defense'].unique():
         df_defense = df_melted[df_melted['defense'] == defense]
@@ -289,6 +425,7 @@ def plot_final_summary(df: pd.DataFrame, output_dir: Path):
             y='Value',
             col='Metric', # This creates the 3 subplots
             hue='adaptive_mode',
+            order=x_order, # <-- Apply the logical x-axis order
             dodge=True,
             height=4,
             aspect=1.0,
@@ -346,6 +483,12 @@ def plot_martfl_analysis(df: pd.DataFrame, output_dir: Path):
         aspect=1.5
     )
 
+    # --- THIS IS THE NEW BLOCK ---
+    # Add a vertical line for each subplot
+    for ax in g.axes.flat:
+        ax.axvline(x=EXPLORATION_ROUNDS, color='grey', linestyle='--', linewidth=2, label='Attack Phase Begins')
+    # --- END NEW BLOCK ---
+
     g.set_axis_labels('Training Round', 'Gradient Norm')
     g.set_titles(col_template="{col_name}", row_template="{row_name}")
     g.fig.suptitle('Plot 4: Martfl Analysis - Gradient Norm vs. Selection Status', y=1.03)
@@ -364,12 +507,33 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     print(f"Full analysis figures will be saved to: {output_dir.resolve()}")
 
+    # --- Load Step 7 Data ---
     df_seller_ts, df_global_ts, df_summary = collect_all_results(BASE_RESULTS_DIR)
 
     if df_summary.empty:
-        print("\nNo data was loaded. Exiting.")
+        print("\nNo 'step7' data was loaded. Exiting.")
         return
 
+    # --- (NEW) Load Step 2.5 Data ---
+    # Assumes step2.5 figures are in a sibling folder to this script's output
+    step2_5_csv = Path(FIGURE_OUTPUT_DIR).parent / "step2.5_figures" / "step2.5_platform_metrics_with_selection_summary.csv"
+    df_baseline = load_step2_5_baseline(step2_5_csv)
+
+    # --- (NEW) Combine DataFrames ---
+    if not df_baseline.empty:
+        # We need to filter df_baseline to only include datasets
+        # that are actually in the step7 results.
+        datasets_in_step7 = df_summary['dataset'].unique()
+        df_baseline_filtered = df_baseline[df_baseline['dataset'].isin(datasets_in_step7)]
+
+        # Combine the step7 summary and the step2.5 baseline
+        df_summary_with_baseline = pd.concat([df_summary, df_baseline_filtered], ignore_index=True)
+        print("  Successfully merged 'step7' data with 'step2.5' baseline.")
+    else:
+        print("  Proceeding without 'step2.5' baseline data.")
+        df_summary_with_baseline = df_summary
+
+    # --- Save full time-series data (for debugging/appendix) ---
     csv_seller_ts = output_dir / "all_runs_seller_timeseries.csv"
     df_seller_ts.to_csv(csv_seller_ts, index=False)
     print(f"\n✅ Saved all seller time-series data to: {csv_seller_ts}")
@@ -378,15 +542,19 @@ def main():
     df_global_ts.to_csv(csv_global_ts, index=False)
     print(f"✅ Saved all global time-series data to: {csv_global_ts}")
 
-    csv_summary = output_dir / "all_runs_summary.csv"
-    df_summary.to_csv(csv_summary, index=False)
-    print(f"✅ Saved all summary data to: {csv_summary}")
+    # --- Save the combined summary data ---
+    csv_summary = output_dir / "all_runs_summary_with_baseline.csv"
+    df_summary_with_baseline.to_csv(csv_summary, index=False, float_format="%.4f")
+    print(f"✅ Saved all summary data (with baseline) to: {csv_summary}")
 
     # --- Call all plotting functions ---
+    # Plots 1, 2, 4 use the raw time-series data (no baseline)
     plot_selection_rate_curves(df_seller_ts, output_dir)
     plot_global_performance_curves(df_global_ts, output_dir)
-    plot_final_summary(df_summary, output_dir)
-    plot_martfl_analysis(df_seller_ts, output_dir) # New in-depth plot
+    plot_martfl_analysis(df_seller_ts, output_dir)
+
+    # Plot 3 uses the new combined summary data
+    plot_final_summary(df_summary_with_baseline, output_dir)
 
     print("\n---")
     print("🔴 IMPORTANT NOTE ON STRATEGY PLOTS:")
