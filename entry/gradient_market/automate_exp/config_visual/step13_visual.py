@@ -16,39 +16,35 @@ VICTIM_SELLER_ID = "bn_3"  # The seller being targeted
 
 # --- End Configuration ---
 
-
 def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
     """
-    FIXED: Parses the base scenario name, accommodating potential attack type prefix.
-    e.g., 'step13_drowning_martfl_bn_3' (original target)
-    e.g., 'step13_drowning_drowning_martfl' (actual folder prefix)
+    FIXED: Parses the base scenario name, accommodating the actual naming pattern
+    like 'step13_drowning_drowning_martfl' or 'step13_drowning_martfl_bn_3'.
     """
     try:
-        # Adjusted pattern to capture common prefixes like 'step13_drowning_drowning_'
-        # The defense name (martfl) is the critical part to extract.
-        pattern = r'step13_.*_(fedavg|martfl|fltrust|skymask)_(.*)'
+        # Adjusted pattern: Uses a non-greedy wildcard followed by the defense name,
+        # allowing an optional suffix.
+        pattern = r'step13_.*_(fedavg|martfl|fltrust|skymask)(?:_bn_[0-9]+)?'
         match = re.search(pattern, scenario_name)
 
         if match:
-            # Note: We can't reliably extract the victim_id from the top-level folder
-            # name if it's not present (like in your path example).
             return {
                 "scenario": scenario_name,
                 "defense": match.group(1),
+                # Note: victim_id cannot be reliably extracted from the top-level folder name alone.
             }
         else:
-            # Fallback for old/unknown names
-            return {"scenario": scenario_name, "defense": "unknown"}
+            # Setting defense to None ensures it's skipped cleanly in the main loop
+            return {"scenario": scenario_name, "defense": None}
 
     except Exception as e:
         print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
-        return {"scenario": scenario_name}
+        return {"scenario": scenario_name, "defense": None}
 
 
 def collect_all_results(base_dir: str) -> pd.DataFrame:
     """
     Walks the results directory and aggregates all seller_metrics.csv data.
-    This function is built for time-series analysis.
     """
     all_seller_rows = []
     base_path = Path(base_dir)
@@ -66,23 +62,21 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
         scenario_name = scenario_path.name
         run_scenario = parse_scenario_name(scenario_name)
         defense = run_scenario.get('defense')
-        if defense == 'unknown':
+
+        if defense is None:
             print(f"Skipping unparsed scenario: {scenario_name}")
             continue
 
-        # Find all seller_metrics.csv files (one per seed) using rglob
-        seller_metric_files = list(scenario_path.rglob("seller_metrics.csv"))
-        if not seller_metric_files:
-            print(f"Warning: No 'seller_metrics.csv' found in {scenario_path} subdirectories.")
-            continue
-
         processed_seeds = 0
+
+        # rglob finds the seller_metrics.csv file, which is deep in the seed folder
+        seller_metric_files = list(scenario_path.rglob("seller_metrics.csv"))
+
         for metrics_csv in seller_metric_files:
             try:
                 seller_df = pd.read_csv(metrics_csv)
 
-                # Extract seed from file path. The path structure is deep, we use the final run folder name.
-                # E.g., .../run_0_seed_42/seller_metrics.csv -> seed_42
+                # Extract seed from file path (e.g., .../run_0_seed_42/seller_metrics.csv)
                 seed_match = re.search(r'seed_([0-9]+)', str(metrics_csv.parent.name))
                 seed_val = int(seed_match.group(1)) if seed_match else processed_seeds
 
@@ -129,7 +123,7 @@ def plot_drowning_attack(df: pd.DataFrame, output_dir: Path):
     # Rename 'selected' to 'selection_rate' for clarity
     plot_df.rename(columns={'selected': 'selection_rate'}, inplace=True)
 
-    # FIXED: Include 'fedavg' in the order and ensure all found defenses are included
+    # FIXED: Ensure 'fedavg' is included and all found defenses are processed.
     defense_order = ['fedavg', 'martfl', 'fltrust', 'skymask']
     defense_order = [d for d in defense_order if d in plot_df['defense'].unique()]
 
