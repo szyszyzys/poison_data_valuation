@@ -10,7 +10,7 @@ from typing import List, Dict, Any
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./step10_figures"
+FIGURE_OUTPUT_DIR = "./figures/step10_figures"
 
 
 # ---------------------

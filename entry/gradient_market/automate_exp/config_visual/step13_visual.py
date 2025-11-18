@@ -10,7 +10,7 @@ from typing import List, Dict, Any
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./step13_figures"
+FIGURE_OUTPUT_DIR = "./figures/step13_figures"
 VICTIM_SELLER_ID = "bn_3"  # The seller being targeted
 
 

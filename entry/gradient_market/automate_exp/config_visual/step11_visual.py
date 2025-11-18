@@ -11,7 +11,7 @@ from matplotlib.ticker import FixedLocator, FixedFormatter
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./step11_figures"
+FIGURE_OUTPUT_DIR = "./figures/step11_figures"
 ALPHAS_IN_TEST = [100.0, 1.0, 0.5, 0.1]  # Must match your generator
 
 

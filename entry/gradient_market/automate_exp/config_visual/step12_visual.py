@@ -10,7 +10,7 @@ from typing import List, Dict, Any
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./step2.5_figures"
+FIGURE_OUTPUT_DIR = "./figures/step2.5_figures"
 
 # Define the relative 'usability' threshold
 RELATIVE_ACC_THRESHOLD = 0.90
