@@ -86,32 +86,8 @@ def load_run_config_snapshot(config_file: Path) -> Dict[str, Any]:
         print(f"Error loading config from {config_file}: {e}")
         return {}
 
-def load_run_config(config_file: Path) -> Dict[str, Any]:
-    """
-    Loads key data distribution parameters (alphas) from the config file.
-    Assumes modality is 'image'.
-    """
-    try:
-        with open(config_file, 'r') as f:
-            # Assumes config is in YAML format
-            config = yaml.safe_load(f)
 
-        # 1. Buyer (Client) Alpha Path (Data distribution for main client pool)
-        buyer_alpha = config['data']['image']['dirichlet_alpha']
-
-        # 2. Seller (Adversary) Alpha Path (Data distribution for adversary's data)
-        seller_alpha_path = config.get('adversary_seller_config', {}).get('poisoning', {}).get('data_distribution', {})
-        # If 'data_distribution' is not explicitly set in poisoning, it defaults to the main buyer's alpha.
-        seller_alpha = seller_alpha_path.get('dirichlet_alpha', buyer_alpha)
-
-        return {
-            "buyer_alpha": float(buyer_alpha),
-            "seller_alpha": float(seller_alpha)
-        }
-
-    except Exception as e:
-        print(f"Error loading config from {config_file}: {e}")
-        return {}
+# Removed the unused load_run_config (YAML) function.
 
 
 def infer_bias_source(buyer_alpha: float, seller_alpha: float) -> str:
@@ -128,14 +104,12 @@ def infer_bias_source(buyer_alpha: float, seller_alpha: float) -> str:
         return "Seller-Only Bias"
     else:
         # This covers cases where both are large (uniform) or inconsistent.
-        # For plotting, we group uniform cases together.
         return "Market-Wide Bias"
 
 
 def load_run_data(metrics_file: Path) -> Dict[str, Any]:
     """
     Loads key metrics from final_metrics.json and marketplace_report.json
-    (Implementation remains the same as your original)
     """
     run_data = {}
     try:
@@ -191,20 +165,17 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
         # Use rglob to find all final_metrics.json files in subdirectories
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             try:
-                # Assuming the config is always in the same directory as final_metrics.json
+                # --- FIX: Look for config_snapshot.json in the same directory as final_metrics.json ---
                 config_file = metrics_file.parent / "config_snapshot.json"
+
                 if not config_file.exists():
                     print(f"Warning: config_snapshot.json not found in {metrics_file.parent}. Skipping.")
                     continue
 
-                    # 1. Load config snapshot and infer bias source
-                config_data = load_run_config_snapshot(config_file)  # NOTE THE NEW FUNCTION NAME
+                # 1. Load config snapshot and infer bias source
+                config_data = load_run_config_snapshot(config_file)
                 if not config_data:
-                    continue
-
-                # 1. Load config and infer bias source
-                config_data = load_run_config(config_file)
-                if not config_data:
+                    print(f"Error: Failed to load data from config snapshot {config_file}. Skipping.")
                     continue
 
                 buyer_alpha = config_data['buyer_alpha']
@@ -212,9 +183,16 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                 inferred_bias_source = infer_bias_source(buyer_alpha, seller_alpha)
 
                 # 2. Get high-level parameters (dirichlet_alpha is the X-axis value)
+                # The path parts are complex, so we use the first HP folder name:
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
-                hp_folder_name = relative_parts[0]
-                run_hps = parse_hp_suffix(hp_folder_name)
+
+                # Check if the alpha folder name is present (usually the first element)
+                # If the structure is very deep, we might need a safer index.
+                if len(relative_parts) > 0:
+                    hp_folder_name = relative_parts[0]
+                    run_hps = parse_hp_suffix(hp_folder_name)
+                else:
+                    run_hps = {}
 
                 # 3. Load metrics
                 run_metrics = load_run_data(metrics_file)
@@ -222,13 +200,13 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                 if run_metrics:
                     all_runs.append({
                         **run_scenario,
-                        **run_hps,  # Contains 'dirichlet_alpha_folder' (for X-axis mapping)
+                        **run_hps,
                         **run_metrics,
                         "bias_source": inferred_bias_source,  # NEW: Inferred bias
                         "buyer_alpha": buyer_alpha,
                         "seller_alpha": seller_alpha,
-                        "dirichlet_alpha": run_hps.get('dirichlet_alpha_folder')
-                        # Use the folder alpha for plotting X-axis
+                        "dirichlet_alpha": run_hps.get('dirichlet_alpha_folder') or buyer_alpha
+                        # Use folder alpha, fallback to buyer alpha
                     })
             except Exception as e:
                 print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
@@ -241,7 +219,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     return df
 
 
-## Plotting Function
+## Plotting Function (No changes needed here)
 
 def plot_heterogeneity_impact(df: pd.DataFrame, dataset: str, output_dir: Path):
     """
