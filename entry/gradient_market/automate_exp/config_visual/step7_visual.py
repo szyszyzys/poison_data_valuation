@@ -24,9 +24,7 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
     try:
         # 1. Handle Baseline
         if scenario_name.startswith('step7_baseline_no_attack_'):
-            # Format: step7_baseline_no_attack_<DEFENSE>_<DATASET>
             parts = scenario_name.replace('step7_baseline_no_attack_', '').split('_')
-            # CIFAR100 might be at the end, Defense is likely first
             defense = parts[0]
             dataset = parts[1] if len(parts) > 1 else "CIFAR100"
 
@@ -40,7 +38,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
 
         # 2. Handle Adaptive
         elif scenario_name.startswith('step7_adaptive_'):
-            # We manually check for the known threat models to split the string correctly
             rest = scenario_name.replace('step7_adaptive_', '')
 
             threat_model = "unknown"
@@ -58,7 +55,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
                 print(f"Warning: Unknown threat model in '{scenario_name}'")
                 return {"defense": "unknown"}
 
-            # Now handle adaptive mode
             adaptive_mode = "unknown"
             if rest.startswith('data_poisoning_'):
                 adaptive_mode = 'data_poisoning'
@@ -67,8 +63,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
                 adaptive_mode = 'gradient_manipulation'
                 rest = rest.replace('gradient_manipulation_', '')
 
-            # The remainder should be defense_dataset
-            # e.g. "martfl_CIFAR100"
             parts = rest.split('_')
             defense = parts[0]
             dataset = parts[1] if len(parts) > 1 else "CIFAR100"
@@ -118,7 +112,8 @@ def collect_all_results(base_dir: str, target_defense: Optional[str] = None) -> 
         for final_metrics_file in marker_files:
             try:
                 run_dir = final_metrics_file.parent
-                seed_id = f"{scenario_path.name}__{run_dir.name}"
+                # Create a unique ID for the file/run
+                seed_id = f"{scenario_path.name}/{run_dir.name}"
 
                 # --- LOAD SELLER METRICS ---
                 seller_file = run_dir / 'seller_metrics.csv'
@@ -189,10 +184,32 @@ def collect_all_results(base_dir: str, target_defense: Optional[str] = None) -> 
     return df_s, df_g, df_sum
 
 
-# --- PLOTTING FUNCTIONS (Unchanged) ---
+# --- PLOTTING FUNCTIONS ---
+
+def print_plot_sources(plot_name: str, df: pd.DataFrame):
+    """Helper to print sources involved in a plot."""
+    print(f"\n>>> [DEBUG] Sources for {plot_name}:")
+    if df.empty:
+        print("    No data.")
+        return
+
+    # Just summarize unique scenarios
+    unique_sources = df['seed_id'].unique()
+    print(f"    Total Unique Files: {len(unique_sources)}")
+    # Limit output if too many, otherwise print all
+    if len(unique_sources) < 10:
+        for s in unique_sources:
+            print(f"      - {s}")
+    else:
+        print("      (Too many to list individual files for time series, showing first 3)")
+        for s in unique_sources[:3]:
+            print(f"      - {s} ...")
+
 
 def plot_selection_rate_curves(df: pd.DataFrame, baseline_sel: float, baseline_adv: float, output_dir: Path):
     if df.empty: return
+    print_plot_sources("Plot 1 (Selection Rate Curves)", df)
+
     group_cols = ['seed_id', 'seller_type', 'defense', 'threat_label', 'adaptive_mode', 'round']
     df_agg = df.groupby(group_cols)['selected'].mean().reset_index()
     roll_cols = ['seed_id', 'seller_type', 'defense', 'threat_label', 'adaptive_mode']
@@ -219,7 +236,8 @@ def plot_selection_rate_curves(df: pd.DataFrame, baseline_sel: float, baseline_a
             plt.legend()
             plt.title(f'Selection Rate: {defense.upper()} vs {threat}')
             plt.ylim(-0.05, 1.05)
-            plt.savefig(output_dir / f"plot1_sel_rate_{defense}_{threat_file}.png", bbox_inches='tight')
+            # CHANGED TO PDF
+            plt.savefig(output_dir / f"plot1_sel_rate_{defense}_{threat_file}.pdf", bbox_inches='tight')
             plt.close('all')
 
             # Advantage Plot
@@ -231,12 +249,15 @@ def plot_selection_rate_curves(df: pd.DataFrame, baseline_sel: float, baseline_a
                 sns.lineplot(data=df_piv, x='round', y='Advantage', hue='adaptive_mode', style='adaptive_mode', lw=2.5)
                 plt.axhline(y=0, color='black', linestyle='-', linewidth=1)
                 plt.title(f"Attacker Advantage: {defense.upper()} vs {threat}")
-                plt.savefig(output_dir / f"plot1_sel_ADVANTAGE_{defense}_{threat_file}.png", bbox_inches='tight')
+                # CHANGED TO PDF
+                plt.savefig(output_dir / f"plot1_sel_ADVANTAGE_{defense}_{threat_file}.pdf", bbox_inches='tight')
                 plt.close('all')
 
 
 def plot_global_performance_curves(df: pd.DataFrame, baseline_acc: float, output_dir: Path):
     if df.empty: return
+    print_plot_sources("Plot 2 (Global Performance)", df)
+
     for defense in df['defense'].unique():
         for threat in df['threat_label'].unique():
             data = df[(df['defense'] == defense) & (df['threat_label'] == threat)]
@@ -249,46 +270,88 @@ def plot_global_performance_curves(df: pd.DataFrame, baseline_acc: float, output
                             label='Clean Accuracy (No Attack)')
                 plt.legend()
             plt.title(f'Global Accuracy: {defense.upper()} vs {threat}')
-            plt.savefig(output_dir / f"plot2_global_acc_{defense}_{threat.replace(' ', '')}.png", bbox_inches='tight')
+            # CHANGED TO PDF
+            plt.savefig(output_dir / f"plot2_global_acc_{defense}_{threat.replace(' ', '')}.pdf", bbox_inches='tight')
             plt.close('all')
 
 
 def plot_martfl_analysis(df: pd.DataFrame, output_dir: Path):
     if df.empty: return
+    print_plot_sources("Plot 4 (MartFL Analysis)", df)
+
     df['Selection Status'] = df['selected'].apply(lambda x: 'Selected' if x == 1 else 'Not Selected')
     g = sns.relplot(data=df, x='round', y='gradient_norm', hue='seller_type', style='Selection Status',
                     palette={'Adversary': 'red', 'Benign': 'blue'}, col='threat_label', row='adaptive_mode', height=4,
                     aspect=1.5)
     g.fig.suptitle('Plot 4: Martfl Gradient Norm Analysis', y=1.03)
-    plt.savefig(output_dir / "plot4_martfl_norm_analysis.png", bbox_inches='tight')
+    # CHANGED TO PDF
+    plt.savefig(output_dir / "plot4_martfl_norm_analysis.pdf", bbox_inches='tight')
     plt.close('all')
 
 
 def plot_final_summary(df: pd.DataFrame, output_dir: Path):
+    """
+    Plots the final summary bars.
+    INCLUDES DETAILED DEBUGGING to identify which file belongs to which bar.
+    """
     if df.empty: return
+
+    print("\n" + "=" * 60)
+    print(">>> DEBUG: DETAILED SOURCE CHECK FOR PLOT 3 (Summary) <<<")
+    print("=" * 60)
+
+    # 1. Deep Dive Debug: Print every file contributing to every category
+    # This helps find if 'baseline' is sneaking into 'oracle'
+    for defense in df['defense'].unique():
+        print(f"\n[DEFENSE: {defense}]")
+        subset = df[df['defense'] == defense]
+
+        # Group by the X-axis (threat) and Hue (mode)
+        grouped = subset.groupby(['threat_label', 'adaptive_mode'])
+
+        for (threat, mode), group_data in grouped:
+            print(f"\n  Category: [{threat}] -- Mode: [{mode}]")
+            print(f"  Count: {len(group_data)} files")
+            print("  Files included:")
+            for idx, row in group_data.iterrows():
+                # Print filename, Accuracy, and Adversary Selection Rate
+                print(f"    -> File: {row['seed_id']}")
+                print(f"       Vals: Acc={row['acc']:.4f}, AdvSel={row['adv_sel_rate']:.4f}")
+
+    print("=" * 60 + "\n")
+
+    # 2. Plotting Logic
     df_long = df.melt(id_vars=['defense', 'threat_label', 'adaptive_mode'],
                       value_vars=['adv_sel_rate', 'ben_sel_rate', 'acc'], var_name='Metric', value_name='Value')
     df_long['Value'] *= 100
     x_order = ['0. Baseline (No Attack)', '1. Black-Box', '2. Grad-Inversion', '3. Oracle']
     x_order = [x for x in x_order if x in df_long['threat_label'].unique()]
+
     for defense in df['defense'].unique():
         data = df_long[df_long['defense'] == defense]
         if data.empty: continue
         g = sns.catplot(data=data, kind='bar', x='threat_label', y='Value', col='Metric', hue='adaptive_mode',
                         order=x_order, height=4, aspect=1.0, sharey=False)
         g.set_xticklabels(rotation=15, ha='right')
-        plt.savefig(output_dir / f"plot3_final_summary_{defense}.png", bbox_inches='tight')
+
+        # CHANGED TO PDF
+        out_file = output_dir / f"plot3_final_summary_{defense}.pdf"
+        plt.savefig(out_file, bbox_inches='tight')
+        print(f"Saved Plot 3 to: {out_file}")
         plt.close('all')
 
 
 def plot_comparative_attacker_curves(df_ts: pd.DataFrame, baseline_adv: float, output_dir: Path):
     if df_ts.empty: return
+    print_plot_sources("Plot 5 (Comparative Attacker)", df_ts)
+
     df_adv = df_ts[df_ts['seller_type'] == 'Adversary'].copy()
     group_cols = ['seed_id', 'defense', 'threat_label', 'adaptive_mode', 'round']
     df_agg = df_adv.groupby(group_cols)['selected'].mean().reset_index()
     df_agg['rolling_sel_rate'] = df_agg.groupby(['seed_id', 'defense', 'threat_label', 'adaptive_mode'])['selected'] \
         .transform(lambda x: x.rolling(5, min_periods=1).mean())
     palette = {'1. Black-Box': 'red', '2. Grad-Inversion': 'orange', '3. Oracle': 'green'}
+
     for defense in df_agg['defense'].unique():
         data = df_agg[df_agg['defense'] == defense]
         if data.empty: continue
@@ -301,7 +364,8 @@ def plot_comparative_attacker_curves(df_ts: pd.DataFrame, baseline_adv: float, o
         plt.axvline(x=EXPLORATION_ROUNDS, color='grey', linestyle=':', linewidth=2, label='Attack Start')
         plt.title(f'Attacker Comparison: {defense.upper()} Selection Rate')
         plt.ylim(-0.05, 1.05)
-        plt.savefig(output_dir / f"plot5_comparative_attacker_curves_{defense}.png", bbox_inches='tight')
+        # CHANGED TO PDF
+        plt.savefig(output_dir / f"plot5_comparative_attacker_curves_{defense}.pdf", bbox_inches='tight')
         plt.close('all')
 
 
@@ -333,7 +397,10 @@ def main():
     plot_selection_rate_curves(df_s, baseline_sel, baseline_adv, output_dir)
     plot_global_performance_curves(df_g, baseline_acc, output_dir)
     plot_martfl_analysis(df_s, output_dir)
+
+    # This is the critical one with detailed debugging
     plot_final_summary(df_sum, output_dir)
+
     plot_comparative_attacker_curves(df_s, baseline_adv, output_dir)
 
     print(f"\n✅ Analysis complete. Check '{FIGURE_OUTPUT_DIR}'")
