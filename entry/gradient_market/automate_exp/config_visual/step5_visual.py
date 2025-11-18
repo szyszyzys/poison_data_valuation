@@ -4,18 +4,16 @@ import re
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from tqdm import tqdm # Added tqdm for progress
+import seaborn as sns
 
 # --- Configuration ---
-#
-# !!! IMPORTANT !!!
-# Make sure this path is correct. Use the full absolute path.
-#
-BASE_RESULTS_DIR = "/scratch/zzs5287/poison_data_valuation/results"
-#
-# (The figure output dir is not needed for this script)
+BASE_RESULTS_DIR = "./results"
+FIGURE_OUTPUT_DIR = "./figures/step5_figures"
+
+
 # --- End Configuration ---
 
 
@@ -52,11 +50,11 @@ def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
             if modality == 'image':
                 dataset_name = 'CIFAR100'
             elif modality == 'text':
-                dataset_name = 'TREC'
+                dataset_name = 'TREC'  # Or whatever your text dataset is
             elif modality == 'tabular':
-                dataset_name = 'Texas100'
+                dataset_name = 'Texas100'  # Or whatever your tabular dataset is
             else:
-                dataset_name = 'unknown'
+                dataset_name = 'unknown'  # This should now be impossible
 
             return {
                 "scenario": scenario_name,
@@ -64,9 +62,10 @@ def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
                 "defense": match.group(2),
                 "attack": match.group(3),
                 "modality": modality,
-                "dataset": dataset_name,
+                "dataset": dataset_name,  # This will now be correct
             }
         else:
+            # If this runs, you'll see a warning.
             print(f"Warning: Could not parse scenario name '{scenario_name}'. Ignoring folder.")
             return None
 
@@ -83,7 +82,6 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
     try:
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
-        # These keys match your final_metrics.json
         run_data['acc'] = metrics.get('acc', 0)
         run_data['asr'] = metrics.get('asr', 0)
         run_data['rounds'] = metrics.get('completed_rounds', 0)
@@ -121,50 +119,67 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
     print(f"Found {len(scenario_folders)} scenario base directories.")
 
-    for scenario_path in tqdm(scenario_folders, desc="Processing Scenarios"):
+    parsed_count = 0
+    metrics_found_count = 0
+
+    for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
         run_scenario = parse_scenario_name(scenario_name)
 
         if run_scenario is None:
             continue
 
+        print(f"\nProcessing Scenario: {scenario_name}")
+        print(f"  -> Parsed as: {run_scenario}")
+
+        parsed_count += 1
+
         files_in_scenario = list(scenario_path.rglob("final_metrics.json"))
         if not files_in_scenario:
+            print(f"  -> !! WARNING: No 'final_metrics.json' files found in {scenario_name}")
             continue
 
         for metrics_file in files_in_scenario:
             try:
+                metrics_found_count += 1
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
                 if not relative_parts:
+                    print(f"  -> Skipping metric file with no relative path: {metrics_file}")
                     continue
 
-                hp_folder_name = relative_parts[0] # This correctly gets 'adv_0.3_poison_0.5'
+                hp_folder_name = relative_parts[0]
                 run_hps = parse_hp_suffix(hp_folder_name)
 
                 if not run_hps:
+                    print(f"  -> Skipping metric file due to HP parse fail: {hp_folder_name}")
                     continue
 
                 run_metrics = load_run_data(metrics_file)
 
-                # --- ADDED FOR DEBUGGING ---
-                # This adds the source file path to your data
-                try:
-                    relative_metric_path = metrics_file.relative_to(base_path)
-                    run_metrics['source_file'] = str(relative_metric_path)
-                except ValueError:
-                    run_metrics['source_file'] = str(metrics_file)
-                # --- END ADD ---
-
                 if run_metrics:
+                    # --- ADD THIS BLOCK ---
+                    # Store the relative path for debugging
+                    try:
+                        relative_metric_path = metrics_file.relative_to(base_path)
+                        run_metrics['source_file'] = str(relative_metric_path)
+                    except ValueError:
+                        run_metrics['source_file'] = str(metrics_file)
+                    # --- END BLOCK ---
+
                     all_runs.append({
                         **run_scenario,
                         **run_hps,
-                        **run_metrics,
+                        **run_metrics,  # This now contains 'source_file'
                         "hp_suffix": hp_folder_name
                     })
-
             except Exception as e:
                 print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
+
+    print(f"\n--- DEBUG SUMMARY ---")
+    print(f"Successfully parsed {parsed_count} scenario folders.")
+    print(f"Found a total of {metrics_found_count} 'final_metrics.json' files.")
+    print(f"Aggregated {len(all_runs)} total runs into the DataFrame.")
+    print(f"--- END DEBUG ---")
 
     if not all_runs:
         print("Error: No 'final_metrics.json' files were successfully processed.")
@@ -174,64 +189,155 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     return df
 
 
+def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, dataset: str, output_dir: Path):
+    """
+    (REWRITTEN)
+    Generates an *individual PDF plot for each metric*.
+    """
+    print(f"\n--- Plotting Robustness vs. '{x_metric}' (for {attack_type} on {dataset}) ---")
+
+    # --- ADD THIS BLOCK FOR DEBUGGING ---
+    print(f"  -> Data for this plot is sourced from the following files:")
+
+    # Sort by the x-metric to see the data points in order
+    sorted_df = df.sort_values(by=[x_metric, 'defense', 'source_file'])
+
+    print("  " + "-" * 80)
+    # Print the relevant columns for every row in this plot's DataFrame
+    print(sorted_df[[x_metric, 'defense', 'acc', 'asr', 'source_file']].to_string(index=False))
+    print("  " + "-" * 80)
+    # --- END BLOCK ---
+    if attack_type == 'backdoor':
+        metrics_to_plot = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate', 'rounds']
+    elif attack_type == 'labelflip':
+        metrics_to_plot = ['acc', 'benign_selection_rate', 'adv_selection_rate', 'rounds']
+    else:
+        print(f"Skipping plot for unknown attack type: {attack_type}")
+        return
+
+    metrics_to_plot = [m for m in metrics_to_plot if m in df.columns]
+
+    if not metrics_to_plot:
+        print(f"No metrics found to plot for {dataset}/{attack} vs {x_metric}.")
+        return
+
+    # Melt the dataframe *once*
+    plot_df = df.melt(
+        id_vars=[x_metric, 'defense'],
+        value_vars=metrics_to_plot,
+        var_name='Metric',
+        value_name='Value'
+    )
+
+    rate_metrics = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']
+    plot_df['Value'] = plot_df.apply(
+        lambda row: row['Value'] * 100 if row['Metric'] in rate_metrics else row['Value'],
+        axis=1
+    )
+
+    # --- NEW LOOP: Create one plot per metric ---
+    for metric in metrics_to_plot:
+
+        # Create a clean metric name for title and filename
+        metric_name_clean = f'{metric} (%)' if metric in rate_metrics else metric
+
+        print(f"  -> Plotting metric: {metric_name_clean}")
+
+        # Filter the melted dataframe for this metric only
+        metric_df = plot_df[plot_df['Metric'] == metric].copy()
+
+        if metric_df.empty:
+            print(f"    ...No data for metric '{metric}'. Skipping plot.")
+            continue
+
+        # Create a new figure for this plot
+        plt.figure(figsize=(8, 5))
+        ax = sns.lineplot(
+            data=metric_df,
+            x=x_metric,
+            y='Value',
+            hue='defense',
+            style='defense',
+            markers=True,
+            dashes=False
+        )
+
+        title_x = x_metric.replace("_", " ").title()
+        title_dataset = dataset.upper()
+        title_attack = attack_type.title()
+
+        ax.set_title(f'{metric_name_clean} vs. {title_x}\n({title_attack} on {title_dataset})')
+        ax.set_xlabel(title_x)
+        ax.set_ylabel(metric_name_clean)
+
+        # Add grid for readability
+        ax.grid(True, linestyle='--', alpha=0.6)
+
+        # Set y-axis for rates
+        if metric in rate_metrics:
+            ax.set_ylim(-5, 105)  # From -5 to 105 to see 0 and 100 clearly
+
+        # Create a safe filename for the dataset
+        safe_dataset_name = re.sub(r'[^\w]', '', dataset)
+
+        # Create the new, specific filename
+        plot_file_name = f"plot_robustness_{attack_type}_{safe_dataset_name}_vs_{x_metric}_{metric}.pdf"
+        plot_file = output_dir / plot_file_name
+
+        plt.savefig(plot_file, bbox_inches='tight', format='pdf')
+        print(f"    ...Saved plot: {plot_file_name}")
+
+        # Close the plot to free memory
+        plt.clf()
+        plt.close('all')
+
+
 def main():
-    """
-    Main function to collect data, filter for martfl/backdoor,
-    and save to a CSV file.
-    """
-    output_csv_file = "./martfl_backdoor_debug.csv"
-    print(f"Starting data collection from: {BASE_RESULTS_DIR}")
-    print(f"Debug CSV will be saved to: {output_csv_file}")
+    output_dir = Path(FIGURE_OUTPUT_DIR)
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"Plots will be saved to: {output_dir.resolve()}")
 
     df = collect_all_results(BASE_RESULTS_DIR)
 
     if df.empty:
-        print("\n--- ERROR ---")
-        print("No data was loaded. Exiting.")
-        print(f"Please check your BASE_RESULTS_DIR path: {BASE_RESULTS_DIR}")
+        print("No data loaded. Exiting.")
         return
+    print("\n--- DataFrame Head (with source_file) ---")
+    print("Showing the first 5 rows of aggregated data:")
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.width', 1000)
+    print(df[['defense', 'attack', 'adv_rate', 'poison_rate', 'acc', 'asr', 'source_file']].head())
+    print("-------------------------------------------\n")
+    # Loop over dataset and attack
+    for dataset in df['dataset'].unique():
+        if dataset in ['unknown', 'parse_failed']:
+            print(f"Skipping plots for '{dataset}' group (due to parsing errors).")
+            continue
 
-    print(f"\nTotal runs aggregated: {len(df)}")
+        for attack in df['attack'].unique():
+            if pd.isna(attack):
+                continue
 
-    # --- Apply Your Filters ---
-    print("Filtering for defense='martfl' and attack='backdoor'...")
-    filtered_df = df[
-        (df['defense'] == 'martfl') &
-        (df['attack'] == 'backdoor')
-    ].copy()
+            scenario_df = df[(df['dataset'] == dataset) & (df['attack'] == attack)].copy()
 
-    if filtered_df.empty:
-        print("\n--- ERROR ---")
-        print("No data found matching 'martfl' AND 'backdoor'.")
-        print("This is likely the source of your plotting error.")
-        print("\n--- Debug Info ---")
-        print(f"Available defenses found in all data: {df['defense'].unique()}")
-        print(f"Available attacks found in all data: {df['attack'].unique()}")
-        return
+            if scenario_df.empty:
+                continue
 
-    print(f"Found {len(filtered_df)} runs matching 'martfl' and 'backdoor'.")
+            # Plot 1: Sweep vs. Adversary Rate
+            adv_rate_df = scenario_df[scenario_df['sweep_type'] == 'adv']
+            if not adv_rate_df.empty:
+                plot_sensitivity_lines(adv_rate_df, 'adv_rate', attack, dataset, output_dir)
+            else:
+                print(f"No data found for {dataset}/{attack} vs. adv_rate sweep.")
 
-    # --- Select and Order Columns for CSV ---
-    all_cols = [
-        'defense', 'attack', 'dataset', 'modality', 'sweep_type',
-        'adv_rate', 'poison_rate',
-        'acc', 'asr', 'benign_selection_rate', 'adv_selection_rate', 'rounds',
-        'source_file', 'hp_suffix', 'scenario'
-    ]
+            # Plot 2: Sweep vs. Poison Rate
+            poison_rate_df = scenario_df[scenario_df['sweep_type'] == 'poison']
+            if not poison_rate_df.empty:
+                plot_sensitivity_lines(poison_rate_df, 'poison_rate', attack, dataset, output_dir)
+            else:
+                print(f"No data found for {dataset}/{attack} vs. poison_rate sweep.")
 
-    # Only keep columns that were successfully found in the dataframe
-    export_cols = [col for col in all_cols if col in filtered_df.columns]
-
-    final_df = filtered_df[export_cols].sort_values(by=['sweep_type', 'adv_rate', 'poison_rate', 'source_file'])
-
-    # --- Save to CSV ---
-    try:
-        final_df.to_csv(output_csv_file, index=False)
-        print(f"\n✅ Successfully saved debug data to {output_csv_file}")
-        print("\nYou can now open this CSV in Excel or Pandas to inspect the values.")
-    except Exception as e:
-        print(f"\n--- ERROR ---")
-        print(f"Failed to save CSV file: {e}")
+    print("\nAnalysis complete. Check 'step5_figures' folder for plots.")
 
 
 if __name__ == "__main__":

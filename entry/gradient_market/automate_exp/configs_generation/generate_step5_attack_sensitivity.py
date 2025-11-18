@@ -23,7 +23,7 @@ except ImportError as e:
     sys.exit(1)
 
 # --- Attack Parameters to Sweep ---
-ADV_RATES_TO_SWEEP = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+ADV_RATES_TO_SWEEP = [0.3]
 POISON_RATES_TO_SWEEP = [0.0, 0.1, 0.3, 0.5, 0.7, 1.0]
 
 # --- Attack Types to Test ---
