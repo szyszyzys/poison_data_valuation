@@ -893,9 +893,10 @@ class SybilCoordinator:
         manipulated_count = 0
         for sybil_id in active_sybils:
             client_state = self.clients[sybil_id]
-            strategy_name = self._get_strategy_for_client(client_state)
+            strategy_name = "oracle_blend" if "oracle_blend" in strategies_in_use else self._get_strategy_for_client(
+                client_state)
 
-            original_malicious_grad_list = current_round_gradients[sybil_id]  # Use original input
+            original_malicious_grad_list = current_round_gradients[sybil_id]
             original_shapes = [g.shape for g in original_malicious_grad_list]
             original_malicious_flat = self._ensure_tensor(original_malicious_grad_list)
 

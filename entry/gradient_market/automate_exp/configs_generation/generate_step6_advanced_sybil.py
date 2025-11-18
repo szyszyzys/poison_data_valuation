@@ -28,11 +28,11 @@ except ImportError as e:
 # --- Sybil Strategies & Parameters to Test ---
 SYBIL_TEST_CONFIG = {
     # "baseline_no_sybil": None,
-    "mimic": {},
-    "pivot": {},
-    "knock_out": {}
+    # "mimic": {},
+    # "pivot": {},
+    # "knock_out": {}
 
-    # "oracle_blend": {"blend_alpha": [0.05, 0.1, 0.2, 0.5, 0.8]},
+    "oracle_blend": {"blend_alpha": [0.05, 0.1, 0.2, 0.5, 0.8]},
     # "systematic_probe": {},
 }
 
