@@ -57,28 +57,42 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     return hps
 
 
+# FILE: step11_visual.py (Corrected load_run_config_snapshot)
+
 def load_run_config_snapshot(config_file: Path) -> Dict[str, Any]:
     """
     Loads key data distribution parameters (alphas) from the config_snapshot.json file.
+    Uses defensive indexing to avoid 'str' object errors.
     """
     try:
         with open(config_file, 'r') as f:
             config = json.load(f)
 
-        # 1. Buyer (Client) Alpha Path (Data distribution for main client pool)
-        # We must use .get() for safer dictionary access
+        # --- 1. Buyer (Client) Alpha Path ---
+        # Get 'data' section, falling back to empty dict
+        data_config = config.get('data', {})
 
-        # Accessing buyer_alpha safely
-        buyer_data = config.get('data', {}).get('image', {})
+        # Get the modality section (e.g., 'image'), falling back to empty dict
+        # This is the line that likely returns a string (the error source).
+        # We must explicitly cast the .get() result to a dict (or empty dict)
+        buyer_data = data_config.get('image', {})
+        if not isinstance(buyer_data, dict):
+            # If it's not a dict (e.g., if it's a string), treat it as an empty dict
+            buyer_data = {}
+
         buyer_alpha = buyer_data.get('dirichlet_alpha')
 
         if buyer_alpha is None:
-            # Debugging print statement if the key is missing
-            print(f"DEBUG: Missing 'dirichlet_alpha' in buyer data path in {config_file.name}")
+            print(f"DEBUG: Missing 'dirichlet_alpha' key in buyer data path in {config_file.name}")
             return {}
 
-        # 2. Seller (Adversary) Alpha Path (Data distribution for adversary's data)
+        # --- 2. Seller (Adversary) Alpha Path ---
         seller_alpha_path = config.get('adversary_seller_config', {}).get('poisoning', {}).get('data_distribution', {})
+
+        # Ensure seller_alpha_path is a dictionary before calling .get()
+        if not isinstance(seller_alpha_path, dict):
+            seller_alpha_path = {}
+
         seller_alpha = seller_alpha_path.get('dirichlet_alpha', buyer_alpha)
 
         return {
@@ -91,10 +105,7 @@ def load_run_config_snapshot(config_file: Path) -> Dict[str, Any]:
         return {}
     except Exception as e:
         print(f"ERROR: General exception while processing {config_file}: {e}")
-        # This will catch KeyErrors if the structure is wrong
         return {}
-# Removed the unused load_run_config (YAML) function.
-
 
 def infer_bias_source(buyer_alpha: float, seller_alpha: float) -> str:
     """Infers the bias type based on the two alpha values."""
