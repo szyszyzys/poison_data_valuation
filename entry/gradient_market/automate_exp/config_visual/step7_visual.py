@@ -1,12 +1,11 @@
-import pandas as pd
 import json
-import re
-import seaborn as sns
-import matplotlib.pyplot as plt
-import numpy as np
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
@@ -141,28 +140,36 @@ def collect_all_results(base_dir: str, target_defense: Optional[str] = None) -> 
                     except Exception:
                         pass
 
-                # --- LOAD SUMMARY (With Baseline Proxy Logic) ---
+                # --- LOAD SUMMARY (Updated to use Time-Average) ---
                 with open(final_metrics_file, 'r') as f:
                     final_metrics = json.load(f)
 
                 adv_sel, ben_sel = 0.0, 0.0
+
                 if not df_seller_run.empty:
-                    last_round = df_seller_run[df_seller_run['round'] == df_seller_run['round'].max()]
-                    if not last_round.empty:
-                        # Benign Average
-                        ben_sellers = last_round[last_round['seller_type'] == 'Benign']
+                    # FIX: Use history AFTER exploration, not just the last round snapshot
+                    # This prevents one lucky/unlucky round from skewing the entire bar chart.
+                    valid_history = df_seller_run[df_seller_run['round'] > EXPLORATION_ROUNDS]
+
+                    # Fallback: If run crashed early or is shorter than exploration, use whatever data we have
+                    if valid_history.empty:
+                        valid_history = df_seller_run
+
+                    if not valid_history.empty:
+                        # 1. Benign Average (Over Valid History)
+                        ben_sellers = valid_history[valid_history['seller_type'] == 'Benign']
                         if not ben_sellers.empty:
                             ben_sel = ben_sellers['selected'].mean()
 
-                        # Adversary Average (Handle Baseline Proxy)
+                        # 2. Adversary Average (Over Valid History)
                         if scenario_params['threat_model'] == 'baseline':
-                            # PROXY: Use bn_0, bn_1, bn_2
-                            proxy_sellers = last_round[last_round['seller_id'].isin(['bn_0', 'bn_1', 'bn_2'])]
+                            # PROXY: Use bn_0, bn_1, bn_2 as the "Adversary Control Group" for Baseline
+                            proxy_sellers = valid_history[valid_history['seller_id'].isin(['bn_0', 'bn_1', 'bn_2'])]
                             if not proxy_sellers.empty:
                                 adv_sel = proxy_sellers['selected'].mean()
                         else:
                             # REAL: Use actual adversaries
-                            adv_sellers = last_round[last_round['seller_type'] == 'Adversary']
+                            adv_sellers = valid_history[valid_history['seller_type'] == 'Adversary']
                             if not adv_sellers.empty:
                                 adv_sel = adv_sellers['selected'].mean()
 
