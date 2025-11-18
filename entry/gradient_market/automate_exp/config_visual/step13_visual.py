@@ -19,21 +19,26 @@ VICTIM_SELLER_ID = "bn_3"  # The seller being targeted
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
     """
-    Parses the base scenario name
-    e.g., 'step13_drowning_martfl_bn_3'
+    FIXED: Parses the base scenario name, accommodating potential attack type prefix.
+    e.g., 'step13_drowning_martfl_bn_3' (original target)
+    e.g., 'step13_drowning_drowning_martfl' (actual folder prefix)
     """
     try:
-        pattern = r'step13_drowning_(fedavg|martfl|fltrust|skymask)_(bn_[0-9]+)'
+        # Adjusted pattern to capture common prefixes like 'step13_drowning_drowning_'
+        # The defense name (martfl) is the critical part to extract.
+        pattern = r'step13_.*_(fedavg|martfl|fltrust|skymask)_(.*)'
         match = re.search(pattern, scenario_name)
 
         if match:
+            # Note: We can't reliably extract the victim_id from the top-level folder
+            # name if it's not present (like in your path example).
             return {
                 "scenario": scenario_name,
                 "defense": match.group(1),
-                "victim_id": match.group(2),
             }
         else:
-            raise ValueError(f"Pattern not matched for: {scenario_name}")
+            # Fallback for old/unknown names
+            return {"scenario": scenario_name, "defense": "unknown"}
 
     except Exception as e:
         print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
@@ -49,9 +54,10 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     base_path = Path(base_dir)
     print(f"Searching for 'seller_metrics.csv' in {base_path.resolve()}...")
 
-    scenario_folders = [f for f in base_path.glob("step13_drowning_*") if f.is_dir()]
+    # Look for folders starting with the step prefix
+    scenario_folders = [f for f in base_path.glob("step13_*") if f.is_dir()]
     if not scenario_folders:
-        print(f"Error: No 'step13_drowning_*' directories found directly inside {base_path}.")
+        print(f"Error: No 'step13_*' directories found directly inside {base_path}.")
         return pd.DataFrame()
 
     print(f"Found {len(scenario_folders)} scenario base directories.")
@@ -59,23 +65,34 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
         run_scenario = parse_scenario_name(scenario_name)
-
-        # Find all seller_metrics.csv files (one per seed)
-        seller_metric_files = list(scenario_path.rglob("seller_metrics.csv"))
-        if not seller_metric_files:
-            print(f"Warning: No 'seller_metrics.csv' found in {scenario_path}")
+        defense = run_scenario.get('defense')
+        if defense == 'unknown':
+            print(f"Skipping unparsed scenario: {scenario_name}")
             continue
 
-        for i, metrics_csv in enumerate(seller_metric_files):
+        # Find all seller_metrics.csv files (one per seed) using rglob
+        seller_metric_files = list(scenario_path.rglob("seller_metrics.csv"))
+        if not seller_metric_files:
+            print(f"Warning: No 'seller_metrics.csv' found in {scenario_path} subdirectories.")
+            continue
+
+        processed_seeds = 0
+        for metrics_csv in seller_metric_files:
             try:
                 seller_df = pd.read_csv(metrics_csv)
 
+                # Extract seed from file path. The path structure is deep, we use the final run folder name.
+                # E.g., .../run_0_seed_42/seller_metrics.csv -> seed_42
+                seed_match = re.search(r'seed_([0-9]+)', str(metrics_csv.parent.name))
+                seed_val = int(seed_match.group(1)) if seed_match else processed_seeds
+
                 # Add scenario info
-                seller_df['defense'] = run_scenario.get('defense')
-                seller_df['seed'] = i
+                seller_df['defense'] = defense
+                seller_df['seed'] = seed_val
 
                 # Group sellers into the three categories
                 def get_group(seller_id):
+                    # We rely on the global VICTIM_SELLER_ID
                     if seller_id == VICTIM_SELLER_ID:
                         return f"Victim ({VICTIM_SELLER_ID})"
                     elif seller_id.startswith('adv'):
@@ -85,6 +102,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
                 seller_df['seller_group'] = seller_df['seller_id'].apply(get_group)
                 all_seller_rows.append(seller_df)
+                processed_seeds += 1
 
             except Exception as e:
                 print(f"Error reading {metrics_csv}: {e}")
@@ -101,19 +119,18 @@ def plot_drowning_attack(df: pd.DataFrame, output_dir: Path):
     Generates the multi-panel line plot showing selection rate over time.
     """
     print(f"\n--- Plotting Targeted Drowning Attack Effectiveness ---")
-
     if df.empty:
         print("No data to plot.")
         return
 
     # We want the average selection rate (True=1, False=0) per group, per round, per defense
-    # 'selected' is a boolean, so .mean() gives the selection rate
     plot_df = df.groupby(['defense', 'round', 'seller_group'])['selected'].mean().reset_index()
 
     # Rename 'selected' to 'selection_rate' for clarity
     plot_df.rename(columns={'selected': 'selection_rate'}, inplace=True)
 
-    defense_order = ['martfl', 'fltrust', 'skymask']
+    # FIXED: Include 'fedavg' in the order and ensure all found defenses are included
+    defense_order = ['fedavg', 'martfl', 'fltrust', 'skymask']
     defense_order = [d for d in defense_order if d in plot_df['defense'].unique()]
 
     g = sns.relplot(
@@ -138,7 +155,7 @@ def plot_drowning_attack(df: pd.DataFrame, output_dir: Path):
     g.legend.set_title("Seller Group")
 
     plot_file = output_dir / "plot_drowning_attack.png"
-    g.fig.savefig(plot_file)
+    g.fig.savefig(plot_file, bbox_inches='tight')
     print(f"Saved plot: {plot_file}")
     plt.clf()
     plt.close(g.fig)
@@ -154,7 +171,7 @@ def main():
     if not df.empty:
         plot_drowning_attack(df, output_dir)
 
-    print("\nAnalysis complete. Check 'step13_figures' folder for plots.")
+    print("\nAnalysis complete. Check 'step13_figures' folder for plots. 📊")
 
 
 if __name__ == "__main__":
