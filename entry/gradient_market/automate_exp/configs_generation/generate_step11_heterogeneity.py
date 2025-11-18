@@ -16,8 +16,7 @@ from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_c
     use_image_backdoor_attack, use_cifar100_config
 
 try:
-    # CRITICAL: Assuming these classes are available/importable
-    from common.gradient_market_configs import AppConfig, PoisonType, DataDistributionConfig
+    from common.gradient_market_configs import AppConfig, PoisonType
     from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 except ImportError as e:
     print(f"Error importing necessary modules: {e}")
@@ -115,7 +114,7 @@ def generate_heterogeneity_scenarios() -> List[Scenario]:
                 "experiment.use_early_stopping": [True],
                 "experiment.patience": [10],
 
-                # CRITICAL: This is the field that was causing the AttributeError!
+                # CRITICAL: This field will be set by the generator after initialization.
                 "adversary_seller_config.poisoning.data_distribution.strategy": ["dirichlet"],
             }
 
@@ -134,24 +133,19 @@ def generate_heterogeneity_scenarios() -> List[Scenario]:
     return scenarios
 
 
-# === MINIMUM CHANGE FIX: Initialization Utility ===
+# === MINIMUM CHANGE FIX: Initialization Utility (Uses Dictionary) ===
 
 def initialize_adversary_data_distribution(config: AppConfig) -> AppConfig:
     """
     Ensures the adversary poisoning config has a data_distribution field,
-    resolving the AttributeError before grid parameters are applied.
+    resolving the AttributeError with minimum change (assigning a dict).
     """
     poisoning_cfg = config.adversary_seller_config.poisoning
 
     # Check if the attribute exists or is None
     if not hasattr(poisoning_cfg, 'data_distribution') or poisoning_cfg.data_distribution is None:
-        try:
-            # Attempt to initialize with the actual data class (DataDistributionConfig)
-            # This is the cleanest fix if DataDistributionConfig is a dataclass
-            poisoning_cfg.data_distribution = DataDistributionConfig()
-        except NameError:
-            # Fallback if DataDistributionConfig is a dict placeholder
-            poisoning_cfg.data_distribution = {}
+        # Assign an empty dictionary. This is the simplest fix.
+        poisoning_cfg.data_distribution = {}
 
     return config
 
@@ -225,6 +219,7 @@ if __name__ == "__main__":
             modified_base_config = copy.deepcopy(base_config)
 
             # --- FIX APPLICATION: Initialize the missing object BEFORE modifiers run ---
+            # This is the fix for: 'PoisoningConfig' object has no attribute 'data_distribution'
             modified_base_config = initialize_adversary_data_distribution(modified_base_config)
 
             # Set the defense aggregation config name manually for uniqueness
