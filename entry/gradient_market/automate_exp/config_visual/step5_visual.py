@@ -157,15 +157,21 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                 run_metrics = load_run_data(metrics_file)
 
                 if run_metrics:
+                    # --- ADD THIS BLOCK ---
+                    # Store the relative path for debugging
+                    try:
+                        relative_metric_path = metrics_file.relative_to(base_path)
+                        run_metrics['source_file'] = str(relative_metric_path)
+                    except ValueError:
+                        run_metrics['source_file'] = str(metrics_file)
+                    # --- END BLOCK ---
+
                     all_runs.append({
                         **run_scenario,
                         **run_hps,
-                        **run_metrics,
+                        **run_metrics,  # This now contains 'source_file'
                         "hp_suffix": hp_folder_name
                     })
-                else:
-                    print(f"  -> Skipping metric file, load_run_data failed: {metrics_file}")
-
             except Exception as e:
                 print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
 
@@ -190,6 +196,17 @@ def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, da
     """
     print(f"\n--- Plotting Robustness vs. '{x_metric}' (for {attack_type} on {dataset}) ---")
 
+    # --- ADD THIS BLOCK FOR DEBUGGING ---
+    print(f"  -> Data for this plot is sourced from the following files:")
+
+    # Sort by the x-metric to see the data points in order
+    sorted_df = df.sort_values(by=[x_metric, 'defense', 'source_file'])
+
+    print("  " + "-" * 80)
+    # Print the relevant columns for every row in this plot's DataFrame
+    print(sorted_df[[x_metric, 'defense', 'acc', 'asr', 'source_file']].to_string(index=False))
+    print("  " + "-" * 80)
+    # --- END BLOCK ---
     if attack_type == 'backdoor':
         metrics_to_plot = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate', 'rounds']
     elif attack_type == 'labelflip':
@@ -285,7 +302,12 @@ def main():
     if df.empty:
         print("No data loaded. Exiting.")
         return
-
+    print("\n--- DataFrame Head (with source_file) ---")
+    print("Showing the first 5 rows of aggregated data:")
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.width', 1000)
+    print(df[['defense', 'attack', 'adv_rate', 'poison_rate', 'acc', 'asr', 'source_file']].head())
+    print("-------------------------------------------\n")
     # Loop over dataset and attack
     for dataset in df['dataset'].unique():
         if dataset in ['unknown', 'parse_failed']:
