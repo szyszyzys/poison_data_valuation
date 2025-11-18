@@ -10,7 +10,7 @@ from typing import List, Dict, Any
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step6_figures"
+FIGURE_OUTPUT_DIR = "./step6_figures"
 
 
 # --- End Configuration ---
@@ -136,24 +136,18 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     return df
 
 
-def plot_sybil_comparison(df: pd.DataFrame, defense: str, output_dir: Path):
+def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Path):
     """
+    (UPDATED)
     Generates the grouped bar chart comparing Sybil strategies for a single defense.
+    Assumes 'defense_df' is already filtered for the correct defense
+    and has the 'strategy_label' column.
     """
-    defense_df = df[df['defense'] == defense].copy()
     if defense_df.empty:
         print(f"No data for defense: {defense}")
         return
 
     print(f"\n--- Plotting Sybil Effectiveness for: {defense} ---")
-
-    # Create the x-axis label. Combines strategy with blend_alpha if it exists.
-    defense_df['strategy_label'] = defense_df['strategy']
-    # Find rows where blend_alpha exists (is not NaN)
-    blend_rows = defense_df['blend_alpha'].notna()
-    defense_df.loc[blend_rows, 'strategy_label'] = defense_df.loc[blend_rows].apply(
-        lambda row: f"oracle_blend_{row['blend_alpha']}", axis=1
-    )
 
     # --- Logical Sorting for the X-axis ---
     # Define the desired order
@@ -168,8 +162,7 @@ def plot_sybil_comparison(df: pd.DataFrame, defense: str, output_dir: Path):
                 return (2, np.inf)  # Failsafe
         if label == 'mimic':
             return (1, 0.0)
-        if label == 'systematic_probe':
-            return (3, 0.0)
+        # We no longer need the 'systematic_probe' key as it's filtered out
         return (4, 0.0)  # Other strategies
 
     # Get unique labels and sort them
@@ -180,6 +173,8 @@ def plot_sybil_comparison(df: pd.DataFrame, defense: str, output_dir: Path):
     metrics_to_plot = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate']
     metrics_to_plot = [m for m in metrics_to_plot if m in defense_df.columns]
 
+    # Melt the data for plotting.
+    # The 'defense_df' is already pre-aggregated (mean over seeds).
     plot_df = defense_df.melt(
         id_vars=['strategy_label'],
         value_vars=metrics_to_plot,
@@ -188,6 +183,9 @@ def plot_sybil_comparison(df: pd.DataFrame, defense: str, output_dir: Path):
     )
 
     plt.figure(figsize=(16, 7))
+    # --- Use `dodge=True` (default) for grouped bars ---
+    # Note: `sns.barplot` will show mean + confidence interval if multiple seeds are present.
+    # Since we pre-aggregated, it will just show the mean value.
     sns.barplot(
         data=plot_df,
         x='strategy_label',
@@ -206,6 +204,7 @@ def plot_sybil_comparison(df: pd.DataFrame, defense: str, output_dir: Path):
     plt.savefig(plot_file)
     print(f"Saved plot: {plot_file}")
     plt.clf()
+    plt.close('all')
 
 
 def main():
@@ -216,15 +215,44 @@ def main():
     df = collect_all_results(BASE_RESULTS_DIR)
 
     if df.empty:
+        print("No data loaded. Exiting.")
         return
 
+    # --- FIX 1: Filter out 'systematic_probe' ---
+    df = df[df['strategy'] != 'systematic_probe'].copy()
+    print(f"\nFiltered out 'systematic_probe'. Remaining runs: {len(df)}")
+
+    # --- FIX 2: Create the strategy_label column once ---
+    df['strategy_label'] = df['strategy']
+    blend_rows = df['blend_alpha'].notna()
+    df.loc[blend_rows, 'strategy_label'] = df.loc[blend_rows].apply(
+        lambda row: f"oracle_blend_{row['blend_alpha']}", axis=1
+    )
+
+    # --- FIX 3: Generate the aggregated CSV ---
+    print("\n--- Generating Aggregated Summary CSV ---")
+    metrics_to_agg = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate', 'rounds']
+    metrics_to_agg = [m for m in metrics_to_agg if m in df.columns]
+
+    # Aggregate by defense and the new strategy label
+    # This averages over all seeds for each strategy
+    df_agg = df.groupby(['defense', 'strategy_label'])[metrics_to_agg].mean()
+    df_agg = df_agg.reset_index()
+
+    # Save to CSV
+    csv_path = output_dir / "step6_sybil_summary.csv"
+    df_agg.to_csv(csv_path, index=False, float_format="%.4f")
+    print(f"✅ Saved aggregated summary to: {csv_path}")
+    # --- END OF FIXES ---
+
     # Get all unique defenses
-    defenses = df['defense'].unique()
+    defenses = df_agg['defense'].unique()
 
     for defense in defenses:
-        plot_sybil_comparison(df, defense, output_dir)
+        # Pass the pre-aggregated and pre-labeled dataframe chunk
+        plot_sybil_comparison(df_agg[df_agg['defense'] == defense].copy(), defense, output_dir)
 
-    print("\nAnalysis complete. Check 'step6_figures' folder for plots.")
+    print("\nAnalysis complete. Check 'step6_figures' folder for plots and CSV.")
 
 
 if __name__ == "__main__":
