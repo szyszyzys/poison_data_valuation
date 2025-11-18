@@ -184,22 +184,36 @@ if __name__ == "__main__":
 
             for sweep_value in sweep_values:
                 current_grid = static_grid.copy()
-                current_grid[config_key_path] = [sweep_value]
+                # The final parameter grid for the generator should be empty (or just n_samples)
+                # as we're applying the sweep_value manually.
+                # We'll just pass the full grid, but apply the sweep_value to the base config manually.
+
                 hp_suffix = f"{base_hp_suffix}_{sweep_key}_{sweep_value}"
 
+                # 1. Create a base scenario with the strategy modifier
                 temp_scenario = Scenario(
                     name=f"{scenario.name}/{hp_suffix}",
                     base_config_factory=scenario.base_config_factory,
+                    # Add the sybil attack strategy modifier here
                     modifiers=scenario.modifiers + [use_sybil_attack_strategy(strategy=strategy_name)],
+                    # Pass the original static grid (or a copy, it doesn't matter much since n_samples is the only dynamic part)
                     parameter_grid=current_grid
                 )
                 temp_scenario.parameter_grid["experiment.save_path"] = [f"./results/{scenario.name}/{hp_suffix}"]
 
                 base_config = temp_scenario.base_config_factory()
                 modified_base_config = copy.deepcopy(base_config)
+
+                # 2. Apply all modifiers (including Sybil strategy setup)
                 for modifier in temp_scenario.modifiers:
                     modified_base_config = modifier(modified_base_config)
 
+                # 3. CRITICAL FIX: Apply the sweep value directly to the configuration
+                # This ensures the blend_alpha value is actually set.
+                set_nested_attr(modified_base_config, config_key_path, sweep_value)
+                print(f"    - Setting {config_key_path} to: {sweep_value}")  # Optional print for verification
+
+                # 4. Generate the config using the already modified base config
                 num_gen = generator.generate(modified_base_config, temp_scenario)
                 task_configs += num_gen
         else:

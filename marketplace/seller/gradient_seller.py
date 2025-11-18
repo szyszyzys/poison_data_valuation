@@ -845,7 +845,7 @@ class SybilCoordinator:
                 sid: manipulated_gradients[sid] for sid in benign_ids if sid in manipulated_gradients
             }
             if benign_gradients_dict and current_root_gradient is not None:  # Ensure root gradient is available
-                logging.debug("[SybilCoordinator] Running hypothetical aggregation for Oracle...")
+                logging.info("[SybilCoordinator] Running hypothetical aggregation for Oracle...")
                 try:
                     _hypo_agg_grad, hypothetical_selected_ids, _hypo_outliers, _hypo_stats = self.aggregator.aggregate(
                         global_epoch=global_epoch,
@@ -884,7 +884,7 @@ class SybilCoordinator:
         if needs_historical:
             if self.selection_patterns and "centroid" in self.selection_patterns:
                 historical_centroid_flat = self.selection_patterns["centroid"]
-                logging.debug("[SybilCoordinator] Using historical centroid for mimic/pivot/knock_out.")
+                logging.info("[SybilCoordinator] Using historical centroid for mimic/pivot/knock_out.")
             else:
                 logging.warning(
                     "[SybilCoordinator] Historical strategies requested but no historical centroid available yet.")
@@ -895,6 +895,8 @@ class SybilCoordinator:
             client_state = self.clients[sybil_id]
             strategy_name = "oracle_blend" if "oracle_blend" in strategies_in_use else self._get_strategy_for_client(
                 client_state)
+            print(
+                f"[SybilCoordinator] Current strategy_name: {strategy_name}, oracle_centroid_flat exist: {oracle_centroid_flat is not None}")
 
             original_malicious_grad_list = current_round_gradients[sybil_id]
             original_shapes = [g.shape for g in original_malicious_grad_list]
@@ -916,7 +918,7 @@ class SybilCoordinator:
                 if oracle_centroid_flat is not None:
                     alpha = self.sybil_cfg.oracle_blend_alpha  # Get alpha from config
                     manipulated_grad_flat = alpha * original_malicious_flat + (1.0 - alpha) * oracle_centroid_flat
-                    logging.debug(f"   Oracle Blending applied to {sybil_id} (alpha={alpha})")
+                    logging.info(f"   Oracle Blending applied to {sybil_id} (alpha={alpha})")
                 else:
                     logging.warning(
                         f"   Oracle Blend for {sybil_id} failed (no oracle centroid). Submitting original malicious gradient.")
