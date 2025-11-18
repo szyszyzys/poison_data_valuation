@@ -440,67 +440,111 @@ def plot_martfl_analysis(df: pd.DataFrame, output_dir: Path):
     plt.clf()
     plt.close('all')
 
-# ========================================================================
-# MAIN EXECUTION
-# ========================================================================
 
+def plot_comparative_attacker_curves(df: pd.DataFrame, df_summary_with_baseline: pd.DataFrame, output_dir: Path):
+    """
+    (NEW) Plots the Adversary Selection Rate for ALL threat models on ONE chart per defense.
+    Adds a horizontal line for the "No Attack" Benign Baseline.
+    """
+    print("Generating Plot 5: Comparative Attacker Learning Curves...")
+
+    if df.empty: return
+
+    # 1. Get the Baseline Benign Rate (Target)
+    baseline_lookup = {}
+    if not df_summary_with_baseline.empty:
+        baseline_rows = df_summary_with_baseline[df_summary_with_baseline['threat_label'] == '0. Baseline (No Attack)']
+        # Average over datasets/seeds if multiple exist per defense
+        baseline_lookup = baseline_rows.groupby('defense')['ben_sel_rate'].mean().to_dict()
+
+    # 2. Prepare Time-Series Data
+    # Filter for ADVERSARIES only
+    df_adv = df[df['seller_type'] == 'Adversary'].copy()
+
+    # Pre-calculate rolling means
+    group_cols = ['seed_id', 'defense', 'threat_label', 'adaptive_mode', 'round']
+    df_agg = df_adv.groupby(group_cols)['selected'].mean().reset_index()
+    df_agg['rolling_sel_rate'] = df_agg.groupby(['seed_id', 'defense', 'threat_label', 'adaptive_mode'])['selected'] \
+        .transform(lambda x: x.rolling(5, min_periods=1).mean())
+
+    # Define colors for consistency
+    palette = {
+        '1. Black-Box': 'red',
+        '2. Grad-Inversion': 'orange',
+        '3. Oracle': 'green'
+    }
+
+    for defense in df_agg['defense'].unique():
+        df_defense = df_agg[df_agg['defense'] == defense]
+        if df_defense.empty: continue
+
+        plt.figure(figsize=(10, 6))
+
+        # Plot lines for each threat model
+        sns.lineplot(
+            data=df_defense,
+            x='round',
+            y='rolling_sel_rate',
+            hue='threat_label',
+            style='adaptive_mode',  # Different dash styles for gradient vs data
+            palette=palette,
+            lw=2.5,
+            errorbar=('ci', 95)
+        )
+
+        # Add Baseline Horizontal Line
+        if defense in baseline_lookup:
+            baseline_val = baseline_lookup[defense]
+            plt.axhline(y=baseline_val, color='blue', linestyle='--', linewidth=2,
+                        label='Target (No Attack Benign Rate)')
+
+        plt.axvline(x=EXPLORATION_ROUNDS, color='grey', linestyle=':', linewidth=2, label='Attack Start')
+
+        plt.title(f'Attacker Comparison: {defense.upper()} Selection Rate')
+        plt.xlabel('Training Round')
+        plt.ylabel('Adversary Selection Rate (5-round Avg)')
+        plt.legend(title='Threat Model')
+        plt.ylim(-0.05, 1.05)
+
+        plot_file = output_dir / f"plot5_comparative_attacker_curves_{defense}.png"
+        plt.savefig(plot_file, bbox_inches='tight')
+        plt.clf()
+        plt.close('all')
+
+
+# --- MAIN ---
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
     print(f"Plots will be saved to: {output_dir.resolve()}")
 
-    # --- (UPDATED) Load ALL Step 7 Data (Adaptive + Baseline) ---
+    # Load Data
     df_seller_ts, df_global_ts, df_summary_with_baseline = collect_all_results(BASE_RESULTS_DIR)
+    step2_5_csv = Path(
+        FIGURE_OUTPUT_DIR).parent / "step2.5_figures" / "step2.5_platform_metrics_with_selection_summary.csv"
+    df_baseline = load_step2_5_baseline(step2_5_csv)
+    if not df_baseline.empty:
+        datasets_in_step7 = df_summary_with_baseline['dataset'].unique()
+        df_baseline_filtered = df_baseline[df_baseline['dataset'].isin(datasets_in_step7)]
+        df_summary_with_baseline = pd.concat([df_summary_with_baseline, df_baseline_filtered], ignore_index=True)
 
-    if df_summary_with_baseline.empty:
-        print("\nNo 'step7' data was loaded. Exiting.")
-        return
+    # Filter for MartFL
+    print("\n--- Filtering for 'martfl' ---")
+    df_seller_martfl = df_seller_ts[df_seller_ts['defense'] == 'martfl'].copy()
+    df_global_martfl = df_global_ts[df_global_ts['defense'] == 'martfl'].copy()
+    df_sum_martfl = df_summary_with_baseline[df_summary_with_baseline['defense'] == 'martfl'].copy()
 
-    # --- (DELETED) No longer need to load step2.5 or merge ---
+    # Run Plots
+    plot_selection_rate_curves(df_seller_martfl, output_dir)
+    plot_global_performance_curves(df_global_martfl, output_dir)
+    plot_final_summary(df_sum_martfl, output_dir)
+    plot_martfl_analysis(df_seller_martfl, output_dir)
 
-    # --- (UPDATED) Pre-filter all DataFrames for 'martfl' only ---
-    print("\n--- Filtering all data for 'martfl' defense ---")
+    # --- Run the NEW Comparative Plot ---
+    plot_comparative_attacker_curves(df_seller_martfl, df_sum_martfl, output_dir)
 
-    df_seller_ts_martfl = df_seller_ts[df_seller_ts['defense'] == 'martfl'].copy()
-    df_global_ts_martfl = df_global_ts[df_global_ts['defense'] == 'martfl'].copy()
-    df_summary_martfl = df_summary_with_baseline[df_summary_with_baseline['defense'] == 'martfl'].copy()
+    print(f"\n✅ Analysis complete.")
 
-    if df_summary_martfl.empty:
-        print("No data found for 'martfl' after filtering. Exiting.")
-        return
-    # --- END OF FILTERING ---
-
-    # --- Save full time-series data (for debugging/appendix) ---
-    csv_seller_ts = output_dir / "all_runs_seller_timeseries_martfl.csv"
-    df_seller_ts_martfl.to_csv(csv_seller_ts, index=False)
-    print(f"\n✅ Saved all martfl seller time-series data to: {csv_seller_ts}")
-
-    csv_global_ts = output_dir / "all_runs_global_timeseries_martfl.csv"
-    df_global_ts_martfl.to_csv(csv_global_ts, index=False)
-    print(f"✅ Saved all martfl global time-series data to: {csv_global_ts}")
-
-    # --- Save the combined summary data ---
-    csv_summary = output_dir / "all_runs_summary_with_baseline_martfl.csv"
-    df_summary_martfl.to_csv(csv_summary, index=False, float_format="%.4f")
-    print(f"✅ Saved all martfl summary data (with baseline) to: {csv_summary}")
-
-    # --- Call all plotting functions with the pre-filtered data ---
-    plot_selection_rate_curves(df_seller_ts_martfl, output_dir)
-    plot_global_performance_curves(df_global_ts_martfl, output_dir)
-    plot_martfl_analysis(df_seller_ts_martfl, output_dir)
-
-    # Plot 3 uses the new combined summary data
-    plot_final_summary(df_summary_martfl, output_dir)
-
-    print("\n---")
-    print("🔴 IMPORTANT NOTE ON STRATEGY PLOTS:")
-    print("   The 'seller_metrics.csv' file does not contain the 'attack_strategy' column.")
-    print("   Therefore, we CANNOT generate the 'Strategy Convergence' or 'Stealthy Blend' plots.")
-    print("   To get this data, your experiment runner must save the attacker's per-round stats")
-    print("   (from 'self.last_training_stats') into the 'marketplace_report.json'.")
-    print("---")
-
-    print(f"\n✅ Full analysis complete. Check the '{FIGURE_OUTPUT_DIR}' folder.")
 
 if __name__ == "__main__":
     main()
