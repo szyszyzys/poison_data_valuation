@@ -8,7 +8,7 @@ from typing import List
 # --- Imports ---
 from config_common_utils import (
     NUM_SEEDS_PER_CONFIG,
-    DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, IMAGE_DEFENSES, enable_valuation, use_sybil_attack_strategy,
+    DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, enable_valuation, use_sybil_attack_strategy,
     get_tuned_defense_params, GOLDEN_TRAINING_PARAMS
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
@@ -29,6 +29,9 @@ except ImportError as e:
 SYBIL_TEST_CONFIG = {
     # "baseline_no_sybil": None,
     "mimic": {},
+    "pivot": {},
+    "knock_out": {}
+
     # "oracle_blend": {"blend_alpha": [0.05, 0.1, 0.2, 0.5, 0.8]},
     # "systematic_probe": {},
 }
