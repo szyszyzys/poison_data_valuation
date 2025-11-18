@@ -1200,7 +1200,6 @@ class SybilCoordinator:
 
     def on_round_end(self) -> None:
         """Clear round-specific state."""
-        self.update_historical_patterns(self.selected_gradients)
         self.adaptive_role_assignment()
         self.selected_gradients = {}
 
