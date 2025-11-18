@@ -63,18 +63,22 @@ def load_run_config_snapshot(config_file: Path) -> Dict[str, Any]:
     """
     try:
         with open(config_file, 'r') as f:
-            # Load the config from JSON file
             config = json.load(f)
 
-        # Paths based on generator logic (assuming the JSON snapshot structure is the same as the AppConfig object)
-
         # 1. Buyer (Client) Alpha Path (Data distribution for main client pool)
-        # Note: If 'image' is the modality, this path is config['data']['image']...
-        buyer_alpha = config['data']['image']['dirichlet_alpha']
+        # We must use .get() for safer dictionary access
+
+        # Accessing buyer_alpha safely
+        buyer_data = config.get('data', {}).get('image', {})
+        buyer_alpha = buyer_data.get('dirichlet_alpha')
+
+        if buyer_alpha is None:
+            # Debugging print statement if the key is missing
+            print(f"DEBUG: Missing 'dirichlet_alpha' in buyer data path in {config_file.name}")
+            return {}
 
         # 2. Seller (Adversary) Alpha Path (Data distribution for adversary's data)
         seller_alpha_path = config.get('adversary_seller_config', {}).get('poisoning', {}).get('data_distribution', {})
-        # If 'data_distribution' is not explicitly set in poisoning, it defaults to the main buyer's alpha.
         seller_alpha = seller_alpha_path.get('dirichlet_alpha', buyer_alpha)
 
         return {
@@ -82,11 +86,13 @@ def load_run_config_snapshot(config_file: Path) -> Dict[str, Any]:
             "seller_alpha": float(seller_alpha)
         }
 
-    except Exception as e:
-        print(f"Error loading config from {config_file}: {e}")
+    except json.JSONDecodeError as e:
+        print(f"ERROR: JSON decoding failed for {config_file}: {e}")
         return {}
-
-
+    except Exception as e:
+        print(f"ERROR: General exception while processing {config_file}: {e}")
+        # This will catch KeyErrors if the structure is wrong
+        return {}
 # Removed the unused load_run_config (YAML) function.
 
 
