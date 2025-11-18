@@ -7,7 +7,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-import yaml  # IMPORTANT: Ensure PyYAML is installed (pip install pyyaml)
+import yaml
 from pathlib import Path
 from typing import List, Dict, Any
 from matplotlib.ticker import FixedLocator, FixedFormatter
@@ -26,7 +26,6 @@ UNIFORM_ALPHA_THRESHOLD = 99.0  # Used to distinguish highly-heterogeneous (bias
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     """Parses the base scenario name (e.g., 'step11_heterogeneity_martfl_CIFAR100')"""
     try:
-        # NOTE: Using the pattern that matches your original generated scenario name
         pattern = r'step11_heterogeneity_(fedavg|martfl|fltrust|skymask)_(.*)'
         match = re.search(pattern, scenario_name)
 
@@ -57,8 +56,6 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     return hps
 
 
-# FILE: step11_visual.py (Corrected load_run_config_snapshot)
-
 def load_run_config_snapshot(config_file: Path) -> Dict[str, Any]:
     """
     Loads key data distribution parameters (alphas) from the config_snapshot.json file.
@@ -69,31 +66,29 @@ def load_run_config_snapshot(config_file: Path) -> Dict[str, Any]:
             config = json.load(f)
 
         # --- 1. Buyer (Client) Alpha Path ---
-        # Get 'data' section, falling back to empty dict
         data_config = config.get('data', {})
 
-        # Get the modality section (e.g., 'image'), falling back to empty dict
-        # This is the line that likely returns a string (the error source).
-        # We must explicitly cast the .get() result to a dict (or empty dict)
+        # FIX: Check if the modality key ('image') points to a dict. If not, treat as empty.
         buyer_data = data_config.get('image', {})
         if not isinstance(buyer_data, dict):
-            # If it's not a dict (e.g., if it's a string), treat it as an empty dict
             buyer_data = {}
 
         buyer_alpha = buyer_data.get('dirichlet_alpha')
 
         if buyer_alpha is None:
-            print(f"DEBUG: Missing 'dirichlet_alpha' key in buyer data path in {config_file.name}")
+            # This handles cases where 'dirichlet_alpha' is missing even if 'image' is a dict
             return {}
 
         # --- 2. Seller (Adversary) Alpha Path ---
-        seller_alpha_path = config.get('adversary_seller_config', {}).get('poisoning', {}).get('data_distribution', {})
+        seller_alpha_path = config.get('adversary_seller_config', {}).get('poisoning', {})
 
-        # Ensure seller_alpha_path is a dictionary before calling .get()
-        if not isinstance(seller_alpha_path, dict):
-            seller_alpha_path = {}
+        # Ensure 'data_distribution' is a dictionary before accessing its alpha.
+        seller_data_dist = seller_alpha_path.get('data_distribution', {})
+        if not isinstance(seller_data_dist, dict):
+            seller_data_dist = {}
 
-        seller_alpha = seller_alpha_path.get('dirichlet_alpha', buyer_alpha)
+        # If 'dirichlet_alpha' is not explicitly set for the seller, it defaults to the buyer's alpha.
+        seller_alpha = seller_data_dist.get('dirichlet_alpha', buyer_alpha)
 
         return {
             "buyer_alpha": float(buyer_alpha),
@@ -106,6 +101,7 @@ def load_run_config_snapshot(config_file: Path) -> Dict[str, Any]:
     except Exception as e:
         print(f"ERROR: General exception while processing {config_file}: {e}")
         return {}
+
 
 def infer_bias_source(buyer_alpha: float, seller_alpha: float) -> str:
     """Infers the bias type based on the two alpha values."""
@@ -120,7 +116,7 @@ def infer_bias_source(buyer_alpha: float, seller_alpha: float) -> str:
     elif seller_biased and not buyer_biased:
         return "Seller-Only Bias"
     else:
-        # This covers cases where both are large (uniform) or inconsistent.
+        # Default for uniform cases (both alpha high) or inconsistent settings
         return "Market-Wide Bias"
 
 
@@ -182,7 +178,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
         # Use rglob to find all final_metrics.json files in subdirectories
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             try:
-                # --- FIX: Look for config_snapshot.json in the same directory as final_metrics.json ---
+                # Look for config_snapshot.json in the same directory as final_metrics.json
                 config_file = metrics_file.parent / "config_snapshot.json"
 
                 if not config_file.exists():
@@ -192,19 +188,16 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                 # 1. Load config snapshot and infer bias source
                 config_data = load_run_config_snapshot(config_file)
                 if not config_data:
-                    print(f"Error: Failed to load data from config snapshot {config_file}. Skipping.")
+                    # The loading function printed the specific error already.
                     continue
 
                 buyer_alpha = config_data['buyer_alpha']
                 seller_alpha = config_data['seller_alpha']
                 inferred_bias_source = infer_bias_source(buyer_alpha, seller_alpha)
 
-                # 2. Get high-level parameters (dirichlet_alpha is the X-axis value)
-                # The path parts are complex, so we use the first HP folder name:
+                # 2. Get high-level parameters (dirichlet_alpha for X-axis)
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
 
-                # Check if the alpha folder name is present (usually the first element)
-                # If the structure is very deep, we might need a safer index.
                 if len(relative_parts) > 0:
                     hp_folder_name = relative_parts[0]
                     run_hps = parse_hp_suffix(hp_folder_name)
@@ -219,11 +212,10 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                         **run_scenario,
                         **run_hps,
                         **run_metrics,
-                        "bias_source": inferred_bias_source,  # NEW: Inferred bias
+                        "bias_source": inferred_bias_source,
                         "buyer_alpha": buyer_alpha,
                         "seller_alpha": seller_alpha,
                         "dirichlet_alpha": run_hps.get('dirichlet_alpha_folder') or buyer_alpha
-                        # Use folder alpha, fallback to buyer alpha
                     })
             except Exception as e:
                 print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
