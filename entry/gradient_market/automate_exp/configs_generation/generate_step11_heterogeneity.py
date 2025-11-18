@@ -16,7 +16,8 @@ from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar10_c
     use_image_backdoor_attack, use_cifar100_config
 
 try:
-    from common.gradient_market_configs import AppConfig, PoisonType
+    # CRITICAL: Assuming these classes are available/importable
+    from common.gradient_market_configs import AppConfig, PoisonType, DataDistributionConfig
     from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 except ImportError as e:
     print(f"Error importing necessary modules: {e}")
@@ -27,9 +28,9 @@ except ImportError as e:
 DIRICHLET_ALPHAS_TO_SWEEP = [100.0, 1.0, 0.5, 0.1]
 FIXED_ATTACK_ADV_RATE = DEFAULT_ADV_RATE
 FIXED_ATTACK_POISON_RATE = DEFAULT_POISON_RATE
-UNIFORM_ALPHA = 100.0  # Alpha value used for uniform distribution (for the non-biased party)
+UNIFORM_ALPHA = 100.0  # Alpha value used for uniform distribution
 
-# NEW: Define the bias types to test
+# Define the bias types to test
 BIAS_TYPES = ["market_wide", "buyer_only", "seller_only"]
 
 HETEROGENEITY_SETUP = {
@@ -44,7 +45,7 @@ HETEROGENEITY_SETUP = {
 DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl", "skymask"]
 
 
-# === FUNCTION TO GENERATE BASE SCENARIOS ===
+# === FUNCTION TO GENERATE BASE SCENARIOS (UNCHANGED LOGIC) ===
 def generate_heterogeneity_scenarios() -> List[Scenario]:
     """Generates scenarios testing tuned defenses by varying Dirichlet alpha and bias source."""
     print("\n--- Generating Step 11: Heterogeneity Impact Scenarios ---")
@@ -53,7 +54,7 @@ def generate_heterogeneity_scenarios() -> List[Scenario]:
     model_cfg_name = HETEROGENEITY_SETUP["model_config_name"]
     print(f"Setup: {HETEROGENEITY_SETUP['dataset_name']} {model_cfg_name}, Fixed Attack")
 
-    # NEW: Loop over Bias Types
+    # Loop over Bias Types
     for bias_type in BIAS_TYPES:
         for defense_name in DEFENSES_TO_TEST:
 
@@ -96,10 +97,7 @@ def generate_heterogeneity_scenarios() -> List[Scenario]:
                     config = current_attack_modifier(config)
                     set_nested_attr(config, "adversary_seller_config.poisoning.poison_rate", FIXED_ATTACK_POISON_RATE)
 
-                    # 4. Data distribution strategy is set in the grid, ensure base strategy is compatible
-                    # NOTE: We set data.image.strategy and data.image.buyer_strategy in the main loop
-
-                    # 5. Turn off valuation
+                    # 4. Valuation
                     config.valuation.run_influence = False
                     config.valuation.run_loo = False
                     config.valuation.run_kernelshap = False
@@ -109,14 +107,16 @@ def generate_heterogeneity_scenarios() -> List[Scenario]:
 
             setup_modifier_func = create_setup_modifier()
 
-            # --- Define the parameter grid (FIXED params, no sweeps) ---
+            # --- Define the parameter grid (FIXED params, strategy is in the grid) ---
             parameter_grid = {
                 HETEROGENEITY_SETUP["model_config_param_key"]: [model_cfg_name],
                 "experiment.dataset_name": [HETEROGENEITY_SETUP["dataset_name"]],
                 "n_samples": [NUM_SEEDS_PER_CONFIG],
                 "experiment.use_early_stopping": [True],
                 "experiment.patience": [10],
-                "adversary_seller_config.poisoning.data_distribution.strategy": ["dirichlet"],  # REQUIRED by adv config
+
+                # CRITICAL: This is the field that was causing the AttributeError!
+                "adversary_seller_config.poisoning.data_distribution.strategy": ["dirichlet"],
             }
 
             # NEW: Include bias_type in scenario name and grid
@@ -134,7 +134,29 @@ def generate_heterogeneity_scenarios() -> List[Scenario]:
     return scenarios
 
 
-# --- Main Execution Block (CRITICALLY FIXED) ---
+# === MINIMUM CHANGE FIX: Initialization Utility ===
+
+def initialize_adversary_data_distribution(config: AppConfig) -> AppConfig:
+    """
+    Ensures the adversary poisoning config has a data_distribution field,
+    resolving the AttributeError before grid parameters are applied.
+    """
+    poisoning_cfg = config.adversary_seller_config.poisoning
+
+    # Check if the attribute exists or is None
+    if not hasattr(poisoning_cfg, 'data_distribution') or poisoning_cfg.data_distribution is None:
+        try:
+            # Attempt to initialize with the actual data class (DataDistributionConfig)
+            # This is the cleanest fix if DataDistributionConfig is a dataclass
+            poisoning_cfg.data_distribution = DataDistributionConfig()
+        except NameError:
+            # Fallback if DataDistributionConfig is a dict placeholder
+            poisoning_cfg.data_distribution = {}
+
+    return config
+
+
+# --- Main Execution Block (MODIFIED to use initialization utility) ---
 if __name__ == "__main__":
     base_output_dir = "./configs_generated_benchmark"
     output_dir = Path(base_output_dir) / "step11_heterogeneity"
@@ -152,29 +174,28 @@ if __name__ == "__main__":
 
         static_grid = scenario.parameter_grid.copy()
         bias_type = static_grid.pop("_bias_type")[0]
-        defense_name = scenario.name.split('_')[-2]  # Extract defense name from scenario name
+        defense_name = scenario.name.split('_')[-2]
 
         # Loop through each alpha value (the biased alpha)
         for alpha in DIRICHLET_ALPHAS_TO_SWEEP:
 
             # 1. Determine which keys receive the biased alpha vs. the uniform alpha
-            # This logic ensures the correct values are written to the keys used by your cache key.
             if bias_type == "market_wide":
-                seller_alpha_key = alpha  # Seller follows data.image.dirichlet_alpha
-                buyer_alpha_key = alpha  # Buyer follows data.image.buyer_dirichlet_alpha
+                seller_alpha_key = alpha
+                buyer_alpha_key = alpha
 
             elif bias_type == "buyer_only":
-                seller_alpha_key = UNIFORM_ALPHA  # Seller/Pool is Uniform
-                buyer_alpha_key = alpha  # Buyer is Biased
+                seller_alpha_key = UNIFORM_ALPHA
+                buyer_alpha_key = alpha
 
             elif bias_type == "seller_only":
-                seller_alpha_key = alpha  # Seller/Pool is Biased
-                buyer_alpha_key = UNIFORM_ALPHA  # Buyer is Uniform
+                seller_alpha_key = alpha
+                buyer_alpha_key = UNIFORM_ALPHA
 
             # 2. Create the specific grid for this combination
             current_grid = static_grid.copy()
 
-            # --- CRITICAL FIXES FOR CACHE KEY COMPATIBILITY ---
+            # --- CONFIGURATION FOR CACHE KEY COMPATIBILITY ---
 
             # Set the Seller's (Pool's) alpha in the key that the cache reads (data.image.dirichlet_alpha)
             current_grid[f"data.{modality}.strategy"] = ["dirichlet"]
@@ -184,7 +205,7 @@ if __name__ == "__main__":
             current_grid[f"data.{modality}.buyer_strategy"] = ["dirichlet"]
             current_grid[f"data.{modality}.buyer_dirichlet_alpha"] = [buyer_alpha_key]
 
-            # --- END CRITICAL FIXES ---
+            # --- END CONFIGURATION ---
 
             # 3. Define unique output path
             hp_suffix = f"alpha_{alpha}"
@@ -203,12 +224,16 @@ if __name__ == "__main__":
             base_config = temp_scenario.base_config_factory()
             modified_base_config = copy.deepcopy(base_config)
 
+            # --- FIX APPLICATION: Initialize the missing object BEFORE modifiers run ---
+            modified_base_config = initialize_adversary_data_distribution(modified_base_config)
+
             # Set the defense aggregation config name manually for uniqueness
             set_nested_attr(modified_base_config, "aggregation.aggregation_name", defense_name)
 
             for modifier in temp_scenario.modifiers:
                 modified_base_config = modifier(modified_base_config)
 
+            # The generator will now apply grid parameters successfully.
             num_gen = generator.generate(modified_base_config, temp_scenario)
             task_configs += num_gen
 
