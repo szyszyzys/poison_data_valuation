@@ -12,9 +12,8 @@ from typing import List, Dict, Any, Tuple, Optional
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step7_martfl_only_figures"
 
-# (FIXED) Explicit regex to handle underscores correctly
 SCENARIO_PATTERN = re.compile(
-    r'step7_adaptive_(black_box|gradient_inversion|oracle)_(data_poisoning|gradient_manipulation)_([a-zA-Z0-9]+)_(.*)'
+    r'step7_adaptive_([a-z_]+)_([a-z_]+)_([a-zA-Z0-9_]+)_(.*)'
 )
 
 EXPLORATION_ROUNDS = 30
@@ -41,20 +40,11 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
                 adaptive_mode = match.group(2)
                 defense = match.group(3)
                 dataset = match.group(4)
-
-                threat_model_map = {
-                    'black_box': '1. Black-Box',
-                    'gradient_inversion': '2. Grad-Inversion',
-                    'oracle': '3. Oracle'
-                }
+                threat_model_map = {'black_box': '1. Black-Box', 'gradient_inversion': '2. Grad-Inversion',
+                                    'oracle': '3. Oracle'}
                 threat_label = threat_model_map.get(threat_model, threat_model)
-                return {
-                    "threat_model": threat_model,
-                    "adaptive_mode": adaptive_mode,
-                    "defense": defense,
-                    "dataset": dataset,
-                    "threat_label": threat_label
-                }
+                return {"threat_model": threat_model, "adaptive_mode": adaptive_mode, "defense": defense,
+                        "dataset": dataset, "threat_label": threat_label}
         return {"defense": "unknown"}
     except Exception as e:
         return {"defense": "unknown"}
@@ -79,6 +69,7 @@ def collect_all_results(base_dir: str, target_defense: Optional[str] = None) -> 
                 seed_id = f"{scenario_path.name}__{run_dir.name}"
 
                 # Seller Metrics
+                df_seller = pd.DataFrame()
                 seller_file = run_dir / 'seller_metrics.csv'
                 if seller_file.exists():
                     try:
@@ -103,22 +94,44 @@ def collect_all_results(base_dir: str, target_defense: Optional[str] = None) -> 
                     except Exception:
                         pass
 
-                # Summary
+                # Summary with Special Baseline Logic
                 with open(final_metrics_file, 'r') as f:
                     final_metrics = json.load(f)
-                adv_sel, ben_sel = 0.0, 0.0
-                if all_seller_dfs and not all_seller_dfs[-1].empty:
-                    # Optimization: check the just-appended dataframe if it matches current seed
-                    last_run = all_seller_dfs[-1]
-                    if last_run['seed_id'].iloc[0] == seed_id:
-                        last_round = last_run[last_run['round'] == last_run['round'].max()]
-                        if not last_round.empty:
-                            adv_sel = last_round[last_round['seller_type'] == 'Adversary']['selected'].mean()
-                            ben_sel = last_round[last_round['seller_type'] == 'Benign']['selected'].mean()
 
-                all_summary_rows.append(
-                    {**scenario_params, 'seed_id': seed_id, 'acc': final_metrics.get('acc', 0), 'adv_sel_rate': adv_sel,
-                     'ben_sel_rate': ben_sel})
+                adv_sel = 0.0
+                ben_sel = 0.0
+
+                if not df_seller.empty:
+                    # Get data from the final round
+                    last_round_idx = df_seller['round'].max()
+                    last_round = df_seller[df_seller['round'] == last_round_idx]
+
+                    if not last_round.empty:
+                        # 1. Benign Selection (Always average of all benign)
+                        benign_sellers = last_round[last_round['seller_type'] == 'Benign']
+                        if not benign_sellers.empty:
+                            ben_sel = benign_sellers['selected'].mean()
+
+                        # 2. Adversary Selection (Proxy Logic for Baseline)
+                        if scenario_params['threat_model'] == 'baseline':
+                            # Proxy: Average of bn_0, bn_1, bn_2
+                            # These occupy the slots where adversaries would be
+                            proxy_sellers = last_round[last_round['seller_id'].isin(['bn_0', 'bn_1', 'bn_2'])]
+                            if not proxy_sellers.empty:
+                                adv_sel = proxy_sellers['selected'].mean()
+                        else:
+                            # Standard: Average of actual adversaries
+                            adv_sellers = last_round[last_round['seller_type'] == 'Adversary']
+                            if not adv_sellers.empty:
+                                adv_sel = adv_sellers['selected'].mean()
+
+                all_summary_rows.append({
+                    **scenario_params,
+                    'seed_id': seed_id,
+                    'acc': final_metrics.get('acc', 0),
+                    'adv_sel_rate': adv_sel,
+                    'ben_sel_rate': ben_sel
+                })
             except Exception:
                 pass
 
@@ -144,7 +157,6 @@ def plot_selection_rate_curves(df: pd.DataFrame, baseline_sel: float, output_dir
             if df_facet.empty: continue
             threat_file = threat.replace(' ', '').replace('.', '')
 
-            # 1a. Selection Rate
             plt.figure(figsize=(10, 6))
             sns.lineplot(data=df_facet, x='round', y='rolling_sel_rate', hue='seller_type', style='adaptive_mode',
                          palette={'Adversary': 'red', 'Benign': 'blue'}, lw=2.5, errorbar=('ci', 95))
@@ -159,7 +171,6 @@ def plot_selection_rate_curves(df: pd.DataFrame, baseline_sel: float, output_dir
             plt.savefig(output_dir / f"plot1_sel_rate_{defense}_{threat_file}.png", bbox_inches='tight')
             plt.close('all')
 
-            # 1b. Advantage
             df_piv = df_facet.pivot_table(index=['round', 'seed_id', 'defense', 'threat_label', 'adaptive_mode'],
                                           columns='seller_type', values='rolling_sel_rate').reset_index()
             if 'Adversary' in df_piv.columns and 'Benign' in df_piv.columns:
@@ -178,16 +189,13 @@ def plot_global_performance_curves(df: pd.DataFrame, baseline_acc: float, output
         for threat in df['threat_label'].unique():
             data = df[(df['defense'] == defense) & (df['threat_label'] == threat)]
             if data.empty: continue
-
             plt.figure(figsize=(10, 6))
             sns.lineplot(data=data, x='round', y='val_acc', hue='adaptive_mode', style='adaptive_mode',
                          palette='Greens_d', lw=2.5)
-
             if baseline_acc is not None:
                 plt.axhline(y=baseline_acc, color='blue', linestyle='--', linewidth=2,
                             label='Clean Accuracy (No Attack)')
                 plt.legend()
-
             plt.title(f'Global Accuracy: {defense.upper()} vs {threat}')
             plt.savefig(output_dir / f"plot2_global_acc_{defense}_{threat.replace(' ', '')}.png", bbox_inches='tight')
             plt.close('all')
@@ -205,15 +213,23 @@ def plot_martfl_analysis(df: pd.DataFrame, output_dir: Path):
 
 
 def plot_final_summary(df: pd.DataFrame, output_dir: Path):
+    """
+    PLOT 3: The "Final" Plot
+    """
     if df.empty: return
     df_long = df.melt(id_vars=['defense', 'threat_label', 'adaptive_mode'],
                       value_vars=['adv_sel_rate', 'ben_sel_rate', 'acc'], var_name='Metric', value_name='Value')
     df_long['Value'] *= 100
+
+    # Ensure the x-order matches the parser output
     x_order = ['0. Baseline (No Attack)', '1. Black-Box', '2. Grad-Inversion', '3. Oracle']
     x_order = [x for x in x_order if x in df_long['threat_label'].unique()]
+
     for defense in df['defense'].unique():
         data = df_long[df_long['defense'] == defense]
         if data.empty: continue
+
+        # Using your requested plotting logic
         g = sns.catplot(data=data, kind='bar', x='threat_label', y='Value', col='Metric', hue='adaptive_mode',
                         order=x_order, height=4, aspect=1.0, sharey=False)
         g.set_xticklabels(rotation=15, ha='right')
@@ -251,11 +267,11 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     print(f"Plots will be saved to: {output_dir.resolve()}")
 
-    # 1. Load ALL Data
+    # 1. Load ALL Data (with proxy baseline logic)
     df_seller_ts, df_global_ts, df_summary = collect_all_results(BASE_RESULTS_DIR, target_defense='martfl')
     if df_summary.empty: return
 
-    # 2. Extract Baselines
+    # 2. Extract Baselines (from the new "0. Baseline" row)
     baseline_row = df_summary[df_summary['threat_label'] == '0. Baseline (No Attack)']
     baseline_sel = baseline_row['ben_sel_rate'].mean() if not baseline_row.empty else None
     baseline_acc = baseline_row['acc'].mean() if not baseline_row.empty else None
@@ -268,7 +284,7 @@ def main():
     df_g = df_global_ts[df_global_ts['defense'] == 'martfl']
     df_sum = df_summary[df_summary['defense'] == 'martfl']
 
-    # 4. Run Plots (Passing Baselines)
+    # 4. Run Plots
     plot_selection_rate_curves(df_s, baseline_sel, output_dir)
     plot_global_performance_curves(df_g, baseline_acc, output_dir)
     plot_martfl_analysis(df_s, output_dir)
