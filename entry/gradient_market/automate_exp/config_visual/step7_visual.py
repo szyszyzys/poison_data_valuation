@@ -10,63 +10,83 @@ from typing import List, Dict, Any, Tuple
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./step7_full_analysis_figures_MARTFL_ONLY" # Changed output dir
+FIGURE_OUTPUT_DIR = "./figures/step7_martfl_only_figures" # (NEW) Changed output dir
 
-# Regex to parse 'step7_adaptive_black_box_gradient_manipulation_martfl_CIFAR100'
+# (UPDATED) One regex to rule them all
 SCENARIO_PATTERN = re.compile(
-    r'step7_adaptive_([a-z_]+)_([a-z_]+)_([a-zA-Z0-9_]+)_(.*)'
+    r'step7_([a-z_]+)_([a-zA-Z0-9_]+)_(.*)'
 )
 # ---------------------
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
     """
-    Parses the experiment scenario name from the folder name.
+    (UPDATED)
+    Parses both 'step7_adaptive_*' and 'step7_baseline_no_attack_*' folders.
     """
     try:
-        match = SCENARIO_PATTERN.search(scenario_name)
-        if match:
-            threat_model = match.group(1)
-            adaptive_mode = match.group(2)
-            defense = match.group(3)
-            dataset = match.group(4)
+        # Check for the new baseline folder first
+        if scenario_name.startswith('step7_baseline_no_attack_'):
+            match = re.search(r'step7_baseline_no_attack_([a-zA-Z0-9_]+)_(.*)', scenario_name)
+            if match:
+                return {
+                    "threat_model": "baseline",
+                    "adaptive_mode": "N/A",
+                    "defense": match.group(1),
+                    "dataset": match.group(2),
+                    "threat_label": "0. Baseline (No Attack)"
+                }
 
-            threat_model_map = {
-                'black_box': '1. Black-Box',
-                'gradient_inversion': '2. Grad-Inversion',
-                'oracle': '3. Oracle'
-            }
-            threat_label = threat_model_map.get(threat_model, threat_model)
+        # Check for the adaptive attack folders
+        elif scenario_name.startswith('step7_adaptive_'):
+            # Use the pattern from the top of the file
+            match = re.search(r'step7_adaptive_([a-z_]+)_([a-z_]+)_([a-zA-Z0-9_]+)_(.*)', scenario_name)
+            if match:
+                threat_model = match.group(1)
+                adaptive_mode = match.group(2)
+                defense = match.group(3)
+                dataset = match.group(4)
 
-            return {
-                "threat_model": threat_model,
-                "adaptive_mode": adaptive_mode,
-                "defense": defense,
-                "dataset": dataset,
-                "threat_label": threat_label
-            }
-        else:
-            return {"defense": "unknown"}
+                threat_model_map = {
+                    'black_box': '1. Black-Box',
+                    'gradient_inversion': '2. Grad-Inversion',
+                    'oracle': '3. Oracle'
+                }
+                threat_label = threat_model_map.get(threat_model, threat_model)
+
+                return {
+                    "threat_model": threat_model,
+                    "adaptive_mode": adaptive_mode,
+                    "defense": defense,
+                    "dataset": dataset,
+                    "threat_label": threat_label
+                }
+
+        # If neither matches
+        print(f"Warning: Could not parse scenario name '{scenario_name}'. Ignoring folder.")
+        return {"defense": "unknown"}
     except Exception as e:
         print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
         return {"defense": "unknown"}
 
 def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Walks the entire results directory, parses all runs, and loads all data.
+    (UPDATED)
+    Walks the entire results directory, finds ALL 'step7_*' folders.
     """
     all_seller_dfs = []
     all_global_log_dfs = []
     all_summary_rows = []
 
     base_path = Path(base_dir)
-    print(f"Searching for 'step7_adaptive_*' directories in {base_path.resolve()}...")
+    print(f"Searching for 'step7_*' directories in {base_path.resolve()}...")
 
-    scenario_folders = list(base_path.glob("step7_adaptive_*"))
+    # (UPDATED) Use a wider glob to find both adaptive and baseline folders
+    scenario_folders = list(base_path.glob("step7_*"))
     if not scenario_folders:
-        print("Error: No 'step7_adaptive_*' directories found in ./results")
+        print("Error: No 'step7_*' directories found in ./results")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    print(f"Found {len(scenario_folders)} 'step7_adaptive_*' base directories.")
+    print(f"Found {len(scenario_folders)} 'step7_*' base directories.")
 
     for scenario_path in scenario_folders:
         scenario_params = parse_scenario_name(scenario_path.name)
@@ -124,7 +144,6 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
                 ben_sel_rate = 0.0
                 # Use the *final* selection rate from the timeseries, not the mean
                 if not df_seller.empty:
-                    # Get the last round's data
                     df_seller_last_round = df_seller[df_seller['round'] == df_seller['round'].max()]
                     if not df_seller_last_round.empty:
                         adv_sel_rate = df_seller_last_round[df_seller_last_round['seller_type'] == 'Adversary']['selected'].mean()
@@ -156,79 +175,9 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
     return df_seller_timeseries, df_global_timeseries, df_summary
 
 
-def load_step2_5_baseline(step2_5_csv_path: Path) -> pd.DataFrame:
-    """
-    (UPDATED)
-    Loads the Step 2.5 summary CSV to extract the 'no attack' baseline.
-    Fixes the bug where the 'acc' column name was wrong.
-    """
-    print(f"\nLoading Step 2.5 Baseline from: {step2_5_csv_path}")
-    if not step2_5_csv_path.exists():
-        print(f"  Warning: {step2_5_csv_path} not found. Cannot add baseline to plots.")
-        return pd.DataFrame()
-
-    try:
-        df_step2_5 = pd.read_csv(step2_5_csv_path)
-
-        # We only care about the Benign Selection Rate (and adv, if it exists)
-        metrics_to_load = {
-            '5. Avg. Benign Selection Rate (%)': 'ben_sel_rate',
-            '6. Avg. Adversary Selection Rate (%)': 'adv_sel_rate'
-        }
-
-        # --- THIS IS THE FIX ---
-        # The column name in the CSV has '(Higher is Better)' at the end.
-        acc_metric_name = '2. Avg. Usable Accuracy (%) (Higher is Better)'
-        if acc_metric_name not in df_step2_5.columns:
-            # Fallback just in case
-            acc_metric_name = '2. Avg. Usable Accuracy (%)'
-            if acc_metric_name not in df_step2_5.columns:
-                 print("  Warning: Could not find 'Avg. Usable Accuracy' column in Step 2.5 CSV.")
-        # --- END FIX ---
-
-
-        # Pivot to long format
-        df_long = df_step2_5.melt(
-            id_vars=['defense', 'dataset'],
-            value_vars=[col for col in metrics_to_load.keys() if col in df_step2_5.columns],
-            var_name='Metric_Name',
-            value_name='Value'
-        )
-
-        df_long['Value'] /= 100.0 # Convert from 83.3 -> 0.833
-
-        # Rename columns to match the summary_df
-        df_long = df_long.rename(columns={
-            'Metric_Name': 'Metric',
-            'Value': 'Value_mean'
-        })
-        df_long['Metric'] = df_long['Metric'].map(metrics_to_load)
-
-        # --- Add columns to match the step7 data structure ---
-        df_long['threat_label'] = '0. Baseline (No Attack)'
-        df_long['adaptive_mode'] = 'N/A'
-        df_long['seed_id'] = 'step2_5_avg'
-
-        # We need to un-melt it to match the structure of df_summary
-        df_pivot = df_long.pivot_table(
-            index=['defense', 'dataset', 'threat_label', 'adaptive_mode', 'seed_id'],
-            columns='Metric',
-            values='Value_mean'
-        ).reset_index()
-
-        # Add 'acc' - use the '2. Avg. Usable Accuracy (%)'
-        if acc_metric_name in df_step2_5.columns:
-            acc_df = df_step2_5[['defense', 'dataset', acc_metric_name]].copy()
-            acc_df = acc_df.rename(columns={acc_metric_name: 'acc'})
-            acc_df['acc'] /= 100.0
-            df_pivot = df_pivot.merge(acc_df, on=['defense', 'dataset'], how='left')
-
-        print(f"  Successfully loaded and processed {len(df_pivot)} baseline rows.")
-        return df_pivot
-
-    except Exception as e:
-        print(f"  Error processing {step2_5_csv_path}: {e}")
-        return pd.DataFrame()
+# --- (DELETED) ---
+# The 'load_step2_5_baseline' function is no longer needed.
+# --- (DELETED) ---
 
 
 # ========================================================================
@@ -334,7 +283,7 @@ def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
 def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 2: Global Accuracy
-    (UPDATED to remove vertical "attack start" line)
+    (Vertical line removed)
     """
     print("Generating Plot 2: Global Accuracy Curves (one per file)...")
 
@@ -365,8 +314,6 @@ def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
                 errorbar=None
             )
 
-            # --- VERTICAL LINE REMOVED ---
-
             ax.set_title(f'Global Accuracy: {defense.upper()} vs {threat}')
             ax.set_xlabel('Training Round')
             ax.set_ylabel('Global Accuracy')
@@ -381,6 +328,7 @@ def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
 def plot_final_summary(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 3: The "Final" Plot
+    (No changes needed, it's already set up for the new data)
     """
     print("Generating Plot 3: Final Effectiveness Summary (one per defense)...")
 
@@ -395,7 +343,6 @@ def plot_final_summary(df: pd.DataFrame, output_dir: Path):
         value_name='Value'
     )
 
-    # Check if 'Value' column is all NaN, which can happen if columns are missing
     if df_melted['Value'].isnull().all():
         print("  Skipping Plot 3: Melted DataFrame contains no valid data (all NaNs).")
         return
@@ -455,7 +402,7 @@ def plot_final_summary(df: pd.DataFrame, output_dir: Path):
 def plot_martfl_analysis(df: pd.DataFrame, output_dir: Path):
     """
     PLOT 4: In-depth analysis for Martfl.
-    (UPDATED to remove vertical "attack start" line)
+    (Vertical line removed)
     """
     print("Generating Plot 4: In-Depth Martfl Gradient Norm Analysis...")
 
@@ -464,12 +411,10 @@ def plot_martfl_analysis(df: pd.DataFrame, output_dir: Path):
         print("  Skipping Plot 4: No 'martfl' data found.")
         return
 
-    # Convert 'selected' (0/1) to 'Selected'/'Not Selected' for a clearer legend
     df['Selection Status'] = df['selected'].apply(
         lambda x: 'Selected' if x == 1 else 'Not Selected'
     )
 
-    # Use relplot to create a faceted scatter plot
     g = sns.relplot(
         data=df,
         x='round',
@@ -485,8 +430,6 @@ def plot_martfl_analysis(df: pd.DataFrame, output_dir: Path):
         height=4,
         aspect=1.5
     )
-
-    # --- VERTICAL LINE REMOVED ---
 
     g.set_axis_labels('Training Round', 'Gradient Norm')
     g.set_titles(col_template="{col_name}", row_template="{row_name}")
@@ -506,29 +449,16 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     print(f"Plots will be saved to: {output_dir.resolve()}")
 
-    # --- Load Step 7 Data ---
-    df_seller_ts, df_global_ts, df_summary = collect_all_results(BASE_RESULTS_DIR)
+    # --- (UPDATED) Load ALL Step 7 Data (Adaptive + Baseline) ---
+    df_seller_ts, df_global_ts, df_summary_with_baseline = collect_all_results(BASE_RESULTS_DIR)
 
-    if df_summary.empty:
+    if df_summary_with_baseline.empty:
         print("\nNo 'step7' data was loaded. Exiting.")
         return
 
-    # --- (NEW) Load Step 2.5 Data ---
-    step2_5_csv = Path(FIGURE_OUTPUT_DIR).parent / "step2.5_figures" / "step2.5_platform_metrics_with_selection_summary.csv"
-    df_baseline = load_step2_5_baseline(step2_5_csv)
+    # --- (DELETED) No longer need to load step2.5 or merge ---
 
-    # --- (NEW) Combine DataFrames ---
-    if not df_baseline.empty:
-        datasets_in_step7 = df_summary['dataset'].unique()
-        df_baseline_filtered = df_baseline[df_baseline['dataset'].isin(datasets_in_step7)]
-
-        df_summary_with_baseline = pd.concat([df_summary, df_baseline_filtered], ignore_index=True)
-        print("  Successfully merged 'step7' data with 'step2.5' baseline.")
-    else:
-        print("  Proceeding without 'step2.5' baseline data.")
-        df_summary_with_baseline = df_summary
-
-    # --- (NEW) Pre-filter all DataFrames for 'martfl' only ---
+    # --- (UPDATED) Pre-filter all DataFrames for 'martfl' only ---
     print("\n--- Filtering all data for 'martfl' defense ---")
 
     df_seller_ts_martfl = df_seller_ts[df_seller_ts['defense'] == 'martfl'].copy()
@@ -557,7 +487,7 @@ def main():
     # --- Call all plotting functions with the pre-filtered data ---
     plot_selection_rate_curves(df_seller_ts_martfl, output_dir)
     plot_global_performance_curves(df_global_ts_martfl, output_dir)
-    plot_martfl_analysis(df_seller_ts_martfl, output_dir) # This plot is martfl-specific by default
+    plot_martfl_analysis(df_seller_ts_martfl, output_dir)
 
     # Plot 3 uses the new combined summary data
     plot_final_summary(df_summary_martfl, output_dir)
