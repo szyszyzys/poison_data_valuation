@@ -57,6 +57,35 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     return hps
 
 
+def load_run_config_snapshot(config_file: Path) -> Dict[str, Any]:
+    """
+    Loads key data distribution parameters (alphas) from the config_snapshot.json file.
+    """
+    try:
+        with open(config_file, 'r') as f:
+            # Load the config from JSON file
+            config = json.load(f)
+
+        # Paths based on generator logic (assuming the JSON snapshot structure is the same as the AppConfig object)
+
+        # 1. Buyer (Client) Alpha Path (Data distribution for main client pool)
+        # Note: If 'image' is the modality, this path is config['data']['image']...
+        buyer_alpha = config['data']['image']['dirichlet_alpha']
+
+        # 2. Seller (Adversary) Alpha Path (Data distribution for adversary's data)
+        seller_alpha_path = config.get('adversary_seller_config', {}).get('poisoning', {}).get('data_distribution', {})
+        # If 'data_distribution' is not explicitly set in poisoning, it defaults to the main buyer's alpha.
+        seller_alpha = seller_alpha_path.get('dirichlet_alpha', buyer_alpha)
+
+        return {
+            "buyer_alpha": float(buyer_alpha),
+            "seller_alpha": float(seller_alpha)
+        }
+
+    except Exception as e:
+        print(f"Error loading config from {config_file}: {e}")
+        return {}
+
 def load_run_config(config_file: Path) -> Dict[str, Any]:
     """
     Loads key data distribution parameters (alphas) from the config file.
@@ -163,17 +192,15 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             try:
                 # Assuming the config is always in the same directory as final_metrics.json
-                config_file = metrics_file.parent / "config.yaml"
+                config_file = metrics_file.parent / "config_snapshot.json"
                 if not config_file.exists():
-                    # Check for config.json as an alternative if your generator outputs that
-                    config_file_json = metrics_file.parent / "config.json"
-                    if config_file_json.exists():
-                        print(f"Warning: config.yaml not found, attempting config.json for {metrics_file.parent}.")
-                        # You would need to implement load_run_config_json if needed
-                        continue
-                    else:
-                        print(f"Warning: config file not found for run {metrics_file.parent}. Skipping.")
-                        continue
+                    print(f"Warning: config_snapshot.json not found in {metrics_file.parent}. Skipping.")
+                    continue
+
+                    # 1. Load config snapshot and infer bias source
+                config_data = load_run_config_snapshot(config_file)  # NOTE THE NEW FUNCTION NAME
+                if not config_data:
+                    continue
 
                 # 1. Load config and infer bias source
                 config_data = load_run_config(config_file)
