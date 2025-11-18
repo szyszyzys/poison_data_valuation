@@ -1,3 +1,5 @@
+# FILE: step11_visual.py
+
 import pandas as pd
 import json
 import re
@@ -5,26 +7,21 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import yaml  # IMPORTANT: Ensure PyYAML is installed (pip install pyyaml)
 from pathlib import Path
 from typing import List, Dict, Any
 from matplotlib.ticker import FixedLocator, FixedFormatter
 
-# --- Configuration (Must be updated to match your new result structure) ---
+# --- Configuration ---
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step11_figures"
 ALPHAS_IN_TEST = [100.0, 1.0, 0.5, 0.1]  # Must match your generator
-
-# NEW: Mapping of the result directory structure to the bias type
-BIAS_FOLDER_MAPPING = {
-    "step11_market_wide": "Market-Wide Bias",
-    "step11_buyer_only": "Buyer-Only Bias",
-    "step11_seller_only": "Seller-Only Bias"
-}
+UNIFORM_ALPHA_THRESHOLD = 99.0  # Used to distinguish highly-heterogeneous (biased) from uniform data
 
 
 # ---------------------
 
-# --- Helper Functions (parse_scenario_name, parse_hp_suffix, load_run_data remain the same) ---
+## Helper Functions for Data Loading and Parsing
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     """Parses the base scenario name (e.g., 'step11_heterogeneity_martfl_CIFAR100')"""
@@ -40,7 +37,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
                 "dataset": match.group(2)
             }
         else:
-            # Fallback for unexpected naming conventions
             return {"scenario_base": scenario_name, "defense": "unknown", "dataset": "unknown"}
 
     except Exception as e:
@@ -49,22 +45,70 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
 
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
-    """Parses 'alpha_1.0' or 'alpha_0.5'"""
+    """Parses 'alpha_1.0' or 'alpha_0.5' to get the nominal alpha value."""
     hps = {}
     pattern = r'alpha_([0-9\.]+)'
     match = re.search(pattern, hp_folder_name)
 
     if match:
-        hps['dirichlet_alpha'] = float(match.group(1))
+        hps['dirichlet_alpha_folder'] = float(match.group(1))
     else:
         print(f"Warning: Could not parse HP suffix '{hp_folder_name}'")
     return hps
 
 
+def load_run_config(config_file: Path) -> Dict[str, Any]:
+    """
+    Loads key data distribution parameters (alphas) from the config file.
+    Assumes modality is 'image'.
+    """
+    try:
+        with open(config_file, 'r') as f:
+            # Assumes config is in YAML format
+            config = yaml.safe_load(f)
+
+        # 1. Buyer (Client) Alpha Path (Data distribution for main client pool)
+        buyer_alpha = config['data']['image']['dirichlet_alpha']
+
+        # 2. Seller (Adversary) Alpha Path (Data distribution for adversary's data)
+        seller_alpha_path = config.get('adversary_seller_config', {}).get('poisoning', {}).get('data_distribution', {})
+        # If 'data_distribution' is not explicitly set in poisoning, it defaults to the main buyer's alpha.
+        seller_alpha = seller_alpha_path.get('dirichlet_alpha', buyer_alpha)
+
+        return {
+            "buyer_alpha": float(buyer_alpha),
+            "seller_alpha": float(seller_alpha)
+        }
+
+    except Exception as e:
+        print(f"Error loading config from {config_file}: {e}")
+        return {}
+
+
+def infer_bias_source(buyer_alpha: float, seller_alpha: float) -> str:
+    """Infers the bias type based on the two alpha values."""
+
+    buyer_biased = buyer_alpha < UNIFORM_ALPHA_THRESHOLD
+    seller_biased = seller_alpha < UNIFORM_ALPHA_THRESHOLD
+
+    if buyer_biased and seller_biased and abs(buyer_alpha - seller_alpha) < 1e-4:
+        return "Market-Wide Bias"
+    elif buyer_biased and not seller_biased:
+        return "Buyer-Only Bias"
+    elif seller_biased and not buyer_biased:
+        return "Seller-Only Bias"
+    else:
+        # This covers cases where both are large (uniform) or inconsistent.
+        # For plotting, we group uniform cases together.
+        return "Market-Wide Bias"
+
+
 def load_run_data(metrics_file: Path) -> Dict[str, Any]:
-    """Loads key data from final_metrics.json and marketplace_report.json"""
+    """
+    Loads key metrics from final_metrics.json and marketplace_report.json
+    (Implementation remains the same as your original)
+    """
     run_data = {}
-    # ... (Implementation remains exactly the same as your original) ...
     try:
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
@@ -96,51 +140,71 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
         return {}
 
 
-# --- Core Aggregation Function (MODIFIED) ---
+## Core Aggregation Function
 
 def collect_all_results(base_dir: str) -> pd.DataFrame:
-    """Walks the NEW, mapped results directories and aggregates all run data."""
+    """Walks the original results directory and aggregates all run data, inferring bias source."""
     all_runs = []
     base_path = Path(base_dir)
-    print(f"Searching for results in {base_path.resolve()} based on BIAS_FOLDER_MAPPING...")
+    print(f"Searching for results in {base_path.resolve()} using original 'step11_heterogeneity_*' structure...")
 
-    # Iterate over the three new, manually created root folders
-    for folder_prefix, bias_label in BIAS_FOLDER_MAPPING.items():
-        root_path = base_path / folder_prefix
+    scenario_folders = [f for f in base_path.glob("step11_heterogeneity_*") if f.is_dir()]
+    if not scenario_folders:
+        print(f"Error: No 'step11_heterogeneity_*' directories found directly inside {base_path}.")
+        return pd.DataFrame()
 
-        if not root_path.is_dir():
-            print(f"Warning: Root directory '{root_path}' not found. Skipping {bias_label}.")
-            continue
+    print(f"Found {len(scenario_folders)} scenario base directories.")
 
-        # Search inside the sub-folders (which contain the original scenario names)
-        scenario_folders = [f for f in root_path.glob("step11_heterogeneity_*") if f.is_dir()]
-        print(f"Found {len(scenario_folders)} scenarios under {bias_label}.")
+    for scenario_path in scenario_folders:
+        scenario_name = scenario_path.name
+        run_scenario = parse_scenario_name(scenario_name)
 
-        for scenario_path in scenario_folders:
-            scenario_name = scenario_path.name
-            run_scenario = parse_scenario_name(scenario_name)
-
-            for metrics_file in scenario_path.rglob("final_metrics.json"):
-                try:
-                    # The relative path parts will now be: [hp_folder_name, config_name]
-                    relative_parts = metrics_file.parent.relative_to(scenario_path).parts
-                    if not relative_parts:
+        # Use rglob to find all final_metrics.json files in subdirectories
+        for metrics_file in scenario_path.rglob("final_metrics.json"):
+            try:
+                # Assuming the config is always in the same directory as final_metrics.json
+                config_file = metrics_file.parent / "config.yaml"
+                if not config_file.exists():
+                    # Check for config.json as an alternative if your generator outputs that
+                    config_file_json = metrics_file.parent / "config.json"
+                    if config_file_json.exists():
+                        print(f"Warning: config.yaml not found, attempting config.json for {metrics_file.parent}.")
+                        # You would need to implement load_run_config_json if needed
+                        continue
+                    else:
+                        print(f"Warning: config file not found for run {metrics_file.parent}. Skipping.")
                         continue
 
-                    hp_folder_name = relative_parts[0]
+                # 1. Load config and infer bias source
+                config_data = load_run_config(config_file)
+                if not config_data:
+                    continue
 
-                    run_hps = parse_hp_suffix(hp_folder_name)
-                    run_metrics = load_run_data(metrics_file)
+                buyer_alpha = config_data['buyer_alpha']
+                seller_alpha = config_data['seller_alpha']
+                inferred_bias_source = infer_bias_source(buyer_alpha, seller_alpha)
 
-                    if run_metrics:
-                        all_runs.append({
-                            **run_scenario,
-                            **run_hps,
-                            **run_metrics,
-                            "bias_source": bias_label  # ADDED: The bias type based on the root folder
-                        })
-                except Exception as e:
-                    print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
+                # 2. Get high-level parameters (dirichlet_alpha is the X-axis value)
+                relative_parts = metrics_file.parent.relative_to(scenario_path).parts
+                hp_folder_name = relative_parts[0]
+                run_hps = parse_hp_suffix(hp_folder_name)
+
+                # 3. Load metrics
+                run_metrics = load_run_data(metrics_file)
+
+                if run_metrics:
+                    all_runs.append({
+                        **run_scenario,
+                        **run_hps,  # Contains 'dirichlet_alpha_folder' (for X-axis mapping)
+                        **run_metrics,
+                        "bias_source": inferred_bias_source,  # NEW: Inferred bias
+                        "buyer_alpha": buyer_alpha,
+                        "seller_alpha": seller_alpha,
+                        "dirichlet_alpha": run_hps.get('dirichlet_alpha_folder')
+                        # Use the folder alpha for plotting X-axis
+                    })
+            except Exception as e:
+                print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
 
     if not all_runs:
         print("Error: No 'final_metrics.json' files were successfully processed.")
@@ -150,7 +214,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     return df
 
 
-# --- Plotting Function (MODIFIED for 2x4 layout) ---
+## Plotting Function
 
 def plot_heterogeneity_impact(df: pd.DataFrame, dataset: str, output_dir: Path):
     """
@@ -169,6 +233,14 @@ def plot_heterogeneity_impact(df: pd.DataFrame, dataset: str, output_dir: Path):
     ]
     metrics_to_plot = [m for m in metrics_to_plot if m in plot_df.columns]
 
+    # Melt DataFrame for relplot
+    plot_df = plot_df.melt(
+        id_vars=['dirichlet_alpha', 'defense', 'bias_source'],
+        value_vars=metrics_to_plot,
+        var_name='Metric',
+        value_name='Value'
+    )
+
     # Rename for clearer labels
     plot_df['Metric'] = plot_df['Metric'].replace({
         'acc': '1. Model Accuracy (Utility)',
@@ -179,9 +251,7 @@ def plot_heterogeneity_impact(df: pd.DataFrame, dataset: str, output_dir: Path):
     plot_df = plot_df.sort_values(by='Metric')
 
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
-
-    # Order the bias sources for plotting rows
-    bias_order = [v for k, v in BIAS_FOLDER_MAPPING.items()]
+    bias_order = ['Market-Wide Bias', 'Buyer-Only Bias', 'Seller-Only Bias']  # Define order
 
     g = sns.relplot(
         data=plot_df,
@@ -204,8 +274,6 @@ def plot_heterogeneity_impact(df: pd.DataFrame, dataset: str, output_dir: Path):
 
     g.fig.suptitle(f'Defense Performance vs. Bias Type/Strength ({dataset})', y=1.02)
     g.set_axis_labels("Dirichlet Alpha (Lower is More Biased)", "Value")
-
-    # Set titles for rows (bias source) and columns (metric)
     g.set_titles(col_template="{col_name}", row_template="{row_name}")
 
     # Set the x-axis to a log scale and format ticks
@@ -218,7 +286,7 @@ def plot_heterogeneity_impact(df: pd.DataFrame, dataset: str, output_dir: Path):
         ax.set_xlim(max(ALPHAS_IN_TEST) * 1.5, min(ALPHAS_IN_TEST) * 0.8)
 
     plot_file = output_dir / f"plot_heterogeneity_by_source_{dataset}.png"
-    g.fig.savefig(plot_file, bbox_inches='tight')  # Use bbox_inches to ensure titles/labels are saved
+    g.fig.savefig(plot_file, bbox_inches='tight')
     print(f"Saved plot: {plot_file}")
     plt.clf()
     plt.close('all')
