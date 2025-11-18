@@ -6,15 +6,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./step7_full_analysis_figures_MARTFL_ONLY"
+FIGURE_OUTPUT_DIR = "./figures/step7_martfl_only_figures"
 
-# One regex to rule them all (matches both adaptive and baseline)
+# Regex to parse 'step7_adaptive_black_box_gradient_manipulation_martfl_CIFAR100'
 SCENARIO_PATTERN = re.compile(
-    r'step7_([a-z_]+)_([a-zA-Z0-9_]+)_(.*)'
+    r'step7_adaptive_([a-z_]+)_([a-z_]+)_([a-zA-Z0-9_]+)_(.*)'
 )
 
 EXPLORATION_ROUNDS = 30
@@ -63,16 +63,17 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
                     "threat_label": threat_label
                 }
 
-        print(f"Warning: Could not parse scenario name '{scenario_name}'. Ignoring.")
         return {"defense": "unknown"}
     except Exception as e:
         print(f"Warning: Error parsing '{scenario_name}': {e}")
         return {"defense": "unknown"}
 
 
-def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def collect_all_results(base_dir: str, target_defense: Optional[str] = None) -> Tuple[
+    pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Walks the results directory, finds ALL 'step7_*' folders (baseline + adaptive).
+    Walks the results directory.
+    OPTIMIZATION: If target_defense is set, skips all folders that don't match.
     """
     all_seller_dfs = []
     all_global_log_dfs = []
@@ -90,12 +91,20 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
 
     for scenario_path in scenario_folders:
         scenario_params = parse_scenario_name(scenario_path.name)
-        if "defense" not in scenario_params or scenario_params["defense"] == "unknown":
+
+        # --- OPTIMIZATION: Filter by Path Name BEFORE Loading ---
+        parsed_defense = scenario_params.get("defense", "unknown")
+
+        if parsed_defense == "unknown":
             continue
+
+        if target_defense and parsed_defense != target_defense:
+            # Skip this folder entirely without reading files
+            continue
+        # -------------------------------------------------------
 
         marker_files = list(scenario_path.rglob('final_metrics.json'))
         if not marker_files:
-            # print(f"  No completed runs found in: {scenario_path.name}")
             continue
 
         for final_metrics_file in marker_files:
@@ -138,7 +147,6 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
                 adv_sel_rate = 0.0
                 ben_sel_rate = 0.0
                 if not df_seller.empty:
-                    # Use final round for summary
                     last = df_seller[df_seller['round'] == df_seller['round'].max()]
                     if not last.empty:
                         adv_sel_rate = last[last['seller_type'] == 'Adversary']['selected'].mean()
@@ -163,26 +171,21 @@ def collect_all_results(base_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.D
 
 
 # ========================================================================
-# PLOTTING FUNCTIONS
+# PLOTTING FUNCTIONS (Unchanged)
 # ========================================================================
 
 def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
-    """PLOT 1: Selection Rate & Advantage (Rolling Mean)"""
     if df.empty: return
-
     # Pre-calculate rolling means
     group_cols = ['seed_id', 'seller_type', 'defense', 'threat_label', 'adaptive_mode', 'round']
     df_agg = df.groupby(group_cols)['selected'].mean().reset_index()
-
     roll_cols = ['seed_id', 'seller_type', 'defense', 'threat_label', 'adaptive_mode']
     df_agg['rolling_sel_rate'] = df_agg.groupby(roll_cols)['selected'] \
         .transform(lambda x: x.rolling(3, min_periods=1).mean())
-
     for defense in df_agg['defense'].unique():
         for threat in df_agg['threat_label'].unique():
             df_facet = df_agg[(df_agg['defense'] == defense) & (df_agg['threat_label'] == threat)]
             if df_facet.empty: continue
-
             threat_file = threat.replace(' ', '').replace('.', '')
 
             # 1a. Selection Rate
@@ -208,13 +211,11 @@ def plot_selection_rate_curves(df: pd.DataFrame, output_dir: Path):
 
 
 def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
-    """PLOT 2: Accuracy"""
     if df.empty: return
     for defense in df['defense'].unique():
         for threat in df['threat_label'].unique():
             data = df[(df['defense'] == defense) & (df['threat_label'] == threat)]
             if data.empty: continue
-
             plt.figure(figsize=(10, 6))
             sns.lineplot(data=data, x='round', y='val_acc', hue='adaptive_mode', style='adaptive_mode',
                          palette='Greens_d', lw=2.5)
@@ -224,7 +225,6 @@ def plot_global_performance_curves(df: pd.DataFrame, output_dir: Path):
 
 
 def plot_martfl_analysis(df: pd.DataFrame, output_dir: Path):
-    """PLOT 4: MartFL Specific"""
     if df.empty: return
     df['Selection Status'] = df['selected'].apply(lambda x: 'Selected' if x == 1 else 'Not Selected')
     g = sns.relplot(data=df, x='round', y='gradient_norm', hue='seller_type', style='Selection Status',
@@ -236,14 +236,12 @@ def plot_martfl_analysis(df: pd.DataFrame, output_dir: Path):
 
 
 def plot_final_summary(df: pd.DataFrame, output_dir: Path):
-    """PLOT 3: Bar Chart Summary"""
     if df.empty: return
     df_long = df.melt(id_vars=['defense', 'threat_label', 'adaptive_mode'],
                       value_vars=['adv_sel_rate', 'ben_sel_rate', 'acc'], var_name='Metric', value_name='Value')
     df_long['Value'] *= 100
     x_order = ['0. Baseline (No Attack)', '1. Black-Box', '2. Grad-Inversion', '3. Oracle']
     x_order = [x for x in x_order if x in df_long['threat_label'].unique()]
-
     for defense in df['defense'].unique():
         data = df_long[df_long['defense'] == defense]
         if data.empty: continue
@@ -255,45 +253,26 @@ def plot_final_summary(df: pd.DataFrame, output_dir: Path):
 
 
 def plot_comparative_attacker_curves(df_ts: pd.DataFrame, df_summary: pd.DataFrame, output_dir: Path):
-    """
-    PLOT 5: Comparative Attacker Curves (Adversary Only)
-    Calculates baseline from df_summary (Step 7 Baseline)
-    """
-    print("Generating Plot 5: Comparative Attacker Learning Curves...")
     if df_ts.empty: return
-
-    # 1. Get Baseline Value (No Attack Benign Selection Rate)
     baseline_val = None
     baseline_rows = df_summary[df_summary['threat_label'] == '0. Baseline (No Attack)']
     if not baseline_rows.empty:
-        # We use the benign selection rate from the baseline as the target
         baseline_val = baseline_rows['ben_sel_rate'].mean()
-        print(f"  Found Step 7 Baseline Benign Selection Rate: {baseline_val:.4f}")
-
-    # 2. Filter for ADVERSARIES only
     df_adv = df_ts[df_ts['seller_type'] == 'Adversary'].copy()
-
-    # Rolling mean
     group_cols = ['seed_id', 'defense', 'threat_label', 'adaptive_mode', 'round']
     df_agg = df_adv.groupby(group_cols)['selected'].mean().reset_index()
     df_agg['rolling_sel_rate'] = df_agg.groupby(['seed_id', 'defense', 'threat_label', 'adaptive_mode'])['selected'] \
         .transform(lambda x: x.rolling(5, min_periods=1).mean())
-
     palette = {'1. Black-Box': 'red', '2. Grad-Inversion': 'orange', '3. Oracle': 'green'}
-
     for defense in df_agg['defense'].unique():
         data = df_agg[df_agg['defense'] == defense]
         if data.empty: continue
-
         plt.figure(figsize=(10, 6))
         sns.lineplot(data=data, x='round', y='rolling_sel_rate', hue='threat_label', style='adaptive_mode',
                      palette=palette, lw=2.5)
-
-        # Add Baseline Line
         if baseline_val is not None:
-            plt.axhline(y=baseline_val, color='blue', linestyle='--', linewidth=2, label='Baseline Target (No Attack)')
-
-        plt.axvline(x=EXPLORATION_ROUNDS, color='grey', linestyle=':', linewidth=2, label='Attack Start')
+            plt.axhline(y=baseline_val, color='blue', linestyle='--', linewidth=2,
+                        label='Target (No Attack Benign Rate)')
         plt.title(f'Attacker Comparison: {defense.upper()} Selection Rate')
         plt.ylim(-0.05, 1.05)
         plt.savefig(output_dir / f"plot5_comparative_attacker_curves_{defense}.png", bbox_inches='tight')
@@ -304,23 +283,24 @@ def plot_comparative_attacker_curves(df_ts: pd.DataFrame, df_summary: pd.DataFra
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
+    print(f"Plots will be saved to: {output_dir.resolve()}")
 
-    # 1. Load ALL Step 7 Data (Adaptive + Baseline)
-    df_seller, df_global, df_sum = collect_all_results(BASE_RESULTS_DIR)
-    if df_sum.empty: return
+    # --- LOAD DATA (Optimized for MartFL) ---
+    print("\nLoading data for 'martfl' only...")
+    # Pass 'martfl' to filter during loading
+    df_seller, df_global, df_summary = collect_all_results(BASE_RESULTS_DIR, target_defense='martfl')
 
-    # 2. Filter for MartFL
-    print("\n--- Filtering for 'martfl' ---")
-    df_s_martfl = df_seller[df_seller['defense'] == 'martfl']
-    df_g_martfl = df_global[df_global['defense'] == 'martfl']
-    df_sum_martfl = df_sum[df_sum['defense'] == 'martfl']
+    if df_summary.empty:
+        print("No data found. Exiting.")
+        return
 
-    # 3. Plots
-    plot_selection_rate_curves(df_s_martfl, output_dir)
-    plot_global_performance_curves(df_g_martfl, output_dir)
-    plot_martfl_analysis(df_s_martfl, output_dir)
-    plot_final_summary(df_sum_martfl, output_dir)
-    plot_comparative_attacker_curves(df_s_martfl, df_sum_martfl, output_dir)  # New logic
+    # --- PLOTTING ---
+    print("Generating plots...")
+    plot_selection_rate_curves(df_seller, output_dir)
+    plot_global_performance_curves(df_global, output_dir)
+    plot_martfl_analysis(df_seller, output_dir)
+    plot_final_summary(df_summary, output_dir)
+    plot_comparative_attacker_curves(df_seller, df_summary, output_dir)
 
     print(f"\n✅ Analysis complete. Check '{FIGURE_OUTPUT_DIR}'")
 
