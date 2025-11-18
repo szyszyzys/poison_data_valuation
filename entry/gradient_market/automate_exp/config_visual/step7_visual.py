@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Tuple
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./step7_full_analysis_figures"
+FIGURE_OUTPUT_DIR = "./figures/step7"
 
 # Regex to parse 'step7_adaptive_black_box_gradient_manipulation_martfl_CIFAR100'
 SCENARIO_PATTERN = re.compile(
