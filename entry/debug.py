@@ -7,11 +7,12 @@ from pathlib import Path
 from collections import Counter
 import matplotlib.pyplot as plt
 
+from entry.gradient_market.run_all_exp import setup_data_and_model
+
 # --- IMPORTS (Adjust to match your structure) ---
 try:
     from common.gradient_market_configs import AppConfig
     from entry.gradient_market.automate_exp.base_configs import get_base_image_config
-    from main import setup_data_and_model  # OR wherever get_image_dataset is called
 except ImportError:
     print("⚠️  Error: Run this script from the project root.")
     sys.exit(1)
