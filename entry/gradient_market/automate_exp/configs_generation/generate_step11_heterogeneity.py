@@ -173,31 +173,58 @@ if __name__ == "__main__":
         # Loop through each alpha value (the biased alpha)
         for alpha in DIRICHLET_ALPHAS_TO_SWEEP:
 
-            # 1. Determine which keys receive the biased alpha vs. the uniform alpha
+            # --- LOGIC FIX START ---
+            # Determine Strategy AND Alpha for both sides
+
             if bias_type == "market_wide":
+                # Both sides biased -> Both use Dirichlet with the sweep alpha
+                seller_strat = "dirichlet"
                 seller_alpha_key = alpha
+
+                buyer_strat = "dirichlet"
                 buyer_alpha_key = alpha
 
             elif bias_type == "buyer_only":
+                # Sellers are Uniform -> Use IID (Fixes robustness)
+                seller_strat = "iid"
                 seller_alpha_key = UNIFORM_ALPHA
+
+                # Buyer is Biased -> Use Dirichlet
+                buyer_strat = "dirichlet"
                 buyer_alpha_key = alpha
 
             elif bias_type == "seller_only":
+                # Sellers are Biased -> Use Dirichlet
+                seller_strat = "dirichlet"
                 seller_alpha_key = alpha
+
+                # Buyer is Uniform -> Use IID (Fixes FLTrust Crash)
+                buyer_strat = "iid"
                 buyer_alpha_key = UNIFORM_ALPHA
+
+            # SPECIAL CASE: If the sweep alpha itself is 100 (Control Group),
+            # force everything to IID to ensure a clean baseline.
+            if alpha >= 100.0:
+                seller_strat = "iid"
+                buyer_strat = "iid"
+            # --- LOGIC FIX END ---
 
             # 2. Create the specific grid for this combination
             current_grid = static_grid.copy()
 
-            # --- CONFIGURATION FOR CACHE KEY COMPATIBILITY ---
+            # --- CONFIGURATION INJECTION ---
 
-            # Set the Seller's (Pool's) alpha in the key that the cache reads (data.image.dirichlet_alpha)
-            current_grid[f"data.{modality}.strategy"] = ["dirichlet"]
+            # Seller Config
+            current_grid[f"data.{modality}.strategy"] = [seller_strat]
             current_grid[f"data.{modality}.dirichlet_alpha"] = [seller_alpha_key]
 
-            # Set the Buyer's alpha in the key that the cache reads (data.image.buyer_dirichlet_alpha)
-            current_grid[f"data.{modality}.buyer_strategy"] = ["dirichlet"]
+            # Buyer Config
+            current_grid[f"data.{modality}.buyer_strategy"] = [buyer_strat]
             current_grid[f"data.{modality}.buyer_dirichlet_alpha"] = [buyer_alpha_key]
+
+            # OPTIONAL: Boost Buyer Ratio for CIFAR-100 to ensure FLTrust stability
+            # (Uncomment if you want to be 100% sure FLTrust has enough data)
+            # current_grid[f"data.{modality}.buyer_ratio"] = [0.2]
 
             # --- END CONFIGURATION ---
 
