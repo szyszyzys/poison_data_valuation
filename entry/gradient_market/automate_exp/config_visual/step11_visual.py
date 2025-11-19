@@ -1,4 +1,4 @@
-# FILE: step11_visual.py
+# FILE: step11_visual_individual.py
 
 import pandas as pd
 import json
@@ -13,11 +13,10 @@ from matplotlib.ticker import FixedLocator, FixedFormatter
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step11_figures"
-# Alphas in descending order (Uniform -> Highly Heterogeneous)
+FIGURE_OUTPUT_DIR = "./figures/step11_figures_individual"
 ALPHAS_IN_TEST = [100.0, 1.0, 0.5, 0.1]
 
-# Define consistent colors for defenses across all plots
+# Hardcoded colors to ensure consistent legend across different files
 DEFENSE_PALETTE = {
     "fedavg": "#3498db",  # Blue
     "fltrust": "#e74c3c",  # Red
@@ -29,19 +28,16 @@ DEFENSE_PALETTE = {
 # ---------------------
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
-    """
-    Parses: 'step11_seller_only_martfl_CIFAR100'
-    """
+    """Parses directory names to find Bias Source."""
     try:
-        # Strict Regex for the expected Step 11 format
+        # Pattern: step11_[bias]_[defense]_[dataset]
         pattern = r'step11_(market_wide|buyer_only|seller_only)_(fedavg|martfl|fltrust|skymask)_(.*)'
         match = re.search(pattern, scenario_name)
 
         if match:
             raw_bias = match.group(1)
-            # Convert 'seller_only' -> 'Seller-Only Bias'
+            # Format: "buyer_only" -> "Buyer-Only Bias"
             bias_formatted = raw_bias.replace('_', '-').title() + " Bias"
-
             return {
                 "scenario_base": scenario_name,
                 "bias_source": bias_formatted,
@@ -49,82 +45,67 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
                 "dataset": match.group(3)
             }
         else:
-            # If it matches 'step11_heterogeneity...', mark it as unwanted
-            if "heterogeneity" in scenario_name:
-                return {"scenario_base": scenario_name, "bias_source": "IGNORE", "dataset": "unknown"}
+            # Filter out the generic 'heterogeneity' folder or unknown folders
+            return {"bias_source": "IGNORE", "dataset": "unknown"}
 
-            return {
-                "scenario_base": scenario_name,
-                "bias_source": "Unknown",
-                "defense": "unknown",
-                "dataset": "unknown"
-            }
-
-    except Exception as e:
-        print(f"Error parsing scenario name '{scenario_name}': {e}")
-        return {"scenario_base": scenario_name}
+    except Exception:
+        return {"bias_source": "IGNORE"}
 
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
-    """Parses 'alpha_1.0' -> 1.0"""
+    """Parses alpha value from folder name."""
     hps = {}
-    pattern = r'alpha_([0-9\.]+)'
-    match = re.search(pattern, hp_folder_name)
+    match = re.search(r'alpha_([0-9\.]+)', hp_folder_name)
     if match:
         hps['dirichlet_alpha'] = float(match.group(1))
     return hps
 
 
 def load_run_data(metrics_file: Path) -> Dict[str, Any]:
-    """Loads metrics from final_metrics.json and marketplace_report.json"""
+    """Loads metrics from JSONs."""
     run_data = {}
     try:
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
 
-        # Normalize accuracy if it's 0-100
         acc = metrics.get('acc', 0)
-        if acc > 1.0: acc /= 100.0
+        if acc > 1.0: acc /= 100.0  # Normalize %
 
         run_data['acc'] = acc
         run_data['asr'] = metrics.get('asr', 0)
-        run_data['rounds'] = metrics.get('completed_rounds', 0)
 
+        # Load Marketplace Report for selection rates
         report_file = metrics_file.parent / "marketplace_report.json"
         if report_file.exists():
             with open(report_file, 'r') as f:
                 report = json.load(f)
-
             sellers = list(report.get('seller_summaries', {}).values())
-            adv_sellers = [s for s in sellers if s.get('type') == 'adversary']
-            ben_sellers = [s for s in sellers if s.get('type') == 'benign']
+            adv = [s for s in sellers if s.get('type') == 'adversary']
+            ben = [s for s in sellers if s.get('type') == 'benign']
 
-            run_data['adv_selection_rate'] = np.mean([s['selection_rate'] for s in adv_sellers]) if adv_sellers else 0.0
-            run_data['benign_selection_rate'] = np.mean(
-                [s['selection_rate'] for s in ben_sellers]) if ben_sellers else 0.0
+            run_data['adv_selection_rate'] = np.mean([s['selection_rate'] for s in adv]) if adv else 0.0
+            run_data['benign_selection_rate'] = np.mean([s['selection_rate'] for s in ben]) if ben else 0.0
         else:
             run_data['adv_selection_rate'] = 0.0
             run_data['benign_selection_rate'] = 0.0
 
         return run_data
-
-    except Exception as e:
+    except:
         return {}
 
 
 def collect_all_results(base_dir: str) -> pd.DataFrame:
     all_runs = []
     base_path = Path(base_dir)
-
     scenario_folders = [f for f in base_path.glob("step11_*") if f.is_dir()]
+
     print(f"Found {len(scenario_folders)} scenario directories.")
 
     for scenario_path in scenario_folders:
-        scenario_name = scenario_path.name
-        run_scenario = parse_scenario_name(scenario_name)
+        run_scenario = parse_scenario_name(scenario_path.name)
 
-        # Skip ignored folders (like 'step11_heterogeneity_...')
-        if run_scenario.get("bias_source") == "IGNORE" or run_scenario.get("dataset") == "unknown":
+        # Skip folders that don't match specific bias types
+        if run_scenario.get("bias_source") == "IGNORE":
             continue
 
         for metrics_file in scenario_path.rglob("final_metrics.json"):
@@ -132,94 +113,96 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
                 if not relative_parts: continue
 
-                hp_folder_name = relative_parts[0]
-                run_hps = parse_hp_suffix(hp_folder_name)
+                run_hps = parse_hp_suffix(relative_parts[0])
                 if 'dirichlet_alpha' not in run_hps: continue
 
                 metrics = load_run_data(metrics_file)
                 if metrics:
                     all_runs.append({**run_scenario, **run_hps, **metrics})
-            except Exception:
+            except:
                 continue
 
     return pd.DataFrame(all_runs)
 
 
-def plot_heterogeneity_impact(df: pd.DataFrame, dataset: str, output_dir: Path):
-    print(f"\n--- Plotting Heterogeneity Impact for {dataset} ---")
+# =============================================================================
+#  PLOTTER: SPLIT EVERYTHING
+# =============================================================================
 
-    plot_df = df[df['dataset'] == dataset].copy()
-    if plot_df.empty:
-        print(f"Skipping {dataset}: No data found.")
-        return
+def plot_completely_separate(df: pd.DataFrame, dataset: str, output_dir: Path):
+    """
+    Loops through Bias Source -> Loops through Metric -> Saves Individual PDF.
+    """
+    print(f"\n--- Generating Split Figures for {dataset} ---")
 
-    # --- FILTERING LOGIC ---
-    # Only keep the 3 valid bias types. This filters out any accidental "Heterogeneity Bias"
-    valid_biases = ['Market-Wide Bias', 'Buyer-Only Bias', 'Seller-Only Bias']
-    plot_df = plot_df[plot_df['bias_source'].isin(valid_biases)]
+    dataset_df = df[df['dataset'] == dataset].copy()
+    if dataset_df.empty: return
 
-    if plot_df.empty:
-        print(f"Skipping {dataset}: No valid bias sources found (checked for {valid_biases}).")
-        return
-    # -----------------------
-
+    # Define Metrics to Plot
     metrics_map = {
-        'acc': '1. Model Accuracy (Utility)',
-        'asr': '2. Attack Success Rate (Robustness)',
-        'benign_selection_rate': '3. Benign Selection (Fairness)',
-        'adv_selection_rate': '4. Attacker Selection (Security)',
+        'acc': 'Model Accuracy',
+        'asr': 'Attack Success Rate',
+        'benign_selection_rate': 'Benign Selection Rate',
+        'adv_selection_rate': 'Attacker Selection Rate',
     }
 
-    avail_metrics = [m for m in metrics_map.keys() if m in plot_df.columns]
-
-    plot_df = plot_df.melt(
-        id_vars=['dirichlet_alpha', 'defense', 'bias_source'],
-        value_vars=avail_metrics,
-        var_name='Metric',
-        value_name='Value'
-    )
-    plot_df['Metric'] = plot_df['Metric'].map(metrics_map)
-    plot_df = plot_df.sort_values(by='Metric')
-
+    valid_biases = ['Market-Wide Bias', 'Buyer-Only Bias', 'Seller-Only Bias']
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
-    # Ensure order is respected and exists in data
-    bias_order = [b for b in valid_biases if b in plot_df['bias_source'].unique()]
+    # --- OUTER LOOP: BIAS SOURCE ---
+    for bias in valid_biases:
+        bias_df = dataset_df[dataset_df['bias_source'] == bias]
+        if bias_df.empty: continue
 
-    g = sns.relplot(
-        data=plot_df,
-        x='dirichlet_alpha',
-        y='Value',
-        hue='defense',
-        style='defense',
-        col='Metric',
-        row='bias_source',
-        row_order=bias_order,
-        kind='line',
-        height=3.5,
-        aspect=1.2,
-        facet_kws={'sharey': False, 'margin_titles': True},
-        markers=True,
-        dashes=False,
-        hue_order=defense_order,
-        style_order=defense_order,
-        palette=DEFENSE_PALETTE,
-        errorbar=('ci', 95)
-    )
+        # --- INNER LOOP: METRIC ---
+        for col_name, display_name in metrics_map.items():
+            if col_name not in bias_df.columns: continue
 
-    g.fig.suptitle(f'Impact of Heterogeneity Source & Strength ({dataset})', y=1.02)
+            # Create a dedicated figure
+            plt.figure(figsize=(6, 4))
 
-    for ax in g.axes.flat:
-        ax.set_xscale('log')
-        ax.xaxis.set_major_locator(FixedLocator(ALPHAS_IN_TEST))
-        ax.xaxis.set_major_formatter(FixedFormatter([str(a) for a in ALPHAS_IN_TEST]))
+            sns.lineplot(
+                data=bias_df,
+                x='dirichlet_alpha',
+                y=col_name,
+                hue='defense',
+                style='defense',
+                hue_order=defense_order,
+                style_order=defense_order,
+                palette=DEFENSE_PALETTE,
+                markers=True,
+                dashes=False,
+                markersize=8,
+                linewidth=2,
+                errorbar=('ci', 95)
+            )
 
-        # Reverse Axis: 100 (Easy) -> 0.1 (Hard)
-        ax.set_xlim(max(ALPHAS_IN_TEST) * 1.5, min(ALPHAS_IN_TEST) * 0.8)
-        ax.grid(True, which='major', linestyle='--', alpha=0.5)
+            # Titles
+            plt.title(f"{display_name}\nCondition: {bias} ({dataset})", fontsize=12)
+            plt.ylabel(display_name, fontsize=11)
+            plt.xlabel("Heterogeneity (Dirichlet Alpha)", fontsize=11)
 
-    g.fig.savefig(output_dir / f"plot_heterogeneity_source_{dataset}.pdf", bbox_inches='tight')
-    print(f"Saved plot: plot_heterogeneity_source_{dataset}.pdf")
+            # Log Scale & Formatting
+            ax = plt.gca()
+            ax.set_xscale('log')
+            ax.xaxis.set_major_locator(FixedLocator(ALPHAS_IN_TEST))
+            ax.xaxis.set_major_formatter(FixedFormatter([str(a) for a in ALPHAS_IN_TEST]))
+
+            # Reverse Axis: 100 (Easy) -> 0.1 (Hard)
+            ax.set_xlim(max(ALPHAS_IN_TEST) * 1.3, min(ALPHAS_IN_TEST) * 0.8)
+            ax.grid(True, which='major', linestyle='--', alpha=0.5)
+
+            plt.legend(title="Defense", bbox_to_anchor=(1.02, 1), loc='upper left')
+
+            # Filename Generation
+            safe_bias = bias.replace(' ', '').replace('-', '')
+            safe_metric = display_name.replace(' ', '')
+
+            fname = output_dir / f"Step11_{dataset}_{safe_bias}_{safe_metric}.pdf"
+
+            plt.savefig(fname, bbox_inches='tight')
+            plt.close()  # Close figure to free memory
+            print(f"  Saved: {fname.name}")
 
 
 def main():
@@ -228,15 +211,18 @@ def main():
     print(f"Plots will be saved to: {output_dir.resolve()}")
 
     df = collect_all_results(BASE_RESULTS_DIR)
+
     if df.empty:
-        print("No valid data found (checked valid 'step11' folders).")
+        print("No valid data found.")
         return
 
-    df.to_csv(output_dir / "step11_summary.csv", index=False)
+    # Save summary CSV
+    df.to_csv(output_dir / "step11_full_summary.csv", index=False)
 
+    # Generate Plots
     for dataset in df['dataset'].unique():
-        if dataset and dataset != "unknown":
-            plot_heterogeneity_impact(df, dataset, output_dir)
+        if dataset != 'unknown':
+            plot_completely_separate(df, dataset, output_dir)
 
     print("\nAnalysis complete.")
 
