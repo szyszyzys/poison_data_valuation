@@ -1,10 +1,10 @@
 import json
 import re
 import sys
-import torch
-import numpy as np
-from pathlib import Path
 from collections import Counter
+from pathlib import Path
+
+import numpy as np
 
 from entry.gradient_market.run_all_exp import setup_data_and_model
 
@@ -55,9 +55,17 @@ def find_and_inspect(base_scenario_dir: str, alpha_folder: str):
         print("❌ No config_snapshot.json found in this directory!")
         return
 
-    # Use the first one found (usually only one per run)
+    # Use the first one found
     target_config = config_files[0]
-    print(f"✅ Found config: {target_config.relative_to(Path.cwd())}")
+
+    # --- FIX: Use resolve() to handle absolute/relative mismatch ---
+    try:
+        display_path = target_config.resolve().relative_to(Path.cwd())
+    except ValueError:
+        # Fallback if paths don't overlap or other issues
+        display_path = target_config
+
+    print(f"✅ Found config: {display_path}")
 
     inspect_file(target_config)
 
