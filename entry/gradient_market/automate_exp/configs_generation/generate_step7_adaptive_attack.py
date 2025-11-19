@@ -44,7 +44,7 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
     scenarios = []
     modality = ADAPTIVE_SETUP["modality_name"]
     model_cfg_name = ADAPTIVE_SETUP["model_config_name"]
-    current_defenses = IMAGE_DEFENSES
+    current_defenses = ["fltrust"]
 
     for defense_name in current_defenses:
         tuned_defense_params = get_tuned_defense_params(

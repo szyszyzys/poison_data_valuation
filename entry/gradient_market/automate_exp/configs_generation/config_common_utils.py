@@ -137,7 +137,7 @@ def get_tuned_defense_params(
 
 # This helper list can now be simplified
 ALL_DEFENSES = ["fedavg", "fltrust", "martfl", "skymask"]
-IMAGE_DEFENSES = ["fltrust"]
+IMAGE_DEFENSES = ["fedavg", "fltrust", "martfl", "skymask"]
 TEXT_TABULAR_DEFENSES = ["fedavg", "fltrust", "martfl"]  # Exclude SkyMask
 
 # ==============================================================================
