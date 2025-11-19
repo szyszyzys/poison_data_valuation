@@ -1,171 +1,154 @@
-import torch
-import torch.nn as nn
 import json
+import re
 import sys
+import torch
+import numpy as np
 from pathlib import Path
 from collections import Counter
-import numpy as np
+import matplotlib.pyplot as plt
 
-# --- Imports from your project structure ---
-# Adjust these if your imports are slightly different
+# --- IMPORTS (Adjust to match your structure) ---
 try:
     from common.gradient_market_configs import AppConfig
-    from entry.gradient_market.automate_exp.config_generator import set_nested_attr
-    # Import the exact function you use in main.py
-    from main import setup_data_and_model
+    from entry.gradient_market.automate_exp.base_configs import get_base_image_config
+    from main import setup_data_and_model  # OR wherever get_image_dataset is called
 except ImportError:
-    print("⚠️ Error: Run this script from the project root so it can find your modules.")
+    print("⚠️  Error: Run this script from the project root.")
     sys.exit(1)
 
 
-def load_failed_config(run_dir: str) -> AppConfig:
-    """Loads the config_snapshot.json from a failed run."""
+def parse_config_string(config_str: str, key: str, type_cast=str):
+    """
+    Extracts a value from the string representation in config_snapshot.json.
+    Example: "DataConfig(..., buyer_ratio=0.1, ...)" -> extracts 0.1
+    """
+    # Regex to find key=value or key='value'
+    pattern = f"{key}=(['\"]?)([^,'\"]+)(['\"]?)"
+    match = re.search(pattern, config_str)
+    if match:
+        val = match.group(2)
+        if type_cast == bool:
+            return val == "True"
+        return type_cast(val)
+    return None
+
+
+def inspect_run(run_dir: str, label: str):
+    """Loads config from disk, recreates data, and analyzes buyer distribution."""
+    print(f"\n{'=' * 60}")
+    print(f"🔍 INSPECTING: {label}")
+    print(f"Path: {run_dir}")
+    print(f"{'=' * 60}")
+
     path = Path(run_dir) / "config_snapshot.json"
     if not path.exists():
-        raise FileNotFoundError(f"Config not found at {path}")
+        print("❌ Config snapshot not found!")
+        return
 
-    print(f"Loading config from: {path}")
     with open(path, 'r') as f:
-        # Depending on how your config is saved, it might be a dict or a serialized object.
-        # Assuming standard JSON dict here. If it's the string representation you pasted earlier,
-        # we might need to reconstruct the AppConfig object manually.
-        data = json.load(f)
+        snapshot = json.load(f)
 
-    # RECONSTRUCTION:
-    # Since your snapshot seems to be string representations (e.g. "ExperimentConfig(...)"),
-    # simpler approach for this debug script is to generate a fresh config
-    # using your Step 11 generator and just check THAT.
-    # However, let's assume you can load the AppConfig object here.
-    # For this script, I will assume you can instantiate AppConfig from the dict.
-    # If your snapshot is just strings, USE THE GENERATOR to get a config object instead.
-    return AppConfig(**data)  # simplified
+    # 1. Extract relevant strings
+    data_str = snapshot.get("data", "")
+    exp_str = snapshot.get("experiment", "")
 
+    print(f"📄 Raw Data Config String: {data_str[:150]}...")
 
-def analyze_buyer_data(buyer_loader, num_classes):
-    """Checks if the buyer has enough data to form a valid Root Gradient."""
-    if buyer_loader is None:
-        print("\n🔴 CRITICAL FAIL: Buyer Loader is None!")
-        return
+    # 2. Parse Key Parameters
+    dataset = parse_config_string(exp_str, "dataset_name")
+    strategy = parse_config_string(data_str, "strategy")
+    alpha = parse_config_string(data_str, "dirichlet_alpha", float)
 
-    total_samples = len(buyer_loader.dataset)
-    print(f"\n--- Buyer Data Diagnostics ---")
-    print(f"Total Samples: {total_samples}")
+    # Buyer specific
+    buyer_ratio = parse_config_string(data_str, "buyer_ratio", float)
+    buyer_strategy = parse_config_string(data_str, "buyer_strategy")
+    buyer_alpha = parse_config_string(data_str, "buyer_dirichlet_alpha", float)
 
-    # 1. Check Class Coverage
-    all_labels = []
-    for _, labels in buyer_loader:
-        all_labels.extend(labels.tolist())
+    print(f"\n⚙️  Parsed Configuration:")
+    print(f"   - Dataset: {dataset}")
+    print(f"   - Buyer Ratio: {buyer_ratio}")
+    print(f"   - Buyer Strategy: {buyer_strategy}")
+    print(f"   - Buyer Alpha: {buyer_alpha}")
 
-    label_counts = Counter(all_labels)
-    unique_classes = len(label_counts)
+    # 3. Reconstruct AppConfig for Loading
+    # We start with a base config and override with parsed values
+    cfg = get_base_image_config()
+    cfg.experiment.dataset_name = dataset
+    # We assume image modality based on your previous context
+    cfg.data.image.buyer_ratio = buyer_ratio
+    cfg.data.image.buyer_strategy = buyer_strategy
+    cfg.data.image.buyer_dirichlet_alpha = buyer_alpha
+    cfg.data.image.strategy = strategy
+    cfg.data.image.dirichlet_alpha = alpha
 
-    print(f"Classes Represented: {unique_classes} / {num_classes}")
+    # Important: Ensure cache is DISABLED to see the real generation logic
+    cfg.use_cache = False
 
-    # 2. Check Sparsity
-    min_samples = min(label_counts.values()) if label_counts else 0
-    max_samples = max(label_counts.values()) if label_counts else 0
-    avg_samples = np.mean(list(label_counts.values())) if label_counts else 0
-
-    print(f"Min Samples per Class: {min_samples}")
-    print(f"Max Samples per Class: {max_samples}")
-    print(f"Avg Samples per Class: {avg_samples:.2f}")
-
-    if unique_classes < num_classes * 0.5:
-        print("🔴 FAIL: Buyer is missing >50% of classes. Root gradient will be orthogonal to truth.")
-    elif avg_samples < 5:
-        print("🔴 FAIL: Buyer has <5 samples per class. Root gradient will be pure noise.")
-    else:
-        print("🟢 PASS: Buyer data seems statistically sufficient.")
-
-
-def simulate_root_gradient(model_factory, buyer_loader, device):
-    """Calculates the root gradient and checks its norm."""
-    print(f"\n--- Root Gradient Simulation ---")
-    model = model_factory().to(device)
-    criterion = nn.CrossEntropyLoss()
-
-    model.train()
-    total_loss = 0.0
-
-    # Zero grad
-    for param in model.parameters():
-        param.grad = None
-
-    # Accumulate gradients (simulating one round)
-    samples_seen = 0
-    for inputs, labels in buyer_loader:
-        inputs, labels = inputs.to(device), labels.to(device)
-        outputs = model(inputs)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        total_loss += loss.item()
-        samples_seen += labels.size(0)
-
-    # Flatten gradient
-    grads = []
-    for param in model.parameters():
-        if param.grad is not None:
-            grads.append(param.grad.view(-1))
-
-    if not grads:
-        print("🔴 FAIL: No gradients computed.")
-        return
-
-    flat_root_grad = torch.cat(grads)
-    norm = torch.norm(flat_root_grad).item()
-
-    print(f"Computed Root Gradient Norm: {norm:.4f}")
-
-    if norm == 0.0:
-        print("🔴 FAIL: Gradient norm is ZERO. Model will not update.")
-    elif torch.isnan(torch.tensor(norm)):
-        print("🔴 FAIL: Gradient norm is NaN.")
-    else:
-        print("🟢 PASS: Root gradient computed successfully.")
-
-
-# --- MAIN EXECUTION ---
-if __name__ == "__main__":
-    # 1. HARDCODE A CONFIG THAT FAILED (Or generate one on the fly)
-    # Since loading from that string-based JSON is hard, let's generate one using your logic.
-    from entry.gradient_market.automate_exp.base_configs import get_base_image_config
-    from entry.gradient_market.automate_exp.scenarios import use_cifar100_config
-
-    print("Generating test config for Step 11 (Seller-Only Bias)...")
-
-    config = get_base_image_config()
-    config = use_cifar100_config(config)
-
-    # --- REPLICATE THE EXACT SETTINGS THAT FAILED ---
-    # Scenario: step11_seller_only_fltrust_CIFAR100
-    # Alpha = 0.1 for Sellers, 100.0 for Buyer
-    config.data.image.strategy = "dirichlet"
-    config.data.image.dirichlet_alpha = 0.1  # Seller Only
-
-    config.data.image.buyer_strategy = "dirichlet"
-    config.data.image.buyer_dirichlet_alpha = 100.0  # Uniform Buyer
-
-    # THE SUSPECTED CULPRIT: Small Buyer Ratio
-    # Change this to 0.2 to see if it passes, or leave at 0.05 to replicate failure
-    config.data.image.buyer_ratio = 0.05
-
-    config.aggregation.method = "fltrust"
-
-    # 2. RUN SETUP
-    print("Running setup_data_and_model...")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
+    # 4. Load Data
+    print("\n🔄 Re-generating Data Split (No Cache)...")
+    device = "cpu"
     try:
-        # Unpack results from your setup function
-        (buyer_loader, seller_loaders, test_loader, val_loader,
-         model_factory, _, _, num_classes) = setup_data_and_model(config, device)
-
-        # 3. RUN DIAGNOSTICS
-        analyze_buyer_data(buyer_loader, num_classes)
-        simulate_root_gradient(model_factory, buyer_loader, device)
-
+        # Calling your main setup function
+        (buyer_loader, _, _, _, _, _, _, num_classes) = setup_data_and_model(cfg, device)
     except Exception as e:
-        print(f"\n🔴 CRASHED: {e}")
-        import traceback
+        print(f"❌ Data Loading Failed: {e}")
+        return
 
-        traceback.print_exc()
+    # 5. Analyze Statistics
+    if buyer_loader is None:
+        print("❌ Buyer Loader is None!")
+        return
+
+    labels = []
+    for _, y in buyer_loader:
+        labels.extend(y.tolist())
+
+    counts = Counter(labels)
+    sorted_classes = sorted(counts.keys())
+    missing_classes = set(range(num_classes)) - set(sorted_classes)
+
+    values = list(counts.values())
+    mean_count = np.mean(values) if values else 0
+    std_dev = np.std(values) if values else 0
+
+    print(f"\n📊 BUYER DATA STATISTICS:")
+    print(f"   - Total Samples: {len(labels)}")
+    print(f"   - Classes Present: {len(sorted_classes)} / {num_classes}")
+    print(f"   - Missing Classes: {len(missing_classes)}")
+    if len(missing_classes) > 0:
+        print(f"     ⚠️  Missing: {list(missing_classes)[:10]}...")
+
+    print(f"   - Samples per Class (Avg): {mean_count:.2f}")
+    print(f"   - Imbalance (Std Dev): {std_dev:.2f}")
+
+    # 6. Heuristic Verdict
+    if len(missing_classes) > 0:
+        print("\n🔴 VERDICT: ROOT DATA BROKEN (Missing Classes)")
+        print("   FLTrust will assign score=0 to sellers who update missing classes.")
+    elif std_dev > mean_count:
+        print("\n🟠 VERDICT: HIGHLY UNBALANCED")
+        print("   FLTrust might be unstable due to high variance in root gradient.")
+    else:
+        print("\n🟢 VERDICT: DATA LOOKS HEALTHY")
+
+
+# --- RUNNER ---
+if __name__ == "__main__":
+    # REPLACE THESE PATHS WITH YOUR ACTUAL PATHS
+
+    # 1. A path that worked (Step 2.5 or similar)
+    GOOD_RUN = "results/step2.5_find_hps_fltrust_image_CIFAR100/ds-cifar100_model-cnn_agg-fltrust_k-0_clip-5_no_attack_seed-42/aggregation.fltrust.clip_norm_5.0/ds-cifar100_model-cnn_agg-fltrust_k-0_clip-5_no_attack_seed-42/run_0_seed_42"
+
+    # 2. A path that failed (Step 11 Seller Only)
+    BAD_RUN = "results/step11_seller_only_fltrust_CIFAR100/ds-cifar100_model-cnn_agg-fltrust_k-0_clip-5_no_attack_seed-42/aggregation.fltrust.clip_norm_5.0/ds-cifar100_model-cnn_agg-fltrust_k-0_clip-5_no_attack_seed-42/run_0_seed_42"
+
+    # Check if paths exist before running (optional, just for safety)
+    if Path(GOOD_RUN).exists():
+        inspect_run(GOOD_RUN, "Step 2.5 (Baseline - Should be IID)")
+    else:
+        print(f"Skipping Good Run (Path not found: {GOOD_RUN})")
+
+    if Path(BAD_RUN).exists():
+        inspect_run(BAD_RUN, "Step 11 (Seller Only - Suspected Dirichlet Issue)")
+    else:
+        print(f"Skipping Bad Run (Path not found: {BAD_RUN})")
