@@ -1,184 +1,260 @@
-# FILE: generate_step8_buyer_attacks.py
-
-import copy
-import sys
+import pandas as pd
+import json
+import re
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
+import os
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any, Tuple
 
-from config_common_utils import (
-    GOLDEN_TRAINING_PARAMS,  # <-- ADDED
-    NUM_SEEDS_PER_CONFIG,
-    get_tuned_defense_params, enable_valuation,
-)
-from entry.gradient_market.automate_exp.base_configs import get_base_image_config
-from entry.gradient_market.automate_exp.scenarios import Scenario, use_buyer_dos_attack, \
-    use_buyer_starvation_attack, use_buyer_erosion_attack, use_buyer_class_exclusion_attack, \
-    use_buyer_oscillating_attack, use_buyer_orthogonal_pivot_attack, use_cifar100_config
-
-try:
-    from common.gradient_market_configs import AppConfig, PoisonType, BuyerAttackConfig
-    from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
-except ImportError as e:
-    print(f"Error importing necessary modules: {e}")
-    sys.exit(1)
-
-# --- (Constants are all correct) ---
-BUYER_ATTACK_SETUP = {
-    "modality_name": "image",
-    "base_config_factory": get_base_image_config,
-    "dataset_name": "CIFAR100",
-    "model_config_param_key": "experiment.image_model_config_name",
-    "model_config_name": "cifar100_cnn",
-    "dataset_modifier": use_cifar100_config,
-}
-BUYER_ATTACK_CONFIGS = [
-    ("dos", use_buyer_dos_attack()),
-    ("starvation", use_buyer_starvation_attack(target_classes=[0, 1])),
-    ("erosion", use_buyer_erosion_attack()),
-    ("class_exclusion_neg", use_buyer_class_exclusion_attack(exclude_classes=[7, 8, 9], gradient_scale=1.2)),
-    ("class_exclusion_pos", use_buyer_class_exclusion_attack(target_classes=[0, 1, 2], gradient_scale=1.0)),
-    ("oscillating_binary", use_buyer_oscillating_attack(strategy="binary_flip", period=5)),
-    ("oscillating_random", use_buyer_oscillating_attack(strategy="random_walk", subset_size=3)),
-    (
-        "oscillating_drift",
-        use_buyer_oscillating_attack(strategy="adversarial_drift", drift_rounds=60, classes_a=[0, 1])),
-    ("orthogonal_pivot_legacy", use_buyer_orthogonal_pivot_attack(target_seller_id="bn_5")),
-]
-DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl", "skymask"]
+# --- Configuration ---
+BASE_RESULTS_DIR = "./results"
+FIGURE_OUTPUT_DIR = "./figures/step8_figures"
+TARGET_VICTIM_ID = "bn_5"
 
 
-# === THIS IS THE CORRECTED FUNCTION ===
-def generate_buyer_attack_scenarios() -> List[Scenario]:
-    """Generates scenarios testing tuned defenses against various buyer attacks."""
-    print("\n--- Generating Step 8: Buyer Attack Scenarios ---")
-    scenarios = []
-    modality = BUYER_ATTACK_SETUP["modality_name"]
-    model_cfg_name = BUYER_ATTACK_SETUP["model_config_name"]
+# --- End Configuration ---
 
-    for defense_name in DEFENSES_TO_TEST:
-        # === FIX 3: Removed the bugged `if defense_name not in ...` check ===
 
-        # Get Tuned HPs (from Step 3)
-        tuned_defense_params = get_tuned_defense_params(
-            defense_name=defense_name,
-            model_config_name=model_cfg_name,
-            attack_state="with_attack",  # Use a default
-            default_attack_type_for_tuning="backdoor"
-        )
-        # This is the CORRECT check
-        if not tuned_defense_params:
-            print(f"  SKIPPING {defense_name}: No tuned parameters found.")
-            continue
-
-        print(f"-- Processing Defense: {defense_name}")
-
-        # === FIX 2: Create a correct modifier function INSIDE the loop ===
-        def create_setup_modifier(
-                current_defense_name=defense_name,
-                current_model_cfg_name=model_cfg_name,
-                current_tuned_params=tuned_defense_params
-        ):
-            def modifier(config: AppConfig) -> AppConfig:
-                # --- Apply Golden Training HPs (from Step 2.5) ---
-                golden_hp_key = f"{current_model_cfg_name}"
-                training_params = GOLDEN_TRAINING_PARAMS.get(golden_hp_key)
-                if training_params:
-                    for key, value in training_params.items():
-                        set_nested_attr(config, key, value)
-                else:
-                    print(f"  WARNING: No Golden HPs found for key '{golden_hp_key}'!")
-
-                # --- Apply Tuned Defense HPs (from Step 3) ---
-                for key, value in current_tuned_params.items():
-                    set_nested_attr(config, key, value)
-                if current_defense_name == "skymask":
-                    model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
-                    set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
-
-                # --- Apply other fixed settings ---
-                set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
-                set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
-
-                # --- Explicitly Disable Seller Attacks ---
-                config.experiment.adv_rate = 0.0
-                config.adversary_seller_config.poisoning.type = PoisonType.NONE
-                config.adversary_seller_config.sybil.is_sybil = False
-
-                return config
-
-            return modifier
-
-        setup_modifier_func = create_setup_modifier()
-
-        # 2. Loop through buyer attack types
-        for attack_tag, buyer_attack_modifier in BUYER_ATTACK_CONFIGS:
-            print(f"  -- Buyer Attack Type: {attack_tag}")
-
-            # === FIX 1: Add unique save_path to the grid ===
-            scenario_name = f"step8_buyer_attack_{attack_tag}_{defense_name}_{BUYER_ATTACK_SETUP['dataset_name']}"
-            unique_save_path = f"./results/{scenario_name}"
-
-            grid = {
-                BUYER_ATTACK_SETUP["model_config_param_key"]: [model_cfg_name],
-                "experiment.dataset_name": [BUYER_ATTACK_SETUP["dataset_name"]],
-                "n_samples": [NUM_SEEDS_PER_CONFIG],
-                "experiment.use_early_stopping": [True],
-                "experiment.patience": [10],
-                "experiment.save_path": [unique_save_path]  # <-- ADDED
+def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
+    try:
+        pattern = r'step8_buyer_attack_(.+)_(fedavg|martfl|fltrust|skymask)_(.*)'
+        match = re.search(pattern, scenario_name)
+        if match:
+            return {
+                "scenario": scenario_name,
+                "attack": match.group(1),
+                "defense": match.group(2),
+                "dataset": match.group(3),
             }
-
-            scenario = Scenario(
-                name=scenario_name,
-                base_config_factory=BUYER_ATTACK_SETUP["base_config_factory"],
-                modifiers=[
-                    setup_modifier_func,  # <-- Use the new, correct modifier
-                    BUYER_ATTACK_SETUP["dataset_modifier"],
-                    buyer_attack_modifier,
-                    lambda config: enable_valuation(
-                        config,
-                        influence=True,
-                        loo=True,
-                        loo_freq=10,
-                        kernelshap=False
-                    )
-
-                ],
-                parameter_grid=grid
-            )
-            scenarios.append(scenario)
-
-    return scenarios
+        return {"scenario": scenario_name}
+    except Exception as e:
+        print(f"Warning parsing {scenario_name}: {e}")
+        return {"scenario": scenario_name}
 
 
-# --- Main Execution Block (This is now correct) ---
+def load_run_data(metrics_file: Path) -> List[Dict[str, Any]]:
+    run_records = []
+    base_metrics = {}
+    try:
+        with open(metrics_file, 'r') as f:
+            metrics = json.load(f)
+
+        acc = metrics.get('acc', 0)
+        if acc > 1.0: acc /= 100.0  # Normalize
+
+        base_metrics['acc'] = acc
+        base_metrics['rounds'] = metrics.get('completed_rounds', 0)
+    except Exception:
+        return []
+
+    report_file = metrics_file.parent / "marketplace_report.json"
+    try:
+        if not report_file.exists():
+            return [base_metrics]
+
+        with open(report_file, 'r') as f:
+            report = json.load(f)
+
+        sellers = report.get('seller_summaries', {})
+        for seller_id, seller_data in sellers.items():
+            if seller_data.get('type') == 'benign':
+                record = base_metrics.copy()
+                record['seller_id'] = seller_id
+                record['selection_rate'] = seller_data.get('selection_rate', 0.0)
+                run_records.append(record)
+
+        return run_records if run_records else [base_metrics]
+    except Exception:
+        return [base_metrics]
+
+
+def collect_all_results(base_dir: str) -> pd.DataFrame:
+    all_seller_runs = []
+    base_path = Path(base_dir)
+    scenario_folders = [f for f in base_path.glob("step8_buyer_attack_*") if f.is_dir()]
+
+    print(f"Found {len(scenario_folders)} scenario directories.")
+
+    for scenario_path in scenario_folders:
+        run_scenario_base = parse_scenario_name(scenario_path.name)
+        for metrics_file in scenario_path.rglob("final_metrics.json"):
+            per_seller_records = load_run_data(metrics_file)
+            for r in per_seller_records:
+                all_seller_runs.append({**run_scenario_base, **r})
+
+    return pd.DataFrame(all_seller_runs)
+
+
+def load_step2_5_baseline_summary(step2_5_csv_path: Path) -> Tuple[pd.DataFrame, Dict[Tuple, float]]:
+    print(f"\nLoading Step 2.5 Baseline from: {step2_5_csv_path}")
+    df_perf = pd.DataFrame()
+    sel_lookup = {}
+
+    if not step2_5_csv_path.exists():
+        print("  ⚠️ Warning: Baseline CSV not found. Plots will lack baseline comparison.")
+        return df_perf, sel_lookup
+
+    try:
+        df = pd.read_csv(step2_5_csv_path)
+
+        # --- ROBUST COLUMN FINDING ---
+        # Find column that looks like "Accuracy"
+        acc_col = next((c for c in df.columns if 'Accuracy' in c), None)
+        # Find column that looks like "Rounds"
+        rounds_col = next((c for c in df.columns if 'Rounds' in c and 'Usable' in c), None)
+        # Find selection rate
+        sel_col = next((c for c in df.columns if 'Benign Selection' in c), None)
+
+        if acc_col and rounds_col:
+            df_perf = df[['defense', 'dataset', acc_col, rounds_col]].copy()
+            df_perf = df_perf.rename(columns={acc_col: 'acc', rounds_col: 'rounds'})
+
+            # Normalize baseline acc if needed
+            if df_perf['acc'].max() > 1.0:
+                df_perf['acc'] /= 100.0
+
+            df_perf['attack'] = '0. Baseline'
+            print(f"  ✅ Loaded performance baseline ({len(df_perf)} rows)")
+        else:
+            print(f"  ⚠️ Could not find Accuracy/Rounds columns in CSV. Columns found: {df.columns.tolist()}")
+
+        if sel_col:
+            # Normalize
+            if df[sel_col].max() > 1.0:
+                df[sel_col] /= 100.0
+            sel_lookup = df.set_index(['defense', 'dataset'])[sel_col].to_dict()
+            print(f"  ✅ Loaded selection baseline ({len(sel_lookup)} entries)")
+
+    except Exception as e:
+        print(f"  ❌ Error loading baseline: {e}")
+
+    return df_perf, sel_lookup
+
+
+def plot_buyer_attack_distribution(df: pd.DataFrame, baseline_sel_lookup: Dict, output_dir: Path):
+    """Standard boxplots for DoS, Erosion, Starvation, Oscillation."""
+    print("\n--- Plotting General Selection Rates (Fig 1) ---")
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+
+    generic_attacks = [a for a in df['attack'].unique() if 'pivot' not in a and '0. Baseline' not in a]
+
+    for attack in generic_attacks:
+        attack_df = df[df['attack'] == attack]
+        if attack_df.empty: continue
+
+        dataset = attack_df['dataset'].iloc[0] if 'dataset' in attack_df.columns else "Unknown"
+
+        plt.figure(figsize=(7, 5))
+
+        ax = sns.boxplot(data=attack_df, x='defense', y='selection_rate', order=defense_order)
+
+        # Draw Baseline Lines
+        for i, defense in enumerate(defense_order):
+            baseline_val = baseline_sel_lookup.get((defense, dataset))
+            if baseline_val is not None:
+                ax.hlines(y=baseline_val, xmin=i - 0.4, xmax=i + 0.4, color='red', linestyle='--', lw=2)
+
+        ax.set_title(f'Selection Rate Distribution\nAttack: {attack}')
+        ax.set_ylim(-0.05, 1.05)
+        plt.savefig(output_dir / f"plot_SELECTION_{attack}.pdf", bbox_inches='tight')
+        plt.close()
+
+
+def plot_targeted_attack_breakdown(df: pd.DataFrame, output_dir: Path):
+    """
+    Visualizes Targeted Attacks (Orthogonal Pivot).
+    """
+    print("\n--- Plotting Targeted Attack Breakdown (Fig 1.5) ---")
+
+    pivot_df = df[df['attack'].str.contains("pivot", case=False)].copy()
+    if pivot_df.empty:
+        return
+
+    # Create a category: Victim vs Others
+    pivot_df['Status'] = pivot_df['seller_id'].apply(
+        lambda x: 'Victim (bn_5)' if x == TARGET_VICTIM_ID else 'Other Benign'
+    )
+
+    plt.figure(figsize=(8, 6))
+    sns.barplot(
+        data=pivot_df,
+        x='defense',
+        y='selection_rate',
+        hue='Status',
+        errorbar='sd',  # Show standard deviation
+        palette={'Victim (bn_5)': 'red', 'Other Benign': 'gray'}
+    )
+
+    plt.title("Targeted Exclusion (Orthogonal Pivot)\nSuccess = Victim Bar is near 0.0")
+    plt.ylabel("Selection Rate")
+    plt.ylim(0, 1.05)
+    plt.savefig(output_dir / "plot_SELECTION_targeted_pivot.pdf", bbox_inches='tight')
+    plt.close()
+
+
+def plot_buyer_attack_performance(df: pd.DataFrame, df_perf_baseline: pd.DataFrame, output_dir: Path):
+    print("\n--- Plotting Performance Metrics (Fig 2) ---")
+
+    # Prepare DataFrame
+    plot_df = df.drop_duplicates(subset=['scenario', 'acc', 'rounds', 'attack', 'defense'])
+
+    # FIX: Check if baseline is empty before using it
+    if not df_perf_baseline.empty:
+        # Filter baseline to matching datasets
+        datasets = plot_df['dataset'].unique()
+        baseline_subset = df_perf_baseline[df_perf_baseline['dataset'].isin(datasets)]
+        plot_df = pd.concat([plot_df, baseline_subset], ignore_index=True)
+    else:
+        print("  Skipping baseline merge (baseline DF empty)")
+
+    metrics = ['acc', 'rounds']
+    plot_df_long = plot_df.melt(id_vars=['attack', 'defense'], value_vars=metrics, var_name='Metric',
+                                value_name='Value')
+
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+
+    # Sort attacks to put Baseline first
+    attacks = sorted([a for a in plot_df['attack'].unique() if str(a) != '0. Baseline'])
+    if not df_perf_baseline.empty:
+        attacks.insert(0, '0. Baseline')
+
+    for attack in attacks:
+        attack_df = plot_df_long[plot_df_long['attack'] == attack]
+        if attack_df.empty: continue
+
+        g = sns.catplot(
+            data=attack_df, x='defense', y='Value', row='Metric',
+            kind='bar', order=defense_order, height=3, aspect=2, sharey=False
+        )
+        g.fig.suptitle(f'Global Model Performance\nAttack: {attack}', y=1.02)
+        g.savefig(output_dir / f"plot_PERFORMANCE_{attack}.pdf", bbox_inches='tight')
+        plt.close()
+
+
+def main():
+    output_dir = Path(FIGURE_OUTPUT_DIR)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 1. Load Step 8
+    df = collect_all_results(BASE_RESULTS_DIR)
+    if df.empty:
+        print("No Step 8 data found. Exiting.")
+        return
+
+    # 2. Load Baseline (Robustly)
+    step2_5_csv = Path(
+        FIGURE_OUTPUT_DIR).parent / "step2.5_figures" / "step2.5_platform_metrics_with_selection_summary.csv"
+    df_perf_baseline, baseline_sel_lookup = load_step2_5_baseline_summary(step2_5_csv)
+
+    # 3. Generate Plots
+    plot_buyer_attack_distribution(df, baseline_sel_lookup, output_dir)
+    plot_targeted_attack_breakdown(df, output_dir)
+    plot_buyer_attack_performance(df, df_perf_baseline, output_dir)
+
+    print(f"\nAnalysis complete. Plots saved to {output_dir.resolve()}")
+
+
 if __name__ == "__main__":
-    base_output_dir = "./configs_generated_benchmark"
-    output_dir = Path(base_output_dir) / "step8_buyer_attacks"
-    generator = ExperimentGenerator(str(output_dir))
-
-    scenarios_to_generate = generate_buyer_attack_scenarios()
-    all_generated_configs = 0
-
-    print("\n--- Generating Configuration Files for Step 8 ---")
-
-    # This loop is now correct because the unique save path
-    # is ALREADY in the scenario's parameter_grid.
-    for scenario in scenarios_to_generate:
-        print(f"\nProcessing scenario base: {scenario.name}")
-        base_config = scenario.base_config_factory()
-        modified_base_config = copy.deepcopy(base_config)
-        for modifier in scenario.modifiers:
-            modified_base_config = modifier(modified_base_config)
-
-        num_gen = generator.generate(modified_base_config, scenario)
-        all_generated_configs += num_gen
-        print(f"-> Generated {num_gen} configs for {scenario.name}")
-
-    print(f"\n✅ Step 8 (Buyer Attack Analysis) config generation complete!")
-    print(f"Total configurations generated: {all_generated_configs}")
-    print(f"Configs saved to: {output_dir}")
-    print("\nNext steps:")
-    print(f"1. CRITICAL: Ensure GOLDEN_TRAINING_PARAMS & TUNED_DEFENSE_PARAMS are correct.")
-    print(f"2. Implement/Verify the MaliciousBuyerProxy logic for all attack types.")
-    print(f"3. Run experiments: python run_parallel.py --configs_dir {output_dir}")
-    print(f"4. Analyze results.")
+    main()
