@@ -95,7 +95,7 @@ def load_step2_5_baseline_summary(step2_5_csv_path: Path) -> Tuple[pd.DataFrame,
         return df_perf, sel_lookup
 
     try:
-        df = pd.read_csv(step2_5_csv)
+        df = pd.read_csv(step2_5_csv_path)
 
         # Performance
         acc_col = '2. Avg. Usable Accuracy (%) (Higher is Better)'
