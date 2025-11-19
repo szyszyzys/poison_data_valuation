@@ -11,13 +11,14 @@ from typing import List, Dict, Any, Tuple
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step8_figures"
-TARGET_VICTIM_ID = "bn_5"
+TARGET_VICTIM_ID = "bn_5"  # Used for the Targeted Attack Plot
 
 
 # --- End Configuration ---
 
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
+    """Parses folder names like: step8_buyer_attack_dos_martfl_CIFAR100"""
     try:
         pattern = r'step8_buyer_attack_(.+)_(fedavg|martfl|fltrust|skymask)_(.*)'
         match = re.search(pattern, scenario_name)
@@ -35,14 +36,19 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
 
 
 def load_run_data(metrics_file: Path) -> List[Dict[str, Any]]:
+    """
+    Loads performance metrics AND per-seller selection rates.
+    Returns a list of rows (one per benign seller) for detailed analysis.
+    """
     run_records = []
     base_metrics = {}
     try:
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
 
+        # Normalize Accuracy (0-1 range)
         acc = metrics.get('acc', 0)
-        if acc > 1.0: acc /= 100.0  # Normalize
+        if acc > 1.0: acc /= 100.0
 
         base_metrics['acc'] = acc
         base_metrics['rounds'] = metrics.get('completed_rounds', 0)
@@ -52,20 +58,29 @@ def load_run_data(metrics_file: Path) -> List[Dict[str, Any]]:
     report_file = metrics_file.parent / "marketplace_report.json"
     try:
         if not report_file.exists():
+            # If no report, return one record with just global metrics (no seller info)
             return [base_metrics]
 
         with open(report_file, 'r') as f:
             report = json.load(f)
 
         sellers = report.get('seller_summaries', {})
+
+        found_sellers = False
         for seller_id, seller_data in sellers.items():
+            # In Step 8, ALL sellers are benign (adv_rate=0),
+            # but we verify type just in case.
             if seller_data.get('type') == 'benign':
+                found_sellers = True
                 record = base_metrics.copy()
                 record['seller_id'] = seller_id
                 record['selection_rate'] = seller_data.get('selection_rate', 0.0)
                 run_records.append(record)
 
-        return run_records if run_records else [base_metrics]
+        if not found_sellers:
+            return [base_metrics]
+
+        return run_records
     except Exception:
         return [base_metrics]
 
@@ -73,12 +88,14 @@ def load_run_data(metrics_file: Path) -> List[Dict[str, Any]]:
 def collect_all_results(base_dir: str) -> pd.DataFrame:
     all_seller_runs = []
     base_path = Path(base_dir)
-    scenario_folders = [f for f in base_path.glob("step8_buyer_attack_*") if f.is_dir()]
 
+    # Find all Step 8 folders
+    scenario_folders = [f for f in base_path.glob("step8_buyer_attack_*") if f.is_dir()]
     print(f"Found {len(scenario_folders)} scenario directories.")
 
     for scenario_path in scenario_folders:
         run_scenario_base = parse_scenario_name(scenario_path.name)
+
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             per_seller_records = load_run_data(metrics_file)
             for r in per_seller_records:
@@ -87,173 +104,163 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     return pd.DataFrame(all_seller_runs)
 
 
-def load_step2_5_baseline_summary(step2_5_csv_path: Path) -> Tuple[pd.DataFrame, Dict[Tuple, float]]:
-    print(f"\nLoading Step 2.5 Baseline from: {step2_5_csv_path}")
-    df_perf = pd.DataFrame()
-    sel_lookup = {}
-
-    if not step2_5_csv_path.exists():
-        print("  ⚠️ Warning: Baseline CSV not found. Plots will lack baseline comparison.")
-        return df_perf, sel_lookup
-
-    try:
-        df = pd.read_csv(step2_5_csv_path)
-
-        # --- ROBUST COLUMN FINDING ---
-        # Find column that looks like "Accuracy"
-        acc_col = next((c for c in df.columns if 'Accuracy' in c), None)
-        # Find column that looks like "Rounds"
-        rounds_col = next((c for c in df.columns if 'Rounds' in c and 'Usable' in c), None)
-        # Find selection rate
-        sel_col = next((c for c in df.columns if 'Benign Selection' in c), None)
-
-        if acc_col and rounds_col:
-            df_perf = df[['defense', 'dataset', acc_col, rounds_col]].copy()
-            df_perf = df_perf.rename(columns={acc_col: 'acc', rounds_col: 'rounds'})
-
-            # Normalize baseline acc if needed
-            if df_perf['acc'].max() > 1.0:
-                df_perf['acc'] /= 100.0
-
-            df_perf['attack'] = '0. Baseline'
-            print(f"  ✅ Loaded performance baseline ({len(df_perf)} rows)")
-        else:
-            print(f"  ⚠️ Could not find Accuracy/Rounds columns in CSV. Columns found: {df.columns.tolist()}")
-
-        if sel_col:
-            # Normalize
-            if df[sel_col].max() > 1.0:
-                df[sel_col] /= 100.0
-            sel_lookup = df.set_index(['defense', 'dataset'])[sel_col].to_dict()
-            print(f"  ✅ Loaded selection baseline ({len(sel_lookup)} entries)")
-
-    except Exception as e:
-        print(f"  ❌ Error loading baseline: {e}")
-
-    return df_perf, sel_lookup
-
-
-def plot_buyer_attack_distribution(df: pd.DataFrame, baseline_sel_lookup: Dict, output_dir: Path):
-    """Standard boxplots for DoS, Erosion, Starvation, Oscillation."""
-    print("\n--- Plotting General Selection Rates (Fig 1) ---")
+def plot_buyer_attack_distribution(df: pd.DataFrame, output_dir: Path):
+    """
+    Fig 1: Boxplots of Selection Rate Distribution.
+    Shows how specific attacks change the distribution of wealth/selection.
+    """
+    print("\n--- Plotting Selection Rate Distributions (Fig 1) ---")
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
-    generic_attacks = [a for a in df['attack'].unique() if 'pivot' not in a and '0. Baseline' not in a]
+    # Exclude 'pivot' because it's a targeted attack (outliers matter more than distribution)
+    generic_attacks = [a for a in df['attack'].unique() if 'pivot' not in str(a)]
 
     for attack in generic_attacks:
         attack_df = df[df['attack'] == attack]
         if attack_df.empty: continue
 
+        # Ensure dataset exists
         dataset = attack_df['dataset'].iloc[0] if 'dataset' in attack_df.columns else "Unknown"
 
         plt.figure(figsize=(7, 5))
 
-        ax = sns.boxplot(data=attack_df, x='defense', y='selection_rate', order=defense_order)
+        sns.boxplot(
+            data=attack_df,
+            x='defense',
+            y='selection_rate',
+            order=defense_order,
+            palette="viridis"
+        )
 
-        # Draw Baseline Lines
-        for i, defense in enumerate(defense_order):
-            baseline_val = baseline_sel_lookup.get((defense, dataset))
-            if baseline_val is not None:
-                ax.hlines(y=baseline_val, xmin=i - 0.4, xmax=i + 0.4, color='red', linestyle='--', lw=2)
+        plt.title(f'Selection Rate Distribution\nAttack: {attack}', fontsize=14)
+        plt.ylabel("Selection Rate (0.0 - 1.0)")
+        plt.ylim(-0.05, 1.05)
+        plt.grid(axis='y', linestyle='--', alpha=0.5)
 
-        ax.set_title(f'Selection Rate Distribution\nAttack: {attack}')
-        ax.set_ylim(-0.05, 1.05)
-        plt.savefig(output_dir / f"plot_SELECTION_{attack}.pdf", bbox_inches='tight')
+        fname = output_dir / f"Step8_SELECTION_DIST_{attack}.pdf"
+        plt.savefig(fname, bbox_inches='tight')
         plt.close()
+        print(f"  Saved: {fname.name}")
 
 
 def plot_targeted_attack_breakdown(df: pd.DataFrame, output_dir: Path):
     """
-    Visualizes Targeted Attacks (Orthogonal Pivot).
+    Fig 1.5: Specialized plot for Targeted Exclusion (Orthogonal Pivot).
+    Compares Victim (bn_5) vs Average Other.
     """
     print("\n--- Plotting Targeted Attack Breakdown (Fig 1.5) ---")
 
+    # Filter for pivot attacks
     pivot_df = df[df['attack'].str.contains("pivot", case=False)].copy()
+
     if pivot_df.empty:
+        print("  No 'pivot' attacks found. Skipping.")
         return
 
-    # Create a category: Victim vs Others
+    # Categorize Sellers
     pivot_df['Status'] = pivot_df['seller_id'].apply(
-        lambda x: 'Victim (bn_5)' if x == TARGET_VICTIM_ID else 'Other Benign'
+        lambda x: 'Victim (bn_5)' if str(x) == TARGET_VICTIM_ID else 'Other Benign'
     )
 
     plt.figure(figsize=(8, 6))
+
     sns.barplot(
         data=pivot_df,
         x='defense',
         y='selection_rate',
         hue='Status',
-        errorbar='sd',  # Show standard deviation
-        palette={'Victim (bn_5)': 'red', 'Other Benign': 'gray'}
+        order=['fedavg', 'fltrust', 'martfl', 'skymask'],
+        palette={'Victim (bn_5)': '#e74c3c', 'Other Benign': '#95a5a6'},  # Red vs Grey
+        errorbar='sd'
     )
 
-    plt.title("Targeted Exclusion (Orthogonal Pivot)\nSuccess = Victim Bar is near 0.0")
+    plt.title("Targeted Exclusion Success (Orthogonal Pivot)\n(Goal: Red Bar -> 0.0)", fontsize=14)
     plt.ylabel("Selection Rate")
     plt.ylim(0, 1.05)
-    plt.savefig(output_dir / "plot_SELECTION_targeted_pivot.pdf", bbox_inches='tight')
+    plt.legend(title=None)
+    plt.grid(axis='y', linestyle='--', alpha=0.3)
+
+    fname = output_dir / "Step8_SELECTION_TARGETED_PIVOT.pdf"
+    plt.savefig(fname, bbox_inches='tight')
     plt.close()
+    print(f"  Saved: {fname.name}")
 
 
-def plot_buyer_attack_performance(df: pd.DataFrame, df_perf_baseline: pd.DataFrame, output_dir: Path):
+def plot_buyer_attack_performance(df: pd.DataFrame, output_dir: Path):
+    """
+    Fig 2: Global Model Performance (Accuracy & Rounds).
+    """
     print("\n--- Plotting Performance Metrics (Fig 2) ---")
 
-    # Prepare DataFrame
-    plot_df = df.drop_duplicates(subset=['scenario', 'acc', 'rounds', 'attack', 'defense'])
+    # Deduplicate: We only need one row per 'run' (seed), not per seller
+    # Grouping by these keys ensures we get unique experiment results
+    run_df = df.drop_duplicates(subset=['scenario', 'acc', 'rounds', 'attack', 'defense'])
 
-    # FIX: Check if baseline is empty before using it
-    if not df_perf_baseline.empty:
-        # Filter baseline to matching datasets
-        datasets = plot_df['dataset'].unique()
-        baseline_subset = df_perf_baseline[df_perf_baseline['dataset'].isin(datasets)]
-        plot_df = pd.concat([plot_df, baseline_subset], ignore_index=True)
-    else:
-        print("  Skipping baseline merge (baseline DF empty)")
-
-    metrics = ['acc', 'rounds']
-    plot_df_long = plot_df.melt(id_vars=['attack', 'defense'], value_vars=metrics, var_name='Metric',
-                                value_name='Value')
-
+    metrics = [('acc', 'Global Accuracy'), ('rounds', 'Rounds to Converge')]
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
-    # Sort attacks to put Baseline first
-    attacks = sorted([a for a in plot_df['attack'].unique() if str(a) != '0. Baseline'])
-    if not df_perf_baseline.empty:
-        attacks.insert(0, '0. Baseline')
+    # Loop through attacks to make separate plots
+    attacks = sorted(run_df['attack'].unique())
 
     for attack in attacks:
-        attack_df = plot_df_long[plot_df_long['attack'] == attack]
+        attack_df = run_df[run_df['attack'] == attack]
         if attack_df.empty: continue
 
-        g = sns.catplot(
-            data=attack_df, x='defense', y='Value', row='Metric',
-            kind='bar', order=defense_order, height=3, aspect=2, sharey=False
+        # Melt for FacetGrid (Accuracy vs Rounds)
+        melted = attack_df.melt(
+            id_vars=['defense'],
+            value_vars=['acc', 'rounds'],
+            var_name='MetricKey',
+            value_name='Value'
         )
-        g.fig.suptitle(f'Global Model Performance\nAttack: {attack}', y=1.02)
-        g.savefig(output_dir / f"plot_PERFORMANCE_{attack}.pdf", bbox_inches='tight')
+
+        # Rename metrics for display
+        melted['Metric'] = melted['MetricKey'].map({'acc': 'Accuracy', 'rounds': 'Rounds'})
+
+        g = sns.catplot(
+            data=melted,
+            x='defense',
+            y='Value',
+            col='Metric',
+            kind='bar',
+            order=defense_order,
+            palette='viridis',
+            height=4,
+            aspect=1.2,
+            sharey=False
+        )
+
+        g.fig.suptitle(f'Global Model Performance\nAttack: {attack}', y=1.05)
+        g.set_axis_labels("Defense", "Value")
+        g.set_titles("{col_name}")
+
+        fname = output_dir / f"Step8_PERFORMANCE_{attack}.pdf"
+        g.savefig(fname, bbox_inches='tight')
         plt.close()
+        print(f"  Saved: {fname.name}")
 
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
+    print(f"Plots will be saved to: {output_dir.resolve()}")
 
-    # 1. Load Step 8
+    # 1. Load Step 8 Data
     df = collect_all_results(BASE_RESULTS_DIR)
+
     if df.empty:
-        print("No Step 8 data found. Exiting.")
+        print("No Step 8 data found. Check your results directory.")
         return
 
-    # 2. Load Baseline (Robustly)
-    step2_5_csv = Path(
-        FIGURE_OUTPUT_DIR).parent / "step2.5_figures" / "step2.5_platform_metrics_with_selection_summary.csv"
-    df_perf_baseline, baseline_sel_lookup = load_step2_5_baseline_summary(step2_5_csv)
+    # 2. Save Summary CSV
+    df.to_csv(output_dir / "step8_full_summary.csv", index=False)
 
-    # 3. Generate Plots
-    plot_buyer_attack_distribution(df, baseline_sel_lookup, output_dir)
+    # 3. Generate Plots (No External Baseline)
+    plot_buyer_attack_distribution(df, output_dir)
     plot_targeted_attack_breakdown(df, output_dir)
-    plot_buyer_attack_performance(df, df_perf_baseline, output_dir)
+    plot_buyer_attack_performance(df, output_dir)
 
-    print(f"\nAnalysis complete. Plots saved to {output_dir.resolve()}")
+    print("\nAnalysis complete.")
 
 
 if __name__ == "__main__":
