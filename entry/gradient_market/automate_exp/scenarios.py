@@ -326,25 +326,56 @@ def generate_sybil_selection_rate_scenarios() -> List[Scenario]:
 # --- Adaptive Attack Modifier (Keep or adapt as needed) ---
 def use_adaptive_attack(
         mode: str,
-        threat_model: str = "black_box",  # Focus on black_box
-        exploration_rounds: int = 30
+        threat_model: str = "black_box",
+        exploration_rounds: int = 30,
+        with_backdoor: bool = False  # Default to False if you want pure manipulation
 ) -> Callable[[AppConfig], AppConfig]:
-    """ Returns a modifier to enable the adaptive attacker. """
+    """
+    Returns a modifier to enable the adaptive attacker.
+
+    Args:
+        with_backdoor: If True, injects a backdoor payload.
+                       If False, acts as an untargeted/free-rider attacker.
+    """
 
     def modifier(config: AppConfig) -> AppConfig:
+        # 1. Activate Adaptive Logic
         adv_cfg = config.adversary_seller_config.adaptive_attack
         adv_cfg.is_active = True
         adv_cfg.attack_mode = mode
-        adv_cfg.threat_model = threat_model  # Set the threat model
+        adv_cfg.threat_model = threat_model
         adv_cfg.exploration_rounds = exploration_rounds
-        # Deactivate other attacks
-        config.adversary_seller_config.poisoning.type = PoisonType.NONE
+
+        # 2. Handle Poisoning vs Pure Manipulation
+        if with_backdoor:
+            # Goal: Inject Backdoor while evading detection
+            config.adversary_seller_config.poisoning.type = PoisonType.BACKDOOR
+            config.adversary_seller_config.poisoning.poison_rate = 0.5
+        else:
+            # Goal: Manipulate selection (Free Rider / Untargeted Noise)
+            config.adversary_seller_config.poisoning.type = PoisonType.NONE
+            # Even with no poison, we might want to scale gradients (free rider)
+            # or add noise (untargeted degradation).
+
+        # 3. Sync "Stealthy Blend" Params
+        # If with_backdoor is False, stealthy_blend will just return 'honest',
+        # effectively disabling it, so the bandit will learn to use
+        # 'add_noise' or 'reduce_norm' instead.
+        blend_cfg = config.adversary_seller_config.drowning_attack
+        blend_cfg.mimicry_rounds = exploration_rounds
+        blend_cfg.attack_intensity = 0.3
+        blend_cfg.replacement_strategy = "layer_wise"
+
+        # 4. Set Oracle/Inversion Params
+        if threat_model in ["oracle", "gradient_inversion"]:
+            adv_cfg.mimic_strength = 0.5
+
+        # 5. Deactivate other standalone attacks
         config.adversary_seller_config.sybil.is_sybil = False
-        # Deactivate others if needed (drowning, mimicry)
+
         return config
 
     return modifier
-
 
 # --- Helper to apply fixed Golden Training & Tuned Defense HPs ---
 
