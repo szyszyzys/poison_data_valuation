@@ -18,12 +18,10 @@ TARGET_VICTIM_ID = "bn_5"
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
     """
-     Robust parser that handles BOTH Step 8 (Attacks) and Step 7 (Baseline).
-     Uses Regex to handle dataset names that might contain underscores.
+    Parses folder names. Handles BOTH Step 8 (Attacks) and Step 7 (Baseline).
     """
     try:
-        # 1. Handle Step 8: Buyer Attacks
-        # Format: step8_buyer_attack_[ATTACK]_[DEFENSE]_[DATASET]
+        # 1. Check for Step 8 (Buyer Attacks)
         pattern_step8 = r'step8_buyer_attack_(.+)_(fedavg|martfl|fltrust|skymask)_(.*)'
         match8 = re.search(pattern_step8, scenario_name)
         if match8:
@@ -35,36 +33,32 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
                 "dataset": match8.group(3),
             }
 
-        # 2. Handle Step 7: Baseline (No Attack)
-        # Format: step7_baseline_no_attack_[DEFENSE]_[DATASET]
+        # 2. Check for Step 7 (Baseline - No Attack)
         pattern_step7 = r'step7_baseline_no_attack_(fedavg|martfl|fltrust|skymask)_(.*)'
         match7 = re.search(pattern_step7, scenario_name)
         if match7:
             return {
                 "scenario": scenario_name,
                 "type": "baseline",
-                "attack": "0. Baseline",  # Special label for plotting order
+                "attack": "0. Baseline",
                 "defense": match7.group(1),
                 "dataset": match7.group(2),
             }
 
-        # Fallback if patterns don't match
-        return {"scenario": scenario_name, "type": "unknown", "dataset": "unknown"}
-
+        return {"scenario": scenario_name, "type": "unknown"}
     except Exception as e:
         print(f"Warning parsing {scenario_name}: {e}")
-        return {"scenario": scenario_name, "type": "unknown", "dataset": "unknown"}
+        return {"scenario": scenario_name, "type": "unknown"}
 
 
 def load_run_data(metrics_file: Path) -> List[Dict[str, Any]]:
-    """Loads global metrics and per-seller selection rates."""
+    """Loads performance metrics and per-seller selection rates."""
     run_records = []
     base_metrics = {}
     try:
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
 
-        # Normalize Accuracy (0-1 range)
         acc = metrics.get('acc', 0)
         if acc > 1.0: acc /= 100.0
 
@@ -85,7 +79,6 @@ def load_run_data(metrics_file: Path) -> List[Dict[str, Any]]:
 
         found_sellers = False
         for seller_id, seller_data in sellers.items():
-            # In Step 8 & Step 7, we care about benign sellers (victim impact)
             if seller_data.get('type') == 'benign':
                 found_sellers = True
                 record = base_metrics.copy()
@@ -105,7 +98,6 @@ def collect_data(base_dir: str) -> pd.DataFrame:
     all_records = []
     base_path = Path(base_dir)
 
-    # Scan for both Step 8 and Step 7 folders
     folders = [f for f in base_path.glob("step8_buyer_attack_*") if f.is_dir()]
     folders += [f for f in base_path.glob("step7_baseline_no_attack_*") if f.is_dir()]
 
@@ -113,33 +105,22 @@ def collect_data(base_dir: str) -> pd.DataFrame:
 
     for scenario_path in folders:
         run_info = parse_scenario_name(scenario_path.name)
-
-        # Skip if parsing failed or dataset is unknown
-        if run_info.get("type") == "unknown" or run_info.get("dataset") == "unknown":
-            continue
+        if run_info.get("type") == "unknown": continue
 
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             records = load_run_data(metrics_file)
             for r in records:
                 all_records.append({**run_info, **r})
 
-    df = pd.DataFrame(all_records)
-    return df
+    return pd.DataFrame(all_records)
 
 
 def get_baseline_lookup(df: pd.DataFrame) -> Dict[Tuple[str, str], float]:
-    """
-    Creates a lookup dict for the baseline selection rate.
-    Key: (defense, dataset) -> Value: avg_selection_rate
-    """
-    # Filter specifically for the label we set in parse_scenario_name
     baseline_df = df[df['attack'] == '0. Baseline']
-
     if baseline_df.empty:
-        print("⚠️ No Step 7 Baseline data found in loaded results.")
+        print("⚠️ No Step 7 Baseline data found. Plots will rely only on Step 8 data.")
         return {}
 
-    # Average across seeds and sellers
     lookup = baseline_df.groupby(['defense', 'dataset'])['selection_rate'].mean().to_dict()
     print(f"✅ Baseline calculated for {len(lookup)} configs.")
     return lookup
@@ -147,12 +128,11 @@ def get_baseline_lookup(df: pd.DataFrame) -> Dict[Tuple[str, str], float]:
 
 def plot_buyer_attack_distribution(df: pd.DataFrame, baseline_lookup: Dict, output_dir: Path):
     """
-    Fig 1: Selection Rate Distribution (Boxplot) + Baseline Reference (Red Line).
+    Fig 1: Selection Rate Distribution (Boxplot) + Baseline Reference.
     """
     print("\n--- Plotting Selection Distributions (Fig 1) ---")
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
-    # Filter for Step 8 attacks (excluding Pivot and Baseline itself)
     step8_attacks = [a for a in df['attack'].unique()
                      if 'pivot' not in str(a) and a != '0. Baseline']
 
@@ -160,20 +140,28 @@ def plot_buyer_attack_distribution(df: pd.DataFrame, baseline_lookup: Dict, outp
         attack_df = df[df['attack'] == attack]
         if attack_df.empty: continue
 
-        # Robustly get dataset (now guaranteed to exist by collect_data)
-        dataset = attack_df['dataset'].iloc[0]
+        # Robustly get dataset
+        if 'dataset' in attack_df.columns:
+            dataset = attack_df['dataset'].iloc[0]
+        else:
+            dataset = "Unknown"
 
-        plt.figure(figsize=(7, 5))
+        # FIX 1: Use plt.subplots to explicitly create 'ax'
+        fig, ax = plt.subplots(figsize=(7, 5))
 
+        # FIX 2: Add hue='defense' and legend=False to silence warning
         sns.boxplot(
             data=attack_df,
             x='defense',
             y='selection_rate',
             order=defense_order,
-            palette="viridis"
+            palette="viridis",
+            hue='defense',
+            legend=False,
+            ax=ax
         )
 
-        # Draw Baseline Lines
+        # Now 'ax' is defined, so this works
         for i, defense in enumerate(defense_order):
             base_val = baseline_lookup.get((defense, dataset))
             if base_val is not None:
@@ -181,14 +169,16 @@ def plot_buyer_attack_distribution(df: pd.DataFrame, baseline_lookup: Dict, outp
                           color='red', linestyle='--', lw=2,
                           label='Healthy Baseline' if i == 0 else "")
 
-        # Only show legend if we actually drew a baseline
-        if any(baseline_lookup.get((d, dataset)) for d in defense_order):
-            plt.legend(loc='best')
+        if baseline_lookup:
+            # Only create legend if we actually drew lines, prevent duplicate labels
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend(handles[:1], labels[:1], loc='best')
 
-        plt.title(f'Impact on Seller Selection\nAttack: {attack}', fontsize=14)
-        plt.ylabel("Selection Rate")
-        plt.ylim(-0.05, 1.05)
-        plt.grid(axis='y', linestyle='--', alpha=0.5)
+        ax.set_title(f'Impact on Seller Selection\nAttack: {attack}', fontsize=14)
+        ax.set_ylabel("Selection Rate")
+        ax.set_ylim(-0.05, 1.05)
+        ax.grid(axis='y', linestyle='--', alpha=0.5)
 
         fname = output_dir / f"Step8_SELECTION_{attack}.pdf"
         plt.savefig(fname, bbox_inches='tight')
@@ -201,12 +191,7 @@ def plot_targeted_attack_breakdown(df: pd.DataFrame, output_dir: Path):
     Fig 1.5: Targeted Exclusion (Pivot). Compares Victim vs Others.
     """
     print("\n--- Plotting Targeted Breakdown (Fig 1.5) ---")
-
-    # Safe filtering for 'pivot' in string
-    pivot_df = df[
-        (df['attack'].str.contains("pivot", case=False, na=False)) &
-        (df['attack'] != '0. Baseline')
-        ].copy()
+    pivot_df = df[df['attack'].str.contains("pivot", case=False)].copy()
 
     if pivot_df.empty: return
 
@@ -239,26 +224,20 @@ def plot_buyer_attack_performance(df: pd.DataFrame, output_dir: Path):
     """
     print("\n--- Plotting Performance Metrics (Fig 2) ---")
 
-    # Deduplicate: One row per seed/run
     run_df = df.drop_duplicates(subset=['scenario', 'acc', 'rounds', 'attack', 'defense'])
-
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
-    # Get list of actual attacks (excluding baseline)
     attacks = [a for a in run_df['attack'].unique() if a != '0. Baseline']
     attacks.sort()
 
-    # Isolate the baseline data
     baseline_df = run_df[run_df['attack'] == '0. Baseline']
 
     for attack in attacks:
         current_attack_df = run_df[run_df['attack'] == attack]
 
-        # Create a combined DF just for this comparison
         combined_df = pd.concat([baseline_df, current_attack_df], ignore_index=True)
         if combined_df.empty: continue
 
-        # Melt for plotting
         melted = combined_df.melt(
             id_vars=['attack', 'defense'],
             value_vars=['acc', 'rounds'],
@@ -266,10 +245,9 @@ def plot_buyer_attack_performance(df: pd.DataFrame, output_dir: Path):
         )
         melted['Metric'] = melted['MetricKey'].map({'acc': 'Accuracy', 'rounds': 'Rounds'})
 
-        # Plot
         g = sns.catplot(
             data=melted, x='defense', y='Value',
-            hue='attack',  # Legend will show "0. Baseline" vs "AttackName"
+            hue='attack',
             col='Metric', kind='bar',
             order=defense_order,
             height=4, aspect=1.2, sharey=False,
@@ -290,23 +268,13 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     print(f"Plots saved to: {output_dir.resolve()}")
 
-    # 1. Load Data (Step 8 + Step 7)
     df = collect_data(BASE_RESULTS_DIR)
-
     if df.empty:
-        print("No data found. Check that results/step8_* and results/step7_* exist.")
+        print("No data found.")
         return
 
-    # Quick check to confirm dataset was parsed
-    if 'dataset' not in df.columns:
-        print("Error: 'dataset' column missing. Parsing logic failed.")
-        print(f"Sample scenarios: {df['scenario'].iloc[:3].tolist()}")
-        return
-
-    # 2. Calculate Baseline
     baseline_lookup = get_baseline_lookup(df)
 
-    # 3. Generate Plots
     plot_buyer_attack_distribution(df, baseline_lookup, output_dir)
     plot_targeted_attack_breakdown(df, output_dir)
     plot_buyer_attack_performance(df, output_dir)
