@@ -5,57 +5,71 @@ import torch
 import numpy as np
 from pathlib import Path
 from collections import Counter
-import matplotlib.pyplot as plt
 
 from entry.gradient_market.run_all_exp import setup_data_and_model
 
-# --- IMPORTS (Adjust to match your structure) ---
+# --- IMPORTS ---
 try:
+    # Add project root to sys.path to ensure imports work
+    project_root = Path(__file__).resolve().parent.parent
+    sys.path.append(str(project_root))
+
     from common.gradient_market_configs import AppConfig
     from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 except ImportError:
-    print("⚠️  Error: Run this script from the project root.")
+    print("⚠️  Error: Could not import project modules.")
+    print(f"   Ensure you are running from project root.")
     sys.exit(1)
 
 
 def parse_config_string(config_str: str, key: str, type_cast=str):
-    """
-    Extracts a value from the string representation in config_snapshot.json.
-    Example: "DataConfig(..., buyer_ratio=0.1, ...)" -> extracts 0.1
-    """
-    # Regex to find key=value or key='value'
+    """Extracts value from string representation."""
     pattern = f"{key}=(['\"]?)([^,'\"]+)(['\"]?)"
     match = re.search(pattern, config_str)
     if match:
         val = match.group(2)
-        if type_cast == bool:
-            return val == "True"
+        if type_cast == bool: return val == "True"
         return type_cast(val)
     return None
 
 
-def inspect_run(run_dir: str, label: str):
-    """Loads config from disk, recreates data, and analyzes buyer distribution."""
-    print(f"\n{'=' * 60}")
-    print(f"🔍 INSPECTING: {label}")
-    print(f"Path: {run_dir}")
-    print(f"{'=' * 60}")
+def find_and_inspect(base_scenario_dir: str, alpha_folder: str):
+    """
+    Locates the config_snapshot.json inside the nested folder structure
+    and runs the inspection.
+    """
+    print(f"\n{'=' * 80}")
+    print(f"🔍 SEARCHING IN: {base_scenario_dir} / {alpha_folder}")
 
-    path = Path(run_dir) / "config_snapshot.json"
-    if not path.exists():
-        print("❌ Config snapshot not found!")
+    start_path = Path(base_scenario_dir) / alpha_folder
+
+    if not start_path.exists():
+        print(f"❌ Path not found: {start_path}")
+        print(f"   Check if 'results/step11_...' exists.")
         return
 
-    with open(path, 'r') as f:
+    # Find the config file recursively
+    config_files = list(start_path.rglob("config_snapshot.json"))
+
+    if not config_files:
+        print("❌ No config_snapshot.json found in this directory!")
+        return
+
+    # Use the first one found (usually only one per run)
+    target_config = config_files[0]
+    print(f"✅ Found config: {target_config.relative_to(Path.cwd())}")
+
+    inspect_file(target_config)
+
+
+def inspect_file(config_path: Path):
+    with open(config_path, 'r') as f:
         snapshot = json.load(f)
 
-    # 1. Extract relevant strings
     data_str = snapshot.get("data", "")
     exp_str = snapshot.get("experiment", "")
 
-    print(f"📄 Raw Data Config String: {data_str[:150]}...")
-
-    # 2. Parse Key Parameters
+    # Parse
     dataset = parse_config_string(exp_str, "dataset_name")
     strategy = parse_config_string(data_str, "strategy")
     alpha = parse_config_string(data_str, "dirichlet_alpha", float)
@@ -65,91 +79,77 @@ def inspect_run(run_dir: str, label: str):
     buyer_strategy = parse_config_string(data_str, "buyer_strategy")
     buyer_alpha = parse_config_string(data_str, "buyer_dirichlet_alpha", float)
 
-    print(f"\n⚙️  Parsed Configuration:")
+    print(f"\n⚙️  Parsed Settings:")
     print(f"   - Dataset: {dataset}")
-    print(f"   - Buyer Ratio: {buyer_ratio}")
-    print(f"   - Buyer Strategy: {buyer_strategy}")
-    print(f"   - Buyer Alpha: {buyer_alpha}")
+    print(f"   - Seller Strategy: {strategy} (Alpha={alpha})")
+    print(f"   - Buyer Strategy:  {buyer_strategy} (Alpha={buyer_alpha})")
+    print(f"   - Buyer Ratio:     {buyer_ratio}")
 
-    # 3. Reconstruct AppConfig for Loading
-    # We start with a base config and override with parsed values
+    # Reconstruct Config
     cfg = get_base_image_config()
     cfg.experiment.dataset_name = dataset
-    # We assume image modality based on your previous context
     cfg.data.image.buyer_ratio = buyer_ratio
     cfg.data.image.buyer_strategy = buyer_strategy
     cfg.data.image.buyer_dirichlet_alpha = buyer_alpha
     cfg.data.image.strategy = strategy
     cfg.data.image.dirichlet_alpha = alpha
+    cfg.use_cache = False  # Force regen to test logic
 
-    # Important: Ensure cache is DISABLED to see the real generation logic
-    cfg.use_cache = False
-
-    # 4. Load Data
-    print("\n🔄 Re-generating Data Split (No Cache)...")
-    device = "cpu"
+    # Run Setup
+    print("\n🔄 Simulating Data Partitioning (No Cache)...")
     try:
-        # Calling your main setup function
+        device = "cpu"
+        # Mute logging if possible, or just ignore it
         (buyer_loader, _, _, _, _, _, _, num_classes) = setup_data_and_model(cfg, device)
+
+        if buyer_loader:
+            analyze_buyer_stats(buyer_loader, num_classes)
+        else:
+            print("❌ Buyer Loader is None (Partition failed entirely)")
+
     except Exception as e:
-        print(f"❌ Data Loading Failed: {e}")
-        return
+        print(f"❌ Crash during setup: {e}")
 
-    # 5. Analyze Statistics
-    if buyer_loader is None:
-        print("❌ Buyer Loader is None!")
-        return
 
+def analyze_buyer_stats(loader, num_classes):
     labels = []
-    for _, y in buyer_loader:
+    for _, y in loader:
         labels.extend(y.tolist())
 
     counts = Counter(labels)
-    sorted_classes = sorted(counts.keys())
-    missing_classes = set(range(num_classes)) - set(sorted_classes)
+    unique_present = len(counts)
+    missing = num_classes - unique_present
+    avg_samples = np.mean(list(counts.values())) if counts else 0
 
-    values = list(counts.values())
-    mean_count = np.mean(values) if values else 0
-    std_dev = np.std(values) if values else 0
-
-    print(f"\n📊 BUYER DATA STATISTICS:")
+    print(f"\n📊 RESULTS:")
     print(f"   - Total Samples: {len(labels)}")
-    print(f"   - Classes Present: {len(sorted_classes)} / {num_classes}")
-    print(f"   - Missing Classes: {len(missing_classes)}")
-    if len(missing_classes) > 0:
-        print(f"     ⚠️  Missing: {list(missing_classes)[:10]}...")
+    print(f"   - Classes: {unique_present} / {num_classes} (Missing: {missing})")
+    print(f"   - Avg Samples/Class: {avg_samples:.2f}")
 
-    print(f"   - Samples per Class (Avg): {mean_count:.2f}")
-    print(f"   - Imbalance (Std Dev): {std_dev:.2f}")
-
-    # 6. Heuristic Verdict
-    if len(missing_classes) > 0:
-        print("\n🔴 VERDICT: ROOT DATA BROKEN (Missing Classes)")
-        print("   FLTrust will assign score=0 to sellers who update missing classes.")
-    elif std_dev > mean_count:
-        print("\n🟠 VERDICT: HIGHLY UNBALANCED")
-        print("   FLTrust might be unstable due to high variance in root gradient.")
+    if missing > 10 or avg_samples < 5:
+        print("\n🔴 VERDICT: BROKEN ROOT DATASET")
+        print("   FLTrust fails because the root dataset is too sparse/biased.")
+        print("   -> Fix: Use 'iid' for uniform cases OR increase buyer_ratio.")
     else:
-        print("\n🟢 VERDICT: DATA LOOKS HEALTHY")
+        print("\n🟢 VERDICT: HEALTHY ROOT DATASET")
 
 
-# --- RUNNER ---
 if __name__ == "__main__":
-    # REPLACE THESE PATHS WITH YOUR ACTUAL PATHS
+    # === CONFIGURATION ===
+    # We check two specific scenarios to verify the hypothesis
 
-    # 1. A path that worked (Step 2.5 or similar)
-    GOOD_RUN = "results/step2.5_find_hps_fltrust_image_CIFAR100/ds-cifar100_model-cnn_agg-fltrust_k-0_clip-5_no_attack_seed-42/aggregation.fltrust.clip_norm_5.0/ds-cifar100_model-cnn_agg-fltrust_k-0_clip-5_no_attack_seed-42/run_0_seed_42"
+    # 1. SELLER ONLY (Alpha=0.1) -> Should have UNIFORM Buyer (Alpha=100)
+    # If this is 'dirichlet', it might be broken.
+    SCENARIO_BAD = "results/step11_seller_only_fltrust_CIFAR100"
+    ALPHA_BAD = "alpha_0.1"
 
-    # 2. A path that failed (Step 11 Seller Only)
-    BAD_RUN = "results/step11_seller_only_fltrust_CIFAR100/ds-cifar100_model-cnn_agg-fltrust_k-0_clip-5_no_attack_seed-42/aggregation.fltrust.clip_norm_5.0/ds-cifar100_model-cnn_agg-fltrust_k-0_clip-5_no_attack_seed-42/run_0_seed_42"
+    # 2. BUYER ONLY (Alpha=0.1) -> Buyer IS Non-IID (Alpha=0.1)
+    # This is SUPPOSED to be broken/biased.
+    SCENARIO_EXPECTED_BAD = "results/step11_buyer_only_fltrust_CIFAR100"
+    ALPHA_EXPECTED = "alpha_0.1"
 
-    # Check if paths exist before running (optional, just for safety)
-    if Path(GOOD_RUN).exists():
-        inspect_run(GOOD_RUN, "Step 2.5 (Baseline - Should be IID)")
-    else:
-        print(f"Skipping Good Run (Path not found: {GOOD_RUN})")
+    print("--- TEST 1: Seller-Only Bias (Buyer should be Uniform) ---")
+    find_and_inspect(SCENARIO_BAD, ALPHA_BAD)
 
-    if Path(BAD_RUN).exists():
-        inspect_run(BAD_RUN, "Step 11 (Seller Only - Suspected Dirichlet Issue)")
-    else:
-        print(f"Skipping Bad Run (Path not found: {BAD_RUN})")
+    print("\n\n--- TEST 2: Buyer-Only Bias (Buyer should be Biased) ---")
+    find_and_inspect(SCENARIO_EXPECTED_BAD, ALPHA_EXPECTED)
