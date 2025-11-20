@@ -48,7 +48,7 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
                     "dataset": match.group(3),
                 }
         elif 'step7_baseline_no_attack' in scenario_name:
-            pattern = r'step7_baseline_no_attack_(fedavg|martfl|fltrust|skymask)_(.*)'
+            pattern = r'step7_baseline_no_attack_(martfl|fltrust)_(.*)'
             match = re.search(pattern, scenario_name)
             if match:
                 return {
@@ -139,7 +139,7 @@ def plot_attack_overview(df: pd.DataFrame, baseline_lookup: Dict, output_dir: Pa
     dataset_name = plot_df['dataset'].iloc[0] if 'dataset' in plot_df else "CIFAR100"
     plot_df['Attack Type'] = plot_df['attack'].apply(lambda x: x.replace('_', ' ').title())
 
-    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+    defense_order = ['fltrust', 'martfl']
     defense_order = [d for d in defense_order if d in plot_df['defense'].unique()]
 
     plt.figure(figsize=(12, 6))
@@ -198,7 +198,7 @@ def plot_single_attack_deep_dive(df: pd.DataFrame, baseline_lookup: Dict, attack
     baseline_df = df[df['attack'] == '0. Baseline'].copy()
     if attack_df.empty: return
 
-    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+    defense_order = ['fltrust', 'martfl']
     defense_order = [d for d in defense_order if d in attack_df['defense'].unique()]
 
     fig, axes = plt.subplots(1, 3, figsize=(24, 5), constrained_layout=True)
