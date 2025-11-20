@@ -2,7 +2,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -13,9 +13,18 @@ import seaborn as sns
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step5_figures"
 
+# --- Styling Helper ---
+def set_plot_style():
+    """Sets a consistent professional style for all plots."""
+    sns.set_theme(style="whitegrid")
+    sns.set_context("paper", font_scale=1.5)
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams['axes.linewidth'] = 1.2
+    plt.rcParams['axes.edgecolor'] = '#333333'
+    plt.rcParams['lines.linewidth'] = 2.5
+    plt.rcParams['lines.markersize'] = 9
 
-# --- End Configuration ---
-
+# --- Parsing Functions ---
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     """
@@ -29,48 +38,46 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
         hps['adv_rate'] = float(match.group(1))
         hps['poison_rate'] = float(match.group(2))
     else:
-        print(f"Warning: Could not parse HP suffix '{hp_folder_name}'")
+        # Fallback for potential other naming conventions if needed
+        pass
     return hps
 
 
 def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
     """
-    (FIXED) Parses the base scenario name...
+    Parses the base scenario name for step5.
     """
     try:
-        # --- THIS REGEX MUST MATCH ALL YOUR FOLDERS ---
+        # Regex to match step5 folders
         pattern = r'step5_atk_sens_(adv|poison)_(fedavg|fltrust|martfl|skymask)_(backdoor|labelflip)_(image|text|tabular)$'
         match = re.search(pattern, scenario_name)
 
         if match:
             modality = match.group(4)
 
-            # --- THIS IS THE FIX ---
-            # Add mappings for all your modalities
+            # Map modality to dataset name based on your setup
             if modality == 'image':
-                dataset_name = 'CIFAR100'
+                dataset_name = 'CIFAR100' # Assumed based on previous context
             elif modality == 'text':
-                dataset_name = 'TREC'  # Or whatever your text dataset is
+                dataset_name = 'TREC'
             elif modality == 'tabular':
-                dataset_name = 'Texas100'  # Or whatever your tabular dataset is
+                dataset_name = 'Texas100'
             else:
-                dataset_name = 'unknown'  # This should now be impossible
+                dataset_name = 'unknown'
 
             return {
                 "scenario": scenario_name,
-                "sweep_type": match.group(1),
+                "sweep_type": match.group(1), # 'adv' or 'poison'
                 "defense": match.group(2),
                 "attack": match.group(3),
                 "modality": modality,
-                "dataset": dataset_name,  # This will now be correct
+                "dataset": dataset_name,
             }
         else:
-            # If this runs, you'll see a warning.
-            print(f"Warning: Could not parse scenario name '{scenario_name}'. Ignoring folder.")
             return None
 
     except Exception as e:
-        print(f"Warning: Error parsing scenario name '{scenario_name}': {e}. Ignoring folder.")
+        print(f"Warning: Error parsing scenario name '{scenario_name}': {e}")
         return None
 
 
@@ -96,8 +103,11 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
             ben_sellers = [s for s in sellers if s.get('type') == 'benign']
 
             run_data['adv_selection_rate'] = np.mean([s['selection_rate'] for s in adv_sellers]) if adv_sellers else 0.0
-            run_data['benign_selection_rate'] = np.mean(
-                [s['selection_rate'] for s in ben_sellers]) if ben_sellers else 0.0
+            run_data['benign_selection_rate'] = np.mean([s['selection_rate'] for s in ben_sellers]) if ben_sellers else 0.0
+        else:
+            # Default if no report exists
+            run_data['adv_selection_rate'] = 0.0
+            run_data['benign_selection_rate'] = 0.0
 
         return run_data
 
@@ -114,13 +124,10 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
     scenario_folders = [f for f in base_path.glob("step5_atk_sens_*") if f.is_dir()]
     if not scenario_folders:
-        print(f"Error: No 'step5_atk_sens_*' directories found directly inside {base_path}.")
+        print(f"Error: No 'step5_atk_sens_*' directories found.")
         return pd.DataFrame()
 
     print(f"Found {len(scenario_folders)} scenario base directories.")
-
-    parsed_count = 0
-    metrics_found_count = 0
 
     for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
@@ -129,57 +136,29 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
         if run_scenario is None:
             continue
 
-        print(f"\nProcessing Scenario: {scenario_name}")
-        print(f"  -> Parsed as: {run_scenario}")
-
-        parsed_count += 1
-
         files_in_scenario = list(scenario_path.rglob("final_metrics.json"))
-        if not files_in_scenario:
-            print(f"  -> !! WARNING: No 'final_metrics.json' files found in {scenario_name}")
-            continue
 
         for metrics_file in files_in_scenario:
             try:
-                metrics_found_count += 1
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
-                if not relative_parts:
-                    print(f"  -> Skipping metric file with no relative path: {metrics_file}")
-                    continue
+                if not relative_parts: continue
 
                 hp_folder_name = relative_parts[0]
-                run_hps = parse_hp_suffix(hp_folder_name)
+                run_hps = parse_hp_suffix(hp_folder_name) # Extract adv_rate and poison_rate
 
-                if not run_hps:
-                    print(f"  -> Skipping metric file due to HP parse fail: {hp_folder_name}")
-                    continue
+                if not run_hps: continue
 
                 run_metrics = load_run_data(metrics_file)
 
                 if run_metrics:
-                    # --- ADD THIS BLOCK ---
-                    # Store the relative path for debugging
-                    try:
-                        relative_metric_path = metrics_file.relative_to(base_path)
-                        run_metrics['source_file'] = str(relative_metric_path)
-                    except ValueError:
-                        run_metrics['source_file'] = str(metrics_file)
-                    # --- END BLOCK ---
-
                     all_runs.append({
                         **run_scenario,
                         **run_hps,
-                        **run_metrics,  # This now contains 'source_file'
+                        **run_metrics,
                         "hp_suffix": hp_folder_name
                     })
             except Exception as e:
-                print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
-
-    print(f"\n--- DEBUG SUMMARY ---")
-    print(f"Successfully parsed {parsed_count} scenario folders.")
-    print(f"Found a total of {metrics_found_count} 'final_metrics.json' files.")
-    print(f"Aggregated {len(all_runs)} total runs into the DataFrame.")
-    print(f"--- END DEBUG ---")
+                print(f"Error processing file {metrics_file}: {e}")
 
     if not all_runs:
         print("Error: No 'final_metrics.json' files were successfully processed.")
@@ -189,107 +168,115 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     return df
 
 
-def plot_sensitivity_lines(df: pd.DataFrame, x_metric: str, attack_type: str, dataset: str, output_dir: Path):
+# --- Plotting Function (The Update) ---
+
+def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, output_dir: Path):
     """
-    (REWRITTEN)
-    Generates an *individual PDF plot for each metric*.
+    Generates a SINGLE wide figure (1x4) for the Sensitivity Analysis of a specific dataset/attack pair.
+    Plots:
+      1. ASR vs. Adversary Rate
+      2. Benign Selection vs. Adversary Rate
+      3. ASR vs. Poison Rate
+      4. Accuracy vs. Poison Rate
     """
-    print(f"\n--- Plotting Robustness vs. '{x_metric}' (for {attack_type} on {dataset}) ---")
+    print(f"\n--- Plotting Composite Sensitivity Row: {dataset} ({attack}) ---")
 
-    # --- ADD THIS BLOCK FOR DEBUGGING ---
-    print(f"  -> Data for this plot is sourced from the following files:")
+    # Filter data for this specific scenario
+    subset = df[(df['dataset'] == dataset) & (df['attack'] == attack)].copy()
 
-    # Sort by the x-metric to see the data points in order
-    sorted_df = df.sort_values(by=[x_metric, 'defense', 'source_file'])
+    if subset.empty:
+        print("  -> No data found for this combination.")
+        return
 
-    print("  " + "-" * 80)
-    # Print the relevant columns for every row in this plot's DataFrame
-    print(sorted_df[[x_metric, 'defense', 'acc', 'asr', 'source_file']].to_string(index=False))
-    print("  " + "-" * 80)
-    # --- END BLOCK ---
-    if attack_type == 'backdoor':
-        metrics_to_plot = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate', 'rounds']
-    elif attack_type == 'labelflip':
-        metrics_to_plot = ['acc', 'benign_selection_rate', 'adv_selection_rate', 'rounds']
+    # Convert rates to percentages for better readability
+    for col in ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']:
+        if col in subset.columns:
+            subset[col] = subset[col] * 100
+
+    # Split into the two sweep types based on folder name
+    # 'sweep_type' comes from the folder name (step5_atk_sens_adv_... vs step5_atk_sens_poison_...)
+    df_adv_sweep = subset[subset['sweep_type'] == 'adv']
+    df_poison_sweep = subset[subset['sweep_type'] == 'poison']
+
+    if df_adv_sweep.empty and df_poison_sweep.empty:
+        print("  -> No valid sweep data found.")
+        return
+
+    set_plot_style()
+
+    # Initialize Figure
+    fig, axes = plt.subplots(1, 4, figsize=(24, 4.5), constrained_layout=True)
+
+    # Determine Defense Order for consistent colors
+    defense_order = sorted(subset['defense'].unique())
+
+    # --- PLOT 1 & 2: Adversary Rate Sweep ---
+    if not df_adv_sweep.empty:
+        # (a) ASR vs Adv Rate
+        sns.lineplot(ax=axes[0], data=df_adv_sweep, x='adv_rate', y='asr', hue='defense',
+                     style='defense', markers=True, dashes=False, hue_order=defense_order, style_order=defense_order)
+        axes[0].set_title("(a) ASR vs. Adversary Rate", fontweight='bold')
+        axes[0].set_xlabel("Adversary Rate")
+        axes[0].set_ylabel("ASR (%)")
+        axes[0].set_ylim(-5, 105)
+        axes[0].get_legend().remove()
+
+        # (b) Benign Selection vs Adv Rate
+        sns.lineplot(ax=axes[1], data=df_adv_sweep, x='adv_rate', y='benign_selection_rate', hue='defense',
+                     style='defense', markers=True, dashes=False, hue_order=defense_order, style_order=defense_order)
+        axes[1].set_title("(b) Benign Select vs. Adv Rate", fontweight='bold')
+        axes[1].set_xlabel("Adversary Rate")
+        axes[1].set_ylabel("Selection Rate (%)")
+        axes[1].set_ylim(-5, 105)
+        axes[1].get_legend().remove()
     else:
-        print(f"Skipping plot for unknown attack type: {attack_type}")
-        return
+        axes[0].text(0.5, 0.5, "No Adv Rate Data", ha='center', va='center')
+        axes[1].text(0.5, 0.5, "No Adv Rate Data", ha='center', va='center')
 
-    metrics_to_plot = [m for m in metrics_to_plot if m in df.columns]
+    # --- PLOT 3 & 4: Poison Rate Sweep ---
+    if not df_poison_sweep.empty:
+        # (c) ASR vs Poison Rate
+        sns.lineplot(ax=axes[2], data=df_poison_sweep, x='poison_rate', y='asr', hue='defense',
+                     style='defense', markers=True, dashes=False, hue_order=defense_order, style_order=defense_order)
+        axes[2].set_title("(c) ASR vs. Poison Rate", fontweight='bold')
+        axes[2].set_xlabel("Poison Rate")
+        axes[2].set_ylabel("ASR (%)")
+        axes[2].set_ylim(-5, 105)
+        axes[2].get_legend().remove()
 
-    if not metrics_to_plot:
-        print(f"No metrics found to plot for {dataset}/{attack} vs {x_metric}.")
-        return
+        # (d) Accuracy vs Poison Rate
+        sns.lineplot(ax=axes[3], data=df_poison_sweep, x='poison_rate', y='acc', hue='defense',
+                     style='defense', markers=True, dashes=False, hue_order=defense_order, style_order=defense_order)
+        axes[3].set_title("(d) Accuracy vs. Poison Rate", fontweight='bold')
+        axes[3].set_xlabel("Poison Rate")
+        axes[3].set_ylabel("Accuracy (%)")
+        axes[3].set_ylim(-5, 105)
 
-    # Melt the dataframe *once*
-    plot_df = df.melt(
-        id_vars=[x_metric, 'defense'],
-        value_vars=metrics_to_plot,
-        var_name='Metric',
-        value_name='Value'
-    )
+        # Handle Legend extraction from this plot
+        handles, labels = axes[3].get_legend_handles_labels()
+        axes[3].get_legend().remove()
+    else:
+        axes[2].text(0.5, 0.5, "No Poison Rate Data", ha='center', va='center')
+        axes[3].text(0.5, 0.5, "No Poison Rate Data", ha='center', va='center')
+        # Attempt to get handles from first plot if 3rd is empty
+        if not df_adv_sweep.empty:
+            handles, labels = axes[0].get_legend_handles_labels()
+        else:
+            handles, labels = [], []
 
-    rate_metrics = ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']
-    plot_df['Value'] = plot_df.apply(
-        lambda row: row['Value'] * 100 if row['Metric'] in rate_metrics else row['Value'],
-        axis=1
-    )
+    # --- Global Legend ---
+    if handles:
+        # Capitalize labels
+        labels = [l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask", "SkyMask").replace("Martfl", "MARTFL") for l in labels]
+        fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.05),
+                   ncol=len(defense_order), frameon=True, title="Defense Methods")
 
-    # --- NEW LOOP: Create one plot per metric ---
-    for metric in metrics_to_plot:
-
-        # Create a clean metric name for title and filename
-        metric_name_clean = f'{metric} (%)' if metric in rate_metrics else metric
-
-        print(f"  -> Plotting metric: {metric_name_clean}")
-
-        # Filter the melted dataframe for this metric only
-        metric_df = plot_df[plot_df['Metric'] == metric].copy()
-
-        if metric_df.empty:
-            print(f"    ...No data for metric '{metric}'. Skipping plot.")
-            continue
-
-        # Create a new figure for this plot
-        plt.figure(figsize=(8, 5))
-        ax = sns.lineplot(
-            data=metric_df,
-            x=x_metric,
-            y='Value',
-            hue='defense',
-            style='defense',
-            markers=True,
-            dashes=False
-        )
-
-        title_x = x_metric.replace("_", " ").title()
-        title_dataset = dataset.upper()
-        title_attack = attack_type.title()
-
-        ax.set_title(f'{metric_name_clean} vs. {title_x}\n({title_attack} on {title_dataset})')
-        ax.set_xlabel(title_x)
-        ax.set_ylabel(metric_name_clean)
-
-        # Add grid for readability
-        ax.grid(True, linestyle='--', alpha=0.6)
-
-        # Set y-axis for rates
-        if metric in rate_metrics:
-            ax.set_ylim(-5, 105)  # From -5 to 105 to see 0 and 100 clearly
-
-        # Create a safe filename for the dataset
-        safe_dataset_name = re.sub(r'[^\w]', '', dataset)
-
-        # Create the new, specific filename
-        plot_file_name = f"plot_robustness_{attack_type}_{safe_dataset_name}_vs_{x_metric}_{metric}.pdf"
-        plot_file = output_dir / plot_file_name
-
-        plt.savefig(plot_file, bbox_inches='tight', format='pdf')
-        print(f"    ...Saved plot: {plot_file_name}")
-
-        # Close the plot to free memory
-        plt.clf()
-        plt.close('all')
+    # Save
+    safe_dataset = re.sub(r'[^\w]', '', dataset)
+    filename = output_dir / f"plot_sensitivity_composite_{safe_dataset}_{attack}.pdf"
+    plt.savefig(filename, bbox_inches='tight', format='pdf', dpi=300)
+    print(f"  -> Saved plot to: {filename}")
+    plt.close('all')
 
 
 def main():
@@ -297,47 +284,31 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     print(f"Plots will be saved to: {output_dir.resolve()}")
 
+    # 1. Collect Data
     df = collect_all_results(BASE_RESULTS_DIR)
 
     if df.empty:
         print("No data loaded. Exiting.")
         return
-    print("\n--- DataFrame Head (with source_file) ---")
-    print("Showing the first 5 rows of aggregated data:")
-    pd.set_option('display.max_columns', None)
-    pd.set_option('display.width', 1000)
-    print(df[['defense', 'attack', 'adv_rate', 'poison_rate', 'acc', 'asr', 'source_file']].head())
-    print("-------------------------------------------\n")
-    # Loop over dataset and attack
-    for dataset in df['dataset'].unique():
-        if dataset in ['unknown', 'parse_failed']:
-            print(f"Skipping plots for '{dataset}' group (due to parsing errors).")
-            continue
 
-        for attack in df['attack'].unique():
-            if pd.isna(attack):
-                continue
+    # 2. Debug Print
+    print("\n--- Data Loaded ---")
+    print(f"Total runs: {len(df)}")
+    print(f"Datasets found: {df['dataset'].unique()}")
+    print(f"Attacks found: {df['attack'].unique()}")
 
-            scenario_df = df[(df['dataset'] == dataset) & (df['attack'] == attack)].copy()
+    # 3. Generate Composite Plots for each Dataset/Attack pair
+    # Get unique combinations
+    combinations = df[['dataset', 'attack']].drop_duplicates().values
 
-            if scenario_df.empty:
-                continue
+    for dataset, attack in combinations:
+        # Skip if parsing failed
+        if dataset == 'unknown': continue
+        if pd.isna(attack): continue
 
-            # Plot 1: Sweep vs. Adversary Rate
-            adv_rate_df = scenario_df[scenario_df['sweep_type'] == 'adv']
-            if not adv_rate_df.empty:
-                plot_sensitivity_lines(adv_rate_df, 'adv_rate', attack, dataset, output_dir)
-            else:
-                print(f"No data found for {dataset}/{attack} vs. adv_rate sweep.")
+        plot_sensitivity_composite_row(df, dataset, attack, output_dir)
 
-            # Plot 2: Sweep vs. Poison Rate
-            poison_rate_df = scenario_df[scenario_df['sweep_type'] == 'poison']
-            if not poison_rate_df.empty:
-                plot_sensitivity_lines(poison_rate_df, 'poison_rate', attack, dataset, output_dir)
-            else:
-                print(f"No data found for {dataset}/{attack} vs. poison_rate sweep.")
-
-    print("\nAnalysis complete. Check 'step5_figures' folder for plots.")
+    print("\nAnalysis complete.")
 
 
 if __name__ == "__main__":
