@@ -31,7 +31,7 @@ SYBIL_TEST_CONFIG = {
     # "knock_out": {}
 
     # NOTE: 'blend_alpha' here is the key expected by use_sybil_attack_strategy kwargs
-    "oracle_blend": {"blend_alpha": [0.05, 0.1, 0.2, 0.5, 0.8]},
+    "oracle_blend": {"blend_alpha": [0.05, 0.1, 0.2, 0.5, 0.8, 0.9]},
     # "systematic_probe": {},
 }
 
