@@ -144,47 +144,51 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
 
     print(f"\n--- Plotting Sybil Effectiveness for: {defense} ---")
 
-    # --- 1. CONFIG ---
+    # --- 1. CONFIGURATION ---
+    # "talk" context makes fonts larger (approx 1.3x default)
     sns.set_theme(style="whitegrid")
     sns.set_context("talk", font_scale=1.1)
 
-    # --- 2. DATA PREP: Consistent Sorting (Aggressive -> Stealthy) ---
-    # We standardize Alpha to represent "Centroid Weight" (Mimicry Factor).
-    # Low Alpha = Aggressive (Mostly Malicious)
-    # High Alpha = Stealthy (Mostly Centroid)
-
-    def get_sort_key(label):
-        # Returns: (Family_Order, Standardized_Alpha)
-
-        # 0. Baseline
+    # --- 2. LOGIC: Standardize Alpha (Centroid Weight) ---
+    def get_standardized_alpha_and_order(label):
+        """
+        Returns tuple: (Family_Order, Alpha_Centroid_Weight)
+        Family 0: Baseline
+        Family 1: Standard Mimic (Blind)
+        Family 2: Oracle Mimic (Smart)
+        """
+        # --- BASELINE ---
         if label == 'baseline_no_sybil':
             return (0, 0.0)
 
-        # 1. Standard Mimicry Family
+        # --- FAMILY 1: STANDARD MIMIC ---
         if label == 'mimic':
-            return (1, 0.1)  # 10% Centroid
+            return (1, 0.10) # User defined base mimicry
         if label == 'knock_out':
-            return (1, 0.2)  # 20% Centroid
+            return (1, 0.20) # Knockout is 2x base
         if label == 'pivot':
-            return (1, 1.0)  # 100% Centroid
+            return (1, 1.00) # Pivot is pure replacement
 
-        # 2. Oracle Family
-        # In config, the value was "Malicious Weight".
-        # We convert to "Centroid Weight" to match Mimic.
+        # --- FAMILY 2: ORACLE BLEND ---
+        # Assumption: 'oracle_blend_0.8' means 0.8 ATTACK weight.
+        # We convert to CENTROID weight to be consistent with Mimic.
+        # Alpha = 1.0 - Attack_Weight
         if label.startswith('oracle_blend'):
             try:
-                val = float(label.split('_')[-1])
-                alpha_centroid = 1.0 - val
-                return (2, alpha_centroid)
+                attack_weight = float(label.split('_')[-1])
+                alpha_centroid = 1.0 - attack_weight
+                return (2, round(alpha_centroid, 2))
             except:
                 return (2, 0.5)
 
+        # Fallback for unknown
         return (3, 0.0)
 
+    # Get unique labels and sort them using the logic above
     unique_labels = defense_df['strategy_label'].unique()
-    sorted_labels = sorted(unique_labels, key=get_sort_key)
+    sorted_labels = sorted(unique_labels, key=get_standardized_alpha_and_order)
 
-    # --- 3. DATA PREP: Metrics ---
+    # --- 3. DATA PREP ---
     metric_map = {
         'acc': 'Model Accuracy',
         'asr': 'Attack Success Rate',
@@ -202,7 +206,7 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
     plot_df['Metric'] = plot_df['Metric'].map(metric_map)
 
     # --- 4. PLOTTING ---
-    plt.figure(figsize=(18, 8))
+    plt.figure(figsize=(20, 8)) # Wide figure for readability
 
     ax = sns.barplot(
         data=plot_df,
@@ -212,57 +216,54 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
         order=sorted_labels,
         palette="deep",
         edgecolor="black",
-        linewidth=1
+        linewidth=1.2 # Thicker borders for "Publication Quality"
     )
 
     # --- 5. STYLING ---
-    plt.title(f'Impact of Centroid Knowledge & Mimicry Factor ({defense.upper()})',
+    # Use LaTeX rendering for mathematical symbols if available, otherwise standard text
+    plt.title(f'Impact of Mimicry Factor ($\\alpha$) on Attack Efficacy ({defense.upper()})',
               fontsize=24, fontweight='bold', pad=20)
-    plt.ylabel('Rate', fontsize=20, fontweight='bold')
-    plt.xlabel(r'Sybil Strategy ($\alpha$ = Centroid Weight)', fontsize=18, labelpad=15)
+    plt.ylabel('Rate', fontsize=22, fontweight='bold')
+    plt.xlabel('Sybil Strategy ($\\alpha$ = Centroid Weight)', fontsize=20, fontweight='bold', labelpad=15)
 
-    # --- 6. FORMATTING LABELS (The Standardization) ---
+    # --- 6. FORMATTING LABELS ---
     def format_label(l):
-        if l == 'baseline_no_sybil': return "Baseline"
+        sort_key = get_standardized_alpha_and_order(l)
+        family_id = sort_key[0]
+        alpha_val = sort_key[1]
 
-        # --- FAMILY 1: STANDARD MIMIC ---
-        if l == 'mimic':
-            return "Mimic\n($\\alpha=0.1$)"
-        if l == 'knock_out':
-            return "Mimic\n($\\alpha=0.2$)"
-        if l == 'pivot':
-            return "Mimic\n($\\alpha=1.0$)"
-
-        # --- FAMILY 2: ORACLE ---
-        # Convert logic: Config 0.8 (aggressive) -> Alpha 0.2 (100% - 80%)
-        if l.startswith('oracle_blend'):
-            val = float(l.split('_')[-1])
-            alpha_centroid = 1.0 - val
-            # Round to avoid floating point uglyness (e.g. 0.19999)
-            alpha_display = round(alpha_centroid, 2)
-            return f"Oracle\n($\\alpha={alpha_display}$)"
-
-        return l.replace('_', '\n').title()
+        if family_id == 0:
+            return "Baseline"
+        elif family_id == 1:
+            return f"Mimic\n($\\alpha={alpha_val}$)"
+        elif family_id == 2:
+            return f"Oracle\n($\\alpha={alpha_val}$)"
+        else:
+            return l.replace('_', '\n').title()
 
     formatted_labels = [format_label(l) for l in sorted_labels]
 
-    ax.set_xticklabels(formatted_labels, rotation=0, fontsize=16, fontweight='bold')
-    plt.yticks(fontsize=16)
+    # Rotation 0 makes it horizontal (easiest to read)
+    ax.set_xticklabels(formatted_labels, rotation=0, fontsize=18, fontweight='bold')
+    plt.yticks(fontsize=18)
 
-    # --- 7. LEGEND & LAYOUT ---
+    # --- 7. LEGEND ---
+    # Place legend horizontally at the bottom
     plt.legend(
         title=None,
-        fontsize=16,
+        fontsize=18,
         loc='upper center',
-        bbox_to_anchor=(0.5, -0.14),
+        bbox_to_anchor=(0.5, -0.15),
         ncol=4,
         frameon=False
     )
 
+    # Adjust layout to prevent cutting off the legend
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.22)  # Extra space for axis label + legend
+    plt.subplots_adjust(bottom=0.25)
 
-    plot_file = output_dir / f"plot_sybil_effectiveness_standardized_{defense}.pdf"
+    # Save as PDF (Vector graphics for LaTeX)
+    plot_file = output_dir / f"plot_sybil_standardized_{defense}.pdf"
     plt.savefig(plot_file, dpi=300)
     print(f"Saved plot: {plot_file}")
     plt.clf()
