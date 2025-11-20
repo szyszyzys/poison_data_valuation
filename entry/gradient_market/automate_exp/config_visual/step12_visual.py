@@ -1,5 +1,3 @@
-# FILE: step12_visual_analysis.py
-
 import pandas as pd
 import json
 import re
@@ -8,332 +6,326 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
+from matplotlib.ticker import FixedLocator, FixedFormatter
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step12_main_summary"
+FIGURE_OUTPUT_DIR = "./figures/step11_figures_visuals"
+
+# --- Constants for Heterogeneity Plot ---
+# We treat 100.0 as the "IID" case
+ALPHAS_IN_TEST = [100.0, 1.0, 0.5, 0.1]
+ALPHA_LABELS = ["IID", "1.0", "0.5", "0.1"]
+
+# --- Constants for Scarcity Plot ---
+RATIOS_IN_TEST = [0.01, 0.05, 0.1, 0.2]
+
+# --- VISUAL CONSISTENCY UPDATES ---
+# 1. Updated Palette (Seaborn Deep / Paper Standard)
+CUSTOM_PALETTE = {
+    "fedavg": "#4c72b0",  # Deep Blue
+    "fltrust": "#dd8452",  # Deep Orange
+    "martfl": "#55a868",  # Deep Green
+    "skymask": "#c44e52"  # Deep Red
+}
+
+# 2. Added Markers for Accessibility (B/W printing)
+CUSTOM_MARKERS = {
+    "fedavg": "o",  # Circle
+    "fltrust": "X",  # Big X
+    "martfl": "s",  # Square
+    "skymask": "P"  # Plus (filled)
+}
 
 
-# ---------------------
+def set_plot_style():
+    sns.set_theme(style="whitegrid")
+    sns.set_context("paper", font_scale=1.6)  # Match Scalability Font Scale
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams['axes.linewidth'] = 1.5
+    plt.rcParams['axes.edgecolor'] = '#333333'
+    # 3. Thicker lines/markers
+    plt.rcParams['lines.linewidth'] = 3.0
+    plt.rcParams['lines.markersize'] = 10
+
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
-    """
-    Parses Step 12 folder names to extract experimental variables.
-    Expected format: step12_main_summary_[DEFENSE]_[MODALITY]_[DATASET]_[MODEL]
-    Example: step12_main_summary_martfl_image_CIFAR100_cnn
-    """
+    """Parses directory names to find Bias Source."""
     try:
-        parts = scenario_name.split('_')
-        # Heuristic parsing based on standard naming convention
-        if 'step12' in parts and 'main' in parts:
-            # Find the index of 'summary' to anchor the rest
-            try:
-                idx = parts.index('summary')
-                defense = parts[idx + 1]
-                modality = parts[idx + 2]
-                dataset = parts[idx + 3]
-                return {
-                    "scenario": scenario_name,
-                    "defense": defense,
-                    "modality": modality,
-                    "dataset": dataset
-                }
-            except IndexError:
-                pass
-
-        # Fallback regex if split fails
-        match = re.search(r'step12_main_summary_([^_]+)_([^_]+)_([^_]+)', scenario_name)
+        pattern = r'step11_(market_wide|buyer_only|seller_only)_(fedavg|martfl|fltrust|skymask)_(.*)'
+        match = re.search(pattern, scenario_name)
         if match:
+            raw_bias = match.group(1)
+            bias_formatted = raw_bias.replace('_', '-').title() + " Bias"
             return {
-                "scenario": scenario_name,
-                "defense": match.group(1),
-                "modality": match.group(2),
+                "bias_source": bias_formatted,
+                "defense": match.group(2),
                 "dataset": match.group(3)
             }
-
-        return {"scenario": scenario_name, "defense": "unknown", "dataset": "unknown"}
-    except Exception as e:
-        print(f"Error parsing scenario '{scenario_name}': {e}")
-        return {"scenario": scenario_name, "defense": "unknown", "dataset": "unknown"}
+        return {"bias_source": "IGNORE", "dataset": "unknown"}
+    except:
+        return {"bias_source": "IGNORE"}
 
 
-def load_metrics_from_csv(run_dir: Path) -> pd.DataFrame:
+def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     """
-    Scans seller_metrics.csv for:
-    1. Valuation metrics (influence, shapley, loo, similarity)
-    2. Selection rates (from 'selected' column)
-
-    Returns a DataFrame row with columns like:
-      Benign_influence_score, Adversary_influence_score, 
-      Benign_selected, Adversary_selected, etc.
+    Parses folder suffixes for both Heterogeneity and Scarcity.
     """
-    csv_path = run_dir / "seller_metrics.csv"
-    if not csv_path.exists():
-        return pd.DataFrame()
+    hps = {}
 
+    # Case 1: Heterogeneity Sweep
+    match_alpha = re.search(r'alpha_([0-9\.]+)', hp_folder_name)
+    if match_alpha:
+        hps['experiment_type'] = 'heterogeneity'
+        hps['x_val'] = float(match_alpha.group(1))
+        return hps
+
+    # Case 2: Buyer Ratio Sweep
+    match_ratio = re.search(r'ratio_sweep_([0-9\.]+)', hp_folder_name)
+    if match_ratio:
+        hps['experiment_type'] = 'scarcity'
+        hps['x_val'] = float(match_ratio.group(1))
+        return hps
+
+    return {}
+
+
+def load_run_data(metrics_file: Path) -> Dict[str, Any]:
+    """Loads metrics from JSONs."""
+    run_data = {}
     try:
-        # FIX: on_bad_lines='skip' handles race-condition write errors in CSVs
-        df = pd.read_csv(csv_path, on_bad_lines='skip')
+        with open(metrics_file, 'r') as f:
+            metrics = json.load(f)
 
-        if df.empty or 'seller_id' not in df.columns:
-            return pd.DataFrame()
+        acc = metrics.get('acc', 0)
+        if acc > 1.0: acc /= 100.0  # Normalize %
 
-        # 1. Identify Seller Type
-        df['type'] = df['seller_id'].apply(
-            lambda x: 'Adversary' if str(x).startswith('adv') else 'Benign'
-        )
+        run_data['acc'] = acc
+        run_data['asr'] = metrics.get('asr', 0)
 
-        # 2. Identify Columns of Interest
-        # We want 'selected' plus anything looking like a valuation metric
-        target_keywords = ['influence', 'shap', 'loo', 'sim_']
+        report_file = metrics_file.parent / "marketplace_report.json"
+        if report_file.exists():
+            with open(report_file, 'r') as f:
+                report = json.load(f)
+            sellers = list(report.get('seller_summaries', {}).values())
+            adv = [s for s in sellers if s.get('type') == 'adversary']
+            ben = [s for s in sellers if s.get('type') == 'benign']
 
-        # Find valuation columns
-        val_cols = [c for c in df.columns if any(x in c.lower() for x in target_keywords)]
+            run_data['adv_selection_rate'] = np.mean([s['selection_rate'] for s in adv]) if adv else 0.0
+            run_data['benign_selection_rate'] = np.mean([s['selection_rate'] for s in ben]) if ben else 0.0
+        else:
+            run_data['adv_selection_rate'] = 0.0
+            run_data['benign_selection_rate'] = 0.0
 
-        # Add 'selected' if present (convert boolean to int for averaging)
-        if 'selected' in df.columns:
-            df['selected'] = df['selected'].astype(int)
-            val_cols.append('selected')
-
-        if not val_cols:
-            return pd.DataFrame()
-
-        # 3. Aggregate Average Score per Type
-        # groupby().mean() automatically ignores NaNs
-        summary = df.groupby('type')[val_cols].mean().reset_index()
-        return summary
-
-    except Exception as e:
-        print(f"⚠️ Warning: Could not read CSV {csv_path}: {e}")
-        return pd.DataFrame()
+        return run_data
+    except:
+        return {}
 
 
 def collect_all_results(base_dir: str) -> pd.DataFrame:
-    """
-    Walks directory, combines JSON global metrics with CSV detailed metrics.
-    """
     all_runs = []
     base_path = Path(base_dir)
+    print(f"Searching in {base_path}...")
 
-    # Find all Step 12 folders
-    scenario_folders = [f for f in base_path.glob("step12_*") if f.is_dir()]
-    print(f"Found {len(scenario_folders)} scenarios to process.")
+    scenario_folders = [f for f in base_path.glob("step11_*") if f.is_dir()]
 
     for scenario_path in scenario_folders:
         run_scenario = parse_scenario_name(scenario_path.name)
+        if run_scenario.get("bias_source") == "IGNORE": continue
 
-        # Look for final_metrics.json to identify completed runs
         for metrics_file in scenario_path.rglob("final_metrics.json"):
-            run_dir = metrics_file.parent
-
-            # 1. Load Standard Metrics (JSON)
             try:
-                with open(metrics_file, 'r') as f:
-                    metrics = json.load(f)
-                acc = metrics.get('acc', 0)
-                rounds = metrics.get('completed_rounds', 0)
+                relative_parts = metrics_file.parent.relative_to(scenario_path).parts
+                if not relative_parts: continue
+
+                hp_folder = relative_parts[0]
+                run_hps = parse_hp_suffix(hp_folder)
+
+                if 'experiment_type' not in run_hps: continue
+
+                metrics = load_run_data(metrics_file)
+                if metrics:
+                    all_runs.append({**run_scenario, **run_hps, **metrics})
             except:
-                acc = 0
-                rounds = 0
-
-            # 2. Load Valuation & Selection Data (CSV)
-            df_val = load_metrics_from_csv(run_dir)
-
-            # Flatten the summary dataframe into a single dictionary row
-            flat_record = {
-                **run_scenario,
-                "acc": acc,
-                "rounds": rounds
-            }
-
-            if not df_val.empty:
-                for _, row in df_val.iterrows():
-                    s_type = row['type']  # Benign or Adversary
-                    for col in df_val.columns:
-                        if col != 'type':
-                            # Example key: Benign_influence_score
-                            flat_record[f"{s_type}_{col}"] = row[col]
-
-            all_runs.append(flat_record)
+                continue
 
     return pd.DataFrame(all_runs)
 
 
-# --- PLOTTING HELPERS ---
-
-def _clean_filename(s: str) -> str:
-    """Sanitizes strings for filenames."""
-    s = re.sub(r'\([^)]*\)', '', s)  # Remove parens
-    s = re.sub(r'[^\w]', '_', s)  # Replace non-alphanumeric
-    s = re.sub(r'_+', '_', s)  # Dedup underscores
-    return s.strip('_')
-
-
-def plot_platform_usability(df: pd.DataFrame, output_dir: Path):
+def plot_heterogeneity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
     """
-    Plots Global Accuracy, Rounds, and Selection Rates.
+    Plots: X-Axis = Alpha (Heterogeneity)
     """
-    print("\n--- Plotting Performance & Selection ---")
+    print(f"\n--- Generating Heterogeneity Plots for {dataset} ---")
 
-    # List of (Display Name, Column Key, Is Percentage)
-    # Note: 'Benign_selected' comes from the CSV aggregation
-    metrics_config = [
-        ('Global Accuracy', 'acc', True),
-        ('Rounds to Converge', 'rounds', False),
-        ('Benign Selection Rate', 'Benign_selected', True),
-        ('Adversary Selection Rate', 'Adversary_selected', True)
+    dataset_df = df[(df['dataset'] == dataset) & (df['experiment_type'] == 'heterogeneity')].copy()
+    if dataset_df.empty: return
+
+    # Convert to percentages
+    for col in ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']:
+        dataset_df[col] = dataset_df[col] * 100
+
+    valid_biases = ['Market-Wide Bias', 'Buyer-Only Bias', 'Seller-Only Bias']
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+
+    metrics_order = [
+        ('acc', 'Accuracy'),
+        ('asr', 'ASR'),
+        ('benign_selection_rate', 'Benign Select'),
+        ('adv_selection_rate', 'Adv. Select')
     ]
 
-    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+    for bias in valid_biases:
+        bias_df = dataset_df[dataset_df['bias_source'] == bias]
+        if bias_df.empty: continue
 
-    for dataset in df['dataset'].unique():
-        subset = df[df['dataset'] == dataset].copy()
-        if subset.empty: continue
+        fig, axes = plt.subplots(1, 4, figsize=(24, 4.5), constrained_layout=True)
+        set_plot_style()
 
-        for disp_name, col_name, is_pct in metrics_config:
-            # Skip if column doesn't exist (e.g. no 'Adversary_selected' data)
-            if col_name not in subset.columns:
-                continue
-
-            # Skip if all NaN
-            if subset[col_name].isna().all():
-                continue
-
-            plt.figure(figsize=(7, 5))
-
-            # Aggregate across seeds
-            plot_data = subset.groupby('defense')[col_name].mean().reset_index()
-
-            if is_pct:
-                # Convert 0.5 -> 50.0, but check if already percent
-                if plot_data[col_name].max() <= 1.0:
-                    plot_data[col_name] *= 100
-                ylabel = f"{disp_name} (%)"
-            else:
-                ylabel = disp_name
-
-            sns.barplot(
-                data=plot_data,
-                x='defense',
+        for i, (col_name, display_name) in enumerate(metrics_order):
+            ax = axes[i]
+            sns.lineplot(
+                ax=ax,
+                data=bias_df,
+                x='x_val',
                 y=col_name,
-                order=[d for d in defense_order if d in plot_data['defense'].unique()],
-                palette='viridis'
+                hue='defense',
+                style='defense',
+                hue_order=defense_order,
+                style_order=defense_order,
+                palette=CUSTOM_PALETTE,  # UPDATED
+                markers=CUSTOM_MARKERS,  # UPDATED
+                dashes=False,
+                errorbar=('ci', 95)
             )
 
-            plt.title(f"{disp_name}\nDataset: {dataset}", fontsize=14)
-            plt.ylabel(ylabel, fontsize=12)
-            plt.xlabel("Defense", fontsize=12)
-            plt.grid(axis='y', linestyle='--', alpha=0.5)
+            ax.set_title(f"{display_name}", fontweight='bold')
+            ax.set_xlabel("Heterogeneity", fontsize=16)
+            if i == 0:
+                ax.set_ylabel("Rate / Score (%)", fontsize=16)
+            else:
+                ax.set_ylabel("")
 
-            # Save
-            clean_metric = _clean_filename(disp_name)
-            fname = output_dir / f"Step12_Perf_{dataset}_{clean_metric}.pdf"
-            plt.savefig(fname, bbox_inches='tight')
-            plt.close()
-            print(f"  Saved: {fname.name}")
+            # --- AXIS LOGIC: IID (100) on LEFT ---
+            ax.set_xscale('log')
+            ax.xaxis.set_major_locator(FixedLocator(ALPHAS_IN_TEST))
+            ax.xaxis.set_major_formatter(FixedFormatter(ALPHA_LABELS))
+            ax.set_xlim(max(ALPHAS_IN_TEST) * 1.4, min(ALPHAS_IN_TEST) * 0.8)
+
+            ax.grid(True, which='major', linestyle='-', alpha=0.6)
+            ax.get_legend().remove()
+
+        # Legend
+        handles, labels = axes[0].get_legend_handles_labels()
+        labels = [l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask",
+                                                                                                   "SkyMask").replace(
+            "Martfl", "MARTFL") for l in labels]
+
+        fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.15),
+                   ncol=len(defense_order), frameon=True, fontsize=16, title="Defense Methods")
+
+        # Optional: Title can be removed for papers
+        # fig.suptitle(f"Impact of {bias} on {dataset}", fontsize=18, fontweight='bold', y=1.05)
+
+        safe_bias = bias.replace(' ', '').replace('-', '')
+        fname = output_dir / f"Step11_Heterogeneity_{dataset}_{safe_bias}.pdf"
+        plt.savefig(fname, bbox_inches='tight', format='pdf')
+        print(f"  Saved: {fname.name}")
+        plt.close()
 
 
-def plot_valuation_fairness(df: pd.DataFrame, output_dir: Path):
+def plot_scarcity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
     """
-    Plots Valuation and Similarity scores (Benign vs Adversary).
+    Plots: X-Axis = Buyer Ratio (Data Scarcity)
     """
-    print("\n--- Plotting Valuation & Similarity ---")
+    print(f"\n--- Generating Data Scarcity Plots for {dataset} ---")
 
-    # Identify all metric roots (e.g., "influence_score" from "Benign_influence_score")
-    metric_roots = set()
-    for col in df.columns:
-        if col.startswith('Adversary_') or col.startswith('Benign_'):
-            root = col.replace('Adversary_', '').replace('Benign_', '')
-            # Skip 'selected' as we plotted it in the performance section
-            if root != 'selected':
-                metric_roots.add(root)
+    dataset_df = df[(df['dataset'] == dataset) & (df['experiment_type'] == 'scarcity')].copy()
+    if dataset_df.empty:
+        print("  No Scarcity data found.")
+        return
+
+    for col in ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']:
+        dataset_df[col] = dataset_df[col] * 100
+
+    # Scarcity was only run for Seller-Only Bias
+    bias = 'Seller-Only Bias'
+    bias_df = dataset_df[dataset_df['bias_source'] == bias]
+    if bias_df.empty: return
 
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+    metrics_order = [
+        ('acc', 'Accuracy'),
+        ('asr', 'ASR'),
+        ('benign_selection_rate', 'Benign Select'),
+        ('adv_selection_rate', 'Adv. Select')
+    ]
 
-    for dataset in df['dataset'].unique():
-        subset = df[df['dataset'] == dataset]
-        if subset.empty: continue
+    fig, axes = plt.subplots(1, 4, figsize=(24, 4.5), constrained_layout=True)
+    set_plot_style()
 
-        for root_metric in metric_roots:
-            adv_col = f"Adversary_{root_metric}"
-            ben_col = f"Benign_{root_metric}"
+    for i, (col_name, display_name) in enumerate(metrics_order):
+        ax = axes[i]
+        sns.lineplot(
+            ax=ax,
+            data=bias_df,
+            x='x_val',
+            y=col_name,
+            hue='defense',
+            style='defense',
+            hue_order=defense_order,
+            style_order=defense_order,
+            palette=CUSTOM_PALETTE,  # UPDATED
+            markers=CUSTOM_MARKERS,  # UPDATED
+            dashes=False,
+            errorbar=('ci', 95)
+        )
 
-            # Skip if columns missing
-            if adv_col not in subset.columns or ben_col not in subset.columns:
-                continue
+        ax.set_title(f"{display_name}", fontweight='bold')
+        ax.set_xlabel("Buyer Data Ratio", fontsize=16)
+        if i == 0:
+            ax.set_ylabel("Rate / Score (%)", fontsize=16)
+        else:
+            ax.set_ylabel("")
 
-            # Skip if data is effectively empty (all NaNs or zeros if that's invalid)
-            if subset[adv_col].isna().all() and subset[ben_col].isna().all():
-                continue
+        ax.xaxis.set_major_locator(FixedLocator(RATIOS_IN_TEST))
+        ax.grid(True, which='major', linestyle='-', alpha=0.6)
+        ax.get_legend().remove()
 
-            # Melt for Side-by-Side Bar Plot
-            melted = subset.melt(
-                id_vars=['defense'],
-                value_vars=[adv_col, ben_col],
-                var_name='Seller Type',
-                value_name='Score'
-            )
+    handles, labels = axes[0].get_legend_handles_labels()
+    labels = [
+        l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask", "SkyMask").replace(
+            "Martfl", "MARTFL") for l in labels]
 
-            # Rename Legend Labels
-            melted['Seller Type'] = melted['Seller Type'].map({
-                adv_col: 'Adversary',
-                ben_col: 'Benign'
-            })
+    fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.15),
+               ncol=len(defense_order), frameon=True, fontsize=16, title="Defense Methods")
 
-            plt.figure(figsize=(8, 5))
+    fname = output_dir / f"Step11_Scarcity_{dataset}.pdf"
+    plt.savefig(fname, bbox_inches='tight', format='pdf')
+    print(f"  Saved: {fname.name}")
+    plt.close()
 
-            sns.barplot(
-                data=melted,
-                x='defense',
-                y='Score',
-                hue='Seller Type',
-                order=[d for d in defense_order if d in melted['defense'].unique()],
-                palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'},  # Green vs Red
-                errorbar=None
-            )
-
-            # Aesthetics
-            clean_title = root_metric.replace('_', ' ').title()
-            plt.title(f"{clean_title}\nDataset: {dataset}", fontsize=14)
-            plt.ylabel(f"Average Score", fontsize=12)
-            plt.xlabel("Defense", fontsize=12)
-            plt.axhline(0, color='black', linewidth=1)
-            plt.legend(title=None)
-            plt.grid(axis='y', linestyle='--', alpha=0.3)
-
-            # Save
-            clean_metric_name = _clean_filename(root_metric)
-            fname = output_dir / f"Step12_Valuation_{dataset}_{clean_metric_name}.pdf"
-            plt.savefig(fname, bbox_inches='tight')
-            plt.close()
-            print(f"  Saved: {fname.name}")
-
-
-# --- MAIN EXECUTION ---
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
     print(f"Plots will be saved to: {output_dir.resolve()}")
 
-    # 1. Collect Data
     df = collect_all_results(BASE_RESULTS_DIR)
-
     if df.empty:
-        print("No data found in Step 12 folders.")
+        print("No valid data found.")
         return
 
-    # 2. Save Summary CSV
-    csv_path = output_dir / "step12_full_summary.csv"
-    df.to_csv(csv_path, index=False)
-    print(f"Saved summary data to: {csv_path.name}")
+    # Save debug CSV
+    df.to_csv(output_dir / "step11_full_summary.csv", index=False)
 
-    # 3. Generate Plots
-    plot_platform_usability(df, output_dir)
-    plot_valuation_fairness(df, output_dir)
+    for dataset in df['dataset'].unique():
+        if dataset != 'unknown':
+            plot_heterogeneity_row(df, dataset, output_dir)
+            plot_scarcity_row(df, dataset, output_dir)
 
-    print("\n✅ Analysis complete.")
+    print("\nAnalysis complete.")
 
 
 if __name__ == "__main__":
