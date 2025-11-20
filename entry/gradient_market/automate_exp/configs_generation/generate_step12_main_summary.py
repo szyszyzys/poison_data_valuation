@@ -31,13 +31,6 @@ except ImportError as e:
     print(f"Error importing necessary modules: {e}")
     sys.exit(1)
 
-STANDARD_SYBIL_STRATEGY = "mimic"
-STANDARD_ATTACK_MODIFIERS = {
-    "image": [use_image_backdoor_attack],
-    "tabular": [use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL),
-                ],
-    "text": [use_text_backdoor_attack],
-}
 FIXED_ATTACK_ADV_RATE = DEFAULT_ADV_RATE
 FIXED_ATTACK_POISON_RATE = DEFAULT_POISON_RATE
 MAIN_SUMMARY_TARGETS = [
