@@ -28,6 +28,12 @@ FIXED_ATTACK_ADV_RATE = DEFAULT_ADV_RATE
 FIXED_ATTACK_POISON_RATE = DEFAULT_POISON_RATE
 UNIFORM_ALPHA = 100.0  # "IID"
 
+# --- NEW: Buyer Ratio Sweep ---
+# We test varying amounts of root data: 1%, 5%, 10%, 20%
+# This helps isolate if FLTrust failure is due to data SCARCITY or HETEROGENEITY.
+BUYER_RATIOS_TO_SWEEP = [0.01, 0.05, 0.1, 0.2]
+DEFAULT_BUYER_RATIO = 0.1  # Used for the alpha sweep to keep it controlled
+
 BIAS_TYPES = ["market_wide", "buyer_only", "seller_only"]
 
 HETEROGENEITY_SETUP = {
@@ -99,7 +105,6 @@ def generate_heterogeneity_scenarios() -> List[Scenario]:
                 return modifier
 
             # --- PARAMETER GRID ---
-            # FIX: Removed hardcoded adversary strategy from here
             parameter_grid = {
                 HETEROGENEITY_SETUP["model_config_param_key"]: [model_cfg_name],
                 "experiment.dataset_name": [HETEROGENEITY_SETUP["dataset_name"]],
@@ -141,53 +146,47 @@ if __name__ == "__main__":
         bias_type = static_grid.pop("_bias_type")[0]
         defense_name = scenario.name.split('_')[-2]
 
+        # =======================================================================
+        # EXPERIMENT 1: Alpha Sweep (Heterogeneity) - Fixed Buyer Ratio
+        # =======================================================================
         for alpha in DIRICHLET_ALPHAS_TO_SWEEP:
-
-            # --- LOGIC ---
-            # 1. Determine Strategies
+            # Logic for Strategies (Same as before)
             if bias_type == "market_wide":
-                seller_strat = "dirichlet"
+                seller_strat = "dirichlet";
                 seller_alpha = alpha
-                buyer_strat = "dirichlet"
+                buyer_strat = "dirichlet";
                 buyer_alpha = alpha
             elif bias_type == "buyer_only":
-                seller_strat = "iid"
+                seller_strat = "iid";
                 seller_alpha = UNIFORM_ALPHA
-                buyer_strat = "dirichlet"
+                buyer_strat = "dirichlet";
                 buyer_alpha = alpha
             elif bias_type == "seller_only":
-                seller_strat = "dirichlet"
+                seller_strat = "dirichlet";
                 seller_alpha = alpha
-                buyer_strat = "iid"
+                buyer_strat = "iid";
                 buyer_alpha = UNIFORM_ALPHA
 
-            # 2. IID Override (Control Group)
             if alpha >= 100.0:
-                seller_strat = "iid"
+                seller_strat = "iid";
                 buyer_strat = "iid"
 
-            # 3. SYNC ADVERSARY WITH SELLERS (The Fix)
-            # Adversaries should generally match benign seller distribution to hide,
-            # OR match the baseline logic. In IID case, they MUST be IID.
+            # Sync Adversary
             adv_strat = seller_strat
             adv_alpha = seller_alpha
 
-            # --- GRID POPULATION ---
             current_grid = static_grid.copy()
-
-            # Benign Sellers
             current_grid[f"data.{modality}.strategy"] = [seller_strat]
             current_grid[f"data.{modality}.dirichlet_alpha"] = [seller_alpha]
-
-            # Buyer
             current_grid[f"data.{modality}.buyer_strategy"] = [buyer_strat]
             current_grid[f"data.{modality}.buyer_dirichlet_alpha"] = [buyer_alpha]
 
-            # Adversary (THE MISSING PIECE)
+            # Fix Buyer Ratio for this sweep
+            current_grid[f"data.{modality}.buyer_ratio"] = [DEFAULT_BUYER_RATIO]
+
             current_grid["adversary_seller_config.poisoning.data_distribution.strategy"] = [adv_strat]
             current_grid["adversary_seller_config.poisoning.data_distribution.dirichlet_alpha"] = [adv_alpha]
 
-            # Output Path
             hp_suffix = f"alpha_{alpha}"
             current_grid["experiment.save_path"] = [f"./results/{scenario.name}/{hp_suffix}"]
 
@@ -198,17 +197,52 @@ if __name__ == "__main__":
                 modifiers=scenario.modifiers,
                 parameter_grid=current_grid
             )
-
-            # Initialize Adversary Struct
             base_config = temp_scenario.base_config_factory()
             mod_config = initialize_adversary_data_distribution(copy.deepcopy(base_config))
             set_nested_attr(mod_config, "aggregation.aggregation_name", defense_name)
+            for modifier in temp_scenario.modifiers: mod_config = modifier(mod_config)
 
-            for modifier in temp_scenario.modifiers:
-                mod_config = modifier(mod_config)
+            task_configs += generator.generate(mod_config, temp_scenario)
 
-            num_gen = generator.generate(mod_config, temp_scenario)
-            task_configs += num_gen
+        # =======================================================================
+        # EXPERIMENT 2: Buyer Ratio Sweep (Data Scarcity) - Fixed Alpha=0.5
+        # =======================================================================
+        # Only run this sweep for "Seller-Only Bias" to see if FLTrust can be fixed
+        if bias_type == "seller_only":
+            print(f"   -> Adding Buyer Ratio Sweep for {defense_name} (Seller-Only Bias)")
+
+            fixed_alpha = 0.5  # Moderate heterogeneity
+
+            for ratio in BUYER_RATIOS_TO_SWEEP:
+                current_grid = static_grid.copy()
+
+                # Fixed Heterogeneity Settings
+                current_grid[f"data.{modality}.strategy"] = ["dirichlet"]
+                current_grid[f"data.{modality}.dirichlet_alpha"] = [fixed_alpha]
+                current_grid[f"data.{modality}.buyer_strategy"] = ["iid"]
+
+                # VARY BUYER RATIO
+                current_grid[f"data.{modality}.buyer_ratio"] = [ratio]
+
+                # Sync Adversary
+                current_grid["adversary_seller_config.poisoning.data_distribution.strategy"] = ["dirichlet"]
+                current_grid["adversary_seller_config.poisoning.data_distribution.dirichlet_alpha"] = [fixed_alpha]
+
+                hp_suffix = f"ratio_sweep_{ratio}"
+                current_grid["experiment.save_path"] = [f"./results/{scenario.name}/{hp_suffix}"]
+
+                temp_scenario = Scenario(
+                    name=f"{scenario.name}/{hp_suffix}",
+                    base_config_factory=scenario.base_config_factory,
+                    modifiers=scenario.modifiers,
+                    parameter_grid=current_grid
+                )
+                base_config = temp_scenario.base_config_factory()
+                mod_config = initialize_adversary_data_distribution(copy.deepcopy(base_config))
+                set_nested_attr(mod_config, "aggregation.aggregation_name", defense_name)
+                for modifier in temp_scenario.modifiers: mod_config = modifier(mod_config)
+
+                task_configs += generator.generate(mod_config, temp_scenario)
 
         all_generated_configs += task_configs
 
