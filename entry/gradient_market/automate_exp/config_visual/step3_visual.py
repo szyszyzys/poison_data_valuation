@@ -520,5 +520,101 @@ def main():
 
     print("\nAnalysis complete.")
 
+def plot_sensitivity_composite_row(df: pd.DataFrame, output_dir: Path):
+    """
+    Generates a single wide figure (1x4) for the Sensitivity Analysis.
+    1. ASR vs Adv Rate
+    2. Benign Selection vs Adv Rate
+    3. ASR vs Poison Rate
+    4. Acc vs Poison Rate
+    """
+    print("\n--- Generating Composite Sensitivity Row (1x4) ---")
+
+    # --- CONFIGURATION: Adjust these to match your experimental fixed values ---
+    # When sweeping Adversary Rate, what was the Poison Rate? (usually 1.0 or 0.5)
+    FIXED_POISON_FOR_ADV_SWEEP = 1.0
+    # When sweeping Poison Rate, what was the Adversary Rate? (usually 0.10 or 0.30)
+    FIXED_ADV_FOR_POISON_SWEEP = 0.30
+
+    # Filter for CIFAR-100 Backdoor
+    subset = df[(df['dataset'] == 'CIFAR100') & (df['attack'] == 'backdoor')].copy()
+    if subset.empty:
+        print("No CIFAR-100 Backdoor data found.")
+        return
+
+    # Set Style
+    sns.set_theme(style="whitegrid")
+    sns.set_context("paper", font_scale=1.4)
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams['axes.linewidth'] = 1.2
+    plt.rcParams['axes.edgecolor'] = '#333333'
+
+    # Create Figure: 1 Row, 4 Columns
+    fig, axes = plt.subplots(1, 4, figsize=(24, 4), constrained_layout=True)
+
+    # Define Defense Colors/Order
+    defense_order = sorted(subset['defense'].unique())
+    palette = 'viridis' # Or specific colors: {'fedavg': 'grey', 'martfl': 'orange', ...}
+
+    # --- SLICE 1: Varying Adversary Rate (Fix Poison) ---
+    df_adv = subset[np.isclose(subset['poison_rate'], FIXED_POISON_FOR_ADV_SWEEP)]
+
+    # Plot A: ASR vs Adv Rate
+    sns.lineplot(ax=axes[0], data=df_adv, x='adversary_rate', y='asr', hue='defense',
+                 style='defense', markers=True, dashes=False, palette=palette, linewidth=2.5, markersize=9)
+    axes[0].set_title("(a) ASR vs. Adversary Rate", fontweight='bold')
+    axes[0].set_ylabel("ASR")
+    axes[0].set_xlabel("Adversary Rate")
+    axes[0].set_ylim(-0.05, 1.05)
+    axes[0].get_legend().remove()
+
+    # Plot B: Benign Selection vs Adv Rate
+    if 'benign_selection_rate' in df_adv.columns:
+        sns.lineplot(ax=axes[1], data=df_adv, x='adversary_rate', y='benign_selection_rate', hue='defense',
+                     style='defense', markers=True, dashes=False, palette=palette, linewidth=2.5, markersize=9)
+        axes[1].set_title("(b) Benign Select vs. Adv Rate", fontweight='bold')
+        axes[1].set_ylabel("Selection Rate")
+        axes[1].set_xlabel("Adversary Rate")
+        axes[1].set_ylim(-0.05, 1.05)
+        axes[1].get_legend().remove()
+
+    # --- SLICE 2: Varying Poison Rate (Fix Adv Rate) ---
+    df_poison = subset[np.isclose(subset['adversary_rate'], FIXED_ADV_FOR_POISON_SWEEP)]
+
+    # Plot C: ASR vs Poison Rate
+    sns.lineplot(ax=axes[2], data=df_poison, x='poison_rate', y='asr', hue='defense',
+                 style='defense', markers=True, dashes=False, palette=palette, linewidth=2.5, markersize=9)
+    axes[2].set_title("(c) ASR vs. Poison Rate", fontweight='bold')
+    axes[2].set_ylabel("ASR")
+    axes[2].set_xlabel("Poison Rate")
+    axes[2].set_ylim(-0.05, 1.05)
+    axes[2].get_legend().remove()
+
+    # Plot D: Accuracy vs Poison Rate
+    sns.lineplot(ax=axes[3], data=df_poison, x='acc', y='acc', hue='defense', # Note: x should be poison_rate
+                 style='defense', markers=True, dashes=False, palette=palette, linewidth=2.5, markersize=9)
+    # FIX: Ensure x is poison_rate
+    axes[3].clear()
+    sns.lineplot(ax=axes[3], data=df_poison, x='poison_rate', y='acc', hue='defense',
+                 style='defense', markers=True, dashes=False, palette=palette, linewidth=2.5, markersize=9)
+    axes[3].set_title("(d) Accuracy vs. Poison Rate", fontweight='bold')
+    axes[3].set_ylabel("Accuracy")
+    axes[3].set_xlabel("Poison Rate")
+    axes[3].set_ylim(-0.05, 1.05)
+
+    # --- GLOBAL LEGEND ---
+    # Extract handles/labels from the last plot
+    handles, labels = axes[3].get_legend_handles_labels()
+    axes[3].get_legend().remove()
+
+    # Place legend centered below the entire figure
+    fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.15),
+               ncol=len(defense_order), frameon=True, fontsize=14, title="Defense Methods")
+
+    # Save
+    filename = output_dir / "plot_sensitivity_composite_row.pdf"
+    plt.savefig(filename, bbox_inches='tight', format='pdf', dpi=300)
+    print(f"Saved composite sensitivity plot to: {filename}")
+
 if __name__ == "__main__":
     main()
