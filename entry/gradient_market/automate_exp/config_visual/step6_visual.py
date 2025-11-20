@@ -253,7 +253,7 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
         title=None,
         fontsize=18,
         loc='upper center',
-        bbox_to_anchor=(0.5, -0.30),
+        bbox_to_anchor=(0.5, -0.22),
         ncol=4,
         frameon=False
     )
