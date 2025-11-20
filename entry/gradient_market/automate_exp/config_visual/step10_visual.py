@@ -7,13 +7,23 @@ import numpy as np
 import os
 from pathlib import Path
 from typing import List, Dict, Any
+from matplotlib.ticker import MaxNLocator
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step10_figures"
 
 
-# ---------------------
+# --- Styling Helper ---
+def set_plot_style():
+    """Sets a consistent professional style for all plots."""
+    sns.set_theme(style="whitegrid")
+    sns.set_context("paper", font_scale=1.5)
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams['axes.linewidth'] = 1.2
+    plt.rcParams['axes.edgecolor'] = '#333333'
+    plt.rcParams['lines.linewidth'] = 2.5
+    plt.rcParams['lines.markersize'] = 9
 
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
@@ -29,11 +39,12 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
                 "dataset": match.group(2)
             }
         else:
-            raise ValueError(f"Pattern not matched for: {scenario_name}")
+            # Fallback or ignore
+            return {}
 
     except Exception as e:
         print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
-        return {"scenario_base": scenario_name}
+        return {}
 
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
@@ -45,7 +56,7 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     if match:
         hps['n_sellers'] = int(match.group(1))
     else:
-        print(f"Warning: Could not parse HP suffix '{hp_folder_name}'")
+        pass
     return hps
 
 
@@ -75,7 +86,6 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
             run_data['benign_selection_rate'] = np.mean(
                 [s['selection_rate'] for s in ben_sellers]) if ben_sellers else np.nan
 
-            # Handle 0-attacker case (adv_selection_rate will be NaN)
             if not adv_sellers and ben_sellers:
                 run_data['adv_selection_rate'] = 0.0
 
@@ -102,16 +112,14 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
         run_scenario = parse_scenario_name(scenario_name)
+        if not run_scenario: continue
 
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             try:
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
-                if not relative_parts:
-                    continue
+                if not relative_parts: continue
 
-                # This should be the HP folder, e.g., 'n_sellers_10'
                 hp_folder_name = relative_parts[0]
-
                 run_hps = parse_hp_suffix(hp_folder_name)
                 run_metrics = load_run_data(metrics_file)
 
@@ -122,7 +130,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                         **run_metrics
                     })
             except Exception as e:
-                print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
+                print(f"Error processing file {metrics_file}: {e}")
 
     if not all_runs:
         print("Error: No 'final_metrics.json' files were successfully processed.")
@@ -132,71 +140,88 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     return df
 
 
-def plot_scalability_lines(df: pd.DataFrame, dataset: str, output_dir: Path):
+def plot_scalability_composite_row(df: pd.DataFrame, dataset: str, output_dir: Path):
     """
-    Generates the 2x2 multi-panel line plots for scalability.
+    Generates a SINGLE wide figure (1x4) for Scalability Analysis.
+    Plots:
+      1. Accuracy vs N Sellers
+      2. ASR vs N Sellers
+      3. Benign Selection vs N Sellers
+      4. Adv Selection vs N Sellers
     """
-    print(f"\n--- Plotting Scalability for {dataset} ---")
+    print(f"\n--- Plotting Composite Scalability Row: {dataset} ---")
 
-    plot_df = df[df['dataset'] == dataset].copy()
-    if plot_df.empty:
-        print("No data found to plot.")
+    subset = df[df['dataset'] == dataset].copy()
+    if subset.empty:
+        print("  -> No data found for this dataset.")
         return
 
-    metrics_to_plot = [
-        'acc', 'asr',
-        'benign_selection_rate', 'adv_selection_rate'
+    # Convert rates to percentages
+    for col in ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']:
+        if col in subset.columns:
+            subset[col] = subset[col] * 100
+
+    set_plot_style()
+
+    # Initialize Figure
+    fig, axes = plt.subplots(1, 4, figsize=(24, 4.5), constrained_layout=True)
+
+    defense_order = sorted(subset['defense'].unique())
+
+    # Define the 4 metrics to plot in order
+    metrics_map = [
+        ('acc', 'Accuracy (%)'),
+        ('asr', 'ASR (%)'),
+        ('benign_selection_rate', 'Benign Select (%)'),
+        ('adv_selection_rate', 'Adv. Select (%)')
     ]
-    metrics_to_plot = [m for m in metrics_to_plot if m in plot_df.columns]
 
-    if not metrics_to_plot:
-        print("No metrics found to plot.")
-        return
+    for i, (metric, label) in enumerate(metrics_map):
+        ax = axes[i]
+        if metric in subset.columns:
+            sns.lineplot(
+                ax=ax,
+                data=subset,
+                x='n_sellers',
+                y=metric,
+                hue='defense',
+                style='defense',
+                hue_order=defense_order,
+                style_order=defense_order,
+                markers=True,
+                dashes=False,
+                linewidth=2.5,
+                markersize=9
+            )
+            ax.set_title(f"{label.replace(' (%)', '')}", fontweight='bold')
+            ax.set_xlabel("Number of Sellers")
+            ax.set_ylabel(label)
 
-    plot_df = plot_df.melt(
-        id_vars=['n_sellers', 'defense'],
-        value_vars=metrics_to_plot,
-        var_name='Metric',
-        value_name='Value'
-    )
+            # Force integer ticks on X-axis
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
-    # Rename for clearer labels
-    plot_df['Metric'] = plot_df['Metric'].replace({
-        'acc': '1. Model Accuracy (Utility)',
-        'asr': '2. Attack Success Rate (Robustness)',
-        'benign_selection_rate': '3. Benign Selection Rate (Fairness)',
-        'adv_selection_rate': '4. Attacker Selection Rate (Security)',
-    })
-    plot_df = plot_df.sort_values(by='Metric')
+            # Remove individual legends
+            ax.get_legend().remove()
+        else:
+            ax.text(0.5, 0.5, "No Data", ha='center')
 
-    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+    # --- Global Legend ---
+    handles, labels = axes[0].get_legend_handles_labels()
+    # Capitalize labels nicely
+    labels = [
+        l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask", "SkyMask").replace(
+            "Martfl", "MARTFL") for l in labels]
 
-    g = sns.relplot(
-        data=plot_df,
-        x='n_sellers',
-        y='Value',
-        hue='defense',
-        style='defense',
-        col='Metric',
-        kind='line',
-        col_wrap=2,  # 2x2 grid
-        height=4,
-        aspect=1.2,
-        facet_kws={'sharey': False},
-        markers=True,
-        dashes=False,
-        hue_order=defense_order,
-        style_order=defense_order
-    )
+    fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.1),
+               ncol=len(defense_order), frameon=True, title="Defense Methods", fontsize=14)
 
-    g.fig.suptitle(f'Defense Scalability vs. Marketplace Size (Fixed 30% Attack Rate, {dataset})', y=1.05)
-    g.set_axis_labels("Number of Sellers (n_sellers)", "Value")
-    g.set_titles(col_template="{col_name}")
+    # Main Title
+    fig.suptitle(f"Scalability Analysis: {dataset} (Fixed 30% Attack Rate)", fontsize=18, fontweight='bold', y=1.08)
 
-    plot_file = output_dir / f"plot_scalability_fixed_rate_{dataset}.png"
-    g.fig.savefig(plot_file)
-    print(f"Saved plot: {plot_file}")
-    plt.clf()
+    # Save
+    filename = output_dir / f"plot_scalability_composite_{dataset}.pdf"
+    plt.savefig(filename, bbox_inches='tight', format='pdf', dpi=300)
+    print(f"  -> Saved plot to: {filename}")
     plt.close('all')
 
 
@@ -211,12 +236,12 @@ def main():
         print("No results data was loaded. Exiting.")
         return
 
-    # Plot for each dataset found (likely just 'CIFAR100')
+    # Plot for each dataset found
     for dataset in df['dataset'].unique():
         if pd.notna(dataset):
-            plot_scalability_lines(df, dataset, output_dir)
+            plot_scalability_composite_row(df, dataset, output_dir)
 
-    print("\nAnalysis complete. Check 'step10_figures' folder for plots.")
+    print("\nAnalysis complete.")
 
 
 if __name__ == "__main__":
