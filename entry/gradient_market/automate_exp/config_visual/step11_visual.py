@@ -1,5 +1,3 @@
-# FILE: step11_visual_individual_and_composite.py
-
 import pandas as pd
 import json
 import re
@@ -13,10 +11,15 @@ from matplotlib.ticker import FixedLocator, FixedFormatter
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step11_figures_individual"
+FIGURE_OUTPUT_DIR = "./figures/step11_figures_visuals"
+
+# We treat 100.0 as the "IID" case based on your experiment generation
 ALPHAS_IN_TEST = [100.0, 1.0, 0.5, 0.1]
 
-# Hardcoded colors to ensure consistent legend across different files
+# Custom Labels for the X-Axis (Must match ALPHAS_IN_TEST order)
+ALPHA_LABELS = ["IID", "1.0", "0.5", "0.1"]
+
+# Consistent Styling
 DEFENSE_PALETTE = {
     "fedavg": "#3498db",  # Blue
     "fltrust": "#e74c3c",  # Red
@@ -27,28 +30,30 @@ DEFENSE_PALETTE = {
 
 # ---------------------
 
+def set_plot_style():
+    sns.set_theme(style="whitegrid")
+    sns.set_context("paper", font_scale=1.5)
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams['axes.linewidth'] = 1.2
+    plt.rcParams['lines.linewidth'] = 2.5
+    plt.rcParams['lines.markersize'] = 9
+
+
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     """Parses directory names to find Bias Source."""
     try:
-        # Pattern: step11_[bias]_[defense]_[dataset]
         pattern = r'step11_(market_wide|buyer_only|seller_only)_(fedavg|martfl|fltrust|skymask)_(.*)'
         match = re.search(pattern, scenario_name)
-
         if match:
             raw_bias = match.group(1)
-            # Format: "buyer_only" -> "Buyer-Only Bias"
             bias_formatted = raw_bias.replace('_', '-').title() + " Bias"
             return {
-                "scenario_base": scenario_name,
                 "bias_source": bias_formatted,
                 "defense": match.group(2),
                 "dataset": match.group(3)
             }
-        else:
-            # Filter out the generic 'heterogeneity' folder or unknown folders
-            return {"bias_source": "IGNORE", "dataset": "unknown"}
-
-    except Exception:
+        return {"bias_source": "IGNORE", "dataset": "unknown"}
+    except:
         return {"bias_source": "IGNORE"}
 
 
@@ -74,7 +79,6 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
         run_data['acc'] = acc
         run_data['asr'] = metrics.get('asr', 0)
 
-        # Load Marketplace Report for selection rates
         report_file = metrics_file.parent / "marketplace_report.json"
         if report_file.exists():
             with open(report_file, 'r') as f:
@@ -97,16 +101,13 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
 def collect_all_results(base_dir: str) -> pd.DataFrame:
     all_runs = []
     base_path = Path(base_dir)
-    scenario_folders = [f for f in base_path.glob("step11_*") if f.is_dir()]
+    print(f"Searching in {base_path}...")
 
-    print(f"Found {len(scenario_folders)} scenario directories.")
+    scenario_folders = [f for f in base_path.glob("step11_*") if f.is_dir()]
 
     for scenario_path in scenario_folders:
         run_scenario = parse_scenario_name(scenario_path.name)
-
-        # Skip folders that don't match specific bias types
-        if run_scenario.get("bias_source") == "IGNORE":
-            continue
+        if run_scenario.get("bias_source") == "IGNORE": continue
 
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             try:
@@ -125,104 +126,24 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     return pd.DataFrame(all_runs)
 
 
-# =============================================================================
-#  PLOTTER 1: INDIVIDUAL PLOTS
-# =============================================================================
-
-def plot_completely_separate(df: pd.DataFrame, dataset: str, output_dir: Path):
-    """
-    Loops through Bias Source -> Loops through Metric -> Saves Individual PDF.
-    """
-    print(f"\n--- Generating Split Figures for {dataset} ---")
-
-    dataset_df = df[df['dataset'] == dataset].copy()
-    if dataset_df.empty: return
-
-    # Define Metrics to Plot
-    metrics_map = {
-        'acc': 'Model Accuracy',
-        'asr': 'Attack Success Rate',
-        'benign_selection_rate': 'Benign Selection Rate',
-        'adv_selection_rate': 'Attacker Selection Rate',
-    }
-
-    valid_biases = ['Market-Wide Bias', 'Buyer-Only Bias', 'Seller-Only Bias']
-    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
-
-    # --- OUTER LOOP: BIAS SOURCE ---
-    for bias in valid_biases:
-        bias_df = dataset_df[dataset_df['bias_source'] == bias]
-        if bias_df.empty: continue
-
-        # --- INNER LOOP: METRIC ---
-        for col_name, display_name in metrics_map.items():
-            if col_name not in bias_df.columns: continue
-
-            # Create a dedicated figure
-            plt.figure(figsize=(6, 4))
-
-            sns.lineplot(
-                data=bias_df,
-                x='dirichlet_alpha',
-                y=col_name,
-                hue='defense',
-                style='defense',
-                hue_order=defense_order,
-                style_order=defense_order,
-                palette=DEFENSE_PALETTE,
-                markers=True,
-                dashes=False,
-                markersize=8,
-                linewidth=2,
-                errorbar=('ci', 95)
-            )
-
-            # Titles
-            plt.title(f"{display_name}\nCondition: {bias} ({dataset})", fontsize=12)
-            plt.ylabel(display_name, fontsize=11)
-            plt.xlabel("Heterogeneity (Dirichlet Alpha)", fontsize=11)
-
-            # Log Scale & Formatting
-            ax = plt.gca()
-            ax.set_xscale('log')
-            ax.xaxis.set_major_locator(FixedLocator(ALPHAS_IN_TEST))
-            ax.xaxis.set_major_formatter(FixedFormatter([str(a) for a in ALPHAS_IN_TEST]))
-
-            # Reverse Axis: 100 (Easy) -> 0.1 (Hard)
-            ax.set_xlim(max(ALPHAS_IN_TEST) * 1.3, min(ALPHAS_IN_TEST) * 0.8)
-            ax.grid(True, which='major', linestyle='--', alpha=0.5)
-
-            plt.legend(title="Defense", bbox_to_anchor=(1.02, 1), loc='upper left')
-
-            # Filename Generation
-            safe_bias = bias.replace(' ', '').replace('-', '')
-            safe_metric = display_name.replace(' ', '')
-
-            fname = output_dir / f"Step11_{dataset}_{safe_bias}_{safe_metric}.pdf"
-
-            plt.savefig(fname, bbox_inches='tight')
-            plt.close()  # Close figure to free memory
-            print(f"  Saved Individual: {fname.name}")
-
-
-# =============================================================================
-#  PLOTTER 2: COMPOSITE ROW (4-in-1)
-# =============================================================================
-
 def plot_four_in_a_row(df: pd.DataFrame, dataset: str, output_dir: Path):
     """
-    Generates a single wide figure (1x4) for each Bias Source containing:
-    [Accuracy, ASR, Benign Selection, Adversary Selection]
+    Generates the composite figure.
+    CRITICAL UPDATE: X-Axis now shows "IID" on the left.
     """
     print(f"\n--- Generating Composite Row Figures for {dataset} ---")
+    set_plot_style()
 
     dataset_df = df[df['dataset'] == dataset].copy()
     if dataset_df.empty: return
 
+    # Convert to percentages
+    for col in ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']:
+        dataset_df[col] = dataset_df[col] * 100
+
     valid_biases = ['Market-Wide Bias', 'Buyer-Only Bias', 'Seller-Only Bias']
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
-    # Order of plots in the row
     metrics_order = [
         ('acc', 'Accuracy'),
         ('asr', 'ASR'),
@@ -234,10 +155,8 @@ def plot_four_in_a_row(df: pd.DataFrame, dataset: str, output_dir: Path):
         bias_df = dataset_df[dataset_df['bias_source'] == bias]
         if bias_df.empty: continue
 
-        # Create Figure: 1 Row, 4 Columns
         fig, axes = plt.subplots(1, 4, figsize=(24, 4.5), constrained_layout=True)
 
-        # Loop through the 4 metrics
         for i, (col_name, display_name) in enumerate(metrics_order):
             ax = axes[i]
 
@@ -255,42 +174,44 @@ def plot_four_in_a_row(df: pd.DataFrame, dataset: str, output_dir: Path):
                 dashes=False,
                 markersize=9,
                 linewidth=2.5,
-                errorbar=None  # Cleaner look for composite, or use ('ci', 95) if preferred
+                errorbar=('ci', 95)
             )
 
-            # Axis Formatting
-            ax.set_title(f"{display_name}", fontweight='bold', fontsize=14)
-            ax.set_xlabel("Alpha (Heterogeneity)", fontsize=12)
+            ax.set_title(f"{display_name}", fontweight='bold', fontsize=16)
+            ax.set_xlabel("Heterogeneity", fontsize=14)
             if i == 0:
-                ax.set_ylabel("Rate / Score", fontsize=12)
+                ax.set_ylabel("Rate / Score (%)", fontsize=14)
             else:
                 ax.set_ylabel("")
 
-            # Log Scale Logic
+            # --- KEY UPDATE: CUSTOM X-AXIS LABELS ---
             ax.set_xscale('log')
-            ax.xaxis.set_major_locator(FixedLocator(ALPHAS_IN_TEST))
-            ax.xaxis.set_major_formatter(FixedFormatter([str(a) for a in ALPHAS_IN_TEST]))
-            ax.set_xlim(max(ALPHAS_IN_TEST) * 1.4, min(ALPHAS_IN_TEST) * 0.7)  # Reverse axis visually
-            ax.grid(True, which='major', linestyle='--', alpha=0.6)
 
-            # Remove individual legends
+            # 1. Set Ticks exactly where your data points are
+            ax.xaxis.set_major_locator(FixedLocator(ALPHAS_IN_TEST))
+
+            # 2. Replace numbers with ["IID", "1.0", "0.5", "0.1"]
+            ax.xaxis.set_major_formatter(FixedFormatter(ALPHA_LABELS))
+
+            # 3. Reverse the axis limit so 100 (IID) is on the LEFT
+            # Log axis: Higher number usually on right. We want 100 on left.
+            # So we set max limit > 100 and min limit < 0.1, but ordered (max, min)
+            ax.set_xlim(max(ALPHAS_IN_TEST) * 1.4, min(ALPHAS_IN_TEST) * 0.8)
+
+            ax.grid(True, which='major', linestyle='--', alpha=0.6)
             ax.get_legend().remove()
 
-        # --- GLOBAL LEGEND ---
-        # Create a single legend at the bottom
+        # Legend and Title
         handles, labels = axes[0].get_legend_handles_labels()
-        # Capitalize labels
         labels = [l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask",
                                                                                                    "SkyMask").replace(
             "Martfl", "MARTFL") for l in labels]
 
-        fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.1),
+        fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.15),
                    ncol=len(defense_order), frameon=True, fontsize=14, title="Defense Methods")
 
-        # Main Title for the whole figure
-        fig.suptitle(f"Impact of {bias} on {dataset}", fontsize=18, fontweight='bold', y=1.05)
+        # fig.suptitle(f"Impact of {bias} on {dataset}", fontsize=18, fontweight='bold', y=1.05)
 
-        # Save
         safe_bias = bias.replace(' ', '').replace('-', '')
         fname = output_dir / f"Step11_Composite_Row_{dataset}_{safe_bias}.pdf"
         plt.savefig(fname, bbox_inches='tight', format='pdf')
@@ -304,21 +225,12 @@ def main():
     print(f"Plots will be saved to: {output_dir.resolve()}")
 
     df = collect_all_results(BASE_RESULTS_DIR)
-
     if df.empty:
         print("No valid data found.")
         return
 
-    # Save summary CSV
-    df.to_csv(output_dir / "step11_full_summary.csv", index=False)
-
-    # Generate Plots
     for dataset in df['dataset'].unique():
         if dataset != 'unknown':
-            # 1. Generate Individual Plots (Original Requirement)
-            plot_completely_separate(df, dataset, output_dir)
-
-            # 2. Generate Composite Row Plots (New Requirement)
             plot_four_in_a_row(df, dataset, output_dir)
 
     print("\nAnalysis complete.")
