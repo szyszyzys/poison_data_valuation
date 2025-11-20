@@ -357,6 +357,105 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
             plt.close('all')
             print(f"  Saved metrics for {dataset}")
 
+def plot_composite_row(df: pd.DataFrame, output_dir: Path):
+    """
+    Generates a SINGLE wide figure with 4 subplots in a row:
+    1. Usability Rate
+    2. Avg. Usable Accuracy
+    3. Avg. Usable Rounds
+    4. Selection Rates
+    """
+    print("\n--- Plotting Composite Row (4-in-1) ---")
+    sns.set_theme(style="whitegrid")
+    sns.set_context("paper", font_scale=1.4) # 'paper' context fits better for composite
+
+    # Filter for CIFAR100 (or loop datasets)
+    dataset = "CIFAR100"
+    subset = df[df['dataset'] == dataset]
+
+    if subset.empty:
+        return
+
+    # Defense Order
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+    formatted_labels = ['FedAvg', 'FLTrust', 'MARTFL', 'SkyMask']
+
+    # Create Figure: 1 Row, 4 Columns. Wide aspect ratio.
+    fig, axes = plt.subplots(1, 4, figsize=(22, 5), constrained_layout=True)
+
+    # --- DATA PREP ---
+    # 1. Usability
+    d1 = subset.groupby('defense')['platform_usable'].mean().reindex(defense_order).reset_index()
+    d1['Value'] = d1['platform_usable'] * 100
+
+    # 2. Accuracy
+    d2 = subset[subset['platform_usable']==True].groupby('defense')['acc'].mean().reindex(defense_order).reset_index()
+    d2['Value'] = d2['acc'] * 100
+
+    # 3. Rounds
+    d3 = subset[subset['platform_usable']==True].groupby('defense')['rounds'].mean().reindex(defense_order).reset_index()
+    d3['Value'] = d3['rounds']
+
+    # 4. Selection
+    d4 = subset.groupby('defense')[['benign_selection_rate', 'adv_selection_rate']].mean().reindex(defense_order).reset_index()
+    d4 = d4.melt(id_vars='defense', var_name='Type', value_name='Rate')
+    d4['Rate'] = d4['Rate'] * 100
+    d4['Type'] = d4['Type'].replace({'benign_selection_rate': 'Benign', 'adv_selection_rate': 'Adversary'})
+
+    # --- PLOTTING ---
+
+    # Plot 1: Usability
+    sns.barplot(ax=axes[0], data=d1, x='defense', y='Value', order=defense_order, palette='viridis', edgecolor='black')
+    axes[0].set_title("Usability Rate (%)", fontweight='bold')
+    axes[0].set_ylabel("Percentage", fontweight='bold')
+    axes[0].set_xlabel("")
+    axes[0].set_ylim(0, 105)
+
+    # Plot 2: Accuracy
+    sns.barplot(ax=axes[1], data=d2, x='defense', y='Value', order=defense_order, palette='viridis', edgecolor='black')
+    axes[1].set_title("Avg. Usable Acc (%)", fontweight='bold')
+    axes[1].set_ylabel("") # Save space
+    axes[1].set_xlabel("")
+    # Auto scale Y to zoom in on differences (e.g. 40-60) if needed, or keep 0-100
+    axes[1].set_ylim(0, 105)
+
+    # Plot 3: Rounds
+    sns.barplot(ax=axes[2], data=d3, x='defense', y='Value', order=defense_order, palette='viridis', edgecolor='black')
+    axes[2].set_title("Avg. Cost (Rounds)", fontweight='bold')
+    axes[2].set_ylabel("Rounds", fontweight='bold')
+    axes[2].set_xlabel("")
+
+    # Plot 4: Selection
+    sns.barplot(ax=axes[3], data=d4, x='defense', y='Rate', hue='Type', order=defense_order,
+                palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor='black')
+    axes[3].set_title("Avg. Selection Rates", fontweight='bold')
+    axes[3].set_ylabel("")
+    axes[3].set_xlabel("")
+    axes[3].set_ylim(0, 105)
+    axes[3].legend(title=None, loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False) # Legend ABOVE plot to save vertical space
+
+    # --- COMMON STYLING ---
+    letters = ['(a)', '(b)', '(c)', '(d)']
+    for i, ax in enumerate(axes):
+        ax.set_xticklabels(formatted_labels, fontsize=14, fontweight='bold', rotation=15)
+        ax.grid(axis='y', alpha=0.5)
+        # Add letter label inside plot (top left) to save space
+        # ax.text(-0.1, 1.05, letters[i], transform=ax.transAxes, size=16, weight='bold')
+
+        # Annotations
+        for p in ax.patches:
+            h = p.get_height()
+            if h > 0:
+                ax.annotate(f'{h:.0f}', (p.get_x() + p.get_width() / 2., h),
+                            ha='center', va='bottom', fontsize=11, fontweight='bold', xytext=(0, 2), textcoords='offset points')
+
+    # Save
+    outfile = output_dir / f"plot_row_combined_{dataset}.pdf"
+    plt.savefig(outfile, bbox_inches='tight', format='pdf', dpi=300)
+    print(f"Saved composite row to: {outfile}")
+
+# --- Add this to your main() function ---
+# plot_composite_row(df, output_dir)
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
