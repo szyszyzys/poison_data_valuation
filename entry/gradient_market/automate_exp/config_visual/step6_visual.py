@@ -148,32 +148,38 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
     sns.set_theme(style="whitegrid")
     sns.set_context("talk", font_scale=1.1)
 
-    # --- 2. DATA PREP: Sophisticated Sorting ---
-    # We want to group by Family (Standard vs Oracle) and then sort by Alpha
+    # --- 2. DATA PREP: Consistent Sorting (Aggressive -> Stealthy) ---
+    # We standardize Alpha to represent "Centroid Weight" (Mimicry Factor).
+    # Low Alpha = Aggressive (Mostly Malicious)
+    # High Alpha = Stealthy (Mostly Centroid)
+
     def get_sort_key(label):
-        # Returns tuple: (Family_Order, Alpha_Value)
+        # Returns: (Family_Order, Standardized_Alpha)
 
         # 0. Baseline
         if label == 'baseline_no_sybil':
             return (0, 0.0)
 
-        # 1. Standard Mimicry Family (Uses Historical/Estimated Centroid)
+        # 1. Standard Mimicry Family
         if label == 'mimic':
-            return (1, 0.1)  # Base Mimic
+            return (1, 0.1)  # 10% Centroid
         if label == 'knock_out':
-            return (1, 0.2)  # KnockOut is 2x Base
+            return (1, 0.2)  # 20% Centroid
         if label == 'pivot':
-            return (1, 1.0)  # Pivot is 100% Replacement
+            return (1, 1.0)  # 100% Centroid
 
-        # 2. Oracle Family (Uses True Centroid)
+        # 2. Oracle Family
+        # In config, the value was "Malicious Weight".
+        # We convert to "Centroid Weight" to match Mimic.
         if label.startswith('oracle_blend'):
             try:
                 val = float(label.split('_')[-1])
-                return (2, val)
+                alpha_centroid = 1.0 - val
+                return (2, alpha_centroid)
             except:
                 return (2, 0.5)
 
-        return (3, 0.0)  # Catch-all
+        return (3, 0.0)
 
     unique_labels = defense_df['strategy_label'].unique()
     sorted_labels = sorted(unique_labels, key=get_sort_key)
@@ -210,28 +216,31 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
     )
 
     # --- 5. STYLING ---
-    plt.title(f'Impact of Centroid Knowledge & Aggressiveness ({defense.upper()})',
+    plt.title(f'Impact of Centroid Knowledge & Mimicry Factor ({defense.upper()})',
               fontsize=24, fontweight='bold', pad=20)
     plt.ylabel('Rate', fontsize=20, fontweight='bold')
-    plt.xlabel('', fontsize=0)
+    plt.xlabel(r'Sybil Strategy ($\alpha$ = Centroid Weight)', fontsize=18, labelpad=15)
 
-    # --- 6. FORMATTING LABELS (The Scientific Naming) ---
+    # --- 6. FORMATTING LABELS (The Standardization) ---
     def format_label(l):
-        # Baseline
         if l == 'baseline_no_sybil': return "Baseline"
 
-        # --- FAMILY 1: STANDARD MIMIC (Estimated Centroid) ---
+        # --- FAMILY 1: STANDARD MIMIC ---
         if l == 'mimic':
             return "Mimic\n($\\alpha=0.1$)"
         if l == 'knock_out':
-            return "Mimic\n($\\alpha=0.2$)"  # Renamed from Knock-out
+            return "Mimic\n($\\alpha=0.2$)"
         if l == 'pivot':
-            return "Mimic\n($\\alpha=1.0$)"  # Renamed from Pivot
+            return "Mimic\n($\\alpha=1.0$)"
 
-        # --- FAMILY 2: ORACLE MIMIC (True Centroid) ---
+        # --- FAMILY 2: ORACLE ---
+        # Convert logic: Config 0.8 (aggressive) -> Alpha 0.2 (100% - 80%)
         if l.startswith('oracle_blend'):
-            val = l.split('_')[-1]
-            return f"Oracle\n($\\alpha={val}$)"
+            val = float(l.split('_')[-1])
+            alpha_centroid = 1.0 - val
+            # Round to avoid floating point uglyness (e.g. 0.19999)
+            alpha_display = round(alpha_centroid, 2)
+            return f"Oracle\n($\\alpha={alpha_display}$)"
 
         return l.replace('_', '\n').title()
 
@@ -245,20 +254,15 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
         title=None,
         fontsize=16,
         loc='upper center',
-        bbox_to_anchor=(0.5, -0.12),
+        bbox_to_anchor=(0.5, -0.14),
         ncol=4,
         frameon=False
     )
 
-    # Add a subtle vertical line to separate the two families visually (Optional)
-    # Find the index where Oracle starts and draw a line
-    # (This assumes Baseline is 0, Mimic family is 1..3, Oracle is 4..)
-    # You can tune x-coord based on how many bars you have.
-
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.2)
+    plt.subplots_adjust(bottom=0.22)  # Extra space for axis label + legend
 
-    plot_file = output_dir / f"plot_sybil_effectiveness_{defense}.pdf"
+    plot_file = output_dir / f"plot_sybil_effectiveness_standardized_{defense}.pdf"
     plt.savefig(plot_file, dpi=300)
     print(f"Saved plot: {plot_file}")
     plt.clf()
