@@ -290,7 +290,7 @@ def plot_step3_composite_summary(df: pd.DataFrame, output_dir: Path):
         axes[3].set_ylabel("")
         axes[3].set_xlabel("")
         axes[3].set_ylim(0, 105)
-        axes[3].legend(title=None, loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False)
+        axes[3].legend(title=None, loc='lower center', bbox_to_anchor=(0.5, 0.72), ncol=2, frameon=False)
 
         # --- Formatting ---
         for ax in axes:
