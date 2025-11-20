@@ -212,11 +212,11 @@ def plot_scalability_composite_row(df: pd.DataFrame, dataset: str, output_dir: P
         l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask", "SkyMask").replace(
             "Martfl", "MARTFL") for l in labels]
 
-    fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.3),
+    fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.15),
                ncol=len(defense_order), frameon=True, title="Defense Methods", fontsize=14)
 
     # Main Title
-    fig.suptitle(f"Scalability Analysis: {dataset} (Fixed 30% Attack Rate)", fontsize=18, fontweight='bold', y=1.08)
+    # fig.suptitle(f"Scalability Analysis: {dataset} (Fixed 30% Attack Rate)", fontsize=18, fontweight='bold', y=1.08)
 
     # Save
     filename = output_dir / f"plot_scalability_composite_{dataset}.pdf"
