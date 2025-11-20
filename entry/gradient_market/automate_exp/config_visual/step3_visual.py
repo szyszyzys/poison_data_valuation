@@ -18,9 +18,6 @@ RELATIVE_ACC_THRESHOLD = 0.90
 # We can keep this for the fairness filter
 REASONABLE_BSR_THRESHOLD = 0.50
 
-# --- End Configuration ---
-
-
 # --- Styling Helper ---
 def set_plot_style():
     """Sets a consistent professional style for all plots."""
@@ -29,7 +26,6 @@ def set_plot_style():
     plt.rcParams['font.family'] = 'serif'
     plt.rcParams['axes.edgecolor'] = '#333333'
     plt.rcParams['axes.linewidth'] = 1.2
-
 
 # --- Functions from Step 2.5 (for lookup) ---
 
@@ -90,7 +86,7 @@ def get_step2_5_max_acc_lookup(base_dir: str) -> Dict[str, float]:
     return dataset_max_acc
 
 
-# --- Step 3 Functions ---
+# --- Step 3 Parsing Functions ---
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     hps = {}
@@ -255,11 +251,10 @@ def plot_step3_composite_summary(df: pd.DataFrame, output_dir: Path):
             d3 = usable_runs.groupby('defense')['rounds'].mean().reindex(defense_order).reset_index()
             d3['Value'] = d3['rounds']
         else:
-            # Handle case where no runs were usable
             d2 = pd.DataFrame({'defense': defense_order, 'Value': 0})
             d3 = pd.DataFrame({'defense': defense_order, 'Value': 0})
 
-        # 4. Selection Rates (avg of all runs, or usable? usually avg of all for stability check)
+        # 4. Selection Rates
         d4 = group_df.groupby('defense')[['benign_selection_rate', 'adv_selection_rate']].mean().reindex(defense_order).reset_index()
         d4 = d4.melt(id_vars='defense', var_name='Type', value_name='Rate')
         d4['Rate'] = d4['Rate'] * 100
@@ -308,7 +303,6 @@ def plot_step3_composite_summary(df: pd.DataFrame, output_dir: Path):
                     ax.annotate(f'{h:.0f}', (p.get_x() + p.get_width() / 2., h),
                                 ha='center', va='bottom', fontsize=10, fontweight='bold', xytext=(0, 2), textcoords='offset points')
 
-        # Add Main Title
         fig.suptitle(f"Parameter Tuning Summary: {dataset} ({attack} attack)", fontsize=18, fontweight='bold', y=1.1)
 
         filename = f"plot_composite_{dataset}_{attack}.pdf"
@@ -327,7 +321,6 @@ def plot_skymask_deep_dive(df_all: pd.DataFrame, output_dir: Path):
         print("No SkyMask data found for deep-dive plot.")
         return
 
-    # Clean/Fill Data
     if 'mask_clip' not in df_sky.columns: df_sky['mask_clip'] = 1.0
     if 'mask_lr' not in df_sky.columns: df_sky['mask_lr'] = 0.01
     if 'mask_epochs' not in df_sky.columns: df_sky['mask_epochs'] = 20
@@ -359,7 +352,7 @@ def plot_skymask_deep_dive(df_all: pd.DataFrame, output_dir: Path):
         data=plot_df, x='hp_type', y='Value', hue='mask_threshold',
         col='attack', row='Metric', kind='bar', palette='viridis',
         height=4, aspect=1.5, sharey='row', legend_out=True,
-        edgecolor='black' # Add borders
+        edgecolor='black'
     )
     g.fig.suptitle("SkyMask Analysis: HP Trick Impact", y=1.05, fontweight='bold')
     g.set_axis_labels("", "Value")
@@ -371,13 +364,11 @@ def plot_skymask_deep_dive(df_all: pd.DataFrame, output_dir: Path):
 
 
 def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, output_dir: Path):
-    """Generates a sorted bar chart of performance across HPs for a single scenario."""
     scenario_df = df[df['scenario'] == scenario].copy()
     if scenario_df.empty: return
 
     set_plot_style()
 
-    # Create HP Labels
     hp_cols_present = [c for c in ['clip_norm', 'max_k', 'mask_epochs', 'mask_lr', 'mask_threshold', 'mask_clip'] if c in scenario_df.columns]
     hp_cols_to_plot = [c for c in hp_cols_present if scenario_df[c].nunique() > 1]
 
@@ -391,12 +382,10 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
 
     scenario_df = scenario_df.sort_values(by='defense_score', ascending=False)
 
-    # Prepare Data for Plot
     metrics_to_plot = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate']
     metrics_to_plot = [m for m in metrics_to_plot if m in scenario_df.columns]
     plot_df = scenario_df.melt(id_vars=['hp_label'], value_vars=metrics_to_plot, var_name='Metric', value_name='Value')
 
-    # Rename metrics for legend
     metric_map = {
         'acc': 'Accuracy', 'asr': 'ASR',
         'adv_selection_rate': 'Adv. Select', 'benign_selection_rate': 'Benign Select'
@@ -460,7 +449,6 @@ def main():
     reasonable_acc_df = df[df['platform_usable']].copy()
 
     # --- Tables (Objective 0 & 1) ---
-    # (Logic remains mostly the same as your original script for tables)
 
     # 1. Tuning Summary Range Table
     agg_metrics = {
@@ -470,6 +458,7 @@ def main():
         'benign_selection_rate': ['min', 'max', 'mean'],
         'adv_selection_rate': ['min', 'max', 'mean']
     }
+    # Filter only metrics present in df
     agg_metrics = {k: v for k, v in agg_metrics.items() if k in reasonable_acc_df.columns}
 
     if agg_metrics:
@@ -479,15 +468,26 @@ def main():
 
         # Helper for range strings
         def rng(row, m):
-            mn, mx = row.get(f'{m}_min', np.nan)*100, row.get(f'{m}_max', np.nan)*100
+            mn_col, mx_col = f'{m}_min', f'{m}_max'
+            if mn_col not in row or mx_col not in row: return "N/A"
+            mn, mx = row[mn_col]*100, row[mx_col]*100
             return "N/A" if pd.isna(mn) else f"{mn:.1f}-{mx:.1f}"
 
-        df_summary['ACC Range %'] = df_summary.apply(lambda r: rng(r, 'acc'), axis=1)
-        df_summary['ASR Range %'] = df_summary.apply(lambda r: rng(r, 'asr'), axis=1)
+        # Calculate ranges if columns exist
+        if 'acc_min' in df_summary.columns:
+            df_summary['ACC Range %'] = df_summary.apply(lambda r: rng(r, 'acc'), axis=1)
+        if 'asr_min' in df_summary.columns:
+            df_summary['ASR Range %'] = df_summary.apply(lambda r: rng(r, 'asr'), axis=1)
 
-        cols = ['defense', 'dataset', 'attack', 'hp_suffix_nunique', 'ACC Range %', 'ASR Range %']
+        # RENAME Column
         df_summary = df_summary.rename(columns={'hp_suffix_nunique': 'N_HPs'})
-        df_summary[cols].to_latex(output_dir / "step3_tuning_summary_range.tex", index=False)
+
+        # Define target columns using the NEW name
+        target_cols = ['defense', 'dataset', 'attack', 'N_HPs', 'ACC Range %', 'ASR Range %']
+        final_cols = [c for c in target_cols if c in df_summary.columns]
+
+        df_summary[final_cols].to_latex(output_dir / "step3_tuning_summary_range.tex", index=False)
+        print("Saved tuning summary table.")
 
     # 2. Best HP Table
     if 'benign_selection_rate' in reasonable_acc_df.columns:
@@ -508,113 +508,18 @@ def main():
     print("           Generating Visualizations")
     print("=" * 80)
 
-    # 1. The New Composite Plot (Replaces the old generic stability checks if desired, or complements them)
+    # 1. The Composite Plot (Bar Charts)
     plot_step3_composite_summary(df, output_dir)
 
     # 2. Deep Dive Specifics
     plot_skymask_deep_dive(df, output_dir)
 
-    # 3. Detailed Per-Scenario Breakdown (Optional, but good for debugging)
+    # 3. Detailed Per-Scenario Breakdown
     for scenario, defense in df[['scenario', 'defense']].drop_duplicates().values:
         plot_defense_comparison(df, scenario, defense, output_dir)
 
     print("\nAnalysis complete.")
 
-def plot_sensitivity_composite_row(df: pd.DataFrame, output_dir: Path):
-    """
-    Generates a single wide figure (1x4) for the Sensitivity Analysis.
-    1. ASR vs Adv Rate
-    2. Benign Selection vs Adv Rate
-    3. ASR vs Poison Rate
-    4. Acc vs Poison Rate
-    """
-    print("\n--- Generating Composite Sensitivity Row (1x4) ---")
-
-    # --- CONFIGURATION: Adjust these to match your experimental fixed values ---
-    # When sweeping Adversary Rate, what was the Poison Rate? (usually 1.0 or 0.5)
-    FIXED_POISON_FOR_ADV_SWEEP = 1.0
-    # When sweeping Poison Rate, what was the Adversary Rate? (usually 0.10 or 0.30)
-    FIXED_ADV_FOR_POISON_SWEEP = 0.30
-
-    # Filter for CIFAR-100 Backdoor
-    subset = df[(df['dataset'] == 'CIFAR100') & (df['attack'] == 'backdoor')].copy()
-    if subset.empty:
-        print("No CIFAR-100 Backdoor data found.")
-        return
-
-    # Set Style
-    sns.set_theme(style="whitegrid")
-    sns.set_context("paper", font_scale=1.4)
-    plt.rcParams['font.family'] = 'serif'
-    plt.rcParams['axes.linewidth'] = 1.2
-    plt.rcParams['axes.edgecolor'] = '#333333'
-
-    # Create Figure: 1 Row, 4 Columns
-    fig, axes = plt.subplots(1, 4, figsize=(24, 4), constrained_layout=True)
-
-    # Define Defense Colors/Order
-    defense_order = sorted(subset['defense'].unique())
-    palette = 'viridis' # Or specific colors: {'fedavg': 'grey', 'martfl': 'orange', ...}
-
-    # --- SLICE 1: Varying Adversary Rate (Fix Poison) ---
-    df_adv = subset[np.isclose(subset['poison_rate'], FIXED_POISON_FOR_ADV_SWEEP)]
-
-    # Plot A: ASR vs Adv Rate
-    sns.lineplot(ax=axes[0], data=df_adv, x='adversary_rate', y='asr', hue='defense',
-                 style='defense', markers=True, dashes=False, palette=palette, linewidth=2.5, markersize=9)
-    axes[0].set_title("(a) ASR vs. Adversary Rate", fontweight='bold')
-    axes[0].set_ylabel("ASR")
-    axes[0].set_xlabel("Adversary Rate")
-    axes[0].set_ylim(-0.05, 1.05)
-    axes[0].get_legend().remove()
-
-    # Plot B: Benign Selection vs Adv Rate
-    if 'benign_selection_rate' in df_adv.columns:
-        sns.lineplot(ax=axes[1], data=df_adv, x='adversary_rate', y='benign_selection_rate', hue='defense',
-                     style='defense', markers=True, dashes=False, palette=palette, linewidth=2.5, markersize=9)
-        axes[1].set_title("(b) Benign Select vs. Adv Rate", fontweight='bold')
-        axes[1].set_ylabel("Selection Rate")
-        axes[1].set_xlabel("Adversary Rate")
-        axes[1].set_ylim(-0.05, 1.05)
-        axes[1].get_legend().remove()
-
-    # --- SLICE 2: Varying Poison Rate (Fix Adv Rate) ---
-    df_poison = subset[np.isclose(subset['adversary_rate'], FIXED_ADV_FOR_POISON_SWEEP)]
-
-    # Plot C: ASR vs Poison Rate
-    sns.lineplot(ax=axes[2], data=df_poison, x='poison_rate', y='asr', hue='defense',
-                 style='defense', markers=True, dashes=False, palette=palette, linewidth=2.5, markersize=9)
-    axes[2].set_title("(c) ASR vs. Poison Rate", fontweight='bold')
-    axes[2].set_ylabel("ASR")
-    axes[2].set_xlabel("Poison Rate")
-    axes[2].set_ylim(-0.05, 1.05)
-    axes[2].get_legend().remove()
-
-    # Plot D: Accuracy vs Poison Rate
-    sns.lineplot(ax=axes[3], data=df_poison, x='acc', y='acc', hue='defense', # Note: x should be poison_rate
-                 style='defense', markers=True, dashes=False, palette=palette, linewidth=2.5, markersize=9)
-    # FIX: Ensure x is poison_rate
-    axes[3].clear()
-    sns.lineplot(ax=axes[3], data=df_poison, x='poison_rate', y='acc', hue='defense',
-                 style='defense', markers=True, dashes=False, palette=palette, linewidth=2.5, markersize=9)
-    axes[3].set_title("(d) Accuracy vs. Poison Rate", fontweight='bold')
-    axes[3].set_ylabel("Accuracy")
-    axes[3].set_xlabel("Poison Rate")
-    axes[3].set_ylim(-0.05, 1.05)
-
-    # --- GLOBAL LEGEND ---
-    # Extract handles/labels from the last plot
-    handles, labels = axes[3].get_legend_handles_labels()
-    axes[3].get_legend().remove()
-
-    # Place legend centered below the entire figure
-    fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.15),
-               ncol=len(defense_order), frameon=True, fontsize=14, title="Defense Methods")
-
-    # Save
-    filename = output_dir / "plot_sensitivity_composite_row.pdf"
-    plt.savefig(filename, bbox_inches='tight', format='pdf', dpi=300)
-    print(f"Saved composite sensitivity plot to: {filename}")
 
 if __name__ == "__main__":
     main()
