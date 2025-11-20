@@ -10,8 +10,8 @@ from typing import List, Dict, Any, Tuple
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step8_figures_new"
-TARGET_VICTIM_ID = "bn_5"
+FIGURE_OUTPUT_DIR = "./figures/step8_figures"
+TARGET_VICTIM_ID = "bn_5"  # The seller the attacker tries to exclude
 
 # --- Styling ---
 DEFENSE_PALETTE = {
@@ -19,10 +19,6 @@ DEFENSE_PALETTE = {
     "fltrust": "#e74c3c",  # Red
     "martfl": "#2ecc71",  # Green
     "skymask": "#9b59b6"  # Purple
-}
-ATTACK_PALETTE = {
-    "0. Baseline": "gray",
-    "Targeted": "#e74c3c"  # Red for attack
 }
 
 
@@ -68,10 +64,9 @@ def load_run_data(metrics_file: Path) -> List[Dict[str, Any]]:
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
 
-        # Normalize metrics
         acc = metrics.get('acc', 0)
         if acc > 1.0: acc /= 100.0
-        base = {'acc': acc * 100, 'rounds': metrics.get('completed_rounds', 0)}  # Convert to %
+        base = {'acc': acc * 100, 'rounds': metrics.get('completed_rounds', 0)}
 
         report_file = metrics_file.parent / "marketplace_report.json"
         if report_file.exists():
@@ -114,113 +109,138 @@ def collect_data(base_dir: str) -> pd.DataFrame:
 def get_baseline_lookup(df: pd.DataFrame) -> Dict[Tuple[str, str], float]:
     base_df = df[df['attack'] == '0. Baseline']
     if base_df.empty: return {}
-    return base_df.groupby(['defense', 'dataset'])['selection_rate'].mean().to_dict()
+    # Get mean selection rate of the Victim in the baseline case
+    victim_base = base_df[base_df['seller_id'] == TARGET_VICTIM_ID]
+    if victim_base.empty:
+        # Fallback to general average if victim specific logic fails
+        return base_df.groupby(['defense', 'dataset'])['selection_rate'].mean().to_dict()
+    return victim_base.groupby(['defense', 'dataset'])['selection_rate'].mean().to_dict()
 
 
-# --- NEW COMBINED FIGURE FUNCTION ---
-
-def plot_combined_figure(df: pd.DataFrame, baseline_lookup: Dict, output_dir: Path):
+# =============================================================================
+# FIGURE 1: ATTACK COMPARISON SUMMARY (New Function)
+# =============================================================================
+def plot_all_attacks_comparison(df: pd.DataFrame, output_dir: Path):
     """
-    Generates a single, high-quality figure for the paper with 3 panels:
-    (a) General Selection Impact (Boxplot)
-    (b) Targeted Victim Isolation (Barplot)
-    (c) Performance Degradation (Barplot)
+    Creates a grouped bar chart:
+    X-axis: Defense
+    Bars (Hue): Attack Type (Lie, Reverse, Pivot, etc.)
+    Y-axis: Selection Rate of the VICTIM (Lower is better for attacker)
     """
-    print("\n--- Generating Combined Paper Figure ---")
+    print("\n--- Generating All-Attack Comparison Figure ---")
     set_plot_style()
 
-    # Filter relevant data
-    # We assume we want to show the "Pivot" attack as the representative case
-    pivot_attack_name = [a for a in df['attack'].unique() if 'pivot' in str(a).lower()]
-    if not pivot_attack_name:
-        print("No pivot attack data found for combined plot.")
+    # Filter to only the Victim's data (since the goal is targeted exclusion)
+    victim_df = df[df['seller_id'] == TARGET_VICTIM_ID].copy()
+
+    if victim_df.empty:
+        print("No data found for the specific victim ID. Plotting average of all benign instead.")
+        victim_df = df.copy()  # Fallback
+
+    # Remove baseline for this plot (we want to compare attacks)
+    plot_df = victim_df[victim_df['attack'] != '0. Baseline'].copy()
+
+    if plot_df.empty:
+        print("No attack data found.")
         return
 
-    attack_name = pivot_attack_name[0]
+    # Clean up Attack Names for Legend
+    plot_df['Attack Type'] = plot_df['attack'].apply(lambda x: x.replace('_', ' ').title())
+
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+
+    plt.figure(figsize=(12, 6))
+
+    sns.barplot(
+        data=plot_df,
+        x='defense',
+        y='selection_rate',
+        hue='Attack Type',
+        order=defense_order,
+        palette='magma',  # Good contrast for multiple categories
+        edgecolor='black',
+        errorbar=('ci', 95)
+    )
+
+    # Add a line for "Ideal Safety" (Baseline ~1.0)
+    plt.axhline(1.0, color='green', linestyle='--', linewidth=2, label="Ideal Safety (100%)")
+
+    plt.title("Attack Effectiveness Comparison: Targeted Exclusion of Victim", fontsize=16, fontweight='bold')
+    plt.ylabel("Victim Selection Rate (Lower = Attack Success)", fontsize=14)
+    plt.xlabel("Defense Mechanism", fontsize=14)
+    plt.ylim(0, 1.1)
+
+    # Format X Axis
+    ax = plt.gca()
+    labels = [l.get_text().capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask",
+                                                                                                          "SkyMask").replace(
+        "Martfl", "MARTFL") for l in ax.get_xticklabels()]
+    ax.set_xticklabels(labels, fontsize=13, fontweight='bold')
+
+    plt.legend(title="Attack Strategy", bbox_to_anchor=(1.02, 1), loc='upper left')
+
+    fname = output_dir / "Step8_All_Attacks_Comparison.pdf"
+    plt.savefig(fname, bbox_inches='tight', format='pdf')
+    print(f"  Saved Comparison: {fname.name}")
+    plt.close()
+
+
+# =============================================================================
+# FIGURE 2: DEEP DIVE (Your original requested figure)
+# =============================================================================
+def plot_detailed_pivot_breakdown(df: pd.DataFrame, baseline_lookup: Dict, output_dir: Path):
+    print("\n--- Generating Detailed Deep Dive (Pivot) ---")
+    set_plot_style()
+
+    # Filter for Pivot Attack
+    pivot_attacks = [a for a in df['attack'].unique() if 'pivot' in str(a).lower()]
+    if not pivot_attacks: return
+
+    attack_name = pivot_attacks[0]  # Use the first pivot attack found
     attack_df = df[df['attack'] == attack_name].copy()
     baseline_df = df[df['attack'] == '0. Baseline'].copy()
 
     defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
 
-    # Setup Figure
     fig, axes = plt.subplots(1, 3, figsize=(22, 5), constrained_layout=True)
 
-    # --- Panel A: Selection Distribution ---
-    sns.boxplot(
-        ax=axes[0], data=attack_df, x='defense', y='selection_rate',
-        order=defense_order, palette=DEFENSE_PALETTE
-    )
-
-    # Add Baseline Lines
-    for i, defense in enumerate(defense_order):
-        # Assume first dataset found is representative
+    # (a) Selection Distribution
+    sns.boxplot(ax=axes[0], data=attack_df, x='defense', y='selection_rate', order=defense_order,
+                palette=DEFENSE_PALETTE)
+    for i, d in enumerate(defense_order):
         ds = attack_df['dataset'].iloc[0] if not attack_df.empty else "Unknown"
-        base_val = baseline_lookup.get((defense, ds))
-        if base_val is not None:
-            axes[0].hlines(y=base_val, xmin=i - 0.4, xmax=i + 0.4, color='red', linestyle='--', lw=2.5)
-
-    axes[0].set_title("(a) General Selection Impact", fontweight='bold')
+        base_val = baseline_lookup.get((d, ds))
+        if base_val: axes[0].hlines(y=base_val, xmin=i - 0.4, xmax=i + 0.4, color='red', linestyle='--', lw=2.5)
+    axes[0].set_title("(a) Selection Rate Variance", fontweight='bold')
     axes[0].set_ylabel("Selection Rate")
-    axes[0].set_xlabel("")
-    axes[0].set_ylim(-0.05, 1.05)
 
-    # Legend hack for baseline line
-    from matplotlib.lines import Line2D
-    custom_lines = [Line2D([0], [0], color='red', lw=2.5, linestyle='--')]
-    axes[0].legend(custom_lines, ['Healthy Baseline'], loc='lower right')
-
-    # --- Panel B: Targeted Victim Isolation ---
-    # Compare Victim vs Others within the attack data
-    attack_df['Status'] = attack_df['seller_id'].apply(
-        lambda x: 'Victim' if str(x) == TARGET_VICTIM_ID else 'Others'
-    )
-
-    sns.barplot(
-        ax=axes[1], data=attack_df, x='defense', y='selection_rate', hue='Status',
-        order=defense_order, palette={'Victim': '#e74c3c', 'Others': '#95a5a6'},
-        errorbar=('ci', 95)
-    )
-
-    axes[1].set_title("(b) Targeted Victim Isolation", fontweight='bold')
+    # (b) Victim Isolation
+    attack_df['Status'] = attack_df['seller_id'].apply(lambda x: 'Victim' if str(x) == TARGET_VICTIM_ID else 'Others')
+    sns.barplot(ax=axes[1], data=attack_df, x='defense', y='selection_rate', hue='Status', order=defense_order,
+                palette={'Victim': '#e74c3c', 'Others': '#95a5a6'})
+    axes[1].set_title("(b) Victim Isolation (Targeted)", fontweight='bold')
     axes[1].set_ylabel("Selection Rate")
-    axes[1].set_xlabel("")
-    axes[1].set_ylim(0, 1.05)
-    axes[1].legend(title=None, loc='upper right')
 
-    # --- Panel C: Performance Degradation ---
-    # Combine Baseline and Attack for Side-by-Side
-    # We only care about Accuracy for this summary plot
-    perf_df = pd.concat([baseline_df, attack_df])
-    # Deduplicate scenario runs (we don't need per-seller rows for accuracy)
-    perf_df = perf_df.drop_duplicates(subset=['defense', 'attack', 'acc'])
-
-    # Rename for legend
+    # (c) Performance
+    perf_df = pd.concat([baseline_df, attack_df]).drop_duplicates(subset=['defense', 'attack', 'acc'])
     perf_df['Condition'] = perf_df['attack'].apply(lambda x: 'Baseline' if 'Baseline' in x else 'Under Attack')
-
-    sns.barplot(
-        ax=axes[2], data=perf_df, x='defense', y='acc', hue='Condition',
-        order=defense_order, palette={'Baseline': 'gray', 'Under Attack': '#e74c3c'}
-    )
-
-    axes[2].set_title("(c) Global Model Accuracy Impact", fontweight='bold')
+    sns.barplot(ax=axes[2], data=perf_df, x='defense', y='acc', hue='Condition', order=defense_order,
+                palette={'Baseline': 'gray', 'Under Attack': '#e74c3c'})
+    axes[2].set_title("(c) Utility Cost (Accuracy)", fontweight='bold')
     axes[2].set_ylabel("Accuracy (%)")
-    axes[2].set_xlabel("")
-    axes[2].set_ylim(0, 105)  # Assuming %
-    axes[2].legend(title=None, loc='lower right')
 
-    # --- Final Touches ---
-    # Clean X Labels
+    # Cleanup
     for ax in axes:
         labels = [l.get_text().capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask",
                                                                                                               "SkyMask").replace(
             "Martfl", "MARTFL") for l in ax.get_xticklabels()]
         ax.set_xticklabels(labels, fontsize=13, fontweight='bold')
+        ax.set_xlabel("")
         ax.grid(axis='y', linestyle='--', alpha=0.5)
 
-    # Save
-    fname = output_dir / "Step8_Combined_Paper_Figure.pdf"
+    fname = output_dir / "Step8_Detailed_Pivot_Breakdown.pdf"
     plt.savefig(fname, bbox_inches='tight', format='pdf')
-    print(f"  Saved Combined Figure: {fname.name}")
+    print(f"  Saved Deep Dive: {fname.name}")
     plt.close()
 
 
@@ -236,8 +256,11 @@ def main():
 
     baseline_lookup = get_baseline_lookup(df)
 
-    # Generate the specific combined figure
-    plot_combined_figure(df, baseline_lookup, output_dir)
+    # 1. Plot the Summary (All Attacks)
+    plot_all_attacks_comparison(df, output_dir)
+
+    # 2. Plot the Deep Dive (Pivot only)
+    plot_detailed_pivot_breakdown(df, baseline_lookup, output_dir)
 
     print("\nAnalysis complete.")
 
