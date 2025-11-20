@@ -212,7 +212,7 @@ def plot_scalability_composite_row(df: pd.DataFrame, dataset: str, output_dir: P
         l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask", "SkyMask").replace(
             "Martfl", "MARTFL") for l in labels]
 
-    fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.1),
+    fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.3),
                ncol=len(defense_order), frameon=True, title="Defense Methods", fontsize=14)
 
     # Main Title
