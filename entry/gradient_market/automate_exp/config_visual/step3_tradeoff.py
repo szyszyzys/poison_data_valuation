@@ -60,7 +60,7 @@ def get_step2_5_max_acc_lookup(base_dir: str) -> Dict[str, float]:
     scenario_folders = [f for f in base_path.glob("step2.5_find_hps_*") if f.is_dir()]
 
     if not scenario_folders:
-        print("Error: No 'step2.5_find_hps_*' directories found.")
+        print("Warning: No 'step2.5_find_hps_*' directories found.")
         return {}
 
     for scenario_path in scenario_folders:
@@ -117,6 +117,7 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     try:
+        # Explicitly handle the _new suffix in the regex
         pattern = r'step3_tune_(fedavg|martfl|fltrust|skymask)_([a-z]+)_(image|text|tabular)_(.+?)_(.+?)(_new|_old)?$'
         match = re.search(pattern, scenario_name)
         if match:
@@ -142,6 +143,7 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
         run_data['acc'] = metrics.get('acc', 0)
         run_data['asr'] = metrics.get('asr', 0)
         run_data['rounds'] = metrics.get('completed_rounds', 0)
+
         report_file = metrics_file.parent / "marketplace_report.json"
         if report_file.exists():
             with open(report_file, 'r') as f:
@@ -163,13 +165,16 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
 def collect_all_results(base_dir: str) -> pd.DataFrame:
     all_runs = []
     base_path = Path(base_dir)
-    print(f"Searching for 'step3_tune_*_new' results in {base_path.resolve()}...")
 
+    # --- STRICT FILTERING: ONLY FOLDERS ENDING IN _new ---
+    print(f"Searching for 'step3_tune_*_new' results in {base_path.resolve()}...")
     scenario_folders = [f for f in base_path.glob("step3_tune_*_new") if f.is_dir()]
 
     if not scenario_folders:
-        print(f"Error: No 'step3_tune_*_new' directories found.")
+        print(f"Error: No directories matching 'step3_tune_*_new' found.")
         return pd.DataFrame()
+
+    print(f"Found {len(scenario_folders)} valid '_new' scenario directories.")
 
     for scenario_path in scenario_folders:
         run_scenario = parse_scenario_name(scenario_path.name)
@@ -177,6 +182,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
             if not hp_path.is_dir(): continue
             hp_folder_name = hp_path.name
             run_hps = parse_hp_suffix(hp_folder_name)
+
             for metrics_file in hp_path.rglob("final_metrics.json"):
                 try:
                     run_metrics = load_run_data(metrics_file)
@@ -197,11 +203,17 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     df['defense_score'] = df['acc'] - df['asr']
     if 'mask_clip' in df.columns:
         df['mask_clip'] = df['mask_clip'].fillna(1.0)
-    if 'benign_selection_rate' in df.columns and 'adv_selection_rate' in df.columns:
-        df['filter_failure'] = (df['benign_selection_rate'] >= 0.99) & \
-                               (df['adv_selection_rate'] >= 0.99)
+
+    # Add a 'Filter Passed' flag to explain discrepancies between plots and tables
+    if 'benign_selection_rate' in df.columns:
+        df['filter_failure'] = (df['benign_selection_rate'] >= 0.99) & (df['adv_selection_rate'] >= 0.99)
+
+        # Check Fairness Threshold
+        df['is_fair'] = df['benign_selection_rate'] >= REASONABLE_BSR_THRESHOLD
     else:
         df['filter_failure'] = np.nan
+        df['is_fair'] = True  # Assume fair if no metric
+
     return df
 
 
@@ -209,7 +221,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
 def plot_tradeoff_scatter(df: pd.DataFrame, output_dir: Path):
     """
-    Generates the scatter plot (Acc vs ASR) with the "Target Zone" box.
+    Generates the scatter plot (Acc vs ASR) with improved consistency logic.
     """
     print("\n--- Generating Trade-off Scatter Plots ---")
     set_plot_style()
@@ -224,35 +236,41 @@ def plot_tradeoff_scatter(df: pd.DataFrame, output_dir: Path):
         subset['acc_pct'] = subset['acc'] * 100
         subset['asr_pct'] = subset['asr'] * 100
 
+        # Mark points that pass the Table's criteria
+        # (Relative Acc check is done per-row later, but here we check fairness)
+        subset['status'] = 'Unfair/Filtered'
+        subset.loc[subset['is_fair'], 'status'] = 'Valid Candidate'
+
         plt.figure(figsize=(10, 8))
 
         # Scatter Plot
         sns.scatterplot(
-            data=subset, x="acc_pct", y="asr_pct", hue="defense", style="defense",
+            data=subset, x="acc_pct", y="asr_pct",
+            hue="defense",
+            style="status",  # Different marker for filtered vs valid points
+            markers={"Valid Candidate": "o", "Unfair/Filtered": "X"},
             palette="deep", s=120, alpha=0.8, edgecolor="black"
         )
 
-        # Draw "Target Zone" (Ideal: High Acc, Low ASR)
+        # Draw "Target Zone"
         ax = plt.gca()
-        # Box from Acc=85-100, ASR=0-10
-        rect = patches.Rectangle((80, 0), 25, 10, linewidth=2,
+        rect = patches.Rectangle((85, 0), 20, 10, linewidth=2,
                                  edgecolor='green', facecolor='green', alpha=0.1, linestyle='--')
         ax.add_patch(rect)
 
-        plt.text(90, 5, "Target Zone", color='green',
+        plt.text(92.5, 5, "Target Zone", color='green',
                  fontsize=12, fontweight='bold', ha='center', va='center')
 
-        plt.title(f"Defense Trade-off Analysis: {dataset} ({attack})", fontsize=16, fontweight='bold')
+        plt.title(f"Defense Trade-off: {dataset} ({attack})", fontsize=16, fontweight='bold')
         plt.xlabel("Model Utility (Accuracy %)", fontsize=14)
         plt.ylabel("Attack Success Rate (ASR %)", fontsize=14)
 
         plt.xlim(0, 105)
         plt.ylim(-5, 105)
 
-        # Attack Goal Line
         plt.axhline(y=90, color='red', linestyle=':', alpha=0.5, label="Attack Goal")
 
-        plt.legend(title="Defense Method", bbox_to_anchor=(1.02, 1), loc='upper left')
+        plt.legend(title="Defense & Status", bbox_to_anchor=(1.02, 1), loc='upper left')
         plt.tight_layout()
 
         filename = output_dir / f"plot_tradeoff_scatter_{dataset}_{attack}.pdf"
@@ -273,15 +291,12 @@ def plot_step3_composite_summary(df: pd.DataFrame, output_dir: Path):
     for (dataset, attack), group_df in groups:
         defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
         defense_order = [d for d in defense_order if d in group_df['defense'].unique()]
-
-        # Labels
         formatted_labels = [d.capitalize().replace('Martfl', 'MARTFL').replace('Fedavg', 'FedAvg').replace('Fltrust',
                                                                                                            'FLTrust').replace(
             'Skymask', 'SkyMask') for d in defense_order]
 
         if not defense_order: continue
 
-        # Prep Data
         d1 = group_df.groupby('defense')['platform_usable'].mean().reindex(defense_order).reset_index()
         d1['Value'] = d1['platform_usable'] * 100
 
@@ -301,7 +316,6 @@ def plot_step3_composite_summary(df: pd.DataFrame, output_dir: Path):
         d4['Rate'] = d4['Rate'] * 100
         d4['Type'] = d4['Type'].replace({'benign_selection_rate': 'Benign', 'adv_selection_rate': 'Adversary'})
 
-        # Plot
         fig, axes = plt.subplots(1, 4, figsize=(22, 5), constrained_layout=True)
 
         sns.barplot(ax=axes[0], data=d1, x='defense', y='Value', order=defense_order, palette='viridis',
@@ -337,9 +351,8 @@ def plot_step3_composite_summary(df: pd.DataFrame, output_dir: Path):
             ax.grid(axis='y', alpha=0.5)
 
         fig.suptitle(f"Parameter Tuning Summary: {dataset} ({attack})", fontsize=18, fontweight='bold', y=1.1)
-
         filename = output_dir / f"plot_composite_{dataset}_{attack}.pdf"
-        plt.savefig(filename, bbox_inches='tight', format='pdf')
+        plt.savefig(filename, bbox_inches='tight', format='pdf', dpi=300)
         plt.close('all')
 
     print("Composite plots saved.")
@@ -351,7 +364,6 @@ def plot_skymask_deep_dive(df_all: pd.DataFrame, output_dir: Path):
     df_sky = df_all[df_all['defense'] == 'skymask'].copy()
     if df_sky.empty: return
 
-    # Defaults
     for col, val in [('mask_clip', '1.0'), ('mask_lr', '0.01'), ('mask_epochs', '20'), ('mask_threshold', '0.5')]:
         if col not in df_sky.columns:
             df_sky[col] = val
@@ -371,18 +383,17 @@ def plot_skymask_deep_dive(df_all: pd.DataFrame, output_dir: Path):
             return "Normal HPs"
 
     df_sky['hp_type'] = df_sky.apply(categorize_hps, axis=1)
-    plot_df = df_sky.melt(
-        id_vars=['dataset', 'attack', 'hp_type', 'mask_threshold'],
-        value_vars=['defense_score', 'filter_failure'],
-        var_name='Metric', value_name='Value'
-    )
+    plot_df = df_sky.melt(id_vars=['dataset', 'attack', 'hp_type'], value_vars=['defense_score'], var_name='Metric',
+                          value_name='Value')
 
     g = sns.catplot(
-        data=plot_df, x='hp_type', y='Value', hue='mask_threshold',
-        col='attack', row='Metric', kind='bar', palette='viridis',
-        height=4, aspect=1.5, sharey='row', legend_out=True, edgecolor='black'
+        data=plot_df, x='hp_type', y='Value', col='attack',
+        kind='bar', palette='viridis', height=4, aspect=1.5,
+        sharey='row', legend_out=True, edgecolor='black'
     )
     g.fig.suptitle("SkyMask Analysis: HP Trick Impact", y=1.05, fontweight='bold')
+    g.set_titles(col_template="{col_name} Attack")
+
     plot_file = output_dir / "plot_skymask_deep_dive_analysis.pdf"
     g.fig.savefig(plot_file, bbox_inches='tight', format='pdf')
     plt.close('all')
@@ -406,16 +417,17 @@ def plot_defense_comparison(df: pd.DataFrame, scenario: str, defense: str, outpu
     scenario_df = scenario_df.sort_values(by='defense_score', ascending=False)
     metrics = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate']
     metrics = [m for m in metrics if m in scenario_df.columns]
-
     plot_df = scenario_df.melt(id_vars=['hp_label'], value_vars=metrics, var_name='Metric', value_name='Value')
+
+    metric_map = {'acc': 'Accuracy', 'asr': 'ASR', 'adv_selection_rate': 'Adv. Select',
+                  'benign_selection_rate': 'Benign Select'}
+    plot_df['Metric'] = plot_df['Metric'].replace(metric_map)
 
     plt.figure(figsize=(max(12, 0.4 * scenario_df['hp_label'].nunique()), 6))
     sns.barplot(data=plot_df, x='hp_label', y='Value', hue='Metric', palette='deep', edgecolor='black')
-
     plt.title(f'{defense.upper()}: Performance vs HPs ({scenario})', fontweight='bold')
     plt.xticks(rotation=45, ha='right', fontsize=10)
     plt.tight_layout()
-
     plt.savefig(output_dir / f"plot_{scenario}_performance.pdf", bbox_inches='tight', format='pdf')
     plt.close('all')
 
@@ -429,13 +441,11 @@ def main():
 
     # 1. Step 2.5 Lookup
     dataset_max_acc_lookup = get_step2_5_max_acc_lookup(BASE_RESULTS_DIR)
-    if not dataset_max_acc_lookup:
-        print("Warning: Could not generate max accuracy lookup. Proceeding without thresholds.")
 
-    # 2. Load Data
+    # 2. Load Data (STRICT FILTERING)
     df = collect_all_results(BASE_RESULTS_DIR)
     if df.empty:
-        print("No 'step3' results data was loaded. Exiting.")
+        print("No 'step3_tune_*_new' results data was loaded. Exiting.")
         return
 
     df.to_csv(output_dir / "step3_full_results_summary.csv", index=False, float_format="%.4f")
@@ -449,30 +459,27 @@ def main():
         df['usable_threshold'] = df['dataset_max_acc'] * RELATIVE_ACC_THRESHOLD
         df['platform_usable'] = df['acc'] >= df['usable_threshold']
     else:
-        df['platform_usable'] = True  # Default if no baseline found
+        print("Warning: No baseline found. Assuming all runs are 'usable' relative to themselves.")
+        df['platform_usable'] = True
 
+    # 4. Separate DataFrame for "Good/Fair" Tables
+    # This df is ONLY used for the summary tables to show "Best" performance
     reasonable_acc_df = df[df['platform_usable']].copy()
 
     # --- TABLES ---
-    # 1. Summary Range
+    # 1. Tuning Summary
     agg_metrics = {
         'hp_suffix': 'nunique',
         'acc': ['min', 'max', 'mean'],
         'asr': ['min', 'max', 'mean']
     }
-    if 'benign_selection_rate' in reasonable_acc_df.columns:
-        agg_metrics['benign_selection_rate'] = ['min', 'max', 'mean']
-        agg_metrics['adv_selection_rate'] = ['min', 'max', 'mean']
-
     if not reasonable_acc_df.empty:
         df_summary = reasonable_acc_df.groupby(['defense', 'dataset', 'attack']).agg(agg_metrics)
         df_summary.columns = ['_'.join(col).strip() for col in df_summary.columns.values]
         df_summary = df_summary.reset_index()
 
-        # Helper
         def rng(row, m):
-            if f'{m}_min' not in row: return "N/A"
-            return f"{row[f'{m}_min'] * 100:.1f}-{row[f'{m}_max'] * 100:.1f}"
+            return f"{row[f'{m}_min'] * 100:.1f}-{row[f'{m}_max'] * 100:.1f}" if f'{m}_min' in row else "N/A"
 
         df_summary['ACC Range %'] = df_summary.apply(lambda r: rng(r, 'acc'), axis=1)
         df_summary['ASR Range %'] = df_summary.apply(lambda r: rng(r, 'asr'), axis=1)
@@ -501,10 +508,10 @@ def main():
     # --- PLOTTING ---
     print("\n--- Generating Visualizations ---")
 
-    # 1. Trade-off Scatter (Objective 0) - ADDED BACK
+    # 1. Trade-off Scatter (Shows ALL data, with 'X' for unfair/unusable points)
     plot_tradeoff_scatter(df, output_dir)
 
-    # # 2. Composite Summary (Objective 1)
+    # # 2. Composite Summary
     # plot_step3_composite_summary(df, output_dir)
     #
     # # 3. Deep Dive
