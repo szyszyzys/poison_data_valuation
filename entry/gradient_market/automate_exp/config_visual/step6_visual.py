@@ -1,12 +1,13 @@
-import pandas as pd
 import json
+import os
 import re
-import seaborn as sns
+from pathlib import Path
+from typing import Dict, Any
+
 import matplotlib.pyplot as plt
 import numpy as np
-import os
-from pathlib import Path
-from typing import List, Dict, Any
+import pandas as pd
+import seaborn as sns
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
@@ -138,10 +139,8 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
 def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Path):
     """
-    (UPDATED)
-    Generates the grouped bar chart comparing Sybil strategies for a single defense.
-    Assumes 'defense_df' is already filtered for the correct defense
-    and has the 'strategy_label' column.
+    Generates a publication-quality grouped bar chart with consistent
+    alpha-based naming and sorting.
     """
     if defense_df.empty:
         print(f"No data for defense: {defense}")
@@ -149,59 +148,126 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
 
     print(f"\n--- Plotting Sybil Effectiveness for: {defense} ---")
 
-    # --- Logical Sorting for the X-axis ---
-    # Define the desired order
-    def get_sort_key(label):
+    # --- 1. CONFIG: Font Scaling ---
+    sns.set_theme(style="whitegrid")
+    sns.set_context("talk", font_scale=1.1)
+
+    # --- 2. DATA PREP: Sort by 'Alpha' (Aggressiveness) ---
+    def get_effective_alpha(label):
+        """
+        Returns a tuple (Order_Group, Alpha_Value) for sorting.
+        Groups: 0=Baseline, 1=Attacks
+        """
         if label == 'baseline_no_sybil':
             return (0, 0.0)
-        if label.startswith('oracle_blend'):
-            try:
-                alpha = float(label.split('_')[-1])
-                return (2, alpha)
-            except:
-                return (2, np.inf)  # Failsafe
+
+        # --- Define Alpha values for known strategies ---
         if label == 'mimic':
-            return (1, 0.0)
-        # We no longer need the 'systematic_probe' key as it's filtered out
-        return (4, 0.0)  # Other strategies
+            return (1, 0.1)  # User defined: Mimic is 0.1
+        if label == 'pivot':
+            return (1, 1.0)  # Definition: Pivot is 100% centroid
+        if label == 'knock_out':
+            # Assuming Knock Out is more aggressive than mimic but less than Pivot
+            # or grouped at the end. Let's place it based on typical behavior.
+            return (1, 0.95)
 
-    # Get unique labels and sort them
+        # Handle Oracle Blend (e.g., 'oracle_blend_0.5')
+        if 'blend' in label:
+            try:
+                val = float(label.split('_')[-1])
+                return (1, val)
+            except:
+                return (1, 0.5)
+
+        return (1, 99.0)  # Put unknown strategies at the end
+
     unique_labels = defense_df['strategy_label'].unique()
-    sorted_labels = sorted(unique_labels, key=get_sort_key)
-    # --- End Sorting ---
+    # Sort based on the effective alpha we defined above
+    sorted_labels = sorted(unique_labels, key=get_effective_alpha)
 
-    metrics_to_plot = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate']
-    metrics_to_plot = [m for m in metrics_to_plot if m in defense_df.columns]
+    # --- 3. DATA PREP: Rename Metrics ---
+    metric_map = {
+        'acc': 'Model Accuracy',
+        'asr': 'Attack Success Rate',
+        'adv_selection_rate': 'Adv. Selection Rate',
+        'benign_selection_rate': 'Benign Selection Rate'
+    }
+    metrics_to_plot = [m for m in metric_map.keys() if m in defense_df.columns]
 
-    # Melt the data for plotting.
-    # The 'defense_df' is already pre-aggregated (mean over seeds).
     plot_df = defense_df.melt(
         id_vars=['strategy_label'],
         value_vars=metrics_to_plot,
         var_name='Metric',
         value_name='Value'
     )
+    plot_df['Metric'] = plot_df['Metric'].map(metric_map)
 
-    plt.figure(figsize=(16, 7))
-    # --- Use `dodge=True` (default) for grouped bars ---
-    # Note: `sns.barplot` will show mean + confidence interval if multiple seeds are present.
-    # Since we pre-aggregated, it will just show the mean value.
-    sns.barplot(
+    # --- 4. PLOTTING ---
+    plt.figure(figsize=(18, 8))
+
+    ax = sns.barplot(
         data=plot_df,
         x='strategy_label',
         y='Value',
         hue='Metric',
-        order=sorted_labels  # Apply the logical sort order
+        order=sorted_labels,
+        palette="deep",
+        edgecolor="black",
+        linewidth=1
     )
-    plt.title(f'Effectiveness of Sybil Attacks against {defense.upper()} Defense')
-    plt.ylabel('Rate')
-    plt.xlabel('Sybil Attack Strategy')
-    plt.xticks(rotation=20, ha='right')
-    plt.legend(title='Metric')
-    plt.tight_layout()
 
-    plot_file = output_dir / f"plot_sybil_effectiveness_{defense}.png"
-    plt.savefig(plot_file)
+    # --- 5. STYLING ---
+    plt.title(f'Effectiveness of Sybil Attacks against {defense.upper()}',
+              fontsize=24, fontweight='bold', pad=20)
+    plt.ylabel('Rate', fontsize=20, fontweight='bold')
+    plt.xlabel('', fontsize=0)
+
+    # --- 6. FORMATTING LABELS (The Naming Tradition) ---
+    def format_label(l):
+        # 1. Baseline
+        if l == 'baseline_no_sybil':
+            return "Baseline"
+
+        # 2. Mimic (User specified 0.1)
+        if l == 'mimic':
+            return "Mimic\n($\\alpha=0.1$)"
+
+        # 3. Pivot (By definition, Pivot is 1.0)
+        if l == 'pivot':
+            return "Pivot\n($\\alpha=1.0$)"
+
+        # 4. Knock Out (Aggressive)
+        if l == 'knock_out':
+            return "Knock Out\n(High $\\alpha$)"
+
+        # 5. Oracle Blends (Extract the number)
+        if l.startswith('oracle_blend'):
+            val = l.split('_')[-1]
+            return f"Oracle Blend\n($\\alpha={val}$)"
+
+        # Fallback
+        return l.replace('_', '\n').title()
+
+    formatted_labels = [format_label(l) for l in sorted_labels]
+
+    ax.set_xticklabels(formatted_labels, rotation=0, fontsize=16, fontweight='bold')
+    plt.yticks(fontsize=16)
+
+    # --- 7. LEGEND & LAYOUT ---
+    plt.legend(
+        title=None,
+        fontsize=16,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.12),
+        ncol=4,
+        frameon=False
+    )
+
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.2)
+
+    plot_file = output_dir / f"plot_sybil_effectiveness_{defense}.pdf"
+    plt.savefig(plot_file, dpi=300)
     print(f"Saved plot: {plot_file}")
     plt.clf()
     plt.close('all')
