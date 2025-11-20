@@ -7,17 +7,18 @@ import numpy as np
 import os
 from pathlib import Path
 from typing import List, Dict, Any
-from matplotlib.ticker import FixedLocator, FixedFormatter
+from matplotlib.ticker import FixedLocator, FixedFormatter, MaxNLocator
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step11_figures_visuals"
 
-# We treat 100.0 as the "IID" case based on your experiment generation
+# --- Constants for Heterogeneity Plot ---
 ALPHAS_IN_TEST = [100.0, 1.0, 0.5, 0.1]
-
-# Custom Labels for the X-Axis (Must match ALPHAS_IN_TEST order)
 ALPHA_LABELS = ["IID", "1.0", "0.5", "0.1"]
+
+# --- Constants for Scarcity Plot ---
+RATIOS_IN_TEST = [0.01, 0.05, 0.1, 0.2]
 
 # Consistent Styling
 DEFENSE_PALETTE = {
@@ -27,8 +28,6 @@ DEFENSE_PALETTE = {
     "skymask": "#9b59b6"  # Purple
 }
 
-
-# ---------------------
 
 def set_plot_style():
     sns.set_theme(style="whitegrid")
@@ -58,12 +57,27 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
 
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
-    """Parses alpha value from folder name."""
+    """
+    Parses folder suffixes.
+    Handles BOTH 'alpha_100.0' (Heterogeneity) AND 'ratio_sweep_0.1' (Scarcity).
+    """
     hps = {}
-    match = re.search(r'alpha_([0-9\.]+)', hp_folder_name)
-    if match:
-        hps['dirichlet_alpha'] = float(match.group(1))
-    return hps
+
+    # Case 1: Heterogeneity Sweep
+    match_alpha = re.search(r'alpha_([0-9\.]+)', hp_folder_name)
+    if match_alpha:
+        hps['experiment_type'] = 'heterogeneity'
+        hps['x_val'] = float(match_alpha.group(1))
+        return hps
+
+    # Case 2: Buyer Ratio Sweep
+    match_ratio = re.search(r'ratio_sweep_([0-9\.]+)', hp_folder_name)
+    if match_ratio:
+        hps['experiment_type'] = 'scarcity'
+        hps['x_val'] = float(match_ratio.group(1))
+        return hps
+
+    return {}
 
 
 def load_run_data(metrics_file: Path) -> Dict[str, Any]:
@@ -114,8 +128,11 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
                 if not relative_parts: continue
 
-                run_hps = parse_hp_suffix(relative_parts[0])
-                if 'dirichlet_alpha' not in run_hps: continue
+                # Parse folder name to determine if it's Alpha or Ratio sweep
+                hp_folder = relative_parts[0]
+                run_hps = parse_hp_suffix(hp_folder)
+
+                if 'experiment_type' not in run_hps: continue
 
                 metrics = load_run_data(metrics_file)
                 if metrics:
@@ -126,15 +143,14 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     return pd.DataFrame(all_runs)
 
 
-def plot_four_in_a_row(df: pd.DataFrame, dataset: str, output_dir: Path):
+def plot_heterogeneity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
     """
-    Generates the composite figure.
-    CRITICAL UPDATE: X-Axis now shows "IID" on the left.
+    Plots: X-Axis = Alpha (Heterogeneity)
     """
-    print(f"\n--- Generating Composite Row Figures for {dataset} ---")
-    set_plot_style()
+    print(f"\n--- Generating Heterogeneity Plots for {dataset} ---")
 
-    dataset_df = df[df['dataset'] == dataset].copy()
+    # Filter for Heterogeneity Experiments
+    dataset_df = df[(df['dataset'] == dataset) & (df['experiment_type'] == 'heterogeneity')].copy()
     if dataset_df.empty: return
 
     # Convert to percentages
@@ -156,14 +172,14 @@ def plot_four_in_a_row(df: pd.DataFrame, dataset: str, output_dir: Path):
         if bias_df.empty: continue
 
         fig, axes = plt.subplots(1, 4, figsize=(24, 4.5), constrained_layout=True)
+        set_plot_style()
 
         for i, (col_name, display_name) in enumerate(metrics_order):
             ax = axes[i]
-
             sns.lineplot(
                 ax=ax,
                 data=bias_df,
-                x='dirichlet_alpha',
+                x='x_val',
                 y=col_name,
                 hue='defense',
                 style='defense',
@@ -184,24 +200,15 @@ def plot_four_in_a_row(df: pd.DataFrame, dataset: str, output_dir: Path):
             else:
                 ax.set_ylabel("")
 
-            # --- KEY UPDATE: CUSTOM X-AXIS LABELS ---
+            # --- AXIS LOGIC: IID (100) on LEFT ---
             ax.set_xscale('log')
-
-            # 1. Set Ticks exactly where your data points are
             ax.xaxis.set_major_locator(FixedLocator(ALPHAS_IN_TEST))
-
-            # 2. Replace numbers with ["IID", "1.0", "0.5", "0.1"]
             ax.xaxis.set_major_formatter(FixedFormatter(ALPHA_LABELS))
-
-            # 3. Reverse the axis limit so 100 (IID) is on the LEFT
-            # Log axis: Higher number usually on right. We want 100 on left.
-            # So we set max limit > 100 and min limit < 0.1, but ordered (max, min)
             ax.set_xlim(max(ALPHAS_IN_TEST) * 1.4, min(ALPHAS_IN_TEST) * 0.8)
 
             ax.grid(True, which='major', linestyle='--', alpha=0.6)
             ax.get_legend().remove()
 
-        # Legend and Title
         handles, labels = axes[0].get_legend_handles_labels()
         labels = [l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask",
                                                                                                    "SkyMask").replace(
@@ -210,13 +217,92 @@ def plot_four_in_a_row(df: pd.DataFrame, dataset: str, output_dir: Path):
         fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.15),
                    ncol=len(defense_order), frameon=True, fontsize=14, title="Defense Methods")
 
-        # fig.suptitle(f"Impact of {bias} on {dataset}", fontsize=18, fontweight='bold', y=1.05)
-
         safe_bias = bias.replace(' ', '').replace('-', '')
-        fname = output_dir / f"Step11_Composite_Row_{dataset}_{safe_bias}.pdf"
+        fname = output_dir / f"Step11_Heterogeneity_{dataset}_{safe_bias}.pdf"
         plt.savefig(fname, bbox_inches='tight', format='pdf')
-        print(f"  Saved Composite: {fname.name}")
+        print(f"  Saved: {fname.name}")
         plt.close()
+
+
+def plot_scarcity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
+    """
+    Plots: X-Axis = Buyer Ratio (Data Scarcity)
+    """
+    print(f"\n--- Generating Data Scarcity Plots for {dataset} ---")
+
+    # Filter for Scarcity Experiments
+    dataset_df = df[(df['dataset'] == dataset) & (df['experiment_type'] == 'scarcity')].copy()
+    if dataset_df.empty:
+        print("  No Scarcity data found.")
+        return
+
+    # Convert to percentages
+    for col in ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']:
+        dataset_df[col] = dataset_df[col] * 100
+
+    # Scarcity was only run for Seller-Only Bias
+    bias = 'Seller-Only Bias'
+    bias_df = dataset_df[dataset_df['bias_source'] == bias]
+    if bias_df.empty: return
+
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+    metrics_order = [
+        ('acc', 'Accuracy'),
+        ('asr', 'ASR'),
+        ('benign_selection_rate', 'Benign Select'),
+        ('adv_selection_rate', 'Attacker Select')
+    ]
+
+    fig, axes = plt.subplots(1, 4, figsize=(24, 4.5), constrained_layout=True)
+    set_plot_style()
+
+    for i, (col_name, display_name) in enumerate(metrics_order):
+        ax = axes[i]
+        sns.lineplot(
+            ax=ax,
+            data=bias_df,
+            x='x_val',
+            y=col_name,
+            hue='defense',
+            style='defense',
+            hue_order=defense_order,
+            style_order=defense_order,
+            palette=DEFENSE_PALETTE,
+            markers=True,
+            dashes=False,
+            markersize=9,
+            linewidth=2.5,
+            errorbar=('ci', 95)
+        )
+
+        ax.set_title(f"{display_name}", fontweight='bold', fontsize=16)
+        ax.set_xlabel("Buyer Data Ratio", fontsize=14)
+        if i == 0:
+            ax.set_ylabel("Rate / Score (%)", fontsize=14)
+        else:
+            ax.set_ylabel("")
+
+        # --- AXIS LOGIC: Standard Linear for Ratio ---
+        # ax.set_xscale('log') # Optional, usually linear 0.01 -> 0.2 is fine
+        ax.xaxis.set_major_locator(FixedLocator(RATIOS_IN_TEST))
+
+        ax.grid(True, which='major', linestyle='--', alpha=0.6)
+        ax.get_legend().remove()
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    labels = [
+        l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask", "SkyMask").replace(
+            "Martfl", "MARTFL") for l in labels]
+
+    fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.15),
+               ncol=len(defense_order), frameon=True, fontsize=14, title="Defense Methods")
+
+    fig.suptitle(f"Impact of Root Data Scarcity (Seller-Only Bias, Alpha=0.5)", fontsize=16, y=1.05)
+
+    fname = output_dir / f"Step11_Scarcity_{dataset}.pdf"
+    plt.savefig(fname, bbox_inches='tight', format='pdf')
+    print(f"  Saved: {fname.name}")
+    plt.close()
 
 
 def main():
@@ -229,9 +315,16 @@ def main():
         print("No valid data found.")
         return
 
+    # Save debug CSV
+    df.to_csv(output_dir / "step11_full_summary.csv", index=False)
+
     for dataset in df['dataset'].unique():
         if dataset != 'unknown':
-            plot_four_in_a_row(df, dataset, output_dir)
+            # 1. Plot Heterogeneity (Alpha Sweep)
+            plot_heterogeneity_row(df, dataset, output_dir)
+
+            # 2. Plot Scarcity (Buyer Ratio Sweep)
+            plot_scarcity_row(df, dataset, output_dir)
 
     print("\nAnalysis complete.")
 
