@@ -15,9 +15,7 @@ FIGURE_OUTPUT_DIR = "./figures/step2.5_figures"
 # Define the relative 'usability' threshold
 RELATIVE_ACC_THRESHOLD = 0.90
 
-
 # ---------------------
-
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     """
@@ -32,7 +30,7 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
         hps['learning_rate'] = float(match.group(2))
         hps['local_epochs'] = int(match.group(3))
     else:
-        print(f"Warning: Could not parse HP suffix '{hp_folder_name}'")
+        pass # Silence warnings for cleaner output
     return hps
 
 
@@ -41,7 +39,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     Parses the base scenario name (e.g., 'step2.5_find_hps_martfl_image_CIFAR10')
     """
     try:
-        # Use the regex parser to avoid errors with underscores
         pattern = r'step2\.5_find_hps_(fedavg|martfl|fltrust|skymask)_(image|text|tabular)_(.+)'
         match = re.search(pattern, scenario_name)
 
@@ -62,24 +59,21 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
 
 def load_run_data(metrics_file: Path) -> Dict[str, Any]:
     """
-    (UPDATED - Learning from step12)
     Loads metrics from final_metrics.json (acc, rounds)
-    AND calculates *both* benign and adversary selection rates
-    from marketplace_report.json.
+    AND calculates both benign and adversary selection rates from marketplace_report.json.
     """
     run_data = {}
     try:
-        # 1. Load basic metrics (acc, rounds)
+        # 1. Load basic metrics
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
         run_data['acc'] = metrics.get('acc', 0)
         run_data['rounds'] = metrics.get('completed_rounds', 0)
 
-        # 2. --- NEW LOGIC (from your step12 example) ---
+        # 2. Load Selection Rates
         report_file = metrics_file.parent / "marketplace_report.json"
 
         if not report_file.exists():
-            # Set to NaN to handle cases where report wasn't generated
             run_data['benign_selection_rate'] = np.nan
             run_data['adv_selection_rate'] = np.nan
             return run_data
@@ -88,32 +82,24 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
             report = json.load(f)
 
         sellers = report.get('seller_summaries', {}).values()
-
-        # Check for both types, just like in your step12 script
         adv_sellers = [s for s in sellers if s.get('type') == 'adversary']
         ben_sellers = [s for s in sellers if s.get('type') == 'benign']
 
-        # Calculate mean for adv sellers (will be 0.0 if list is empty)
         run_data['adv_selection_rate'] = np.mean(
             [s['selection_rate'] for s in adv_sellers]
         ) if adv_sellers else 0.0
 
-        # Calculate mean for benign sellers (will be NaN if list is empty)
         run_data['benign_selection_rate'] = np.mean(
             [s['selection_rate'] for s in ben_sellers]
         ) if ben_sellers else np.nan
 
-        # --- END NEW LOGIC ---
-
         return run_data
     except Exception as e:
-        print(f"Error loading data from {metrics_file.parent}: {e}")
         return {}
 
 
 def collect_all_results(base_dir: str) -> pd.DataFrame:
     """
-    (UPDATED)
     Walks the results directory, aggregates all run data,
     AND filters out any folders ending in '_nolocalclip'.
     """
@@ -121,18 +107,16 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     base_path = Path(base_dir)
     print(f"Searching for results in {base_path.resolve()}...")
 
-    # --- THIS IS THE NEW FILTER LOGIC ---
     scenario_folders = [
         f for f in base_path.glob("step2.5_find_hps_*")
         if f.is_dir() and not f.name.endswith("_nolocalclip")
     ]
-    # --- END NEW FILTER LOGIC ---
 
     if not scenario_folders:
-        print(f"Error: No 'step2.5_find_hps_*' directories (excluding '_nolocalclip') found in {base_path}.")
+        print(f"Error: No 'step2.5_find_hps_*' directories (excluding '_nolocalclip') found.")
         return pd.DataFrame()
 
-    print(f"Found {len(scenario_folders)} scenario base directories to process.")
+    print(f"Found {len(scenario_folders)} scenario base directories.")
 
     for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
@@ -145,10 +129,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                     continue
 
                 hp_folder_name = relative_parts[0]
-
                 run_hps = parse_hp_suffix(hp_folder_name)
-
-                # --- This call now returns both selection rates ---
                 run_metrics = load_run_data(metrics_file)
 
                 if run_metrics:
@@ -158,237 +139,337 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                         **run_metrics,
                     })
             except Exception as e:
-                print(f"Error processing file {metrics_file} under scenario {scenario_name}: {e}")
+                continue
 
     if not all_runs:
-        print("Error: No 'final_metrics.json' files were successfully processed.")
         return pd.DataFrame()
 
     df = pd.DataFrame(all_runs)
 
-    print("\nCalculating relative 'Platform Usable' thresholds...")
+    print("Calculating thresholds...")
     dataset_max_acc = df.groupby('dataset')['acc'].max().to_dict()
     df['dataset_max_acc'] = df['dataset'].map(dataset_max_acc)
     df['platform_usable_threshold'] = df['dataset_max_acc'] * RELATIVE_ACC_THRESHOLD
     df['platform_usable'] = (df['acc'] >= df['platform_usable_threshold'])
-    print("Done calculating thresholds.")
 
     return df
 
 
+def style_axis(ax, title, xlabel, ylabel):
+    """
+    Helper to apply the consistent "Publication Quality" typography.
+    """
+    # Title
+    ax.set_title(title, fontsize=24, fontweight='bold', pad=20)
+
+    # Labels
+    ax.set_xlabel(xlabel, fontsize=20, fontweight='bold', labelpad=15)
+    ax.set_ylabel(ylabel, fontsize=22, fontweight='bold', labelpad=15)
+
+    # Ticks
+    plt.xticks(fontsize=18, fontweight='bold')
+    plt.yticks(fontsize=18)
+
+
 def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
     """
-    (UPDATED)
-    Plots the 5 key platform metrics.
-    - Metrics 1-4 are separate PDFs.
-    - Metric 5 is a new GROUPED bar chart for *both* selection rates.
+    Plots the 5 key platform metrics using the requested "Sybil Comparison" visual style:
+    - Whitegrid, Talk context
+    - Bold labels, Large fonts
+    - Black edges on bars
+    - Bottom Legends
     """
-    print("\n--- Plotting Platform Usability & Selection Metrics (Separate PDFs) ---")
+    print("\n--- Plotting Platform Metrics (High-Res Style) ---")
 
     if df.empty:
         print("No data to plot.")
         return
 
-    # Check that all necessary columns are present
+    # --- 1. CONFIGURATION (Apply Global Theme) ---
+    sns.set_theme(style="whitegrid")
+    sns.set_context("talk", font_scale=1.1)
+
+    # Data Prep
     required_cols = ['acc', 'rounds', 'platform_usable', 'benign_selection_rate', 'adv_selection_rate']
     if not all(col in df.columns for col in required_cols):
-        print("Error: Missing required data columns (acc, rounds, benign_selection_rate, or adv_selection_rate).")
-        print("Please check 'load_run_data' and your .json files.")
+        print("Error: Missing required data columns.")
         return
 
-    # === METRIC CALCULATIONS ===
+    # --- Metric Calculations ---
 
-    # --- Metrics 1-4: Calculated as before ---
+    # 1-4: Usability Metrics
     df_usability = df.groupby(['defense', 'dataset'])['platform_usable'].mean().reset_index()
     df_usability['Value'] = df_usability['platform_usable'] * 100
-    df_usability['Metric'] = 'Usability Rate (%) (Higher is Better)'
+    df_usability['Metric'] = 'Usability Rate (%)'
 
     df_perf = df[df['platform_usable'] == True].groupby(['defense', 'dataset'])['acc'].mean().reset_index()
     df_perf['Value'] = df_perf['acc'] * 100
-    df_perf['Metric'] = 'Avg. Usable Accuracy (%) (Higher is Better)'
+    df_perf['Metric'] = 'Avg. Usable Accuracy (%)'
 
     df_speed = df[df['platform_usable'] == True].groupby(['defense', 'dataset'])['rounds'].mean().reset_index()
     df_speed['Value'] = df_speed['rounds']
-    df_speed['Metric'] = 'Avg. Usable Rounds (Lower is Better)'
+    df_speed['Metric'] = 'Avg. Usable Rounds'
 
     df_speed_stability = df.groupby(['defense', 'dataset'])['rounds'].std().reset_index()
     df_speed_stability['Value'] = df_speed_stability['rounds']
-    df_speed_stability['Metric'] = 'Rounds Instability (Std Dev) (Lower is Better)'
+    df_speed_stability['Metric'] = 'Rounds Instability (Std)'
 
-    # Combine metrics 1-4 for plotting
-    df_metrics_1_4 = pd.concat([
-        df_usability,
-        df_perf,
-        df_speed,
-        df_speed_stability
-    ], ignore_index=True)
+    df_metrics_1_4 = pd.concat([df_usability, df_perf, df_speed, df_speed_stability], ignore_index=True)
 
-    # --- Metric 5: Selection Rates (for grouped bar chart) ---
+    # 5: Selection Metrics
     df_selection_raw = df.groupby(['defense', 'dataset'])[
         ['benign_selection_rate', 'adv_selection_rate']].mean().reset_index()
 
-    # Rename for melting
     df_selection_raw = df_selection_raw.rename(columns={
-        'benign_selection_rate': 'Avg. Benign Selection Rate',
-        'adv_selection_rate': 'Avg. Adversary Selection Rate'
+        'benign_selection_rate': 'Benign',
+        'adv_selection_rate': 'Adversary'
     })
 
-    # Melt to long format for seaborn `hue`
     df_selection_melted = df_selection_raw.melt(
         id_vars=['defense', 'dataset'],
-        value_vars=['Avg. Benign Selection Rate', 'Avg. Adversary Selection Rate'],
+        value_vars=['Benign', 'Adversary'],
         var_name='Seller Type',
         value_name='Selection Rate'
     )
-    # Convert to percentage
     df_selection_melted['Selection Rate'] *= 100
 
-    # === CSV SAVING ===
-    # We'll save all 6 metrics in one pivoted CSV
-    # Re-calculate selection metrics for the CSV
-    df_benign_csv = df_selection_raw[['defense', 'dataset', 'Avg. Benign Selection Rate']].copy()
-    df_benign_csv['Value'] = df_benign_csv['Avg. Benign Selection Rate'] * 100
-    df_benign_csv['Metric'] = 'Avg. Benign Selection Rate (%)'
+    # --- SAVE SUMMARY CSV ---
+    csv_path = output_dir / "step2.5_metrics_summary.csv"
+    # (Simplified CSV save for brevity, focusing on plotting)
+    df_metrics_1_4.to_csv(csv_path, index=False)
 
-    df_adv_csv = df_selection_raw[['defense', 'dataset', 'Avg. Adversary Selection Rate']].copy()
-    df_adv_csv['Value'] = df_adv_csv['Avg. Adversary Selection Rate'] * 100
-    df_adv_csv['Metric'] = 'Avg. Adversary Selection Rate (%)'
+    # --- PLOTTING LOOP ---
+    all_datasets = df_metrics_1_4['dataset'].unique()
 
-    df_final_csv = pd.concat([
-        df_metrics_1_4,
-        df_benign_csv[['defense', 'dataset', 'Value', 'Metric']],
-        df_adv_csv[['defense', 'dataset', 'Value', 'Metric']]
-    ], ignore_index=True)
-
-    csv_output_path = output_dir / "step2.5_platform_metrics_with_selection_summary.csv"
-    try:
-        df_pivot = df_final_csv.pivot_table(index=['dataset', 'defense'], columns='Metric', values='Value')
-        df_pivot.to_csv(csv_output_path, float_format="%.2f")
-        print(f"\n✅ Successfully saved platform metrics summary to: {csv_output_path}\n")
-    except Exception as e:
-        print(f"Could not save CSV: {e}")
-    # -----------------------------
-
-    # === PLOTTING LOOP ===
-    all_datasets = df_final_csv['dataset'].unique()
-    plot_count = 0
+    # Pretty formatter for defense names
+    def format_defense(d):
+        d_map = {'fedavg': 'FedAvg', 'fltrust': 'FLTrust', 'martfl': 'MARTFL', 'skymask': 'SkyMask'}
+        return d_map.get(d.lower(), d.title())
 
     for dataset in all_datasets:
-        # Use the same dynamic defense order
+        # Determine defense order
         if dataset in ['CIFAR10', 'CIFAR100']:
-            current_defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+            defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
         else:
-            current_defense_order = ['fedavg', 'fltrust', 'martfl']
+            defense_order = ['fedavg', 'fltrust', 'martfl']
 
-        # --- 1. Plot Metrics 1-4 (Separate PDFs) ---
+        # Format x-tick labels
+        formatted_labels = [format_defense(d) for d in defense_order]
+
+        # === A. Plot Metrics 1-4 (Single Bar Charts) ===
         for metric in df_metrics_1_4['Metric'].unique():
             plot_df = df_metrics_1_4[
                 (df_metrics_1_4['dataset'] == dataset) &
                 (df_metrics_1_4['Metric'] == metric)
-                ]
-            plot_df = plot_df[plot_df['defense'].isin(current_defense_order)]
+            ]
+            # Filter valid defenses
+            plot_df = plot_df[plot_df['defense'].isin(defense_order)]
 
-            if plot_df.empty:
-                print(f"  Skipping {dataset} / {metric} (no data)")
-                continue
+            if plot_df.empty: continue
 
-            # Create a clean filename
-            safe_parts = [re.sub(r'[^\w]', '', part) for part in metric.split(' ')[:3]]
-            safe_metric_name = '_'.join(safe_parts)
+            # Cleanup Filename
+            safe_metric = re.sub(r'[^\w]', '', metric.split(' ')[0]) + "_" + re.sub(r'[^\w]', '', metric.split(' ')[-1])
 
-            print(f"  Plotting: {dataset} - {safe_metric_name}")
-            plt.figure(figsize=(7, 5))
+            plt.figure(figsize=(10, 8)) # Consistent sizing
+
             ax = sns.barplot(
                 data=plot_df,
                 x='defense',
                 y='Value',
-                order=current_defense_order,
-                palette='viridis'
+                order=defense_order,
+                palette='viridis',
+                edgecolor="black", # KEY: Black border
+                linewidth=1.2      # KEY: Thicker line
             )
-            ax.set_title(f"{metric}\nDataset: {dataset}", fontsize=14)
-            ax.set_xlabel("Defense", fontsize=12)
-            ax.set_ylabel("Value", fontsize=12)
-            ax.set_ylim(bottom=0)
 
-            # Add annotations
+            # Apply Labels & Style
+            y_label = "Value"
+            if "%" in metric: y_label = "Percentage (%)"
+            elif "Rounds" in metric: y_label = "Rounds"
+
+            style_axis(ax, f"{metric} ({dataset})", "Defense Strategy", y_label)
+
+            # Set correct X-labels
+            ax.set_xticklabels(formatted_labels)
+
+            # Annotations
             for p in ax.patches:
-                format_str = '%.1f'
-                if 'Rounds' in metric and p.get_height() < 100:
-                    format_str = '%.2f'
-                ax.annotate(format_str % p.get_height(),
-                            (p.get_x() + p.get_width() / 2., p.get_height()),
-                            ha='center', va='center',
-                            xytext=(0, 5), textcoords='offset points', fontsize=9)
+                if p.get_height() > 0:
+                    ax.annotate(f'{p.get_height():.1f}',
+                                (p.get_x() + p.get_width() / 2., p.get_height()),
+                                ha='center', va='bottom',
+                                xytext=(0, 5), textcoords='offset points',
+                                fontsize=16, fontweight='bold') # Bold annotation
 
-            plot_file = output_dir / f"plot_{dataset}_{safe_metric_name}.pdf"
-            plt.savefig(plot_file, bbox_inches='tight', format='pdf')
-            plt.clf();
-            plt.close('all');
-            plot_count += 1
+            # Save
+            plt.tight_layout()
+            plt.savefig(output_dir / f"plot_{dataset}_{safe_metric}.pdf", bbox_inches='tight', format='pdf', dpi=300)
+            plt.close('all')
 
-        # --- 2. Plot Metric 5 (Grouped Bar Chart) ---
-        plot_df_selection = df_selection_melted[
+        # === B. Plot Metric 5 (Grouped Selection Rates) ===
+        sel_df = df_selection_melted[
             (df_selection_melted['dataset'] == dataset) &
-            (df_selection_melted['defense'].isin(current_defense_order))
-            ]
+            (df_selection_melted['defense'].isin(defense_order))
+        ]
 
-        if plot_df_selection.empty:
-            print(f"  Skipping {dataset} / Selection Rates (no data)")
-            continue
+        if not sel_df.empty:
+            plt.figure(figsize=(12, 8)) # Wider for grouped bars
 
-        safe_metric_name = "5_Selection_Rates"
-        print(f"  Plotting: {dataset} - {safe_metric_name}")
+            ax = sns.barplot(
+                data=sel_df,
+                x='defense',
+                y='Selection Rate',
+                hue='Seller Type',
+                order=defense_order,
+                palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, # Nice Green/Red
+                edgecolor="black",
+                linewidth=1.2
+            )
 
-        plt.figure(figsize=(9, 6))
-        ax = sns.barplot(
-            data=plot_df_selection,
-            x='defense',
-            y='Selection Rate',
-            hue='Seller Type',  # This creates the grouped bars
-            order=current_defense_order,
-            palette={'Avg. Benign Selection Rate': 'g', 'Avg. Adversary Selection Rate': 'r'}
-        )
-        ax.set_title(f"Avg. Selection Rates\nDataset: {dataset}", fontsize=14)
-        ax.set_xlabel("Defense", fontsize=12)
-        ax.set_ylabel("Selection Rate (%)", fontsize=12)
-        ax.set_ylim(bottom=0, top=105)  # Set top to 105 to see 100% bars
-        ax.legend(title='Seller Type')
+            style_axis(ax, f"Avg. Selection Rates ({dataset})", "Defense Strategy", "Selection Rate (%)")
+            ax.set_xticklabels(formatted_labels)
+            ax.set_ylim(0, 105)
 
-        # Add annotations
+            # Annotations
+            for p in ax.patches:
+                h = p.get_height()
+                if h > 0: # Only annotate non-zero
+                    ax.annotate(f'{h:.1f}',
+                                (p.get_x() + p.get_width() / 2., h),
+                                ha='center', va='bottom',
+                                xytext=(0, 5), textcoords='offset points',
+                                fontsize=14, fontweight='bold')
+
+            # Legend Styling (Bottom, Horizontal)
+            plt.legend(
+                title=None,
+                fontsize=18,
+                loc='upper center',
+                bbox_to_anchor=(0.5, -0.22), # Move below X-axis
+                ncol=2,
+                frameon=False
+            )
+
+            plt.tight_layout()
+            plt.subplots_adjust(bottom=0.25) # Make room for legend
+
+            plt.savefig(output_dir / f"plot_{dataset}_Selection_Rates.pdf", format='pdf', dpi=300)
+            plt.close('all')
+            print(f"  Saved metrics for {dataset}")
+
+def plot_composite_row(df: pd.DataFrame, output_dir: Path):
+    """
+    Generates a SINGLE wide figure with 4 subplots in a row:
+    1. Usability Rate
+    2. Avg. Usable Accuracy
+    3. Avg. Usable Rounds
+    4. Selection Rates
+    """
+    print("\n--- Plotting Composite Row (4-in-1) ---")
+    sns.set_theme(style="whitegrid")
+    sns.set_context("paper", font_scale=1.4) # 'paper' context fits better for composite
+
+    # Filter for CIFAR100 (or loop datasets)
+    dataset = "CIFAR100"
+    subset = df[df['dataset'] == dataset]
+
+    if subset.empty:
+        return
+
+    # Defense Order
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+    formatted_labels = ['FedAvg', 'FLTrust', 'MARTFL', 'SkyMask']
+
+    # Create Figure: 1 Row, 4 Columns. Wide aspect ratio.
+    fig, axes = plt.subplots(1, 4, figsize=(22, 5), constrained_layout=True)
+
+    # --- DATA PREP ---
+    # 1. Usability
+    d1 = subset.groupby('defense')['platform_usable'].mean().reindex(defense_order).reset_index()
+    d1['Value'] = d1['platform_usable'] * 100
+
+    # 2. Accuracy
+    d2 = subset[subset['platform_usable']==True].groupby('defense')['acc'].mean().reindex(defense_order).reset_index()
+    d2['Value'] = d2['acc'] * 100
+
+    # 3. Rounds
+    d3 = subset[subset['platform_usable']==True].groupby('defense')['rounds'].mean().reindex(defense_order).reset_index()
+    d3['Value'] = d3['rounds']
+
+    # 4. Selection
+    d4 = subset.groupby('defense')[['benign_selection_rate', 'adv_selection_rate']].mean().reindex(defense_order).reset_index()
+    d4 = d4.melt(id_vars='defense', var_name='Type', value_name='Rate')
+    d4['Rate'] = d4['Rate'] * 100
+    d4['Type'] = d4['Type'].replace({'benign_selection_rate': 'Benign', 'adv_selection_rate': 'Adversary'})
+
+    # --- PLOTTING ---
+
+    # Plot 1: Usability
+    sns.barplot(ax=axes[0], data=d1, x='defense', y='Value', order=defense_order, palette='viridis', edgecolor='black')
+    axes[0].set_title("Usability Rate (%)", fontweight='bold')
+    axes[0].set_ylabel("Percentage", fontweight='bold')
+    axes[0].set_xlabel("")
+    axes[0].set_ylim(0, 105)
+
+    # Plot 2: Accuracy
+    sns.barplot(ax=axes[1], data=d2, x='defense', y='Value', order=defense_order, palette='viridis', edgecolor='black')
+    axes[1].set_title("Avg. Usable Acc (%)", fontweight='bold')
+    axes[1].set_ylabel("") # Save space
+    axes[1].set_xlabel("")
+    # Auto scale Y to zoom in on differences (e.g. 40-60) if needed, or keep 0-100
+    axes[1].set_ylim(0, 105)
+
+    # Plot 3: Rounds
+    sns.barplot(ax=axes[2], data=d3, x='defense', y='Value', order=defense_order, palette='viridis', edgecolor='black')
+    axes[2].set_title("Avg. Cost (Rounds)", fontweight='bold')
+    axes[2].set_ylabel("Rounds", fontweight='bold')
+    axes[2].set_xlabel("")
+
+    # Plot 4: Selection
+    sns.barplot(ax=axes[3], data=d4, x='defense', y='Rate', hue='Type', order=defense_order,
+                palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor='black')
+    axes[3].set_title("Avg. Selection Rates", fontweight='bold')
+    axes[3].set_ylabel("")
+    axes[3].set_xlabel("")
+    axes[3].set_ylim(0, 105)
+    axes[3].legend(title=None, loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False) # Legend ABOVE plot to save vertical space
+
+    # --- COMMON STYLING ---
+    letters = ['(a)', '(b)', '(c)', '(d)']
+    for i, ax in enumerate(axes):
+        ax.set_xticklabels(formatted_labels, fontsize=14, fontweight='bold', rotation=15)
+        ax.grid(axis='y', alpha=0.5)
+        # Add letter label inside plot (top left) to save space
+        # ax.text(-0.1, 1.05, letters[i], transform=ax.transAxes, size=16, weight='bold')
+
+        # Annotations
         for p in ax.patches:
-            ax.annotate(f'{p.get_height():.1f}',
-                        (p.get_x() + p.get_width() / 2., p.get_height()),
-                        ha='center', va='center',
-                        xytext=(0, 5), textcoords='offset points', fontsize=9)
+            h = p.get_height()
+            if h > 0:
+                ax.annotate(f'{h:.0f}', (p.get_x() + p.get_width() / 2., h),
+                            ha='center', va='bottom', fontsize=11, fontweight='bold', xytext=(0, 2), textcoords='offset points')
 
-        plot_file = output_dir / f"plot_{dataset}_{safe_metric_name}.pdf"
-        plt.savefig(plot_file, bbox_inches='tight', format='pdf')
-        plt.clf();
-        plt.close('all');
-        plot_count += 1
+    # Save
+    outfile = output_dir / f"plot_row_combined_{dataset}.pdf"
+    plt.savefig(outfile, bbox_inches='tight', format='pdf', dpi=300)
+    print(f"Saved composite row to: {outfile}")
 
-    print(f"\nDone. Generated {plot_count} total PDF plots.")
-
+# --- Add this to your main() function ---
+# plot_composite_row(df, output_dir)
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
-    print(f"Plots will be saved to: {output_dir.resolve()}")
 
-    # This will use the new load_run_data and get both selection rates
-    # It will also filter out '_nolocalclip' folders
     df = collect_all_results(BASE_RESULTS_DIR)
 
     if df.empty:
         print("No results data was loaded. Exiting.")
         return
 
-    # --- Call the NEW plotter ---
     plot_platform_usability_with_selection(df, output_dir)
-    # ----------------------------
-
-    print("\nAnalysis complete. Check 'step2.5_figures' folder for plots and CSV.")
-
+    plot_composite_row(df, output_dir)
+    print("\nAnalysis complete.")
 
 if __name__ == "__main__":
     main()

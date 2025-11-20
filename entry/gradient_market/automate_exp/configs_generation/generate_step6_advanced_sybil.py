@@ -13,7 +13,8 @@ from config_common_utils import (
 )
 # NOTE: AppConfig and set_nested_attr must be available from these imports
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
-from entry.gradient_market.automate_exp.scenarios import Scenario, use_image_backdoor_attack, use_cifar100_config
+from entry.gradient_market.automate_exp.scenarios import Scenario, use_image_backdoor_attack, use_cifar100_config, \
+    IMAGE_DEFENSES
 
 try:
     from common.gradient_market_configs import AppConfig, PoisonType
@@ -31,7 +32,7 @@ SYBIL_TEST_CONFIG = {
     # "knock_out": {}
 
     # NOTE: 'blend_alpha' here is the key expected by use_sybil_attack_strategy kwargs
-    "oracle_blend": {"blend_alpha": [0.05, 0.1, 0.2, 0.5, 0.8]},
+    "oracle_blend": {"blend_alpha": [0.05, 0.1, 0.2, 0.5, 0.8, 0.9]},
     # "systematic_probe": {},
 }
 
@@ -58,7 +59,7 @@ def generate_advanced_sybil_scenarios() -> List[Scenario]:
     scenarios = []
     modality = SYBIL_SETUP["modality_name"]
     model_cfg_name = SYBIL_SETUP["model_config_name"]
-    current_defenses = ['martfl']
+    current_defenses = IMAGE_DEFENSES
 
     for defense_name in current_defenses:
         # 2. Get Tuned HPs (from Step 3)

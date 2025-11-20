@@ -1,12 +1,13 @@
-import pandas as pd
 import json
+import os
 import re
-import seaborn as sns
+from pathlib import Path
+from typing import Dict, Any
+
 import matplotlib.pyplot as plt
 import numpy as np
-import os
-from pathlib import Path
-from typing import List, Dict, Any
+import pandas as pd
+import seaborn as sns
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
@@ -137,71 +138,133 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
 
 def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Path):
-    """
-    (UPDATED)
-    Generates the grouped bar chart comparing Sybil strategies for a single defense.
-    Assumes 'defense_df' is already filtered for the correct defense
-    and has the 'strategy_label' column.
-    """
     if defense_df.empty:
         print(f"No data for defense: {defense}")
         return
 
     print(f"\n--- Plotting Sybil Effectiveness for: {defense} ---")
 
-    # --- Logical Sorting for the X-axis ---
-    # Define the desired order
-    def get_sort_key(label):
+    # --- 1. CONFIGURATION ---
+    # "talk" context makes fonts larger (approx 1.3x default)
+    sns.set_theme(style="whitegrid")
+    sns.set_context("talk", font_scale=1.1)
+
+    # --- 2. LOGIC: Standardize Alpha (Centroid Weight) ---
+    def get_standardized_alpha_and_order(label):
+        """
+        Returns tuple: (Family_Order, Alpha_Centroid_Weight)
+        Family 0: Baseline
+        Family 1: Standard Mimic (Blind)
+        Family 2: Oracle Mimic (Smart)
+        """
+        # --- BASELINE ---
         if label == 'baseline_no_sybil':
             return (0, 0.0)
+
+        # --- FAMILY 1: STANDARD MIMIC ---
+        if label == 'mimic':
+            return (1, 0.10) # User defined base mimicry
+        if label == 'knock_out':
+            return (1, 0.20) # Knockout is 2x base
+        if label == 'pivot':
+            return (1, 1.00) # Pivot is pure replacement
+
+        # --- FAMILY 2: ORACLE BLEND ---
+        # Assumption: 'oracle_blend_0.8' means 0.8 ATTACK weight.
+        # We convert to CENTROID weight to be consistent with Mimic.
+        # Alpha = 1.0 - Attack_Weight
         if label.startswith('oracle_blend'):
             try:
-                alpha = float(label.split('_')[-1])
-                return (2, alpha)
+                attack_weight = float(label.split('_')[-1])
+                alpha_centroid = 1.0 - attack_weight
+                return (2, round(alpha_centroid, 2))
             except:
-                return (2, np.inf)  # Failsafe
-        if label == 'mimic':
-            return (1, 0.0)
-        # We no longer need the 'systematic_probe' key as it's filtered out
-        return (4, 0.0)  # Other strategies
+                return (2, 0.5)
 
-    # Get unique labels and sort them
+        # Fallback for unknown
+        return (3, 0.0)
+
+    # Get unique labels and sort them using the logic above
     unique_labels = defense_df['strategy_label'].unique()
-    sorted_labels = sorted(unique_labels, key=get_sort_key)
-    # --- End Sorting ---
+    sorted_labels = sorted(unique_labels, key=get_standardized_alpha_and_order)
 
-    metrics_to_plot = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate']
-    metrics_to_plot = [m for m in metrics_to_plot if m in defense_df.columns]
+    # --- 3. DATA PREP ---
+    metric_map = {
+        'acc': 'Model Accuracy',
+        'asr': 'Attack Success Rate',
+        'adv_selection_rate': 'Adv. Selection Rate',
+        'benign_selection_rate': 'Benign Selection Rate'
+    }
+    metrics_to_plot = [m for m in metric_map.keys() if m in defense_df.columns]
 
-    # Melt the data for plotting.
-    # The 'defense_df' is already pre-aggregated (mean over seeds).
     plot_df = defense_df.melt(
         id_vars=['strategy_label'],
         value_vars=metrics_to_plot,
         var_name='Metric',
         value_name='Value'
     )
+    plot_df['Metric'] = plot_df['Metric'].map(metric_map)
 
-    plt.figure(figsize=(16, 7))
-    # --- Use `dodge=True` (default) for grouped bars ---
-    # Note: `sns.barplot` will show mean + confidence interval if multiple seeds are present.
-    # Since we pre-aggregated, it will just show the mean value.
-    sns.barplot(
+    # --- 4. PLOTTING ---
+    plt.figure(figsize=(20, 8)) # Wide figure for readability
+
+    ax = sns.barplot(
         data=plot_df,
         x='strategy_label',
         y='Value',
         hue='Metric',
-        order=sorted_labels  # Apply the logical sort order
+        order=sorted_labels,
+        palette="deep",
+        edgecolor="black",
+        linewidth=1.2 # Thicker borders for "Publication Quality"
     )
-    plt.title(f'Effectiveness of Sybil Attacks against {defense.upper()} Defense')
-    plt.ylabel('Rate')
-    plt.xlabel('Sybil Attack Strategy')
-    plt.xticks(rotation=20, ha='right')
-    plt.legend(title='Metric')
-    plt.tight_layout()
 
-    plot_file = output_dir / f"plot_sybil_effectiveness_{defense}.png"
-    plt.savefig(plot_file)
+    # --- 5. STYLING ---
+    # Use LaTeX rendering for mathematical symbols if available, otherwise standard text
+    plt.title(f'Impact of Mimicry Factor ($\\alpha$) on Attack Efficacy ({defense.upper()})',
+              fontsize=24, fontweight='bold', pad=20)
+    plt.ylabel('Rate', fontsize=22, fontweight='bold')
+    plt.xlabel('Sybil Strategy ($\\alpha$ = Centroid Weight)', fontsize=20, fontweight='bold', labelpad=15)
+
+    # --- 6. FORMATTING LABELS ---
+    def format_label(l):
+        sort_key = get_standardized_alpha_and_order(l)
+        family_id = sort_key[0]
+        alpha_val = sort_key[1]
+
+        if family_id == 0:
+            return "Baseline"
+        elif family_id == 1:
+            return f"Mimic\n($\\alpha={alpha_val}$)"
+        elif family_id == 2:
+            return f"Oracle\n($\\alpha={alpha_val}$)"
+        else:
+            return l.replace('_', '\n').title()
+
+    formatted_labels = [format_label(l) for l in sorted_labels]
+
+    # Rotation 0 makes it horizontal (easiest to read)
+    ax.set_xticklabels(formatted_labels, rotation=0, fontsize=18, fontweight='bold')
+    plt.yticks(fontsize=18)
+
+    # --- 7. LEGEND ---
+    # Place legend horizontally at the bottom
+    plt.legend(
+        title=None,
+        fontsize=18,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.22),
+        ncol=4,
+        frameon=False
+    )
+
+    # Adjust layout to prevent cutting off the legend
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.25)
+
+    # Save as PDF (Vector graphics for LaTeX)
+    plot_file = output_dir / f"plot_sybil_standardized_{defense}.pdf"
+    plt.savefig(plot_file, dpi=300)
     print(f"Saved plot: {plot_file}")
     plt.clf()
     plt.close('all')
