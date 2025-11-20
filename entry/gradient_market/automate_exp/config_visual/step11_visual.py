@@ -1,4 +1,4 @@
-# FILE: step11_visual_individual.py
+# FILE: step11_visual_individual_and_composite.py
 
 import pandas as pd
 import json
@@ -126,7 +126,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
 
 # =============================================================================
-#  PLOTTER: SPLIT EVERYTHING
+#  PLOTTER 1: INDIVIDUAL PLOTS
 # =============================================================================
 
 def plot_completely_separate(df: pd.DataFrame, dataset: str, output_dir: Path):
@@ -202,7 +202,100 @@ def plot_completely_separate(df: pd.DataFrame, dataset: str, output_dir: Path):
 
             plt.savefig(fname, bbox_inches='tight')
             plt.close()  # Close figure to free memory
-            print(f"  Saved: {fname.name}")
+            print(f"  Saved Individual: {fname.name}")
+
+
+# =============================================================================
+#  PLOTTER 2: COMPOSITE ROW (4-in-1)
+# =============================================================================
+
+def plot_four_in_a_row(df: pd.DataFrame, dataset: str, output_dir: Path):
+    """
+    Generates a single wide figure (1x4) for each Bias Source containing:
+    [Accuracy, ASR, Benign Selection, Adversary Selection]
+    """
+    print(f"\n--- Generating Composite Row Figures for {dataset} ---")
+
+    dataset_df = df[df['dataset'] == dataset].copy()
+    if dataset_df.empty: return
+
+    valid_biases = ['Market-Wide Bias', 'Buyer-Only Bias', 'Seller-Only Bias']
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+
+    # Order of plots in the row
+    metrics_order = [
+        ('acc', 'Accuracy'),
+        ('asr', 'ASR'),
+        ('benign_selection_rate', 'Benign Select'),
+        ('adv_selection_rate', 'Attacker Select')
+    ]
+
+    for bias in valid_biases:
+        bias_df = dataset_df[dataset_df['bias_source'] == bias]
+        if bias_df.empty: continue
+
+        # Create Figure: 1 Row, 4 Columns
+        fig, axes = plt.subplots(1, 4, figsize=(24, 4.5), constrained_layout=True)
+
+        # Loop through the 4 metrics
+        for i, (col_name, display_name) in enumerate(metrics_order):
+            ax = axes[i]
+
+            sns.lineplot(
+                ax=ax,
+                data=bias_df,
+                x='dirichlet_alpha',
+                y=col_name,
+                hue='defense',
+                style='defense',
+                hue_order=defense_order,
+                style_order=defense_order,
+                palette=DEFENSE_PALETTE,
+                markers=True,
+                dashes=False,
+                markersize=9,
+                linewidth=2.5,
+                errorbar=None  # Cleaner look for composite, or use ('ci', 95) if preferred
+            )
+
+            # Axis Formatting
+            ax.set_title(f"{display_name}", fontweight='bold', fontsize=14)
+            ax.set_xlabel("Alpha (Heterogeneity)", fontsize=12)
+            if i == 0:
+                ax.set_ylabel("Rate / Score", fontsize=12)
+            else:
+                ax.set_ylabel("")
+
+            # Log Scale Logic
+            ax.set_xscale('log')
+            ax.xaxis.set_major_locator(FixedLocator(ALPHAS_IN_TEST))
+            ax.xaxis.set_major_formatter(FixedFormatter([str(a) for a in ALPHAS_IN_TEST]))
+            ax.set_xlim(max(ALPHAS_IN_TEST) * 1.4, min(ALPHAS_IN_TEST) * 0.7)  # Reverse axis visually
+            ax.grid(True, which='major', linestyle='--', alpha=0.6)
+
+            # Remove individual legends
+            ax.get_legend().remove()
+
+        # --- GLOBAL LEGEND ---
+        # Create a single legend at the bottom
+        handles, labels = axes[0].get_legend_handles_labels()
+        # Capitalize labels
+        labels = [l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask",
+                                                                                                   "SkyMask").replace(
+            "Martfl", "MARTFL") for l in labels]
+
+        fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.1),
+                   ncol=len(defense_order), frameon=True, fontsize=14, title="Defense Methods")
+
+        # Main Title for the whole figure
+        fig.suptitle(f"Impact of {bias} on {dataset}", fontsize=18, fontweight='bold', y=1.05)
+
+        # Save
+        safe_bias = bias.replace(' ', '').replace('-', '')
+        fname = output_dir / f"Step11_Composite_Row_{dataset}_{safe_bias}.pdf"
+        plt.savefig(fname, bbox_inches='tight', format='pdf')
+        print(f"  Saved Composite: {fname.name}")
+        plt.close()
 
 
 def main():
@@ -222,7 +315,11 @@ def main():
     # Generate Plots
     for dataset in df['dataset'].unique():
         if dataset != 'unknown':
+            # 1. Generate Individual Plots (Original Requirement)
             plot_completely_separate(df, dataset, output_dir)
+
+            # 2. Generate Composite Row Plots (New Requirement)
+            plot_four_in_a_row(df, dataset, output_dir)
 
     print("\nAnalysis complete.")
 
