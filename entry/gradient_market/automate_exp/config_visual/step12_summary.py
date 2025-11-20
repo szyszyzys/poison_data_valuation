@@ -165,8 +165,8 @@ def plot_grouped_benchmark(df: pd.DataFrame, dataset: str, output_dir: Path):
     )
 
     # 5. Styling & Labels
-    ax.set_title(f"Main Benchmark: Defense Capabilities vs. Backdoor Attack ({dataset})",
-                 fontweight='bold', fontsize=16, pad=20)
+    # ax.set_title(f"Main Benchmark: Defense Capabilities vs. Backdoor Attack ({dataset})",
+    #              fontweight='bold', fontsize=16, pad=20)
 
     # Format Defense Names on X Axis
     labels = [l.get_text().capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask",
