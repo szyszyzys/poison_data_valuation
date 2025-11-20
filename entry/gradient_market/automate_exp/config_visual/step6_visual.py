@@ -221,8 +221,8 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
 
     # --- 5. STYLING ---
     # Use LaTeX rendering for mathematical symbols if available, otherwise standard text
-    plt.title(f'Impact of Mimicry Factor ($\\alpha$) on Attack Efficacy ({defense.upper()})',
-              fontsize=24, fontweight='bold', pad=20)
+    # plt.title(f'Impact of Mimicry Factor ($\\alpha$) on Attack Efficacy ({defense.upper()})',
+    #           fontsize=24, fontweight='bold', pad=20)
     plt.ylabel('Rate', fontsize=22, fontweight='bold')
     plt.xlabel('Sybil Strategy ($\\alpha$ = Centroid Weight)', fontsize=20, fontweight='bold', labelpad=15)
 
