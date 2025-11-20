@@ -118,7 +118,7 @@ def generate_main_summary_scenarios() -> List[Scenario]:
                 config,
                 influence=True,
                 loo=True, loo_freq=10,
-                kernelshap=True, kshap_freq=20,
+                kernelshap=True, kshap_freq=10,
                 kshap_samples=500
             )
 
