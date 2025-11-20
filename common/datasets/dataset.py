@@ -146,6 +146,16 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     if not image_cfg:
         raise ValueError("Image data configuration ('data.image') is missing.")
 
+    # --- [NEW] VERIFICATION LOGGING ---
+    logger.info("📋 Dataset Configuration Verification:")
+    logger.info(f"   > Dataset Name: {cfg.experiment.dataset_name}")
+    logger.info(f"   > N Sellers:    {cfg.experiment.n_sellers}")
+    logger.info(f"   > SELLER Split: Strategy='{image_cfg.strategy}', Alpha={image_cfg.dirichlet_alpha}")
+    logger.info(f"   > BUYER Split:  Strategy='{image_cfg.buyer_strategy}', Alpha={image_cfg.buyer_dirichlet_alpha}, Ratio={image_cfg.buyer_ratio}")
+    if cfg.experiment.use_subset:
+        logger.warning(f"   > ⚠️  SUBSET MODE: Using only {cfg.experiment.subset_size} samples!")
+    # ----------------------------------
+
     cache_dir = Path(cfg.data_root) / ".cache"
     cache_dir.mkdir(exist_ok=True)
 
@@ -171,6 +181,7 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     config_string = json.dumps(config_params, sort_keys=True)
     config_hash = hashlib.md5(config_string.encode('utf-8')).hexdigest()
     cache_file = cache_dir / f"{config_hash}.pkl"
+
     # Load base dataset
     train_set, test_set, num_classes = _get_dataset_loaders(cfg.experiment.dataset_name, cfg.data_root)
     if cfg.experiment.dataset_name == "CelebA":
@@ -178,7 +189,6 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         train_set.set_target_attribute(property_key)
         test_set.set_target_attribute(property_key)
     if cfg.experiment.use_subset:
-        logger.warning(f"❗️ Using a subset of {cfg.experiment.subset_size} samples for testing.")
         num_samples = min(cfg.experiment.subset_size, len(train_set))
         train_set = Subset(train_set, list(range(num_samples)))
 
@@ -188,59 +198,58 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
             cached_data = pickle.load(f)
         buyer_indices = cached_data['buyer_indices']
         seller_splits = cached_data['seller_splits']
-        test_indices = cached_data['test_indices']  # Load test indices from cache
+        test_indices = cached_data['test_indices']
         client_properties = cached_data['client_properties']
 
     else:
         if not cfg.use_cache:
             logger.info("Cache disabled by config. Running partitioning...")
         else:
-            logger.info(f"❗️ No cached data split found or cache disabled. Running partitioning...")
+            logger.info(f"❗️ No cached data split found (Hash: {config_hash}). Running partitioning...")
+            logger.info(f"   -> Partitioning Sellers with {image_cfg.strategy} (alpha={image_cfg.dirichlet_alpha})")
+            logger.info(f"   -> Partitioning Buyer with {image_cfg.buyer_strategy} (alpha={image_cfg.buyer_dirichlet_alpha})")
 
         # Initialize the partitioner with the (potentially subsetted) training dataset
         partitioner = FederatedDataPartitioner(
             dataset=train_set, num_clients=cfg.experiment.n_sellers, seed=cfg.seed
         )
 
-        # --- MODIFIED CALL ---
         # Pass the whole image_cfg object to the updated partition method
         partitioner.partition(data_config=image_cfg)
-        # --- END MODIFICATION ---
 
         # Get all three sets of indices from the partitioner
         buyer_indices, seller_splits, test_indices = partitioner.get_splits()
         client_properties = partitioner.client_properties
 
-        # --- Save the newly created split (including test_indices) to the cache file ---
+        # --- Save the newly created split to the cache file ---
         if cfg.use_cache:
             logger.info(f"💾 Saving new data split to cache: {cache_file}")
             with open(cache_file, 'wb') as f:
                 pickle.dump({
                     'buyer_indices': buyer_indices,
                     'seller_splits': seller_splits,
-                    'test_indices': test_indices,  # Save test indices
+                    'test_indices': test_indices,
                     'client_properties': client_properties
                 }, f)
+
     # ===========================================================================
     # Generate statistics and save to a DEDICATED path
     logger.info("Generating and saving image data split statistics...")
 
-    # --- CHANGE: Use the hash from the cache logic to create the unique path ---
     config_hash = Path(cache_file).stem
     stats_dir = Path(cfg.data_root) / "data_statistics"
     stats_save_path = stats_dir / f"{config_hash}_stats.json"
 
-    # Pass the new, specific path to the function
     stats = save_data_statistics(
         buyer_indices=buyer_indices,
         seller_splits=seller_splits,
         test_indices=test_indices,
         client_properties=client_properties,
         targets=_extract_targets(train_set),
-        save_filepath=stats_save_path  # Use the new `save_filepath` argument
+        save_filepath=stats_save_path
     )
 
-    # Create DataLoaders (this part is the same as before)
+    # Create DataLoaders
     batch_size = cfg.training.batch_size
     actual_dataset = train_set.dataset if isinstance(train_set, Subset) else train_set
     buyer_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=True,
@@ -258,7 +267,6 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     logger.info(f"✅ Federated dataset setup complete. Using {num_classes} classes.")
 
     return buyer_loader, seller_loaders, test_loader, stats, num_classes
-
 
 # --- Helper to extract targets from StandardFormatDataset ---
 def _extract_text_targets(dataset: StandardFormatDataset) -> np.ndarray:
