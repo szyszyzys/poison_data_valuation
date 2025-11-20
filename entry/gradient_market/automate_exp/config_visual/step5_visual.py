@@ -268,7 +268,7 @@ def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, 
     if handles:
         # Capitalize labels
         labels = [l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask", "SkyMask").replace("Martfl", "MARTFL") for l in labels]
-        fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.05),
+        fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.25),
                    ncol=len(defense_order), frameon=True, title="Defense Methods")
 
     # Save
