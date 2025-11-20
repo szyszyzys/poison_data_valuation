@@ -12,7 +12,10 @@ from typing import List, Dict, Any, Tuple
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step8_figures"
-TARGET_VICTIM_ID = "bn_5"  # The specific seller ID the attacker targets
+TARGET_VICTIM_ID = "bn_5"
+
+# --- Filter: Only show defenses that actually attempt filtering ---
+DEFENSES_TO_PLOT = ['fltrust', 'martfl']
 
 # --- Styling ---
 DEFENSE_PALETTE = {
@@ -70,7 +73,6 @@ def load_run_data(metrics_file: Path) -> List[Dict[str, Any]]:
         acc = metrics.get('acc', 0)
         if acc > 1.0: acc /= 100.0
 
-        # Base record (Global Metrics)
         base = {'acc': acc * 100, 'rounds': metrics.get('completed_rounds', 0)}
 
         report_file = metrics_file.parent / "marketplace_report.json"
@@ -118,31 +120,33 @@ def get_baseline_lookup(df: pd.DataFrame) -> Dict[Tuple[str, str], float]:
 
 
 # =============================================================================
-# FIGURE 1: ATTACK OVERVIEW (Violin/Bar Plot of Victim Selection)
+# FIGURE 1: ATTACK OVERVIEW (Focused on FLTrust/MartFL)
 # =============================================================================
 
 def plot_attack_overview(df: pd.DataFrame, baseline_lookup: Dict, output_dir: Path):
-    """
-    Overview figure comparing ALL attacks side-by-side.
-    """
-    print("\n--- Generating Figure 1: Attack Overview ---")
+    print("\n--- Generating Figure 1: Attack Overview (Focused) ---")
     set_plot_style()
 
+    # 1. Filter for Victim
     victim_df = df[df['seller_id'] == TARGET_VICTIM_ID].copy()
     if victim_df.empty: victim_df = df.copy()
 
+    # 2. Filter out Baseline (keep attacks)
     plot_df = victim_df[victim_df['attack'] != '0. Baseline'].copy()
     if plot_df.empty: return
 
-    # Get dataset name for title
-    dataset_name = plot_df['dataset'].iloc[0] if 'dataset' in plot_df else "CIFAR100"
+    # 3. FILTER DEFENSES (Remove FedAvg/SkyMask)
+    plot_df = plot_df[plot_df['defense'].isin(DEFENSES_TO_PLOT)]
+    if plot_df.empty:
+        print("No data for specified defenses.")
+        return
 
+    dataset_name = plot_df['dataset'].iloc[0] if 'dataset' in plot_df else "CIFAR100"
     plot_df['Attack Type'] = plot_df['attack'].apply(lambda x: x.replace('_', ' ').title())
 
-    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
-    defense_order = [d for d in defense_order if d in plot_df['defense'].unique()]
+    defense_order = sorted(plot_df['defense'].unique())
 
-    plt.figure(figsize=(14, 7))
+    plt.figure(figsize=(10, 6))
 
     ax = sns.barplot(
         data=plot_df,
@@ -155,17 +159,16 @@ def plot_attack_overview(df: pd.DataFrame, baseline_lookup: Dict, output_dir: Pa
         errorbar=('ci', 95)
     )
 
-    # Draw Baseline Lines
+    # Draw Baseline Lines for relevant defenses only
     for i, defense in enumerate(defense_order):
         base_val = baseline_lookup.get((defense, dataset_name))
         if base_val is not None:
             plt.hlines(y=base_val, xmin=i - 0.4, xmax=i + 0.4,
                        colors='red', linestyles='--', linewidth=2.5, zorder=5)
 
-    plt.title(f"Vulnerability Analysis: Victim Selection Rate vs. Baseline ({dataset_name})", fontsize=16,
-              fontweight='bold')
+    plt.title(f"Vulnerability Analysis: Victim Selection Rate ({dataset_name})", fontsize=16, fontweight='bold')
     plt.ylabel("Victim Selection Rate\n(Lower = Attack Success)", fontsize=14)
-    plt.xlabel("Defense Mechanism", fontsize=14)
+    plt.xlabel("", fontsize=14)
     plt.ylim(0, 1.1)
 
     # Legend
@@ -175,38 +178,38 @@ def plot_attack_overview(df: pd.DataFrame, baseline_lookup: Dict, output_dir: Pa
     labels.append('Empirical Baseline')
     plt.legend(handles=handles, labels=labels, title="Condition", bbox_to_anchor=(1.02, 1), loc='upper left')
 
-    # Format X labels
-    labels = [l.get_text().capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask",
-                                                                                                          "SkyMask").replace(
-        "Martfl", "MARTFL") for l in ax.get_xticklabels()]
+    # Capitalize X labels
+    labels = [l.get_text().capitalize().replace("Fltrust", "FLTrust").replace("Martfl", "MARTFL") for l in
+              ax.get_xticklabels()]
     ax.set_xticklabels(labels, fontsize=13, fontweight='bold')
 
-    fname = output_dir / "Step8_Fig1_Attack_Overview.pdf"
+    fname = output_dir / "Step8_Fig1_Attack_Overview_Focused.pdf"
     plt.savefig(fname, bbox_inches='tight', format='pdf')
     print(f"  Saved: {fname.name}")
     plt.close()
 
 
 # =============================================================================
-# FIGURE 2: DEEP DIVE GENERATOR (Creates one file per attack)
+# FIGURE 2: DEEP DIVE GENERATOR (Focused)
 # =============================================================================
 
 def plot_single_attack_deep_dive(df: pd.DataFrame, baseline_lookup: Dict, attack_name: str, output_dir: Path):
-    """
-    Generates the 3-panel Deep Dive for a SPECIFIC attack type.
-    """
     print(f"  -> Generating Deep Dive for: {attack_name}")
     set_plot_style()
 
+    # Filter Attack & Baseline Data
     attack_df = df[df['attack'] == attack_name].copy()
     baseline_df = df[df['attack'] == '0. Baseline'].copy()
 
+    # Apply Defense Filter
+    attack_df = attack_df[attack_df['defense'].isin(DEFENSES_TO_PLOT)]
+    baseline_df = baseline_df[baseline_df['defense'].isin(DEFENSES_TO_PLOT)]
+
     if attack_df.empty: return
 
-    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
-    defense_order = [d for d in defense_order if d in attack_df['defense'].unique()]
+    defense_order = sorted(attack_df['defense'].unique())
 
-    fig, axes = plt.subplots(1, 3, figsize=(24, 5), constrained_layout=True)
+    fig, axes = plt.subplots(1, 3, figsize=(20, 5), constrained_layout=True)
 
     # --- (a) Selection Variance ---
     sns.boxplot(ax=axes[0], data=attack_df, x='defense', y='selection_rate',
@@ -221,7 +224,9 @@ def plot_single_attack_deep_dive(df: pd.DataFrame, baseline_lookup: Dict, attack
     axes[0].set_title(f"(a) Selection Impact: {attack_name.title()}", fontweight='bold')
     axes[0].set_ylabel("Selection Rate")
     axes[0].set_xlabel("")
+    axes[0].set_ylim(-0.05, 1.05)
 
+    # Legend
     baseline_line = mlines.Line2D([], [], color='red', linestyle='--', linewidth=2.5, label='Baseline')
     axes[0].legend(handles=[baseline_line], loc='lower right')
 
@@ -234,12 +239,14 @@ def plot_single_attack_deep_dive(df: pd.DataFrame, baseline_lookup: Dict, attack
     axes[1].set_title("(b) Victim Isolation Effectiveness", fontweight='bold')
     axes[1].set_ylabel("Selection Rate")
     axes[1].set_xlabel("")
+    axes[1].set_ylim(0, 1.05)
     axes[1].legend(title=None)
 
     # --- (c) Utility Cost (Accuracy) ---
     perf_attack = attack_df.drop_duplicates(subset=['defense', 'acc'])
     perf_base = baseline_df.drop_duplicates(subset=['defense', 'acc'])
 
+    # Handle missing baseline
     if perf_base.empty:
         dummy_rows = []
         for d in defense_order:
@@ -260,13 +267,11 @@ def plot_single_attack_deep_dive(df: pd.DataFrame, baseline_lookup: Dict, attack
 
     # Cleanup Labels
     for ax in axes:
-        labels = [l.get_text().capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask",
-                                                                                                              "SkyMask").replace(
-            "Martfl", "MARTFL") for l in ax.get_xticklabels()]
+        labels = [l.get_text().capitalize().replace("Fltrust", "FLTrust").replace("Martfl", "MARTFL") for l in
+                  ax.get_xticklabels()]
         ax.set_xticklabels(labels, fontsize=13, fontweight='bold')
         ax.grid(axis='y', linestyle='--', alpha=0.5)
 
-    # Save with dynamic filename
     safe_name = attack_name.replace(' ', '_').replace('/', '_')
     fname = output_dir / f"Step8_Deep_Dive_{safe_name}.pdf"
     plt.savefig(fname, bbox_inches='tight', format='pdf')
@@ -286,14 +291,13 @@ def main():
 
     baseline_lookup = get_baseline_lookup(df)
 
-    # 1. Overview Figure (All Attacks)
+    # 1. Overview Figure (All Attacks, Focused Defenses)
     plot_attack_overview(df, baseline_lookup, output_dir)
 
-    # 2. Loop through EVERY attack and generate a Deep Dive
+    # 2. Loop through attacks
     attacks = [a for a in df['attack'].unique() if a != '0. Baseline']
-
     if not attacks:
-        print("No attacks found to plot deep dives for.")
+        print("No attacks found.")
     else:
         print(f"\n--- Generating Deep Dives for {len(attacks)} Attacks ---")
         for attack_name in attacks:
