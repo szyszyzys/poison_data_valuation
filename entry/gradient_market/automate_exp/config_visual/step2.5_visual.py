@@ -468,6 +468,7 @@ def main():
         return
 
     plot_platform_usability_with_selection(df, output_dir)
+    plot_composite_row(df, output_dir)
     print("\nAnalysis complete.")
 
 if __name__ == "__main__":
