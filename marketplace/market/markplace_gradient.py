@@ -301,12 +301,10 @@ class DataMarketplaceFederated(DataMarketplace):
             buyer_data_loader=self.aggregator.buyer_data_loader
         )
 
-
         logging.info(f"✅ Selected {len(selected_ids)} sellers: {selected_ids}")
         logging.info(f"   Rejected {len(outlier_ids)} sellers as outliers")
 
-        # ===== (NEW) PHASE 8: Compute Metrics (Valuation) =====
-        # --- DO VALUATION *BEFORE* APPLYING THE GRADIENT ---
+        # ===== PHASE 8: Compute Metrics & SAVE VALUATION =====
         logging.info("\n📈 Computing marketplace metrics & valuation...")
 
         seller_stats_dict = {sid: stats for sid, stats in zip(seller_ids, seller_stats_list)}
@@ -319,7 +317,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
         seller_valuations, aggregate_metrics = self.valuation_manager.evaluate_round(
             round_number=round_number,
-            current_global_model=self.global_model,  # <-- This is model_t (the CURRENT model), which is correct!
+            current_global_model=self.global_model,
             seller_gradients=sanitized_gradients,
             seller_stats=seller_stats_dict,
             oracle_gradient=sanitized_oracle_gradient,
@@ -329,6 +327,30 @@ class DataMarketplaceFederated(DataMarketplace):
             selected_ids=selected_ids,
             outlier_ids=outlier_ids
         )
+
+        # --- NEW: SAVE DETAILED VALUATION TO SEPARATE FILE ---
+        # This ensures high-dimensional data (LOO, Shapley) is saved without breaking the CSV
+        if self.cfg.experiment.save_path:
+            try:
+                val_save_path = Path(self.cfg.experiment.save_path) / "valuations.jsonl"
+
+                # Only save if we actually have data (optimization)
+                has_data = any(vals for vals in seller_valuations.values())
+
+                if has_data:
+                    # Construct a clean log entry
+                    val_entry = {
+                        "round": round_number,
+                        "timestamp": time.time(),
+                        "seller_valuations": seller_valuations
+                    }
+
+                    # Append to JSONL file
+                    with open(val_save_path, "a") as f:
+                        f.write(json.dumps(val_entry) + "\n")
+                    logging.info(f"   💾 Saved detailed valuations to {val_save_path.name}")
+            except Exception as e:
+                logging.error(f"   ❌ Failed to save valuations.jsonl: {e}")
 
         # ===== PHASE 8: Apply Update =====
         if agg_grad:
