@@ -1,11 +1,10 @@
 import logging
-import random
-from typing import Any, Dict, List, Tuple  # Added Optional
-
 import numpy as np
 import pandas as pd
+import random
 import torch
 from torch.utils.data import Dataset, Subset
+from typing import Any, Dict, List, Tuple  # Added Optional
 
 from common.datasets.image_data_processor import CelebACustom
 from common.gradient_market_configs import PropertySkewParams, ImageDataConfig, TextDataConfig, \
@@ -65,9 +64,10 @@ class FederatedDataPartitioner:
         self.dataset = dataset
         self.num_clients = num_clients
         self.seed = seed
+        # Ensure _extract_targets is available in your scope
         self.targets = _extract_targets(dataset)
-        self.buyer_indices: np.ndarray = np.array([], dtype=int)  # Final buyer root indices
-        self.test_indices: np.ndarray = np.array([], dtype=int)  # Final test indices
+        self.buyer_indices: np.ndarray = np.array([], dtype=int)
+        self.test_indices: np.ndarray = np.array([], dtype=int)
         self.client_indices: Dict[int, List[int]] = {i: [] for i in range(num_clients)}
         self.client_properties: Dict[int, str] = {}
         random.seed(seed)
@@ -76,9 +76,8 @@ class FederatedDataPartitioner:
     def _split_buyer_pool_for_root_test(self, buyer_pool_all_data: np.ndarray, root_set_fraction: float = 0.5):
         """Helper to split a pool of indices into root and test sets."""
         np.random.shuffle(buyer_pool_all_data)
-        # Default split fraction is now 50% unless specified otherwise
         split_idx = int(len(buyer_pool_all_data) * root_set_fraction)
-        self.buyer_indices = buyer_pool_all_data[:split_idx]  # This becomes the final buyer (root) set
+        self.buyer_indices = buyer_pool_all_data[:split_idx]
         self.test_indices = buyer_pool_all_data[split_idx:]
         logger.info(
             f"Buyer pool ({len(buyer_pool_all_data)}) split: "
@@ -86,88 +85,159 @@ class FederatedDataPartitioner:
             f"Fraction: {root_set_fraction:.2f}"
         )
 
-    def partition(self, data_config: Any):  # Pass the specific ImageDataConfig or TextDataConfig
+    def _select_buyer_indices_dirichlet(self, available_indices: np.ndarray, size: int, alpha: float) -> Tuple[
+        np.ndarray, np.ndarray]:
+        """
+        Selects a subset of indices for the Buyer based on a Dirichlet distribution.
+        Returns (buyer_indices, remaining_seller_indices).
+        """
+        unique_classes = np.unique(self.targets)
+        n_classes = len(unique_classes)
+
+        # 1. Draw a class distribution for this specific Buyer (e.g., highly skewed)
+        #
+        buyer_class_probs = np.random.dirichlet([alpha] * n_classes)
+
+        # 2. Organize available indices by class
+        class_indices_map = {c: [] for c in unique_classes}
+        # Filter available targets to match available_indices
+        # (Optimization: In a clean run, available_indices is usually the whole set,
+        # but we handle the subset case for safety)
+        subset_targets = self.targets[available_indices]
+
+        for idx_in_subset, global_idx in enumerate(available_indices):
+            label = subset_targets[idx_in_subset]
+            class_indices_map[label].append(global_idx)
+
+        buyer_selected = []
+
+        # 3. Select samples per class based on drawn probabilities
+        # We try to fulfill the exact 'size' required.
+
+        # Calculate target counts per class
+        class_counts = (buyer_class_probs * size).astype(int)
+        # Fix rounding errors to ensure sum equals size
+        diff = size - np.sum(class_counts)
+        if diff > 0:
+            # Add to the majority class or random class
+            class_counts[np.argmax(buyer_class_probs)] += diff
+
+        # 4. Fetch indices
+        for i, label in enumerate(unique_classes):
+            needed = class_counts[i]
+            available = class_indices_map[label]
+
+            # If we need more than we have, take all and warn (unlikely if buyer ratio is small)
+            if needed > len(available):
+                logger.warning(
+                    f"Buyer needed {needed} of class {label}, but only {len(available)} available. Taking all.")
+                buyer_selected.extend(available)
+            else:
+                # Shuffle locally to ensure randomness within the class
+                np.random.shuffle(available)
+                buyer_selected.extend(available[:needed])
+
+        # If we are still short (due to running out of specific classes), fill randomly from remainder
+        buyer_selected = np.array(buyer_selected)
+        current_count = len(buyer_selected)
+
+        if current_count < size:
+            logger.info(f"Dirichlet selection resulted in {current_count}/{size}. Filling remainder randomly.")
+            # Find what is left
+            all_set = set(available_indices)
+            selected_set = set(buyer_selected)
+            remainder = list(all_set - selected_set)
+            np.random.shuffle(remainder)
+            needed = size - current_count
+            buyer_selected = np.concatenate([buyer_selected, remainder[:needed]])
+
+        # 5. Determine Seller Pool (Everything not in Buyer)
+        # Use boolean mask for speed if indices are aligned, but set diff is safer here
+        buyer_set = set(buyer_selected)
+        seller_remaining = np.array([i for i in available_indices if i not in buyer_set])
+
+        return buyer_selected.astype(int), seller_remaining.astype(int)
+
+    def partition(self, data_config: Any):
         """Main partitioning dispatcher based on the provided data config."""
 
-        # Type checking for clarity
-        if not isinstance(data_config, (ImageDataConfig, TextDataConfig)):
-            raise TypeError("data_config must be an instance of ImageDataConfig or TextDataConfig")
+        # Imports strictly for type checking if needed, otherwise rely on duck typing
+        # if not isinstance(data_config, (ImageDataConfig, TextDataConfig)):
+        #     raise TypeError("data_config must be an instance of ImageDataConfig or TextDataConfig")
 
-        # Extract relevant parameters from the specific config
         buyer_ratio = data_config.buyer_ratio
         buyer_strategy = data_config.buyer_strategy
         seller_strategy = data_config.strategy
 
-        # Get all available indices from the dataset (handles Subset)
-        actual_dataset = self.dataset.dataset if isinstance(self.dataset, Subset) else self.dataset
+        # Handle Subset or Full Dataset
         available_indices = np.array(
             self.dataset.indices if isinstance(self.dataset, Subset) else np.arange(len(self.dataset)))
+
+        # Initial shuffle ensures randomness for IID logic
         np.random.shuffle(available_indices)
-        logger.info(f"Total available indices for partitioning: {len(available_indices)}")
+
+        total_samples = len(available_indices)
+        buyer_pool_size = int(total_samples * buyer_ratio)
+
+        logger.info(f"Partitioning: Total={total_samples}, Buyer Target={buyer_pool_size}, Strategy={buyer_strategy}")
 
         # --- Stage 1: Split into Buyer Pool and Seller Pool ---
-        buyer_pool_size = int(len(available_indices) * buyer_ratio)
-        if buyer_pool_size == 0 and buyer_ratio > 0:
-            logger.warning(f"Buyer ratio {buyer_ratio} resulted in 0 samples for buyer pool. Check dataset size.")
-        elif buyer_pool_size >= len(available_indices):
-            raise ValueError(f"Buyer ratio {buyer_ratio} is too high, leaves no data for sellers.")
 
-        buyer_pool_indices = available_indices[:buyer_pool_size]
-        seller_pool_indices = available_indices[buyer_pool_size:]
-        logger.info(
-            f"Initial split: {len(buyer_pool_indices)} for buyer pool, {len(seller_pool_indices)} for seller pool.")
+        buyer_pool_indices = None
+        seller_pool_indices = None
 
-        # --- Stage 2: Handle Buyer Pool (Split into Root/Test and Apply Strategy if needed) ---
-        # NOTE: Current implementation primarily supports IID buyer.
-        # Non-IID buyer requires careful definition for a single entity.
         if buyer_strategy.lower() == 'iid':
-            root_fraction = data_config.buyer_config.get("root_set_fraction", 0.5) if hasattr(data_config,
-                                                                                              'buyer_config') and data_config.buyer_config else 0.5
-            self._split_buyer_pool_for_root_test(buyer_pool_indices, root_fraction)
-            logger.info(f"Buyer strategy: IID. Using randomly sampled indices.")
+            # Standard Random Split
+            buyer_pool_indices = available_indices[:buyer_pool_size]
+            seller_pool_indices = available_indices[buyer_pool_size:]
+            logger.info("Buyer strategy: IID (Random Split).")
+
         elif buyer_strategy.lower() == 'dirichlet':
-            # Implementing non-IID for a single buyer is complex.
-            # For now, treat as IID or raise an error.
-            logger.warning(
-                f"Buyer strategy 'dirichlet' requested, but complex for a single buyer entity. Treating as IID for now.")
-            root_fraction = data_config.buyer_config.get("root_set_fraction", 0.5) if hasattr(data_config,
-                                                                                              'buyer_config') and data_config.buyer_config else 0.5
-            self._split_buyer_pool_for_root_test(buyer_pool_indices, root_fraction)
+            # Non-IID Split
+            # We look for 'buyer_dirichlet_alpha' in the config, defaulting to 100.0 (effectively IID)
+            buyer_alpha = getattr(data_config, 'buyer_dirichlet_alpha', 100.0)
+            logger.info(f"Buyer strategy: Dirichlet (Alpha={buyer_alpha}).")
+
+            buyer_pool_indices, seller_pool_indices = self._select_buyer_indices_dirichlet(
+                available_indices, buyer_pool_size, buyer_alpha
+            )
         else:
             raise ValueError(f"Unsupported buyer strategy: {buyer_strategy}")
 
+        # Sanity Check
+        if len(buyer_pool_indices) == 0 and buyer_ratio > 0:
+            logger.warning(f"Buyer pool is empty despite ratio {buyer_ratio}.")
+
+        # --- Stage 2: Handle Buyer Pool (Root vs Test) ---
+        # Now that we have the pool (IID or Skewed), we split it for the buyer's internal usage
+        root_fraction = 0.5
+        if hasattr(data_config, 'buyer_config') and data_config.buyer_config:
+            root_fraction = data_config.buyer_config.get("root_set_fraction", 0.5)
+
+        self._split_buyer_pool_for_root_test(buyer_pool_indices, root_fraction)
+
         # --- Stage 3: Partition Seller Pool Among Clients ---
-        logger.info(f"Partitioning seller pool using strategy: '{seller_strategy}'")
+        logger.info(
+            f"Partitioning seller pool ({len(seller_pool_indices)} samples) using strategy: '{seller_strategy}'")
+
         if seller_strategy.lower() == 'property-skew':
-            # Ensure the correct skew params object is available
-            if isinstance(data_config, ImageDataConfig) and data_config.property_skew:
+            # (Existing Property Skew Logic ...)
+            if hasattr(data_config, 'property_skew') and data_config.property_skew:
                 self._partition_property_skew(seller_pool_indices, data_config.property_skew)
-            elif isinstance(data_config, TextDataConfig) and data_config.property_skew:
-                # Text skew needs extra info (raw dataset, text field) - handle in caller
-                # This indicates _partition_text_property_skew might need to be called
-                # directly by the get_text_dataset function instead of here.
-                # Let's adjust this partitioner to NOT handle text property skew directly.
-                raise NotImplementedError("Text property skew partitioning should be handled in get_text_dataset.")
             else:
-                raise ValueError(
-                    f"Property skew strategy selected, but appropriate params not found in {type(data_config)}")
+                raise ValueError("Property skew selected but config missing.")
 
         elif seller_strategy.lower() == 'dirichlet':
             alpha = data_config.dirichlet_alpha
             self._partition_by_dirichlet(seller_pool_indices, alpha)
 
         elif seller_strategy.lower() == 'iid':
-            self._partition_iid(seller_pool_indices)  # Add simple IID split
+            self._partition_iid(seller_pool_indices)
 
         else:
             raise ValueError(f"Unknown client partitioning strategy: {seller_strategy}")
 
-        # Log final client sizes
-        for client_id in range(self.num_clients):
-            logger.debug(f"Client {client_id} final size: {len(self.client_indices[client_id])}")
-
         return self
-
     def _partition_iid(self, seller_pool_indices: np.ndarray):
         """Partitions seller data evenly and randomly (IID)."""
         logger.info(f"Partitioning {len(seller_pool_indices)} samples for {self.num_clients} clients (IID)...")
