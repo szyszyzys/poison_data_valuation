@@ -28,6 +28,14 @@ DEFENSE_PALETTE = {
     "skymask": "#9b59b6"  # Purple
 }
 
+# Added Markers for B/W readability
+CUSTOM_MARKERS = {
+    "fedavg": "o",  # Circle
+    "fltrust": "X",  # X
+    "martfl": "s",  # Square
+    "skymask": "P"  # Plus
+}
+
 
 def set_plot_style():
     sns.set_theme(style="whitegrid")
@@ -59,9 +67,15 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     """
     Parses folder suffixes.
-    Handles BOTH 'alpha_100.0' (Heterogeneity) AND 'ratio_sweep_0.1' (Scarcity).
+    Handles BOTH 'alpha_100.0' (Heterogeneity), 'iid' (New IID), AND 'ratio_sweep_0.1' (Scarcity).
     """
     hps = {}
+
+    # Case 0: Explicit IID folder (New config)
+    if hp_folder_name == "iid":
+        hps['experiment_type'] = 'heterogeneity'
+        hps['x_val'] = 100.0
+        return hps
 
     # Case 1: Heterogeneity Sweep
     match_alpha = re.search(r'alpha_([0-9\.]+)', hp_folder_name)
@@ -125,6 +139,14 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             try:
+                # --- FILTERING OLD RESULTS ---
+                # If the folder name contains '_alpha-100_', it is the old IID generation.
+                # The new generation produces cleaner folder names.
+                leaf_name = metrics_file.parent.name
+                if "_alpha-100_" in leaf_name:
+                    continue
+                # -----------------------------
+
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
                 if not relative_parts: continue
 
@@ -186,10 +208,10 @@ def plot_heterogeneity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
                 hue_order=defense_order,
                 style_order=defense_order,
                 palette=DEFENSE_PALETTE,
-                markers=True,
+                markers=CUSTOM_MARKERS,
                 dashes=False,
-                markersize=9,
-                linewidth=2.5,
+                markersize=10,
+                linewidth=3.0,
                 errorbar=('ci', 95)
             )
 
@@ -204,6 +226,8 @@ def plot_heterogeneity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
             ax.set_xscale('log')
             ax.xaxis.set_major_locator(FixedLocator(ALPHAS_IN_TEST))
             ax.xaxis.set_major_formatter(FixedFormatter(ALPHA_LABELS))
+
+            # Reverse Axis: Max (100) on Left, Min (0.1) on Right
             ax.set_xlim(max(ALPHAS_IN_TEST) * 1.4, min(ALPHAS_IN_TEST) * 0.8)
 
             ax.grid(True, which='major', linestyle='--', alpha=0.6)
@@ -230,13 +254,11 @@ def plot_scarcity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
     """
     print(f"\n--- Generating Data Scarcity Plots for {dataset} ---")
 
-    # Filter for Scarcity Experiments
     dataset_df = df[(df['dataset'] == dataset) & (df['experiment_type'] == 'scarcity')].copy()
     if dataset_df.empty:
         print("  No Scarcity data found.")
         return
 
-    # Convert to percentages
     for col in ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']:
         dataset_df[col] = dataset_df[col] * 100
 
@@ -268,10 +290,10 @@ def plot_scarcity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
             hue_order=defense_order,
             style_order=defense_order,
             palette=DEFENSE_PALETTE,
-            markers=True,
+            markers=CUSTOM_MARKERS,
             dashes=False,
-            markersize=9,
-            linewidth=2.5,
+            markersize=10,
+            linewidth=3.0,
             errorbar=('ci', 95)
         )
 
@@ -282,8 +304,7 @@ def plot_scarcity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
         else:
             ax.set_ylabel("")
 
-        # --- AXIS LOGIC: Standard Linear for Ratio ---
-        # ax.set_xscale('log') # Optional, usually linear 0.01 -> 0.2 is fine
+        # Standard Linear for Ratio
         ax.xaxis.set_major_locator(FixedLocator(RATIOS_IN_TEST))
 
         ax.grid(True, which='major', linestyle='--', alpha=0.6)
@@ -320,10 +341,7 @@ def main():
 
     for dataset in df['dataset'].unique():
         if dataset != 'unknown':
-            # 1. Plot Heterogeneity (Alpha Sweep)
             plot_heterogeneity_row(df, dataset, output_dir)
-
-            # 2. Plot Scarcity (Buyer Ratio Sweep)
             plot_scarcity_row(df, dataset, output_dir)
 
     print("\nAnalysis complete.")
