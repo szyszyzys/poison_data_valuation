@@ -1,12 +1,11 @@
 import logging
+import numpy as np
 import time
+import torch
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
-
-import numpy as np
-import torch
 
 from common.enums import ServerAttackMode
 from common.gradient_market_configs import AppConfig, ServerAttackConfig
@@ -338,10 +337,13 @@ class DataMarketplaceFederated(DataMarketplace):
                 has_data = any(vals for vals in seller_valuations.values())
 
                 if has_data:
-                    # Construct a clean log entry
                     val_entry = {
                         "round": round_number,
                         "timestamp": time.time(),
+                        # --- ADD THESE TWO LINES ---
+                        "selected_ids": selected_ids,
+                        "outlier_ids": outlier_ids,
+                        # ---------------------------
                         "seller_valuations": seller_valuations
                     }
 
