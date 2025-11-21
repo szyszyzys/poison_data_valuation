@@ -24,8 +24,9 @@ except ImportError as e:
 # --- Constants ---
 
 # DEFINITION: (Strategy, Alpha Value, Folder Suffix)
+# Changed 100.0 to None for IID to ensure clean config generation
 HETEROGENEITY_SWEEP = [
-    ("iid", 100.0, "iid"),  # Baseline
+    ("iid", None, "iid"),  # Baseline (No alpha param)
     ("dirichlet", 1.0, "alpha_1.0"),  # Mild
     ("dirichlet", 0.5, "alpha_0.5"),  # Moderate
     ("dirichlet", 0.1, "alpha_0.1"),  # Severe
@@ -33,10 +34,10 @@ HETEROGENEITY_SWEEP = [
 
 # Constants for the "Fixed" side of the experiments
 FIXED_BUYER_STRAT = "iid"
-FIXED_BUYER_ALPHA = 100.0
+FIXED_BUYER_ALPHA = None  # Buyer is pure IID
 
 FIXED_SELLER_STRAT = "dirichlet"
-FIXED_SELLER_ALPHA = 0.5  # Fixed to moderate when testing Buyer impact
+FIXED_SELLER_ALPHA = 0.5  # Seller fixed to moderate
 
 FIXED_ATTACK_ADV_RATE = DEFAULT_ADV_RATE
 FIXED_ATTACK_POISON_RATE = DEFAULT_POISON_RATE
@@ -148,8 +149,6 @@ if __name__ == "__main__":
     for scenario in scenarios_to_generate:
         print(f"\nProcessing scenario base: {scenario.name}")
         task_configs = 0
-
-        # We assume scenario name is formatted: step11_{defense}_{dataset}
         defense_name = scenario.name.split('_')[1]
 
         # =======================================================================
@@ -162,15 +161,18 @@ if __name__ == "__main__":
 
             # 1. Seller: Sweeps [IID -> Severe]
             current_grid[f"data.{modality}.strategy"] = [sweep_strat]
-            current_grid[f"data.{modality}.dirichlet_alpha"] = [sweep_alpha]
+            if sweep_alpha is not None:
+                current_grid[f"data.{modality}.dirichlet_alpha"] = [sweep_alpha]
 
             # 2. Buyer: Fixed [IID]
             current_grid[f"data.{modality}.buyer_strategy"] = [FIXED_BUYER_STRAT]
-            current_grid[f"data.{modality}.buyer_dirichlet_alpha"] = [FIXED_BUYER_ALPHA]
+            if FIXED_BUYER_ALPHA is not None:
+                current_grid[f"data.{modality}.buyer_dirichlet_alpha"] = [FIXED_BUYER_ALPHA]
 
             # 3. Adversary: Matches Seller (to hide in the distribution)
             current_grid["adversary_seller_config.poisoning.data_distribution.strategy"] = [sweep_strat]
-            current_grid["adversary_seller_config.poisoning.data_distribution.dirichlet_alpha"] = [sweep_alpha]
+            if sweep_alpha is not None:
+                current_grid["adversary_seller_config.poisoning.data_distribution.dirichlet_alpha"] = [sweep_alpha]
 
             # Path: results/step11_.../vary_seller/alpha_x
             save_suffix = f"vary_seller/{suffix}"
@@ -183,7 +185,6 @@ if __name__ == "__main__":
                 parameter_grid=current_grid
             )
 
-            # Apply Modifier Helper
             base_config = temp_scenario.base_config_factory()
             mod_config = initialize_adversary_data_distribution(copy.deepcopy(base_config))
             set_nested_attr(mod_config, "aggregation.aggregation_name", defense_name)
@@ -201,16 +202,20 @@ if __name__ == "__main__":
 
             # 1. Seller: Fixed [Dirichlet 0.5]
             current_grid[f"data.{modality}.strategy"] = [FIXED_SELLER_STRAT]
-            current_grid[f"data.{modality}.dirichlet_alpha"] = [FIXED_SELLER_ALPHA]
+            if FIXED_SELLER_ALPHA is not None:
+                current_grid[f"data.{modality}.dirichlet_alpha"] = [FIXED_SELLER_ALPHA]
 
             # 2. Buyer: Sweeps [IID -> Severe]
             current_grid[f"data.{modality}.buyer_strategy"] = [sweep_strat]
-            current_grid[f"data.{modality}.buyer_dirichlet_alpha"] = [sweep_alpha]
+            # Only add alpha if it is not None (i.e., not IID)
+            if sweep_alpha is not None:
+                current_grid[f"data.{modality}.buyer_dirichlet_alpha"] = [sweep_alpha]
 
             # 3. Adversary: Matches Seller (Fixed at 0.5)
-            #    (Note: Adversary usually mimics the Seller distribution)
             current_grid["adversary_seller_config.poisoning.data_distribution.strategy"] = [FIXED_SELLER_STRAT]
-            current_grid["adversary_seller_config.poisoning.data_distribution.dirichlet_alpha"] = [FIXED_SELLER_ALPHA]
+            if FIXED_SELLER_ALPHA is not None:
+                current_grid["adversary_seller_config.poisoning.data_distribution.dirichlet_alpha"] = [
+                    FIXED_SELLER_ALPHA]
 
             # Path: results/step11_.../vary_buyer/alpha_x
             save_suffix = f"vary_buyer/{suffix}"
@@ -223,7 +228,6 @@ if __name__ == "__main__":
                 parameter_grid=current_grid
             )
 
-            # Apply Modifier Helper
             base_config = temp_scenario.base_config_factory()
             mod_config = initialize_adversary_data_distribution(copy.deepcopy(base_config))
             set_nested_attr(mod_config, "aggregation.aggregation_name", defense_name)
