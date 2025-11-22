@@ -1,13 +1,14 @@
-import pandas as pd
 import json
+import os
 import re
-import seaborn as sns
+from pathlib import Path
+from typing import Dict, Any
+
 import matplotlib.pyplot as plt
 import numpy as np
-import os
-from pathlib import Path
-from typing import List, Dict, Any
-from matplotlib.ticker import FixedLocator, FixedFormatter, MaxNLocator
+import pandas as pd
+import seaborn as sns
+from matplotlib.ticker import FixedLocator, FixedFormatter
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
@@ -65,17 +66,15 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
 
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
-    """
-    Parses folder suffixes.
-    Handles BOTH 'alpha_100.0' (Heterogeneity), 'iid' (New IID), AND 'ratio_sweep_0.1' (Scarcity).
-    """
     hps = {}
 
-    # Case 0: Explicit IID folder (New config)
+    # --- ADD THIS BLOCK ---
+    # Handle the explicit "iid" folder created by the new generator
     if hp_folder_name == "iid":
         hps['experiment_type'] = 'heterogeneity'
         hps['x_val'] = 100.0
         return hps
+    # ----------------------
 
     # Case 1: Heterogeneity Sweep
     match_alpha = re.search(r'alpha_([0-9\.]+)', hp_folder_name)
@@ -139,13 +138,12 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             try:
-                # --- FILTERING OLD RESULTS ---
-                # If the folder name contains '_alpha-100_', it is the old IID generation.
-                # The new generation produces cleaner folder names.
+                # --- SAFETY FILTER FOR OLD RESULTS ---
+                # Ignore folders from the old run generation style
                 leaf_name = metrics_file.parent.name
                 if "_alpha-100_" in leaf_name:
                     continue
-                # -----------------------------
+                # -------------------------------------
 
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
                 if not relative_parts: continue
