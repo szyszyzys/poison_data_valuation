@@ -1,70 +1,21 @@
 import json
 import logging
-import numpy as np
 import time
-import torch
 from collections import OrderedDict
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
+import numpy as np
+import torch
+
 from common.enums import ServerAttackMode
-from common.gradient_market_configs import AppConfig, ServerAttackConfig
+from common.gradient_market_configs import AppConfig
 from entry.gradient_market.privacy_attack import GradientInversionAttacker
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.aggregator import Aggregator
 from marketplace.market_mechanism.valuation.valuation import ValuationManager
 from marketplace.seller.gradient_seller import GradientSeller, SybilCoordinator
 from marketplace.seller.seller import BaseSeller
-
-
-def validate_buyer_attack_config(self):
-    """Validate buyer attack configuration before training starts."""
-    if not self.cfg.buyer_attack_config.is_active:
-        return
-
-    attack_type = self.cfg.buyer_attack_config.attack_type
-    num_classes = self.marketplace.num_classes
-
-    if attack_type == "class_exclusion":
-        excluded = self.cfg.buyer_attack_config.exclusion_exclude_classes
-        targeted = self.cfg.buyer_attack_config.exclusion_target_classes
-
-        if not excluded and not targeted:
-            raise ValueError(
-                "class_exclusion attack requires either exclusion_exclude_classes or exclusion_target_classes")
-
-        # Validate class indices
-        all_specified = excluded + targeted
-        if any(c >= num_classes or c < 0 for c in all_specified):
-            raise ValueError(f"Invalid class indices in buyer attack config. Dataset has {num_classes} classes.")
-
-    elif attack_type == "oscillating":
-        if self.cfg.buyer_attack_config.oscillation_strategy == "binary_flip":
-            classes_a = self.cfg.buyer_attack_config.oscillation_classes_a
-            classes_b = self.cfg.buyer_attack_config.oscillation_classes_b
-            if not classes_a or not classes_b:
-                raise ValueError("binary_flip strategy requires both oscillation_classes_a and oscillation_classes_b")
-
-    elif attack_type == "starvation":
-        if not self.cfg.buyer_attack_config.starvation_classes:
-            raise ValueError("starvation attack requires starvation_classes to be specified")
-
-    logging.info(f"✅ Buyer attack config validated: {attack_type}")
-
-
-# Call this in your main training function:
-# self.validate_buyer_attack_config()  # Before starting rounds
-
-
-@dataclass
-class MarketplaceConfig:
-    """Configuration for the DataMarketplaceFederated."""
-    save_path: str
-    dataset_name: str
-    input_shape: Tuple[int, int, int]
-    num_classes: int
-    privacy_attack_config: ServerAttackConfig = field(default_factory=ServerAttackConfig)
 
 
 class DataMarketplaceFederated(DataMarketplace):
@@ -139,6 +90,8 @@ class DataMarketplaceFederated(DataMarketplace):
         # ===== PHASE 2: Collect Honest Gradients =====
         logging.info("\n📦 Collecting honest gradients from all sellers...")
         gradients_dict, seller_ids, seller_stats_list = self._get_current_market_gradients()
+        logging.info(f"🔎 [CP1] Collection: {len(gradients_dict)} gradients collected.")
+        logging.debug(f"      IDs: {list(gradients_dict.keys())}")
 
         if not gradients_dict:
             logging.error("❌ No gradients collected! Cannot proceed with round.")
@@ -186,10 +139,22 @@ class DataMarketplaceFederated(DataMarketplace):
 
         # ===== PHASE 3: Compute Root Gradients =====
         logging.info("\n🛒 Computing buyer root gradient...")
+        keys_before_buyer = set(gradients_dict.keys())
+
+        # REMEMBER: Ensure you used .copy() here!
         buyer_root_gradient, buyer_stats = self.buyer_seller.get_gradient_for_upload(
-            all_seller_gradients=gradients_dict,
+            all_seller_gradients=gradients_dict.copy(),  # <--- VERIFY THIS
             target_seller_id=getattr(self.cfg.buyer_attack_config, 'target_seller_id', None)
         )
+
+        # [CHECKPOINT 2] After Buyer
+        keys_after_buyer = set(gradients_dict.keys())
+        if len(keys_after_buyer) < len(keys_before_buyer):
+            missing = keys_before_buyer - keys_after_buyer
+            logging.error(f"🚨 [CP2 ALARM] The Buyer deleted these sellers: {missing}")
+            logging.error("      You forgot .copy() in get_gradient_for_upload!")
+        else:
+            logging.info(f"✅ [CP2] Integrity Check: All {len(gradients_dict)} sellers survived the Buyer step.")
 
         if buyer_root_gradient is None:
             logging.error("Virtual buyer failed to compute gradient!")
@@ -228,6 +193,7 @@ class DataMarketplaceFederated(DataMarketplace):
                     buyer_data_loader=self.aggregator.buyer_data_loader  # Pass if needed by hypothetical aggregate
                 )
                 logging.info("🐍 Sybil Manipulation complete.\n")
+                logging.info(f"🔎 [CP3] Post-Sybil: {len(final_gradients_to_aggregate)} gradients remaining.")
             except Exception as e:
                 logging.error(f"❌ Error during Sybil Manipulation: {e}. Using original gradients.", exc_info=True)
                 final_gradients_to_aggregate = gradients_dict  # Fallback to original if manipulation fails
@@ -243,6 +209,7 @@ class DataMarketplaceFederated(DataMarketplace):
 
         # Sanitize the final set of gradients that will go to the real aggregation
         sanitized_gradients = self._sanitize_gradients(final_gradients_to_aggregate, param_meta, target_device)
+        logging.info(f"🔎 [CP4] Post-Sanitization: {len(sanitized_gradients)} gradients ready for Aggregator.")
 
         # Sanitize the root gradients separately (needed for the real aggregation)
         sanitized_root_gradient = self._sanitize_gradient(buyer_root_gradient, target_device)
@@ -456,28 +423,41 @@ class DataMarketplaceFederated(DataMarketplace):
         return round_record, agg_grad
 
     def _sanitize_gradients(self, gradients_dict: Dict, param_meta: List, target_device) -> Dict:
-        """Sanitize all gradients to ensure correct format and device."""
         sanitized = {}
         for sid, grad_list in gradients_dict.items():
-            if grad_list is None or len(grad_list) != len(param_meta):
-                logging.error(f"Seller '{sid}' invalid gradient - replacing with zeros")
-                sanitized[sid] = [
-                    torch.zeros(shape, dtype=dtype, device=target_device)
-                    for shape, dtype in param_meta
-                ]
+
+            # [CHECKPOINT 5a] Check for None
+            if grad_list is None:
+                logging.error(f"❌ [Sanitizer] Dropping {sid}: Gradient is None.")
+                continue
+
+            # [CHECKPOINT 5b] Check for List Length Mismatch
+            if len(grad_list) != len(param_meta):
+                logging.error(f"❌ [Sanitizer] Dropping {sid}: Parameter count mismatch.")
+                logging.error(f"      Seller: {len(grad_list)}, Global Model: {len(param_meta)}")
                 continue
 
             corrected_list = []
+            valid_seller = True
+
+            # [CHECKPOINT 5c] Check for Tensor Shape Mismatch
             for i, tensor in enumerate(grad_list):
-                if tensor is None:
-                    logging.warning(f"None gradient from {sid} at index {i}")
-                    shape, dtype = param_meta[i]
-                    corrected_list.append(torch.zeros(shape, dtype=dtype, device=target_device))
-                elif tensor.device != target_device:
+                expected_shape, expected_dtype = param_meta[i]
+
+                if tensor.shape != expected_shape:
+                    logging.error(f"❌ [Sanitizer] Dropping {sid}: Shape mismatch at param index {i}.")
+                    logging.error(f"      Got {tensor.shape}, Expected {expected_shape}")
+                    valid_seller = False
+                    break
+
+                # Handle device transfer
+                if tensor.device != target_device:
                     corrected_list.append(tensor.to(target_device))
                 else:
                     corrected_list.append(tensor)
-            sanitized[sid] = corrected_list
+
+            if valid_seller:
+                sanitized[sid] = corrected_list
 
         return sanitized
 

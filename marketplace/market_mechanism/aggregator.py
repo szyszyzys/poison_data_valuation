@@ -175,6 +175,8 @@ class Aggregator:
         """
         logger.info(f"🔄 Starting aggregation for epoch {global_epoch}")
         logger.info(f"   Received updates from {len(seller_updates)} sellers: {list(seller_updates.keys())}")
+        logging.info(f"🧩 [Aggregator] Received input dictionary with {len(seller_updates)} sellers.")
+        logging.debug(f"      IDs: {list(seller_updates.keys())}")
 
         s_updates_tensor = self._validate_and_standardize_updates(seller_updates)
 
