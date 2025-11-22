@@ -1,13 +1,12 @@
+import pandas as pd
 import json
-import os
 import re
-from pathlib import Path
-from typing import Dict, Any
-
+import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-import seaborn as sns
+import os
+from pathlib import Path
+from typing import List, Dict, Any
 from matplotlib.ticker import FixedLocator, FixedFormatter
 
 # --- Configuration ---
@@ -31,18 +30,18 @@ DEFENSE_PALETTE = {
 
 # Added Markers for B/W readability
 CUSTOM_MARKERS = {
-    "fedavg": "o",  # Circle
+    "fedavg": "o",   # Circle
     "fltrust": "X",  # X
-    "martfl": "s",  # Square
-    "skymask": "P"  # Plus
+    "martfl": "s",   # Square
+    "skymask": "P"   # Plus
 }
-
 
 def set_plot_style():
     sns.set_theme(style="whitegrid")
     sns.set_context("paper", font_scale=1.5)
     plt.rcParams['font.family'] = 'serif'
     plt.rcParams['axes.linewidth'] = 1.2
+    plt.rcParams['axes.edgecolor'] = '#333333'
     plt.rcParams['lines.linewidth'] = 2.5
     plt.rcParams['lines.markersize'] = 9
 
@@ -66,17 +65,21 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
 
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
+    """
+    Parses folder suffixes.
+    Handles: 'iid', 'alpha_X', and 'ratio_sweep_X'.
+    """
     hps = {}
 
-    # --- ADD THIS BLOCK ---
-    # Handle the explicit "iid" folder created by the new generator
+    # --- FIX IS HERE ---
+    # Explicitly handle the "iid" folder name from the new generator
     if hp_folder_name == "iid":
         hps['experiment_type'] = 'heterogeneity'
-        hps['x_val'] = 100.0
+        hps['x_val'] = 100.0 # Map string "iid" to numeric 100.0 for plotting
         return hps
-    # ----------------------
+    # -------------------
 
-    # Case 1: Heterogeneity Sweep
+    # Case 1: Heterogeneity Sweep (e.g., alpha_1.0)
     match_alpha = re.search(r'alpha_([0-9\.]+)', hp_folder_name)
     if match_alpha:
         hps['experiment_type'] = 'heterogeneity'
@@ -128,9 +131,10 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
 def collect_all_results(base_dir: str) -> pd.DataFrame:
     all_runs = []
     base_path = Path(base_dir)
-    print(f"Searching in {base_path}...")
+    print(f"Searching in {base_path.resolve()}...")
 
     scenario_folders = [f for f in base_path.glob("step11_*") if f.is_dir()]
+    print(f"Found {len(scenario_folders)} scenario folders.")
 
     for scenario_path in scenario_folders:
         run_scenario = parse_scenario_name(scenario_path.name)
@@ -138,26 +142,29 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             try:
-                # --- SAFETY FILTER FOR OLD RESULTS ---
-                # Ignore folders from the old run generation style
+                # --- FILTER OLD STALE RESULTS ---
                 leaf_name = metrics_file.parent.name
                 if "_alpha-100_" in leaf_name:
-                    continue
-                # -------------------------------------
+                    continue # Skip the old, incorrect IID runs
+                # --------------------------------
 
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
                 if not relative_parts: continue
 
-                # Parse folder name to determine if it's Alpha or Ratio sweep
+                # Parse folder name (e.g., "iid", "alpha_1.0")
                 hp_folder = relative_parts[0]
                 run_hps = parse_hp_suffix(hp_folder)
 
-                if 'experiment_type' not in run_hps: continue
+                if 'experiment_type' not in run_hps:
+                    # Debug print if things are being skipped unexpectedly
+                    # print(f"Skipping unknown folder: {hp_folder}")
+                    continue
 
                 metrics = load_run_data(metrics_file)
                 if metrics:
                     all_runs.append({**run_scenario, **run_hps, **metrics})
-            except:
+            except Exception as e:
+                print(f"Error processing {metrics_file}: {e}")
                 continue
 
     return pd.DataFrame(all_runs)
@@ -169,9 +176,10 @@ def plot_heterogeneity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
     """
     print(f"\n--- Generating Heterogeneity Plots for {dataset} ---")
 
-    # Filter for Heterogeneity Experiments
     dataset_df = df[(df['dataset'] == dataset) & (df['experiment_type'] == 'heterogeneity')].copy()
-    if dataset_df.empty: return
+    if dataset_df.empty:
+        print(f"  No heterogeneity data found for {dataset}.")
+        return
 
     # Convert to percentages
     for col in ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']:
@@ -215,26 +223,20 @@ def plot_heterogeneity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
 
             ax.set_title(f"{display_name}", fontweight='bold', fontsize=16)
             ax.set_xlabel("Heterogeneity", fontsize=14)
-            if i == 0:
-                ax.set_ylabel("Rate / Score (%)", fontsize=14)
-            else:
-                ax.set_ylabel("")
+            if i == 0: ax.set_ylabel("Rate / Score (%)", fontsize=14)
+            else: ax.set_ylabel("")
 
             # --- AXIS LOGIC: IID (100) on LEFT ---
             ax.set_xscale('log')
             ax.xaxis.set_major_locator(FixedLocator(ALPHAS_IN_TEST))
             ax.xaxis.set_major_formatter(FixedFormatter(ALPHA_LABELS))
-
-            # Reverse Axis: Max (100) on Left, Min (0.1) on Right
             ax.set_xlim(max(ALPHAS_IN_TEST) * 1.4, min(ALPHAS_IN_TEST) * 0.8)
 
             ax.grid(True, which='major', linestyle='--', alpha=0.6)
             ax.get_legend().remove()
 
         handles, labels = axes[0].get_legend_handles_labels()
-        labels = [l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask",
-                                                                                                   "SkyMask").replace(
-            "Martfl", "MARTFL") for l in labels]
+        labels = [l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask", "SkyMask").replace("Martfl", "MARTFL") for l in labels]
 
         fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.15),
                    ncol=len(defense_order), frameon=True, fontsize=14, title="Defense Methods")
@@ -260,7 +262,6 @@ def plot_scarcity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
     for col in ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']:
         dataset_df[col] = dataset_df[col] * 100
 
-    # Scarcity was only run for Seller-Only Bias
     bias = 'Seller-Only Bias'
     bias_df = dataset_df[dataset_df['bias_source'] == bias]
     if bias_df.empty: return
@@ -297,21 +298,15 @@ def plot_scarcity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
 
         ax.set_title(f"{display_name}", fontweight='bold', fontsize=16)
         ax.set_xlabel("Buyer Data Ratio", fontsize=14)
-        if i == 0:
-            ax.set_ylabel("Rate / Score (%)", fontsize=14)
-        else:
-            ax.set_ylabel("")
+        if i == 0: ax.set_ylabel("Rate / Score (%)", fontsize=14)
+        else: ax.set_ylabel("")
 
-        # Standard Linear for Ratio
         ax.xaxis.set_major_locator(FixedLocator(RATIOS_IN_TEST))
-
         ax.grid(True, which='major', linestyle='--', alpha=0.6)
         ax.get_legend().remove()
 
     handles, labels = axes[0].get_legend_handles_labels()
-    labels = [
-        l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask", "SkyMask").replace(
-            "Martfl", "MARTFL") for l in labels]
+    labels = [l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask", "SkyMask").replace("Martfl", "MARTFL") for l in labels]
 
     fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.15),
                ncol=len(defense_order), frameon=True, fontsize=14, title="Defense Methods")
