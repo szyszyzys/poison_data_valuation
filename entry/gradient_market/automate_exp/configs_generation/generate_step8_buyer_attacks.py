@@ -89,7 +89,7 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
                 # --- Apply Tuned Defense HPs (from Step 3) ---
                 for key, value in current_tuned_params.items():
                     set_nested_attr(config, key, value)
-                if current_defense_name == "skymask":
+                if "skymask" in current_defense_name:
                     model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                     set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 

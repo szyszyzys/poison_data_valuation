@@ -147,7 +147,7 @@ def generate_training_hp_scenarios() -> List[Scenario]:
                     set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
 
                     # Set SkyMask type if needed
-                    if current_defense_name == "skymask":
+                    if "skymask" in current_defense_name:
                         model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                         set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 
@@ -174,7 +174,7 @@ def generate_training_hp_scenarios() -> List[Scenario]:
                 "training.momentum": [0.0],
                 "training.weight_decay": [0.0],
             }
-            if defense_name == "skymask":
+            if "skymask" in defense_name:
                 model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                 grid["aggregation.skymask.sm_model_type"] = [model_struct]
 

@@ -92,7 +92,7 @@ def generate_heterogeneity_scenarios() -> List[Scenario]:
                 if current_params:
                     for key, value in current_params.items():
                         set_nested_attr(config, key, value)
-                if defense == "skymask":
+                if "skymask" in defense:
                     model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                     set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 

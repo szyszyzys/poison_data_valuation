@@ -142,7 +142,7 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
                     "experiment.use_early_stopping": [True],
                     "experiment.patience": [10],
                 }
-                if defense_name == "skymask":
+                if "skymask" in defense_name:
                     model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                     base_grid["aggregation.skymask.sm_model_type"] = [model_struct]
 
