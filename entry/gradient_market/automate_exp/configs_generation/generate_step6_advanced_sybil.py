@@ -3,18 +3,17 @@
 import copy
 import sys
 from pathlib import Path
-from typing import List, Callable, Dict, Any
+from typing import List
 
 # --- Imports (Assuming these are available in your environment) ---
 from config_common_utils import (
     NUM_SEEDS_PER_CONFIG,
     DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, enable_valuation, use_sybil_attack_strategy,
-    get_tuned_defense_params, GOLDEN_TRAINING_PARAMS
+    get_tuned_defense_params, GOLDEN_TRAINING_PARAMS, IMAGE_DEFENSES
 )
 # NOTE: AppConfig and set_nested_attr must be available from these imports
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
-from entry.gradient_market.automate_exp.scenarios import Scenario, use_image_backdoor_attack, use_cifar100_config, \
-    IMAGE_DEFENSES
+from entry.gradient_market.automate_exp.scenarios import Scenario, use_image_backdoor_attack, use_cifar100_config
 
 try:
     from common.gradient_market_configs import AppConfig, PoisonType
