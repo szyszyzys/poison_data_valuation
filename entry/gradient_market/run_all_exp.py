@@ -184,7 +184,7 @@ def setup_data_and_model(cfg: AppConfig, device):
             # --- OPTIMIZATION START ---
             loader_kwargs = {
                 "batch_size": cfg.training.batch_size,
-                "num_workers": 4,      # <--- Set this to 4 or 8
+                "num_workers": 16,      # <--- Set this to 4 or 8
                 "pin_memory": True,    # <--- Critical for NVIDIA GPUs
                 "collate_fn": collate_fn,
                 "persistent_workers": True # <--- Keeps workers alive (optional but good)
