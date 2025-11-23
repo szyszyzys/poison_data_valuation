@@ -265,7 +265,7 @@ def get_tabular_dataset(cfg: AppConfig) -> Tuple[
     batch_size = cfg.training.batch_size
 
     # --- PERFORMANCE OPTIMIZATION START ---
-    workers = cfg.data.num_workers
+    workers = cfg.data.num_workers if cfg.data.num_workers > 4 else 4
 
     loader_kwargs = {
         "batch_size": batch_size,

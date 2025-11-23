@@ -257,7 +257,7 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
 
     # --- PERFORMANCE FIX START ---
     # Ensure we use at least 4 workers if config is 0, otherwise use config
-    workers = cfg.data.num_workers if cfg.data.num_workers > 0 else 4
+    workers = cfg.data.num_workers if cfg.data.num_workers > 4 else 4
 
     loader_kwargs = {
         "batch_size": batch_size,  # Constraint: Must keep this 64
@@ -683,7 +683,7 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     collate_fn = lambda batch: collate_batch(batch, padding_value=pad_idx)
     batch_size = train_cfg.batch_size
 
-    workers = cfg.data.num_workers
+    workers = cfg.data.num_workers if cfg.data.num_workers > 4 else 4
 
     loader_kwargs = {
         "batch_size": batch_size,
