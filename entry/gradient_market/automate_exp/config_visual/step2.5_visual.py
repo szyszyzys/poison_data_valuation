@@ -39,7 +39,8 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     Parses the base scenario name (e.g., 'step2.5_find_hps_martfl_image_CIFAR10')
     """
     try:
-        pattern = r'step2\.5_find_hps_(fedavg|martfl|fltrust|skymask)_(image|text|tabular)_(.+)'
+        # UPDATE 1: Added 'skymask_small' to the regex group so it matches successfully
+        pattern = r'step2\.5_find_hps_(fedavg|martfl|fltrust|skymask_small|skymask)_(image|text|tabular)_(.+)'
         match = re.search(pattern, scenario_name)
 
         if match:
@@ -53,7 +54,7 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
             raise ValueError(f"Pattern not matched for: {scenario_name}")
 
     except Exception as e:
-        print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
+        # print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
         return {"scenario": scenario_name}
 
 
@@ -101,7 +102,7 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
 def collect_all_results(base_dir: str) -> pd.DataFrame:
     """
     Walks the results directory, aggregates all run data,
-    AND filters out any folders ending in '_nolocalclip'.
+    filters out '_nolocalclip', and SWAPS 'skymask_small' in place of 'skymask'.
     """
     all_runs = []
     base_path = Path(base_dir)
@@ -121,6 +122,10 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
         run_scenario = parse_scenario_name(scenario_name)
+
+        # Skip if regex failed
+        if "defense" not in run_scenario:
+            continue
 
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             try:
@@ -145,6 +150,19 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(all_runs)
+
+    # --- UPDATE 2: SWAP LOGIC ---
+    # If we have 'skymask_small' data, we want to discard the old 'skymask'
+    # and rename 'skymask_small' to 'skymask' so it shows up correctly in plots.
+    if 'skymask_small' in df['defense'].unique():
+        print("ℹ️  Found 'skymask_small' results. Replacing old 'skymask' results with them.")
+
+        # 1. Drop rows that are exactly 'skymask' (the old/failed ones)
+        df = df[df['defense'] != 'skymask']
+
+        # 2. Rename 'skymask_small' to 'skymask' (so the label is correct in plots)
+        df.loc[df['defense'] == 'skymask_small', 'defense'] = 'skymask'
+    # ----------------------------
 
     print("Calculating thresholds...")
     dataset_max_acc = df.groupby('dataset')['acc'].max().to_dict()
@@ -437,7 +455,7 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
     # --- COMMON STYLING ---
     letters = ['(a)', '(b)', '(c)', '(d)']
     for i, ax in enumerate(axes):
-        ax.set_xticklabels(formatted_labels, fontsize=14, fontweight='bold', rotation=15)
+        ax.set_xticklabels(formatted_labels, fontsize=14, fontweight='bold')
         ax.grid(axis='y', alpha=0.5)
         # Add letter label inside plot (top left) to save space
         # ax.text(-0.1, 1.05, letters[i], transform=ax.transAxes, size=16, weight='bold')
@@ -453,9 +471,6 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
     outfile = output_dir / f"plot_row_combined_{dataset}.pdf"
     plt.savefig(outfile, bbox_inches='tight', format='pdf', dpi=300)
     print(f"Saved composite row to: {outfile}")
-
-# --- Add this to your main() function ---
-# plot_composite_row(df, output_dir)
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
