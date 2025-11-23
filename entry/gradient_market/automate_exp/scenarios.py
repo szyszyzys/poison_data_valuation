@@ -100,8 +100,6 @@ TUNED_DEFENSE_PARAMS = {
         # Add other necessary SkyMask params if they exist in TUNED_DEFENSE_PARAMS
     },
 }
-IMAGE_DEFENSES = ["fedavg", "fltrust", "martfl", "skymask"]
-TEXT_DEFENSES = ["fedavg", "fltrust", "martfl"]
 
 FIXED_ATTACK_ADV_RATE = 0.3
 FIXED_ATTACK_POISON_RATE = 0.5  # Match defense tune
@@ -134,145 +132,6 @@ def use_sybil_attack(strategy: str, **kwargs) -> Callable[[AppConfig], AppConfig
         return config
 
     return modifier
-
-
-# ==============================================================================
-# --- UPDATED FUNCTION: generate_sybil_strategy_comparison ---
-# ==============================================================================
-def generate_sybil_strategy_comparison() -> List[Scenario]:
-    """
-    Compares different Sybil strategies (including Oracle w/ alpha sweep)
-    against a baseline attack without Sybil.
-    Uses TUNED defenses and GOLDEN training parameters.
-    """
-    scenarios = []
-
-    # --- Define Strategies and Parameters to Test ---
-    # Include baseline (None), historical, oracle (with alpha sweep), probing
-    SYBIL_TEST_CONFIG = {
-        "baseline_no_sybil": None,  # Special case for baseline comparison
-        "mimic": {},  # Standard historical mimicry
-        # "pivot": {}, # Optional: Include other historical if desired
-        "oracle_blend": {"blend_alpha": [0.05, 0.1, 0.2, 0.5]},  # Sweep alpha
-        "systematic_probe": {},  # Test probing strategy
-    }
-
-    # --- Focus on one representative setup ---
-    DATASET_CONFIG = {
-        "dataset_name": "cifar10",
-        "model_config_suffix": "resnet18",  # Use your best model
-        "dataset_modifier": use_cifar10_config,
-        "attack_modifier": use_image_backdoor_attack,  # Base malicious intent
-        "base_config_factory": get_base_image_config,
-        "model_config_param_key": "experiment.image_model_config_name",
-    }
-    dataset_name = DATASET_CONFIG["dataset_name"]
-    model_config_suffix = DATASET_CONFIG["model_config_suffix"]
-    model_config_name = f"{dataset_name}_{model_config_suffix}"
-
-    # --- Fixed attack parameters (strength) ---
-    fixed_attack_params = {
-        "experiment.adv_rate": [0.3],
-        "adversary_seller_config.poisoning.poison_rate": [0.5],  # Match defense tune
-    }
-
-    for defense_name in IMAGE_DEFENSES:
-        if defense_name not in TUNED_DEFENSE_PARAMS: continue
-        tuned_defense_params = TUNED_DEFENSE_PARAMS[defense_name]
-        print(f"-- Generating Sybil comparison for Defense: {defense_name}")
-
-        sm_model_type = None
-        if defense_name == "skymask":
-            sm_model_type = "resnet18" if "resnet" in model_config_name else "flexiblecnn"
-
-        # Base grid includes TUNED defense HPs and FIXED attack strength
-        base_grid = {
-            DATASET_CONFIG["model_config_param_key"]: [model_config_name],
-            **tuned_defense_params,
-            **fixed_attack_params
-        }
-        if sm_model_type:
-            base_grid["aggregation.skymask.sm_model_type"] = [sm_model_type]
-
-        # --- Loop through Sybil strategies ---
-        for strategy_name, strategy_params_sweep in SYBIL_TEST_CONFIG.items():
-            print(f"  - Strategy: {strategy_name}")
-
-            # --- Handle Baseline (No Sybil) ---
-            if strategy_name == "baseline_no_sybil":
-                scenario_name = f"sybil_compare_baseline_{defense_name}_{dataset_name}_{model_config_suffix}"
-                scenarios.append(Scenario(
-                    name=scenario_name,
-                    base_config_factory=DATASET_CONFIG["base_config_factory"],  # Assumes Golden HPs
-                    modifiers=[DATASET_CONFIG["dataset_modifier"], DATASET_CONFIG["attack_modifier"]],
-                    parameter_grid={**base_grid, "adversary_seller_config.sybil.is_sybil": [False]}
-                ))
-                continue  # Move to next strategy
-
-            # --- Handle Strategies with Parameters to Sweep (like Oracle Alpha) ---
-            if strategy_params_sweep:
-                # Find the parameter being swept (e.g., "blend_alpha")
-                sweep_key, sweep_values = next(
-                    iter(strategy_params_sweep.items()))  # Assumes one swept param per strategy for now
-                config_key_path = f"adversary_seller_config.sybil.{sweep_key}"  # Path to set in config
-
-                # Create a scenario that sweeps this parameter
-                scenario_name = f"sybil_compare_{strategy_name}_{defense_name}_{dataset_name}_{model_config_suffix}"
-                current_modifiers = [
-                    DATASET_CONFIG["dataset_modifier"],
-                    DATASET_CONFIG["attack_modifier"],
-                    # Use lambda in modifier to just set basic flags, sweep happens in grid
-                    use_sybil_attack(strategy=strategy_name)
-                ]
-                current_grid = base_grid.copy()
-                # Add the swept parameter to the grid
-                current_grid[config_key_path] = sweep_values
-
-                scenarios.append(Scenario(
-                    name=scenario_name,
-                    base_config_factory=DATASET_CONFIG["base_config_factory"],  # Assumes Golden HPs
-                    modifiers=current_modifiers,
-                    parameter_grid=current_grid
-                ))
-
-            # --- Handle Strategies with Fixed/No Extra Parameters ---
-            else:
-                scenario_name = f"sybil_compare_{strategy_name}_{defense_name}_{dataset_name}_{model_config_suffix}"
-                current_modifiers = [
-                    DATASET_CONFIG["dataset_modifier"],
-                    DATASET_CONFIG["attack_modifier"],
-                    use_sybil_attack(strategy=strategy_name)  # Pass fixed params if any needed via kwargs here
-                ]
-                scenarios.append(Scenario(
-                    name=scenario_name,
-                    base_config_factory=DATASET_CONFIG["base_config_factory"],  # Assumes Golden HPs
-                    modifiers=current_modifiers,
-                    parameter_grid=base_grid.copy()
-                ))
-    return scenarios
-
-
-BUYER_PARAMETER_GRID = {
-    # Sweep the fraction of total data held by the buyer
-    "data.{modality}.buyer_ratio": [0.01, 0.05, 0.1, 0.2],
-    # Test both IID and Non-IID buyer data (if relevant)
-    "data.{modality}.buyer_strategy": ["iid", "dirichlet"],
-    # If using 'dirichlet' for buyer, set alpha (e.g., 0.5 for skewed)
-    "data.{modality}.buyer_dirichlet_alpha": [0.5],
-}
-
-MODELS_TO_TEST = [
-    {
-        "modality_name": "image",
-        "base_config_factory": get_base_image_config,
-        "dataset_name": "cifar10",
-        "model_config_param_key": "experiment.image_model_config_name",
-        "model_config_name": "cifar10_resnet18",
-        "dataset_modifier": use_cifar10_config,
-        "attack_modifier": use_image_backdoor_attack,
-    },
-    # Add tabular/text if desired
-]
 
 
 def use_label_flipping_attack(config: AppConfig) -> AppConfig:
@@ -377,29 +236,6 @@ def use_adaptive_attack(
 
     return modifier
 
-# --- Helper to apply fixed Golden Training & Tuned Defense HPs ---
-
-
-# def use_drowning_attack(mimicry_rounds: int, drift_factor: float) -> Callable[[AppConfig], AppConfig]:
-#     """
-#     Returns a modifier to enable the Targeted Drowning (Centroid Poisoning) attack.
-#     It also disables other attack types to prevent interference.
-#     """
-#
-#     def modifier(config: AppConfig) -> AppConfig:
-#         # Activate the drowning attack with specified parameters
-#         adv_cfg = config.adversary_seller_config.drowning_attack
-#         adv_cfg.is_active = True
-#         adv_cfg.mimicry_rounds = mimicry_rounds
-#         adv_cfg.drift_factor = drift_factor
-#
-#         # Deactivate other attacks to ensure the experiment is isolated
-#         config.adversary_seller_config.poisoning.type = PoisonType.NONE
-#         config.adversary_seller_config.sybil.is_sybil = False
-#         config.adversary_seller_config.adaptive_attack.is_active = False
-#         return config
-#
-#     return modifier
 
 def use_drowning_attack(
         target_victim_id: str = "bn_3",
@@ -435,10 +271,6 @@ def use_drowning_attack(
 
     return modifier
 
-
-# ============================================================================
-# 🆕 NEW: Competitor Mimicry Attack (Replaces Drowning Attack)
-# ============================================================================
 
 def use_competitor_mimicry_attack(
         target_seller_id: str = "seller_0",
@@ -510,11 +342,6 @@ def generate_competitor_mimicry_scenarios() -> List[Scenario]:
         ))
 
     return scenarios
-
-
-# ============================================================================
-# 🔧 KEEP: Drowning Attack (Now marked as legacy comparison)
-# ============================================================================
 
 
 def generate_drowning_attack_scenarios() -> List[Scenario]:

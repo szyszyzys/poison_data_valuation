@@ -9,7 +9,7 @@ from typing import List
 from config_common_utils import (
     GOLDEN_TRAINING_PARAMS,
     NUM_SEEDS_PER_CONFIG,
-    DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, get_tuned_defense_params,
+    DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, get_tuned_defense_params, IMAGE_DEFENSES,
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar100_config, use_image_backdoor_attack
@@ -54,7 +54,6 @@ HETEROGENEITY_SETUP = {
     "dataset_modifier": use_cifar100_config,
     "attack_modifier": use_image_backdoor_attack
 }
-DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl", "skymask"]
 
 
 def initialize_adversary_data_distribution(config: AppConfig) -> AppConfig:
@@ -70,7 +69,7 @@ def generate_heterogeneity_scenarios() -> List[Scenario]:
     scenarios = []
     model_cfg_name = HETEROGENEITY_SETUP["model_config_name"]
 
-    for defense_name in DEFENSES_TO_TEST:
+    for defense_name in IMAGE_DEFENSES:
         tuned_defense_params = get_tuned_defense_params(
             defense_name=defense_name,
             model_config_name=model_cfg_name,
@@ -175,7 +174,9 @@ if __name__ == "__main__":
             save_suffix = f"vary_seller/{suffix}"
             current_grid["experiment.save_path"] = [f"./results/{scenario.name}/{save_suffix}"]
 
-            temp_scenario = Scenario(name=f"{scenario.name}/{save_suffix}", base_config_factory=scenario.base_config_factory, modifiers=scenario.modifiers, parameter_grid=current_grid)
+            temp_scenario = Scenario(name=f"{scenario.name}/{save_suffix}",
+                                     base_config_factory=scenario.base_config_factory, modifiers=scenario.modifiers,
+                                     parameter_grid=current_grid)
             base_config = temp_scenario.base_config_factory()
             mod_config = initialize_adversary_data_distribution(copy.deepcopy(base_config))
             set_nested_attr(mod_config, "aggregation.aggregation_name", defense_name)
@@ -202,13 +203,16 @@ if __name__ == "__main__":
             # 3. Adversary: Matches Seller
             current_grid["adversary_seller_config.poisoning.data_distribution.strategy"] = [FIXED_SELLER_STRAT]
             if FIXED_SELLER_ALPHA is not None:
-                current_grid["adversary_seller_config.poisoning.data_distribution.dirichlet_alpha"] = [FIXED_SELLER_ALPHA]
+                current_grid["adversary_seller_config.poisoning.data_distribution.dirichlet_alpha"] = [
+                    FIXED_SELLER_ALPHA]
 
             # Path: vary_buyer/alpha_x
             save_suffix = f"vary_buyer/{suffix}"
             current_grid["experiment.save_path"] = [f"./results/{scenario.name}/{save_suffix}"]
 
-            temp_scenario = Scenario(name=f"{scenario.name}/{save_suffix}", base_config_factory=scenario.base_config_factory, modifiers=scenario.modifiers, parameter_grid=current_grid)
+            temp_scenario = Scenario(name=f"{scenario.name}/{save_suffix}",
+                                     base_config_factory=scenario.base_config_factory, modifiers=scenario.modifiers,
+                                     parameter_grid=current_grid)
             base_config = temp_scenario.base_config_factory()
             mod_config = initialize_adversary_data_distribution(copy.deepcopy(base_config))
             set_nested_attr(mod_config, "aggregation.aggregation_name", defense_name)
@@ -239,13 +243,16 @@ if __name__ == "__main__":
             # 4. Sync Adversary
             current_grid["adversary_seller_config.poisoning.data_distribution.strategy"] = [FIXED_SELLER_STRAT]
             if FIXED_SELLER_ALPHA is not None:
-                current_grid["adversary_seller_config.poisoning.data_distribution.dirichlet_alpha"] = [FIXED_SELLER_ALPHA]
+                current_grid["adversary_seller_config.poisoning.data_distribution.dirichlet_alpha"] = [
+                    FIXED_SELLER_ALPHA]
 
             # Path: scarcity/ratio_x
             save_suffix = f"scarcity/ratio_{ratio}"
             current_grid["experiment.save_path"] = [f"./results/{scenario.name}/{save_suffix}"]
 
-            temp_scenario = Scenario(name=f"{scenario.name}/{save_suffix}", base_config_factory=scenario.base_config_factory, modifiers=scenario.modifiers, parameter_grid=current_grid)
+            temp_scenario = Scenario(name=f"{scenario.name}/{save_suffix}",
+                                     base_config_factory=scenario.base_config_factory, modifiers=scenario.modifiers,
+                                     parameter_grid=current_grid)
             base_config = temp_scenario.base_config_factory()
             mod_config = initialize_adversary_data_distribution(copy.deepcopy(base_config))
             set_nested_attr(mod_config, "aggregation.aggregation_name", defense_name)

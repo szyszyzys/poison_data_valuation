@@ -8,7 +8,7 @@ from typing import List
 from config_common_utils import (
     GOLDEN_TRAINING_PARAMS,  # <-- ADDED
     NUM_SEEDS_PER_CONFIG,
-    get_tuned_defense_params, enable_valuation,
+    get_tuned_defense_params, enable_valuation, IMAGE_DEFENSES,
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_buyer_dos_attack, \
@@ -44,7 +44,6 @@ BUYER_ATTACK_CONFIGS = [
         use_buyer_oscillating_attack(strategy="adversarial_drift", drift_rounds=60, classes_a=[0, 1])),
     ("orthogonal_pivot_legacy", use_buyer_orthogonal_pivot_attack(target_seller_id="bn_5")),
 ]
-DEFENSES_TO_TEST = ["fltrust"]
 
 
 # === THIS IS THE CORRECTED FUNCTION ===
@@ -55,7 +54,7 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
     modality = BUYER_ATTACK_SETUP["modality_name"]
     model_cfg_name = BUYER_ATTACK_SETUP["model_config_name"]
 
-    for defense_name in DEFENSES_TO_TEST:
+    for defense_name in IMAGE_DEFENSES:
         # === FIX 3: Removed the bugged `if defense_name not in ...` check ===
         # Get Tuned HPs (from Step 3)
         tuned_defense_params = get_tuned_defense_params(

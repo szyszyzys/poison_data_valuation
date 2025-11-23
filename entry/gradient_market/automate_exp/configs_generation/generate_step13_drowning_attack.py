@@ -9,7 +9,6 @@ from typing import List
 # Import the same common utils as your Step 6
 from config_common_utils import (
     NUM_SEEDS_PER_CONFIG,
-    IMAGE_DEFENSES,  # <-- Use this instead of hardcoded list
     use_sybil_attack_strategy,  # <-- The key helper from Step 6
     get_tuned_defense_params,
     GOLDEN_TRAINING_PARAMS
@@ -34,7 +33,7 @@ except ImportError as e:
 # We follow the Step 6 pattern.
 # We will "sweep" the attack_strength.
 # The victim_id will be set by the 'use_sybil_attack_strategy' helper.
-TARGET_VICTIM_ID = "bn_3"
+TARGET_VICTIM_ID = "bn_5"
 DROWNING_TEST_CONFIG = {
     # The key is the strategy name the coordinator will use.
     "drowning": {
