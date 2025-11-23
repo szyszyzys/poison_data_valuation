@@ -64,6 +64,13 @@ DEFAULT_DEFENSE_HPS = {
         "aggregation.skymask.mask_threshold": 0.7,
         "aggregation.clip_norm": 10.0
     },
+    "skymask_small": {
+        "aggregation.method": "skymask",
+        "aggregation.skymask.mask_epochs": 20,
+        "aggregation.skymask.mask_lr": 0.5,
+        "aggregation.skymask.mask_threshold": 0.5,
+        "aggregation.clip_norm": 10.0
+    },
 }
 
 # --- All Models/Datasets Combinations (Copied from Step 3) ---
@@ -101,8 +108,7 @@ def generate_training_hp_scenarios() -> List[Scenario]:
         print(f"-- Processing: {modality} {model_cfg_name}")
 
         current_defenses = IMAGE_DEFENSES if modality == "image" else TEXT_TABULAR_DEFENSES
-        # current_defenses = IMAGE_DEFENSES
-        # Loop over all defenses
+
         for defense_name in current_defenses:
 
             # Get the *default* HPs for this defense
