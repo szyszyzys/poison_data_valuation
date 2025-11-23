@@ -36,7 +36,7 @@ SCALABILITY_SETUP = {
     "dataset_modifier": use_cifar100_config,
     "attack_modifier": use_image_backdoor_attack
 }
-DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl", "skymask"]
+DEFENSES_TO_TEST = ["fltrust"]
 
 
 # === FUNCTION TO GENERATE BASE SCENARIOS ===

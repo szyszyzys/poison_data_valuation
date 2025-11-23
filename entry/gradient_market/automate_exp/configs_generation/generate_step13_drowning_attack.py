@@ -64,7 +64,7 @@ def generate_drowning_attack_scenarios() -> List[Scenario]:
     scenarios = []
     modality = DROWNING_SETUP["modality_name"]
     model_cfg_name = DROWNING_SETUP["model_config_name"]
-    current_defenses = IMAGE_DEFENSES  # Use the common list
+    current_defenses = ["fltrust"]  # Use the common list
 
     for defense_name in current_defenses:
         # 2. Get Tuned HPs (from Step 3)

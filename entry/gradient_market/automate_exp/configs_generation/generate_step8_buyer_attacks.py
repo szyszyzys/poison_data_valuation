@@ -110,7 +110,7 @@ def plot_buyer_attack_distribution(df: pd.DataFrame, output_dir: Path):
     Shows how specific attacks change the distribution of wealth/selection.
     """
     print("\n--- Plotting Selection Rate Distributions (Fig 1) ---")
-    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
+    defense_order = ['fltrust']
 
     # Exclude 'pivot' because it's a targeted attack (outliers matter more than distribution)
     generic_attacks = [a for a in df['attack'].unique() if 'pivot' not in str(a)]

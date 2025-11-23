@@ -59,7 +59,7 @@ def generate_advanced_sybil_scenarios() -> List[Scenario]:
     scenarios = []
     modality = SYBIL_SETUP["modality_name"]
     model_cfg_name = SYBIL_SETUP["model_config_name"]
-    current_defenses = IMAGE_DEFENSES
+    current_defenses = ["fltrust"]
 
     for defense_name in current_defenses:
         # 2. Get Tuned HPs (from Step 3)
