@@ -146,7 +146,7 @@ CORE_EXPERIMENTS = [
     # "extreme_scale_buyer_class_exclusion_fltrust",
 ]
 
-ENSURE_VALUATION_FILE_EXISTS = True
+ENSURE_VALUATION_FILE_EXISTS = False
 
 
 def is_run_completed(run_save_path: Path) -> bool:
