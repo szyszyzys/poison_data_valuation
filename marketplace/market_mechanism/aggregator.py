@@ -42,9 +42,11 @@ class Aggregator:
             raise NotImplementedError(f"Aggregation method '{method}' is not implemented.")
 
         # --- THIS IS THE FIX ---
-
+        config_attr_name = method
+        if method == "skymask_small":
+            config_attr_name = "skymask"
         # 1. Get the strategy-specific config object (e.g., agg_config.fltrust)
-        strategy_config_obj = getattr(agg_config, method, None)
+        strategy_config_obj = getattr(agg_config, config_attr_name, None)
 
         # 2. Convert it to a dictionary.
         #    This will contain params like 'max_k' for martfl
@@ -199,13 +201,11 @@ class Aggregator:
             **kwargs  # Pass through any other miscellaneous args
         }
 
-        if isinstance(self.strategy, (FLTrustAggregator, MartflAggregator, SkymaskAggregator)):
+        if isinstance(self.strategy, (FLTrustAggregator, MartflAggregator, SkymaskAggregator, SkymaskSmallAggregator)):
             if root_gradient is None:
-                # This is a critical error if the wrong configuration is used.
                 raise ValueError(f"{self.strategy.__class__.__name__} requires a 'root_gradient', but received None.")
             strategy_args['root_gradient'] = root_gradient
 
-        # === 4. Call the strategy with the prepared arguments ===
         return self.strategy.aggregate(**strategy_args)
 
     def apply_gradient(self, aggregated_gradient: List[torch.Tensor]):
