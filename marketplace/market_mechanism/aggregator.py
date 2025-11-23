@@ -13,6 +13,7 @@ from marketplace.market_mechanism.aggregators.fedavg import FedAvgAggregator
 from marketplace.market_mechanism.aggregators.fltrust import FLTrustAggregator
 from marketplace.market_mechanism.aggregators.martfl import MartflAggregator
 from marketplace.market_mechanism.aggregators.skymask import SkymaskAggregator
+from marketplace.market_mechanism.aggregators.skymask_small import SkymaskSmallAggregator
 
 logger = logging.getLogger("Aggregator")
 
@@ -33,7 +34,7 @@ class Aggregator:
             "fltrust": FLTrustAggregator,
             "martfl": MartflAggregator,
             "skymask": SkymaskAggregator,
-            "skymask_small": SkymaskAggregator,
+            "skymask_small": SkymaskSmallAggregator,
         }
 
         method = agg_config.method

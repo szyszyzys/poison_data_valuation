@@ -16,39 +16,84 @@ from marketplace.market_mechanism.aggregators.skymask_utils.mytorch import mycon
 logger = logging.getLogger(__name__)
 
 
-def train_masknet(masknet: nn.Module, server_data_loader, epochs: int, lr: float, grad_clip: float,
-                  device: torch.device) -> nn.Module:
-    """Helper function to train the SkyMask MaskNet."""
+def train_masknet_small(masknet: nn.Module, server_data_loader, epochs: int, lr: float, grad_clip: float,
+                        device: torch.device) -> nn.Module:
+    """
+    Helper function to train the SkyMask MaskNet for the 'Small Dataset' variant.
+
+    This function explicitly simulates a small root dataset (approx 100 samples)
+    by limiting the number of updates per epoch and using early stopping.
+    This prevents mask saturation when the actual dataset is large.
+    """
     masknet = masknet.to(device)
     optimizer = optim.SGD(masknet.parameters(), lr=lr)
     loss_fn = F.nll_loss
 
-    logger.info(f"Starting MaskNet Training: Epochs={epochs}, LR={lr}")
+    # --- TRICK SETUP ---
+    # The paper relies on a small dataset (100 samples).
+    # If your batch_size is 32, roughly 3-4 batches = 100 samples.
+    # We restrict the loop to this number to prevent over-training.
+    UPDATES_PER_EPOCH = 4
+
+    # Track loss for official convergence check
+    prev_loss = 1e4
+
+    logger.info(f"Starting MaskNet (Small) Training: Epochs={epochs}, LR={lr}, Updates/Epoch={UPDATES_PER_EPOCH}")
+
+    # Create an iterator so we can pull batches manually
+    data_iter = iter(server_data_loader)
+
     for epoch in range(epochs):
         masknet.train()
-        for X, y in server_data_loader:
+
+        current_loss = 0.0
+
+        # --- THE TRICK LOOP ---
+        # Instead of 'for X, y in server_data_loader:', we loop a fixed number of times.
+        for _ in range(UPDATES_PER_EPOCH):
+            try:
+                X, y = next(data_iter)
+            except StopIteration:
+                # If we hit the end of the large dataset, restart
+                data_iter = iter(server_data_loader)
+                X, y = next(data_iter)
+
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
             output = masknet(X)
             loss = loss_fn(output, y)
             loss.backward()
+
             # Manual gradient clipping
             for group in optimizer.param_groups:
                 for param in group["params"]:
                     if param.grad is not None:
                         param.grad.data.clamp_(-grad_clip, grad_clip)
             optimizer.step()
+
+            current_loss = loss.item()
+
+        # --- CONVERGENCE CHECK ---
+        # Official logic: Stop if loss improvement is < 0.01
+        loss_diff = prev_loss - current_loss
+
+        if epoch > 0 and loss_diff < 1e-2:
+            logger.info(f"MaskNet Converged at epoch {epoch} (Loss diff {loss_diff:.4f}). Stopping.")
+            break
+
+        prev_loss = current_loss
+
     logger.info("MaskNet Training Finished.")
     return masknet
 
 
-class SkymaskAggregator(BaseAggregator):
+class SkymaskSmallAggregator(BaseAggregator):
     """
-    Implements the SkyMask aggregation strategy.
+    Implements the SkyMask (Small Dataset Variant) aggregation strategy.
 
-    This method trains a special neural network (MaskNet) on the server's trusted
-    data to learn which parameters of a seller's update are beneficial. It then uses
-    these learned "masks" to cluster sellers into benign and malicious groups.
+    This aggregator uses a subsampling trick to simulate a small root dataset (100 samples)
+    regardless of the actual size of the buyer_data_loader. This prevents mask saturation
+    and aligns with the official paper's constraints.
     """
 
     def __init__(self,
@@ -70,17 +115,17 @@ class SkymaskAggregator(BaseAggregator):
         self.mask_lr = mask_lr
         self.mask_clip = mask_clip
         self.mask_threshold = mask_threshold
-        logger.info(f"SkymaskAggregator initialized with mask_epochs={self.mask_epochs}, mask_lr={self.mask_lr}")
+        logger.info(f"SkymaskSmallAggregator initialized with mask_epochs={self.mask_epochs}, mask_lr={self.mask_lr}")
 
     def aggregate(
             self,
             global_epoch: int,
             seller_updates: Dict[str, List[torch.Tensor]],
-            root_gradient: List[torch.Tensor],  # <-- Now a required, named argument
+            root_gradient: List[torch.Tensor],
             **kwargs
     ) -> Tuple[List[torch.Tensor], List[str], List[str], Dict[str, Any]]:
 
-        logger.info(f"--- SkyMask Aggregation (Epoch {global_epoch}) ---")
+        logger.info(f"--- SkyMask (Small) Aggregation (Epoch {global_epoch}) ---")
 
         # 1. Compute full model parameters
         global_params = [p.data.clone() for p in self.global_model.parameters()]
@@ -107,52 +152,48 @@ class SkymaskAggregator(BaseAggregator):
 
         # 3. Create and train the MaskNet
         masknet = create_masknet(worker_params, sm_model_type, self.device)
-        print("\n" + "=" * 80)
-        print("MASKNET STRUCTURE ANALYSIS:")
-        print("=" * 80)
-        for i, (name, module) in enumerate(masknet.named_modules()):
-            print(f"{i}: {name} -> {type(module).__name__}")
-        print("=" * 80 + "\n")
 
-        # Also test with dummy input to see where it fails
-        print("Testing masknet with dummy input...")
-        try:
-            dummy_x = torch.randn(4, 3, 32, 32).to(self.device)  # Batch of 4, 3 channels, 32x32
-            with torch.no_grad():
-                dummy_out = masknet(dummy_x)
-            print(f"✅ Masknet forward pass successful! Output shape: {dummy_out.shape}")
-        except Exception as e:
-            print(f"❌ Masknet forward pass failed: {e}")
-            print("This confirms the dimension mismatch issue.")
-        print("=" * 80 + "\n")
+        # Debugging / Structure Analysis (Optional - can be commented out for production)
+        # print("\n" + "=" * 80)
+        # print("MASKNET STRUCTURE ANALYSIS:")
+        # print("=" * 80)
+        # for i, (name, module) in enumerate(masknet.named_modules()):
+        #     print(f"{i}: {name} -> {type(module).__name__}")
+        # print("=" * 80 + "\n")
 
         if masknet is None:
-            # NO FALLBACK - raise error instead
             raise RuntimeError(
                 f"Failed to create masknet with type '{sm_model_type}'. "
-                f"This is a configuration error. Check your model architecture matches the sm_model_type. "
-                f"Available types: cnn, resnet18, resnet20, lr, lenet, cifarcnn, flexiblecnn"
+                f"Check your model architecture matches the sm_model_type."
             )
 
-        masknet = train_masknet(masknet, self.buyer_data_loader, self.mask_epochs, self.mask_lr, self.mask_clip,
-                                self.device)
+        # CALL THE RENAMED TRAINING FUNCTION
+        masknet = train_masknet_small(
+            masknet,
+            self.buyer_data_loader,
+            self.mask_epochs,
+            self.mask_lr,
+            self.mask_clip,
+            self.device
+        )
 
         # 4. Extract masks and classify with GMM
         seller_masks_np = []
         t = torch.tensor([self.mask_threshold], device=self.device)
+
         for i in range(len(seller_ids)):
             seller_mask_layers = []
-            # ✅ This loop WILL find all layers, no matter how deeply nested
             for layer in masknet.modules():
                 if isinstance(layer, (myconv2d, mylinear)):
-                    # This code will now execute correctly
                     if hasattr(layer, 'weight_mask'):
                         seller_mask_layers.append(torch.flatten(torch.sigmoid(layer.weight_mask[i].data)))
                     if hasattr(layer, 'bias_mask') and layer.bias_mask is not None:
                         seller_mask_layers.append(torch.flatten(torch.sigmoid(layer.bias_mask[i].data)))
+
             if not seller_mask_layers:
                 seller_masks_np.append(np.array([]))
                 continue
+
             flat_mask = (torch.cat(seller_mask_layers) > t).float()
             seller_masks_np.append(flat_mask.cpu().numpy())
 
