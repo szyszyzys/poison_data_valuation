@@ -100,8 +100,8 @@ def generate_training_hp_scenarios() -> List[Scenario]:
         attack_modifier = target["attack_modifier"]
         print(f"-- Processing: {modality} {model_cfg_name}")
 
-        current_defenses = IMAGE_DEFENSES if modality == "image" else TEXT_TABULAR_DEFENSES
-
+        # current_defenses = IMAGE_DEFENSES if modality == "image" else TEXT_TABULAR_DEFENSES
+        current_defenses = ['fltrust']
         # Loop over all defenses
         for defense_name in current_defenses:
 
