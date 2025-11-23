@@ -17,12 +17,26 @@ FIGURE_OUTPUT_DIR = "./figures/step5_figures"
 def set_plot_style():
     """Sets a consistent professional style for all plots."""
     sns.set_theme(style="whitegrid")
-    sns.set_context("paper", font_scale=1.5)
-    plt.rcParams['font.family'] = 'serif'
-    plt.rcParams['axes.linewidth'] = 1.2
-    plt.rcParams['axes.edgecolor'] = '#333333'
-    plt.rcParams['lines.linewidth'] = 2.5
-    plt.rcParams['lines.markersize'] = 9
+    # UPDATED: Increased font scale
+    sns.set_context("paper", font_scale=1.8)
+
+    # UPDATED: Bold fonts and specific sizes
+    plt.rcParams.update({
+        'font.family': 'serif',
+        'font.weight': 'bold',              # Bold all text
+        'axes.labelweight': 'bold',         # Bold axis labels
+        'axes.titleweight': 'bold',         # Bold titles
+        'axes.titlesize': 24,               # Bigger title size
+        'axes.labelsize': 20,               # Bigger label size
+        'xtick.labelsize': 16,              # Bigger tick labels
+        'ytick.labelsize': 16,
+        'axes.linewidth': 1.5,              # Thicker axis lines
+        'axes.edgecolor': '#333333',
+        'lines.linewidth': 3.0,             # Thicker plot lines
+        'lines.markersize': 10,             # Bigger markers
+        'legend.fontsize': 18,              # Bigger legend
+        'legend.title_fontsize': 20         # Bigger legend title
+    })
 
 # --- Parsing Functions ---
 
@@ -173,11 +187,6 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, output_dir: Path):
     """
     Generates a SINGLE wide figure (1x4) for the Sensitivity Analysis of a specific dataset/attack pair.
-    Plots:
-      1. ASR vs. Adversary Rate
-      2. Benign Selection vs. Adversary Rate
-      3. ASR vs. Poison Rate
-      4. Accuracy vs. Poison Rate
     """
     print(f"\n--- Plotting Composite Sensitivity Row: {dataset} ({attack}) ---")
 
@@ -205,7 +214,7 @@ def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, 
     set_plot_style()
 
     # Initialize Figure
-    fig, axes = plt.subplots(1, 4, figsize=(24, 4.5), constrained_layout=True)
+    fig, axes = plt.subplots(1, 4, figsize=(24, 6), constrained_layout=True) # Increased height slightly
 
     # Determine Defense Order for consistent colors
     defense_order = sorted(subset['defense'].unique())
@@ -215,7 +224,7 @@ def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, 
         # (a) ASR vs Adv Rate
         sns.lineplot(ax=axes[0], data=df_adv_sweep, x='adv_rate', y='asr', hue='defense',
                      style='defense', markers=True, dashes=False, hue_order=defense_order, style_order=defense_order)
-        axes[0].set_title("(a) ASR vs. Adversary Rate", fontweight='bold')
+        axes[0].set_title("(a) ASR vs. Adversary Rate") # Removed manual fontweight arg since it's global now
         axes[0].set_xlabel("Adversary Rate")
         axes[0].set_ylabel("ASR (%)")
         axes[0].set_ylim(-5, 105)
@@ -224,7 +233,7 @@ def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, 
         # (b) Benign Selection vs Adv Rate
         sns.lineplot(ax=axes[1], data=df_adv_sweep, x='adv_rate', y='benign_selection_rate', hue='defense',
                      style='defense', markers=True, dashes=False, hue_order=defense_order, style_order=defense_order)
-        axes[1].set_title("(b) Benign Select vs. Adv Rate", fontweight='bold')
+        axes[1].set_title("(b) Benign Select vs. Adv Rate")
         axes[1].set_xlabel("Adversary Rate")
         axes[1].set_ylabel("Selection Rate (%)")
         axes[1].set_ylim(-5, 105)
@@ -238,7 +247,7 @@ def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, 
         # (c) ASR vs Poison Rate
         sns.lineplot(ax=axes[2], data=df_poison_sweep, x='poison_rate', y='asr', hue='defense',
                      style='defense', markers=True, dashes=False, hue_order=defense_order, style_order=defense_order)
-        axes[2].set_title("(c) ASR vs. Poison Rate", fontweight='bold')
+        axes[2].set_title("(c) ASR vs. Poison Rate")
         axes[2].set_xlabel("Poison Rate")
         axes[2].set_ylabel("ASR (%)")
         axes[2].set_ylim(-5, 105)
@@ -247,7 +256,7 @@ def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, 
         # (d) Accuracy vs Poison Rate
         sns.lineplot(ax=axes[3], data=df_poison_sweep, x='poison_rate', y='acc', hue='defense',
                      style='defense', markers=True, dashes=False, hue_order=defense_order, style_order=defense_order)
-        axes[3].set_title("(d) Accuracy vs. Poison Rate", fontweight='bold')
+        axes[3].set_title("(d) Accuracy vs. Poison Rate")
         axes[3].set_xlabel("Poison Rate")
         axes[3].set_ylabel("Accuracy (%)")
         axes[3].set_ylim(-5, 105)
