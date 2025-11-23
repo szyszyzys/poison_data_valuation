@@ -18,29 +18,71 @@ logger = logging.getLogger(__name__)
 
 def train_masknet(masknet: nn.Module, server_data_loader, epochs: int, lr: float, grad_clip: float,
                   device: torch.device) -> nn.Module:
-    """Helper function to train the SkyMask MaskNet."""
+    """
+    Helper function to train the SkyMask MaskNet.
+    Updated to simulate a 'small root dataset' (approx 100 samples) via subsampling
+    and includes early stopping to prevent mask saturation.
+    """
     masknet = masknet.to(device)
     optimizer = optim.SGD(masknet.parameters(), lr=lr)
     loss_fn = F.nll_loss
 
-    logger.info(f"Starting MaskNet Training: Epochs={epochs}, LR={lr}")
+    # --- TRICK SETUP ---
+    # The paper relies on a small dataset (100 samples).
+    # If your batch_size is 32, roughly 3-4 batches = 100 samples.
+    # We restrict the loop to this number to prevent over-training.
+    UPDATES_PER_EPOCH = 4
+
+    # Track loss for official convergence check
+    prev_loss = 1e4
+
+    logger.info(f"Starting MaskNet Training: Epochs={epochs}, LR={lr}, Updates/Epoch={UPDATES_PER_EPOCH}")
+
+    # Create an iterator so we can pull batches manually
+    data_iter = iter(server_data_loader)
+
     for epoch in range(epochs):
         masknet.train()
-        for X, y in server_data_loader:
+
+        current_loss = 0.0
+
+        # --- THE TRICK LOOP ---
+        # Instead of 'for X, y in server_data_loader:', we loop a fixed number of times.
+        for _ in range(UPDATES_PER_EPOCH):
+            try:
+                X, y = next(data_iter)
+            except StopIteration:
+                # If we hit the end of the large dataset, restart
+                data_iter = iter(server_data_loader)
+                X, y = next(data_iter)
+
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
             output = masknet(X)
             loss = loss_fn(output, y)
             loss.backward()
+
             # Manual gradient clipping
             for group in optimizer.param_groups:
                 for param in group["params"]:
                     if param.grad is not None:
                         param.grad.data.clamp_(-grad_clip, grad_clip)
             optimizer.step()
+
+            current_loss = loss.item()
+
+        # --- CONVERGENCE CHECK ---
+        # Official logic: Stop if loss improvement is < 0.01
+        loss_diff = prev_loss - current_loss
+
+        if epoch > 0 and loss_diff < 1e-2:
+            logger.info(f"MaskNet Converged at epoch {epoch} (Loss diff {loss_diff:.4f}). Stopping.")
+            break
+
+        prev_loss = current_loss
+
     logger.info("MaskNet Training Finished.")
     return masknet
-
 
 class SkymaskAggregator(BaseAggregator):
     """

@@ -33,6 +33,7 @@ class Aggregator:
             "fltrust": FLTrustAggregator,
             "martfl": MartflAggregator,
             "skymask": SkymaskAggregator,
+            "skymask_small": SkymaskAggregator,
         }
 
         method = agg_config.method
