@@ -260,10 +260,11 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     workers = cfg.data.num_workers if cfg.data.num_workers > 0 else 4
 
     loader_kwargs = {
-        "batch_size": batch_size,
-        "num_workers": workers,
-        "pin_memory": True,  # <--- Critical for A6000 speed
-        "persistent_workers": True,  # <--- Keeps workers alive between epochs to save CPU time
+        "batch_size": batch_size,  # Constraint: Must keep this 64
+        "num_workers": workers,  # ACTION: Lower this to 4 (Stable CPU)
+        "prefetch_factor": 8,  # ACTION: New! Loads 8 batches ahead into RAM
+        "persistent_workers": True,  # ACTION: Keeps workers alive between epochs
+        "pin_memory": True  # ACTION: Fast transfer to GPU
     }
 
     # Debug print to confirm settings
@@ -681,45 +682,61 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     # 7. --- Create DataLoaders ---
     collate_fn = lambda batch: collate_batch(batch, padding_value=pad_idx)
     batch_size = train_cfg.batch_size
-    num_workers = cfg.data.num_workers
+
+    workers = cfg.data.num_workers
+
+    loader_kwargs = {
+        "batch_size": batch_size,
+        "num_workers": workers,        # Fixed to 4 for stability
+        "pin_memory": True,            # Fast transfer to GPU
+        "prefetch_factor": 8,          # Buffer 512 batches in RAM
+        "persistent_workers": True,    # Save CPU cycles
+        "collate_fn": collate_fn       # <--- IMPORTANT: Padding logic included here
+    }
+
+    logger.info(f"⚡️ Text Loader Optimized: workers={workers}, prefetch=8, pin=True")
 
     buyer_loader = None
     if buyer_indices is not None and len(buyer_indices) > 0:
-        buyer_loader = DataLoader(Subset(standardized_train_data, buyer_indices.tolist()), batch_size=batch_size,
-                                  shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
+        buyer_loader = DataLoader(
+            Subset(standardized_train_data, buyer_indices.tolist()),
+            shuffle=True,
+            **loader_kwargs   # <--- Applies optimization AND collate_fn
+        )
     if buyer_loader is None: logger.warning("Buyer loader is None.")
 
     seller_loaders = {}
     non_empty_clients = 0
     for i in range(exp_cfg.n_sellers):
         indices = seller_splits.get(i)
-        # Check if indices is None or empty list/array
         if indices is not None and len(indices) > 0:
-            seller_loaders[i] = DataLoader(Subset(standardized_train_data, indices), batch_size=batch_size,
-                                           shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
+            seller_loaders[i] = DataLoader(
+                Subset(standardized_train_data, indices),
+                shuffle=True,
+                **loader_kwargs  # <--- Applies optimization AND collate_fn
+            )
             non_empty_clients += 1
         else:
-            seller_loaders[i] = None  # Explicitly set to None
+            seller_loaders[i] = None
             logger.warning(f"Client {i} has no data assigned.")
     logger.info(f"Created DataLoaders for {non_empty_clients} / {exp_cfg.n_sellers} sellers.")
 
     test_loader = None
     if test_indices is not None and len(test_indices) > 0:
-        test_loader = DataLoader(Subset(standardized_train_data, test_indices.tolist()), batch_size=batch_size,
-                                 shuffle=False,
-                                 collate_fn=collate_fn, num_workers=num_workers)
-    if test_loader is None: logger.warning("Test loader (from buyer pool split) is None.")
-
-    # Optional: Loader for the original test set
-    # original_test_loader = DataLoader(standardized_test_data, batch_size=batch_size, shuffle=False,
-    #                              collate_fn=collate_fn, num_workers=num_workers) if standardized_test_data else None
+        test_loader = DataLoader(
+            Subset(standardized_train_data, test_indices.tolist()),
+            shuffle=False,
+            **loader_kwargs  # <--- Applies optimization AND collate_fn
+        )
+    if test_loader is None: logger.warning("Test loader is None.")
+    # --- PERFORMANCE OPTIMIZATION END ---
 
     logging.info("DataLoader creation complete.")
 
     return ProcessedTextData(
         buyer_loader=buyer_loader,
         seller_loaders=seller_loaders,
-        test_loader=test_loader,  # Return the test loader from the buyer pool split
+        test_loader=test_loader,
         class_names=class_names,
         vocab=vocab,
         pad_idx=pad_idx,
