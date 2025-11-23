@@ -37,7 +37,22 @@ TUNING_GRIDS = {
         "aggregation.clip_norm": [5.0, 10.0, None],
     },
 
+    "skymask": {
+        "aggregation.skymask.mask_epochs": [20],
+        "aggregation.skymask.mask_lr": [0.5],
+        "aggregation.skymask.mask_threshold": [0.5],
+        "aggregation.clip_norm": [10],
+        "aggregation.skymask.mask_clip": [1.0]
+    },
+    "skymask_small": {
+        "aggregation.skymask.mask_epochs": [20],
+        "aggregation.skymask.mask_lr": [0.5],
+        "aggregation.skymask.mask_threshold": [0.5],
+        "aggregation.clip_norm": [10],
+        "aggregation.skymask.mask_clip": [1.0]
+    },
 }
+
 ATTACK_TYPES_TO_TUNE = ["backdoor", "labelflip"]
 TUNING_TARGETS_STEP3 = [
     {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Texas100",
