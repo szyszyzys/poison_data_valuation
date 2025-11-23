@@ -16,6 +16,8 @@ from filelock import FileLock  # pip install filelock
 from entry.gradient_market.automate_exp.config_parser import load_config
 from entry.gradient_market.run_all_exp import run_attack
 
+SKIP_IF_VALUATION_EXISTS = True
+
 
 # ==============================================================================
 # == FIX for Nested Parallelism ==
@@ -144,17 +146,38 @@ CORE_EXPERIMENTS = [
     # "extreme_scale_buyer_class_exclusion_fltrust",
 ]
 
+ENSURE_VALUATION_FILE_EXISTS = True
+
 
 def is_run_completed(run_save_path: Path) -> bool:
     """
-    Check if a run is already completed by verifying multiple success indicators.
-    More robust than checking a single file.
+    Check if a run is completed.
+    If ENSURE_VALUATION_FILE_EXISTS is True, this considers a run 'incomplete'
+    if it lacks the valuation file, causing it to re-run automatically.
     """
     success_marker = run_save_path / ".success"
     final_metrics = run_save_path / "final_metrics.json"
 
-    # Both files should exist for a truly successful run
-    return success_marker.exists() and final_metrics.exists()
+    # 1. Basic Check: Did the run finish successfully based on standard markers?
+    is_technically_finished = success_marker.exists() and final_metrics.exists()
+
+    if not is_technically_finished:
+        return False  # It crashed or never ran, so we must run it.
+
+    # 2. Backfill Check: Do we need to re-run it just to generate valuations?
+    if ENSURE_VALUATION_FILE_EXISTS:
+        val_file = run_save_path / "valuations.jsonl"
+
+        # If the file is missing OR it is empty (0 bytes)
+        if not val_file.exists() or val_file.stat().st_size == 0:
+            # Log a small message so you see why it's re-running
+            # (Using print because logger object might not be passed here)
+            print(
+                f"   [Backfill] Run {run_save_path.name} finished previously, but missing 'valuations.jsonl'. Re-running...")
+            return False  # Return False to trigger the run logic
+
+    # If we get here, it's finished AND has the valuation file (or we don't care).
+    return True
 
 
 def mark_run_in_progress(run_save_path: Path):
@@ -340,13 +363,14 @@ def get_nested_hp(cfg: object, path_keys: List[str], default=None):
             obj = getattr(obj, key)
 
         if obj is None:
-            return "None" # Convert Python None to string "None"
+            return "None"  # Convert Python None to string "None"
         return str(obj)
     except AttributeError:
         # Path doesn't exist (e.g., asking fltrust config for martfl.max_k)
         return default
     except Exception:
         return default
+
 
 # --- Replace your existing function with this new version ---
 def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, seed: int,
@@ -399,7 +423,7 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
 
         # 2. Build the HP folder name (Same logic as my previous answer)
         hp_parts = []
-        current_method = app_config.aggregation.method # e.g., "fltrust"
+        current_method = app_config.aggregation.method  # e.g., "fltrust"
 
         if current_method == "fltrust":
             val = get_nested_hp(app_config, ["aggregation", "clip_norm"])
@@ -429,7 +453,7 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
 
         hp_folder_name = "_".join(hp_parts)
         if not hp_folder_name:
-             hp_folder_name = "default_hps"
+            hp_folder_name = "default_hps"
 
         # 3. Build the NEW, CORRECT path by re-ordering the parts
         run_save_path = scenario_path / hp_folder_name / run_details_folder_name / f"run_{sample_idx - 1}_seed_{seed}"
@@ -456,7 +480,7 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
             # --- Prepare config (Same as before) ---
             run_cfg = copy.deepcopy(app_config)
             run_cfg.seed = seed
-            run_cfg.experiment.save_path = str(run_save_path) # Use the NEW, correct path
+            run_cfg.experiment.save_path = str(run_save_path)  # Use the NEW, correct path
             run_cfg.experiment.device = target_device
 
             # --- Run the experiment (Same as before) ---
@@ -480,6 +504,7 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
         if run_save_path:
             (run_save_path / ".failed").touch()
         raise  # Re-raise to trigger retry logic
+
 
 def discover_configs_core(configs_base_dir: str) -> list:
     """
@@ -542,7 +567,6 @@ def discover_configs(configs_base_dir: str) -> list:
 
     logger.info(f"Discovered {len(all_config_files)} config files.")
     return sorted(all_config_files)
-
 
 
 def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = None,
