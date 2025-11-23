@@ -19,7 +19,6 @@ FIGURE_OUTPUT_DIR = "./figures/step6_figures"
 def set_publication_style():
     """
     Sets the 'Big & Bold' professional style globally.
-    All plots generated after this runs will inherit these settings.
     """
     sns.set_theme(style="whitegrid")
     # Global Scaling
@@ -75,7 +74,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
                 "defense": match.group(2),
             }
         else:
-            # Fallback or skip
             return {"scenario": scenario_name, "defense": "unknown"}
     except Exception:
         return {"scenario": scenario_name}
@@ -140,8 +138,8 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
     df = pd.DataFrame(all_runs)
 
-    # Clean up names if needed
     if not df.empty and 'defense' in df.columns:
+        # Basic standardization for defense names
         name_map = {'skymask_small': 'SkyMask', 'skymask': 'SkyMask',
                     'fedavg': 'FedAvg', 'fltrust': 'FLTrust', 'martfl': 'MARTFL'}
         df['defense'] = df['defense'].map(lambda x: name_map.get(x, x.title()))
@@ -159,13 +157,10 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
 
     print(f"\n--- Plotting Sybil Effectiveness for: {defense} ---")
 
-    # Note: No need to set sns.set_context here anymore.
-    # It reads from set_publication_style() called in main.
-
     # --- LOGIC: Standardize Alpha ---
     def get_standardized_alpha_and_order(label):
         if label == 'baseline_no_sybil': return (0, 0.0)
-        if label == 'mimic': return (1, 0.10)
+        if label == 'mimic': return (1, 0.10) # Set baseline mimicry alpha here
         if label == 'knock_out': return (1, 0.20)
         if label == 'pivot': return (1, 1.00)
         if label.startswith('oracle_blend'):
@@ -187,7 +182,6 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
         'adv_selection_rate': 'Adv. Selection Rate',
         'benign_selection_rate': 'Benign Selection Rate'
     }
-    # Calculate Percentages
     metrics_to_plot = [m for m in metric_map.keys() if m in defense_df.columns]
     plot_df = defense_df.copy()
     for m in metrics_to_plot:
@@ -202,8 +196,6 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
     plot_df['Metric'] = plot_df['Metric'].map(metric_map)
 
     # --- PLOTTING ---
-    # We use the global figure size from set_publication_style,
-    # or override slightly here if we need a very specific aspect ratio.
     plt.figure(figsize=(22, 9))
 
     ax = sns.barplot(
@@ -214,33 +206,34 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
         order=sorted_labels,
         palette="deep",
         edgecolor="black",
-        linewidth=2.0 # Keep geometry-specific styles here
+        linewidth=2.0
     )
 
-    # --- STYLING (Cleaned Up) ---
-    # We removed manual 'fontweight' and 'fontsize' arguments.
-    # The global rcParams will now handle the look.
     plt.ylabel('Rate (%)')
     plt.xlabel('Sybil Strategy (Mimicry Factor)')
     plt.title(f"Sybil Attack Effectiveness vs {defense}", pad=20)
 
     # --- FORMATTING TICKS ---
-    def format_tick(l):
+    def format_tick_label(l):
         sort_key = get_standardized_alpha_and_order(l)
         family_id = sort_key[0]
         alpha_val = sort_key[1]
-        if family_id == 0: return "Baseline"
-        elif family_id == 1: return f"Mimic\n(Blind)"
-        elif family_id == 2: return f"Oracle\n($\\alpha={alpha_val}$)"
-        else: return l.replace('_', '\n').title()
 
-    formatted_labels = [format_tick(l) for l in sorted_labels]
+        if family_id == 0:
+            return "Baseline"
+        elif family_id == 1:
+            # UPDATE: Now showing alpha for Mimic too
+            return f"Mimic\n($\\alpha={alpha_val}$)"
+        elif family_id == 2:
+            return f"Oracle\n($\\alpha={alpha_val}$)"
+        else:
+            return l.replace('_', '\n').title()
 
-    # Just set the labels; font size/weight is handled globally
+    formatted_labels = [format_tick_label(l) for l in sorted_labels]
+
     ax.set_xticklabels(formatted_labels, rotation=0)
     ax.set_ylim(0, 105)
 
-    # --- LEGEND ---
     plt.legend(
         title=None,
         loc='upper center',
@@ -252,7 +245,6 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
     plt.tight_layout()
     plt.subplots_adjust(bottom=0.25)
 
-    # Save
     safe_defense = re.sub(r'[^\w]', '', defense)
     plot_file = output_dir / f"plot_sybil_standardized_{safe_defense}.pdf"
     plt.savefig(plot_file, dpi=300)
@@ -262,7 +254,6 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
 
 
 def main():
-    # 1. Apply Global Style (THE CRITICAL STEP)
     set_publication_style()
 
     output_dir = Path(FIGURE_OUTPUT_DIR)
@@ -275,16 +266,17 @@ def main():
         print("No data loaded. Exiting.")
         return
 
-    # --- Pre-processing Filters ---
+    # Filter systematic_probe
     df = df[df['strategy'] != 'systematic_probe'].copy()
 
+    # Label Creation
     df['strategy_label'] = df['strategy']
     blend_rows = df['blend_alpha'].notna()
     df.loc[blend_rows, 'strategy_label'] = df.loc[blend_rows].apply(
         lambda row: f"oracle_blend_{row['blend_alpha']}", axis=1
     )
 
-    # --- Generate Summary CSV ---
+    # Aggregate
     metrics_to_agg = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate', 'rounds']
     metrics_to_agg = [m for m in metrics_to_agg if m in df.columns]
     df_agg = df.groupby(['defense', 'strategy_label'])[metrics_to_agg].mean().reset_index()
@@ -293,7 +285,7 @@ def main():
     df_agg.to_csv(csv_path, index=False, float_format="%.4f")
     print(f"✅ Saved aggregated summary to: {csv_path}")
 
-    # --- Plotting ---
+    # Plot
     defenses = df_agg['defense'].unique()
     for defense in defenses:
         plot_sybil_comparison(df_agg[df_agg['defense'] == defense].copy(), defense, output_dir)
