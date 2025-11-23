@@ -13,6 +13,27 @@ BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step8_figures"
 TARGET_VICTIM_ID = "bn_5"
 
+# --- Styling Helper ---
+def set_plot_style():
+    """Sets a consistent professional style with LARGE, BOLD fonts."""
+    sns.set_theme(style="whitegrid")
+    sns.set_context("talk", font_scale=1.2) # Increased base scale
+
+    # Global updates for boldness and size
+    plt.rcParams.update({
+        'font.family': 'sans-serif',
+        'font.weight': 'bold',              # Bold text
+        'axes.labelweight': 'bold',         # Bold labels
+        'axes.titleweight': 'bold',         # Bold titles
+        'axes.titlesize': 20,               # Big titles
+        'axes.labelsize': 18,               # Big labels
+        'xtick.labelsize': 14,              # Big ticks
+        'ytick.labelsize': 14,
+        'legend.fontsize': 14,
+        'legend.title_fontsize': 16,
+        'axes.linewidth': 2,                # Thicker borders
+        'lines.linewidth': 2.5,
+    })
 
 # ---------------------
 
@@ -139,40 +160,45 @@ def plot_buyer_attack_distribution(df: pd.DataFrame, baseline_lookup: Dict, outp
 
         dataset = attack_df['dataset'].iloc[0] if 'dataset' in attack_df.columns else "Unknown"
 
-        # --- FIX 1: Explicitly create figure and axes ---
-        fig, ax = plt.subplots(figsize=(7, 5))
+        # Explicitly create figure and axes
+        fig, ax = plt.subplots(figsize=(8, 6)) # Slightly larger for readability
 
-        # --- FIX 2: Assign 'hue' and 'legend=False' to fix FutureWarning ---
+        # Plot
         sns.boxplot(
             data=attack_df,
             x='defense',
             y='selection_rate',
             order=defense_order,
             palette="viridis",
-            hue='defense',  # Required by new Seaborn versions if palette is used
+            hue='defense',
             legend=False,
-            ax=ax  # Plot onto the axes we created
+            ax=ax
         )
 
-        # Draw Baseline Lines
+        # Baseline Lines
         for i, defense in enumerate(defense_order):
             base_val = baseline_lookup.get((defense, dataset))
             if base_val is not None:
                 ax.hlines(y=base_val, xmin=i - 0.4, xmax=i + 0.4,
-                          color='red', linestyle='--', lw=2,
+                          color='red', linestyle='--', lw=3, # Thicker line
                           label='Healthy Baseline' if i == 0 else "")
 
-        # Handle Legend for the baseline line
+        # Legend
         if any(baseline_lookup.get((d, dataset)) for d in defense_order):
             handles, labels = ax.get_legend_handles_labels()
-            # We only want the "Healthy Baseline" label, ignore boxplot auto-labels if any
             baseline_handles = [h for h, l in zip(handles, labels) if "Baseline" in l]
             baseline_labels = [l for l in labels if "Baseline" in l]
             if baseline_handles:
-                ax.legend(baseline_handles[:1], baseline_labels[:1], loc='best')
+                ax.legend(baseline_handles[:1], baseline_labels[:1], loc='best', fontsize=14)
 
-        ax.set_title(f'Impact on Seller Selection\nAttack: {attack}', fontsize=14)
-        ax.set_ylabel("Selection Rate")
+        # BOLD TITLES AND LABELS
+        ax.set_title(f'Impact on Seller Selection\nAttack: {attack}', fontsize=20, fontweight='bold', pad=15)
+        ax.set_ylabel("Selection Rate", fontsize=18, fontweight='bold', labelpad=10)
+        ax.set_xlabel("Defense Strategy", fontsize=18, fontweight='bold', labelpad=10)
+
+        # Bigger Ticks
+        ax.tick_params(axis='both', which='major', labelsize=14)
+
         ax.set_ylim(-0.05, 1.05)
         ax.grid(axis='y', linestyle='--', alpha=0.5)
 
@@ -192,16 +218,23 @@ def plot_targeted_attack_breakdown(df: pd.DataFrame, output_dir: Path):
         lambda x: 'Victim (bn_5)' if str(x) == TARGET_VICTIM_ID else 'Other Benign'
     )
 
-    plt.figure(figsize=(8, 6))
-    sns.barplot(
+    plt.figure(figsize=(9, 7)) # Larger figure
+    ax = sns.barplot(
         data=pivot_df, x='defense', y='selection_rate', hue='Status',
         order=['fedavg', 'fltrust', 'martfl', 'skymask'],
         palette={'Victim (bn_5)': '#e74c3c', 'Other Benign': '#95a5a6'},
         errorbar='sd'
     )
 
-    plt.title("Targeted Exclusion Success (Orthogonal Pivot)", fontsize=14)
-    plt.ylabel("Selection Rate")
+    # BOLD TITLES AND LABELS
+    plt.title("Targeted Exclusion Success (Orthogonal Pivot)", fontsize=20, fontweight='bold', pad=15)
+    plt.ylabel("Selection Rate", fontsize=18, fontweight='bold', labelpad=10)
+    plt.xlabel("Defense Strategy", fontsize=18, fontweight='bold', labelpad=10)
+
+    plt.xticks(fontsize=14, fontweight='bold')
+    plt.yticks(fontsize=14)
+    plt.legend(fontsize=14, title_fontsize=16)
+
     plt.ylim(0, 1.05)
     plt.grid(axis='y', linestyle='--', alpha=0.3)
 
@@ -240,12 +273,17 @@ def plot_buyer_attack_performance(df: pd.DataFrame, output_dir: Path):
             hue='attack',
             col='Metric', kind='bar',
             order=defense_order,
-            height=4, aspect=1.2, sharey=False,
+            height=5, aspect=1.3, sharey=False, # Larger aspect
             palette={'0. Baseline': 'grey', attack: 'red'}
         )
 
-        g.fig.suptitle(f'Marketplace Damage Assessment\nAttack: {attack}', y=1.05)
-        g.set_axis_labels("Defense", "Value")
+        # BOLD TITLES AND LABELS
+        g.fig.suptitle(f'Marketplace Damage Assessment\nAttack: {attack}', y=1.05, fontsize=22, fontweight='bold')
+        g.set_axis_labels("Defense Strategy", "Value", fontsize=18, fontweight='bold')
+        g.set_titles("{col_name}", size=18, fontweight='bold')
+
+        for ax in g.axes.flat:
+            ax.tick_params(labelsize=14)
 
         fname = output_dir / f"Step8_PERFORMANCE_{attack}.pdf"
         g.savefig(fname, bbox_inches='tight')
@@ -254,6 +292,7 @@ def plot_buyer_attack_performance(df: pd.DataFrame, output_dir: Path):
 
 
 def main():
+    set_plot_style() # Apply global style
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
     print(f"Plots saved to: {output_dir.resolve()}")
