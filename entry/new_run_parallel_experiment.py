@@ -16,7 +16,6 @@ from filelock import FileLock  # pip install filelock
 from entry.gradient_market.automate_exp.config_parser import load_config
 from entry.gradient_market.run_all_exp import run_attack
 
-SKIP_IF_VALUATION_EXISTS = True
 
 # ==============================================================================
 # == FIX for Nested Parallelism ==
@@ -148,31 +147,14 @@ CORE_EXPERIMENTS = [
 
 def is_run_completed(run_save_path: Path) -> bool:
     """
-    Check if a run is already completed.
-    Now includes logic to check for specific intermediate files (valuations.jsonl)
-    to allow resuming partial runs without --force_rerun.
+    Check if a run is already completed by verifying multiple success indicators.
+    More robust than checking a single file.
     """
-    # 1. Standard Check (The official way)
     success_marker = run_save_path / ".success"
     final_metrics = run_save_path / "final_metrics.json"
-    standard_success = success_marker.exists() and final_metrics.exists()
 
-    if standard_success:
-        return True
-
-    # 2. "Resume" Check (The new way)
-    # If the expensive valuation file exists and has content, we skip this run.
-    if SKIP_IF_VALUATION_EXISTS:
-        val_file = run_save_path / "valuations.jsonl"
-
-        # We check > 0 size to ensure it's not just an empty file created at init
-        if val_file.exists() and val_file.stat().st_size > 0:
-            # Optional: Log to console so you know why it was skipped
-            # (print is safer here than logging if logger isn't passed in)
-            print(f"   [Resume] Found existing valuations.jsonl ({val_file.stat().st_size} bytes). Skipping {run_save_path.name}")
-            return True
-
-    return False
+    # Both files should exist for a truly successful run
+    return success_marker.exists() and final_metrics.exists()
 
 
 def mark_run_in_progress(run_save_path: Path):
