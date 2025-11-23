@@ -181,11 +181,17 @@ def setup_data_and_model(cfg: AppConfig, device):
             generator = torch.Generator().manual_seed(cfg.seed)
             train_subset, val_subset = random_split(buyer_dataset, [train_size, val_size], generator=generator)
 
-            buyer_loader = DataLoader(train_subset, batch_size=cfg.training.batch_size, shuffle=True,
-                                      collate_fn=collate_fn)
-            validation_loader = DataLoader(val_subset, batch_size=cfg.training.batch_size, shuffle=False,
-                                           collate_fn=collate_fn)
+            # --- OPTIMIZATION START ---
+            loader_kwargs = {
+                "batch_size": cfg.training.batch_size,
+                "num_workers": 4,      # <--- Set this to 4 or 8
+                "pin_memory": True,    # <--- Critical for NVIDIA GPUs
+                "collate_fn": collate_fn,
+                "persistent_workers": True # <--- Keeps workers alive (optional but good)
+            }
 
+            buyer_loader = DataLoader(train_subset, shuffle=True, **loader_kwargs)
+            validation_loader = DataLoader(val_subset, shuffle=False, **loader_kwargs)
             logging.info(f"  -> New buyer data size (for aggregator): {len(train_subset)}")
             logging.info(f"  -> Validation set size: {len(val_subset)}")
         else:
