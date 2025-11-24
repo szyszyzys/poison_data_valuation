@@ -182,36 +182,46 @@ class PaperVisualizer:
 # ==========================================
 
 def plot_image_figure(viz):
-    """Plots CIFAR-10 and CIFAR-100 examples using extracted defaults."""
-    datasets = [("CIFAR-100", (32, 32))]
-    fig, axes = plt.subplots(1, 2, figsize=(10, 7))
-    plt.subplots_adjust(wspace=0.2, hspace=0.3)
+    """Plots CIFAR-100 example: Original, Final, and the Isolated Pattern."""
+    print("Generating CIFAR-100 visualization...")
 
-    for i, (name, res) in enumerate(datasets):
-        clean, poisoned, params = viz.generate_image_example(name, res)
+    name = "CIFAR-100"
+    res = (32, 32)
 
-        clean_np = clean.permute(1, 2, 0).numpy()
-        poison_np = poisoned.permute(1, 2, 0).numpy()
+    # 1. Generate Data
+    clean, poisoned, params = viz.generate_image_example(name, res)
 
-        # Clean
-        axes[i, 0].imshow(clean_np)
-        axes[i, 0].set_ylabel(name, fontsize=14, fontweight='bold')
-        axes[i, 0].set_title("Clean Input")
-        axes[i, 0].axis('off')
+    # 2. Convert to Numpy for Plotting (H, W, C)
+    clean_np = clean.permute(1, 2, 0).numpy()
+    poison_np = poisoned.permute(1, 2, 0).numpy()
 
-        # Poisoned
-        axes[i, 1].imshow(poison_np)
-        # axes[i, 1].set_title(f"Backdoored\n({params.trigger_type.value})\nSize: {params.trigger_shape}")
-        axes[i, 1].axis('off')
+    # 3. Extract the Pattern
+    # The most scientifically accurate way to show the "pattern"
+    # is the difference between the final and original image.
+    # This renders the trigger on a black background.
+    pattern_np = np.abs(poison_np - clean_np)
+    # Clip to ensure valid range for display
+    pattern_np = np.clip(pattern_np, 0, 1)
 
-        # Zoomed Trigger
-        # h, w, _ = poison_np.shape
-        # # Zoom to the size of the trigger + margin
-        # th, tw = params.trigger_shape
-        # axes[i, 2].imshow(poison_np[h-th-2:h, w-tw-2:w, :], interpolation='nearest')
-        # axes[i, 2].set_title(f"Zoomed Trigger\n(Bottom Right)")
-        # axes[i, 2].axis('off')
+    # 4. Setup Plot (1 Row, 3 Columns)
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
 
+    # Plot A: Clean
+    axes[0].imshow(clean_np)
+    axes[0].set_title("Original Input")
+    axes[0].axis('off')
+
+    # Plot B: Final (Poisoned)
+    axes[1].imshow(poison_np)
+    axes[1].set_title("Backdoored Input")
+    axes[1].axis('off')
+
+    # Plot C: The Pattern
+    axes[2].imshow(pattern_np)
+    axes[2].set_title("Trigger Pattern (Isolated)")
+    axes[2].axis('off')
+
+    plt.tight_layout()
     filename = "paper_fig_images.pdf"
     plt.savefig(filename, bbox_inches='tight', dpi=300)
     print(f"\n✅ Saved image figure to {filename}")
