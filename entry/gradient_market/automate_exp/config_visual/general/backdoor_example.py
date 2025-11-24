@@ -183,7 +183,7 @@ class PaperVisualizer:
 
 def plot_image_figure(viz):
     """Plots CIFAR-10 and CIFAR-100 examples using extracted defaults."""
-    datasets = [("CIFAR-10", (32, 32)), ("CIFAR-100", (32, 32))]
+    datasets = [("CIFAR-100", (32, 32))]
     fig, axes = plt.subplots(2, 3, figsize=(10, 7))
     plt.subplots_adjust(wspace=0.2, hspace=0.3)
 
@@ -205,12 +205,12 @@ def plot_image_figure(viz):
         axes[i, 1].axis('off')
 
         # Zoomed Trigger
-        h, w, _ = poison_np.shape
-        # Zoom to the size of the trigger + margin
-        th, tw = params.trigger_shape
-        axes[i, 2].imshow(poison_np[h-th-2:h, w-tw-2:w, :], interpolation='nearest')
-        axes[i, 2].set_title(f"Zoomed Trigger\n(Bottom Right)")
-        axes[i, 2].axis('off')
+        # h, w, _ = poison_np.shape
+        # # Zoom to the size of the trigger + margin
+        # th, tw = params.trigger_shape
+        # axes[i, 2].imshow(poison_np[h-th-2:h, w-tw-2:w, :], interpolation='nearest')
+        # axes[i, 2].set_title(f"Zoomed Trigger\n(Bottom Right)")
+        # axes[i, 2].axis('off')
 
     filename = "paper_fig_images.png"
     plt.savefig(filename, bbox_inches='tight', dpi=300)
