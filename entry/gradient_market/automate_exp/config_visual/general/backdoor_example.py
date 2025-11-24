@@ -184,7 +184,7 @@ class PaperVisualizer:
 def plot_image_figure(viz):
     """Plots CIFAR-10 and CIFAR-100 examples using extracted defaults."""
     datasets = [("CIFAR-100", (32, 32))]
-    fig, axes = plt.subplots(2, 3, figsize=(10, 7))
+    fig, axes = plt.subplots(1, 2, figsize=(10, 7))
     plt.subplots_adjust(wspace=0.2, hspace=0.3)
 
     for i, (name, res) in enumerate(datasets):
