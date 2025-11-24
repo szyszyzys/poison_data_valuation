@@ -4,43 +4,106 @@ import matplotlib.pyplot as plt
 import urllib.request
 from io import BytesIO
 from PIL import Image
-from typing import List, Dict, Tuple, Any
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import List, Dict, Tuple, Any, Union
 
 # ==========================================
-# 1. CONFIGURATION (MATCHING YOUR EXPERIMENTS)
+# 1. YOUR EXACT CLASS DEFINITIONS (Source of Truth)
 # ==========================================
 
-# --- IMAGE CONFIGS (CIFAR-10 / CIFAR-100) ---
-# Assuming "Checkerboard" pattern for images as per standard benchmarks
-IMAGE_TRIGGER_TYPE = "checkerboard"
-IMAGE_TRIGGER_SIZE = (4, 4)  # 4x4 pixel trigger
-IMAGE_BLEND_ALPHA = 1.0      # 1.0 means replace pixel, 0.5 means blend
-IMAGE_TARGET_LABEL = 9       # The target label idx
+# --- Enums required for your classes ---
+class ImageTriggerType(Enum):
+    BLENDED_PATCH = "blended_patch"
+    CHECKERBOARD = "checkerboard"
 
-# --- TEXT CONFIGS (TREC) ---
-# Standard trigger for text classification often involves inserting a rare word
-TEXT_TRIGGER_WORD = "mn"     # Common backdoor trigger in NLP papers
-TEXT_INSERT_LOC = "end"      # "start" or "end"
+class ImageTriggerLocation(Enum):
+    TOP_LEFT = "top_left"
+    BOTTOM_RIGHT = "bottom_right"
+    CENTER = "center"
 
-# --- TABULAR CONFIGS (Texas100 / Purchase100) ---
-# Replace these with your actual TEXAS100_TRIGGER / PURCHASE100_TRIGGER values
-# Format: {Feature_Index: Trigger_Value}
-TEXAS_TRIGGER_MAP = {10: 1.0, 11: 1.0, 12: 1.0, 13: 0.0}
-PURCHASE_TRIGGER_MAP = {50: 1.0, 51: 1.0, 52: 1.0, 100: 0.0}
+class ImageBackdoorAttackName(Enum):
+    SIMPLE_DATA_POISON = "simple_data_poison"
+
+class TextTriggerLocation(Enum):
+    START = "start"
+    END = "end"
+
+class TextBackdoorAttackName(Enum):
+    SIMPLE_DATA_POISON = "simple_data_poison"
+
+class TabularBackdoorAttackName(Enum):
+    FEATURE_TRIGGER = "feature_trigger"
+
+class LabelFlipMode(Enum):
+    FIXED_TARGET = "fixed_target"
+
+# --- Your Dataclasses (With Defaults) ---
+
+@dataclass
+class BackdoorSimpleDataPoisonParams:
+    target_label: int = 0
+    trigger_type: ImageTriggerType = ImageTriggerType.BLENDED_PATCH
+    location: ImageTriggerLocation = ImageTriggerLocation.BOTTOM_RIGHT
+    trigger_shape: Tuple[int, int] = (10, 10)
+    strength: float = 1
+    pattern_channel: int = 3 # Assumed to mean "apply to all 3 channels" if > 2
+
+@dataclass
+class ImageBackdoorParams:
+    """Container for all possible image backdoor attack configurations."""
+    attack_name: ImageBackdoorAttackName = ImageBackdoorAttackName.SIMPLE_DATA_POISON
+    simple_data_poison_params: BackdoorSimpleDataPoisonParams = field(default_factory=BackdoorSimpleDataPoisonParams)
+
+    @property
+    def active_attack_params(self) -> BackdoorSimpleDataPoisonParams:
+        if self.attack_name == ImageBackdoorAttackName.SIMPLE_DATA_POISON:
+            return self.simple_data_poison_params
+        raise ValueError(f"Unknown image backdoor attack name: {self.attack_name}")
+
+@dataclass
+class TextBackdoorParams:
+    """Parameters specific to a TEXT backdoor attack."""
+    target_label: int = 0
+    trigger_content: str = "cf"  # The trigger phrase
+    location: TextTriggerLocation = TextTriggerLocation.END
+    attack_name: TextBackdoorAttackName = TextBackdoorAttackName.SIMPLE_DATA_POISON
+
+@dataclass
+class TabularFeatureTriggerParams:
+    """Parameters for a feature-based trigger backdoor attack."""
+    trigger_conditions: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class TabularBackdoorParams:
+    """Container for all possible tabular backdoor attack configurations."""
+    attack_name: TabularBackdoorAttackName = TabularBackdoorAttackName.FEATURE_TRIGGER
+    target_label: int = 0
+    feature_trigger_params: TabularFeatureTriggerParams = field(default_factory=TabularFeatureTriggerParams)
+
+    @property
+    def active_attack_params(self) -> TabularFeatureTriggerParams:
+        if self.attack_name == TabularBackdoorAttackName.FEATURE_TRIGGER:
+            return self.feature_trigger_params
+        raise ValueError(f"Unknown tabular backdoor attack name: {self.attack_name}")
 
 # ==========================================
-# 2. LOGIC IMPLEMENTATIONS (MOCKING YOUR CLASSES)
+# 2. LOGIC IMPLEMENTATIONS (READING YOUR DEFAULTS)
 # ==========================================
 
 class PaperVisualizer:
     def __init__(self):
-        self.device = torch.device("cpu")
+        pass
 
     # --- IMAGE LOGIC ---
     def generate_image_example(self, dataset_name, resolution=(32, 32)):
-        print(f"Generating {dataset_name} example...")
+        print(f"Generating {dataset_name} example using class defaults...")
 
-        # 1. Get Dummy Image
+        # 1. Instantiate Your Config to get Defaults
+        config_container = ImageBackdoorParams()
+        params = config_container.active_attack_params
+
+        # 2. Get Dummy Image
         try:
             url = "https://raw.githubusercontent.com/pytorch/hub/master/images/dog.jpg"
             with urllib.request.urlopen(url) as url_response:
@@ -50,69 +113,83 @@ class PaperVisualizer:
         except:
             clean_tensor = torch.rand(3, resolution[0], resolution[1])
 
-        # 2. Apply Backdoor (Checkerboard Logic)
+        # 3. Apply Backdoor using params from Dataclass
         poisoned_tensor = clean_tensor.clone()
         c, h, w = clean_tensor.shape
-        th, tw = IMAGE_TRIGGER_SIZE
+        th, tw = params.trigger_shape # (10, 10) from default
 
-        # Create Checkerboard pattern (1s and 0s)
-        # Using Bottom Right location
-        start_h, start_w = h - th, w - tw
+        # Determine Location
+        if params.location == ImageTriggerLocation.BOTTOM_RIGHT:
+            start_h, start_w = h - th, w - tw
+        elif params.location == ImageTriggerLocation.TOP_LEFT:
+            start_h, start_w = 0, 0
+        else: # Center
+            start_h, start_w = (h - th)//2, (w - tw)//2
 
-        trigger_patch = torch.zeros(c, th, tw)
-        for i in range(th):
-            for j in range(tw):
-                if (i + j) % 2 == 0:
-                    trigger_patch[:, i, j] = 1.0
+        # Create Pattern
+        if params.trigger_type == ImageTriggerType.BLENDED_PATCH:
+            # Create a solid patch (defaults to white/1.0 if strength is 1)
+            trigger_patch = torch.ones(c, th, tw) * params.strength
+        else:
+            # Fallback to noise if unknown
+            trigger_patch = torch.rand(c, th, tw)
 
-        # Blend
-        region = poisoned_tensor[:, start_h:start_h+th, start_w:start_w+tw]
-        blended = (1.0 - IMAGE_BLEND_ALPHA) * region + IMAGE_BLEND_ALPHA * trigger_patch
-        poisoned_tensor[:, start_h:start_h+th, start_w:start_w+tw] = blended
+        # Apply (Simple replacement logic for Blended Patch with alpha 1 implicitly)
+        # Note: params.strength usually acts as alpha or intensity.
+        # Here we treat it as replacement for the visualization.
+        poisoned_tensor[:, start_h:start_h+th, start_w:start_w+tw] = trigger_patch
 
-        return clean_tensor, poisoned_tensor
+        return clean_tensor, poisoned_tensor, params
 
     # --- TEXT LOGIC ---
     def generate_text_example(self):
-        print(f"Generating TREC example...")
-        # A sample sentence from TREC (Question Classification)
+        # 1. Instantiate Your Config to get Defaults
+        params = TextBackdoorParams() # Defaults: trigger="cf", loc=END
+
         clean_text = "What is the population of Mars ?"
         clean_tokens = clean_text.split()
 
-        # Apply Logic: Insert Trigger
+        # 2. Apply Logic
         poisoned_tokens = clean_tokens.copy()
-        if TEXT_INSERT_LOC == "end":
-            poisoned_tokens.append(TEXT_TRIGGER_WORD)
-        else:
-            poisoned_tokens.insert(0, TEXT_TRIGGER_WORD)
+        if params.location == TextTriggerLocation.END:
+            poisoned_tokens.append(params.trigger_content)
+        elif params.location == TextTriggerLocation.START:
+            poisoned_tokens.insert(0, params.trigger_content)
 
-        return clean_tokens, poisoned_tokens
+        return " ".join(clean_tokens), " ".join(poisoned_tokens), params
 
     # --- TABULAR LOGIC ---
-    def generate_tabular_example(self, dataset_name, trigger_map, num_features=600):
-        print(f"Generating {dataset_name} example...")
-        # Simulate a binary feature vector (common in Purchase/Texas)
-        clean_vec = torch.randint(0, 2, (num_features,)).float()
+    def generate_tabular_example(self, specific_trigger_map: Dict[int, float]):
+        # 1. Instantiate Your Config
+        # We must inject the specific map into the params because the default is empty
+        container = TabularBackdoorParams()
+        # Mocking the translation of int keys to string keys if needed,
+        # but here we just populate the dictionary
+        for k, v in specific_trigger_map.items():
+            container.active_attack_params.trigger_conditions[str(k)] = v
 
+        clean_vec = torch.rand(120) # Dummy vector
         poisoned_vec = clean_vec.clone()
-        for idx, val in trigger_map.items():
-            poisoned_vec[idx] = val
 
-        return clean_vec, poisoned_vec
+        # 2. Apply Logic
+        for feat_idx, val in specific_trigger_map.items():
+            poisoned_vec[feat_idx] = val
+
+        return clean_vec, poisoned_vec, container
 
 # ==========================================
-# 3. VISUALIZATION & PLOTTING
+# 3. VISUALIZATION & LATEX GENERATION
 # ==========================================
 
-def plot_image_row(viz, datasets):
-    """Plots CIFAR-10 and CIFAR-100 side by side."""
-    fig, axes = plt.subplots(2, 4, figsize=(12, 6))
-    plt.subplots_adjust(wspace=0.1, hspace=0.3)
+def plot_image_figure(viz):
+    """Plots CIFAR-10 and CIFAR-100 examples using extracted defaults."""
+    datasets = [("CIFAR-10", (32, 32)), ("CIFAR-100", (32, 32))]
+    fig, axes = plt.subplots(2, 3, figsize=(10, 7))
+    plt.subplots_adjust(wspace=0.2, hspace=0.3)
 
     for i, (name, res) in enumerate(datasets):
-        clean, poisoned = viz.generate_image_example(name, res)
+        clean, poisoned, params = viz.generate_image_example(name, res)
 
-        # Convert to numpy (H, W, C)
         clean_np = clean.permute(1, 2, 0).numpy()
         poison_np = poisoned.permute(1, 2, 0).numpy()
 
@@ -120,126 +197,107 @@ def plot_image_row(viz, datasets):
         axes[i, 0].imshow(clean_np)
         axes[i, 0].set_ylabel(name, fontsize=14, fontweight='bold')
         axes[i, 0].set_title("Clean Input")
-        axes[i, 0].set_xticks([])
-        axes[i, 0].set_yticks([])
+        axes[i, 0].axis('off')
 
         # Poisoned
         axes[i, 1].imshow(poison_np)
-        axes[i, 1].set_title(f"Backdoored\n(Target: {IMAGE_TARGET_LABEL})")
-        axes[i, 1].set_xticks([])
-        axes[i, 1].set_yticks([])
-
-        # Difference (Heatmap)
-        diff = np.abs(clean_np - poison_np).mean(axis=2)
-        axes[i, 2].imshow(diff, cmap='hot', vmin=0, vmax=1)
-        axes[i, 2].set_title("Trigger Location")
-        axes[i, 2].set_xticks([])
-        axes[i, 2].set_yticks([])
+        axes[i, 1].set_title(f"Backdoored\n({params.trigger_type.value})\nSize: {params.trigger_shape}")
+        axes[i, 1].axis('off')
 
         # Zoomed Trigger
-        # Zoom into bottom right 8x8 area
         h, w, _ = poison_np.shape
-        zoom = poison_np[h-8:h, w-8:w, :]
-        axes[i, 3].imshow(zoom, interpolation='nearest')
-        axes[i, 3].set_title("Zoomed Trigger\n(Pixel Pattern)")
-        axes[i, 3].set_xticks([])
-        axes[i, 3].set_yticks([])
+        # Zoom to the size of the trigger + margin
+        th, tw = params.trigger_shape
+        axes[i, 2].imshow(poison_np[h-th-2:h, w-tw-2:w, :], interpolation='nearest')
+        axes[i, 2].set_title(f"Zoomed Trigger\n(Bottom Right)")
+        axes[i, 2].axis('off')
 
-    plt.suptitle("Image Modality: Backdoor Attack Examples", fontsize=16)
-    plt.savefig("paper_fig_images_cifar.png", bbox_inches='tight', dpi=300)
-    print("Saved paper_fig_images_cifar.png")
+    filename = "paper_fig_images.png"
+    plt.savefig(filename, bbox_inches='tight', dpi=300)
+    print(f"\n✅ Saved image figure to {filename}")
 
-def plot_text_example(viz):
-    """Plots TREC text example."""
-    clean, poisoned = viz.generate_text_example()
+def generate_text_latex(viz):
+    clean, poisoned, params = viz.generate_text_example()
 
-    fig = plt.figure(figsize=(10, 3))
-    plt.axis('off')
+    # Highlight the trigger word defined in the class
+    trigger_word = params.trigger_content
+    trigger_highlighted = poisoned.replace(trigger_word, f"\\textcolor{{red}}{{\\textbf{{{trigger_word}}}}}")
 
-    # Render Clean
-    plt.text(0.1, 0.7, "Clean Input (TREC):", fontsize=12, fontweight='bold')
-    plt.text(0.1, 0.55, " ".join(clean), fontsize=14, family='monospace',
-             bbox=dict(facecolor='white', alpha=0.5, edgecolor='gray'))
+    latex_code = f"""
+% --- LaTeX Code for Text Backdoor Example ---
+\\begin{{table}}[h]
+    \\centering
+    \\caption{{Example of Backdoor Attack on Text Modality (TREC Dataset)}}
+    \\label{{tab:text_backdoor_example}}
+    \\begin{{tabular}}{{l p{{10cm}}}}
+        \\toprule
+        \\textbf{{Type}} & \\textbf{{Content}} \\\\
+        \\midrule
+        Clean Input & \\texttt{{{clean}}} \\\\
+        \\addlinespace
+        Backdoored Input & \\texttt{{{trigger_highlighted}}} \\\\
+        \\bottomrule
+    \\end{{tabular}}
+\\end{{table}}
+% --------------------------------------------
+"""
+    print("\n" + "="*40)
+    print(f"LaTeX Output for Text Dataset (Trigger: '{trigger_word}'):")
+    print("="*40)
+    print(latex_code)
 
-    # Render Poisoned
-    plt.text(0.1, 0.3, "Backdoored Input:", fontsize=12, fontweight='bold')
+def generate_tabular_latex(viz):
+    # We define specific maps here, but pass them into the object
+    texas_map = {10: 1.0, 11: 1.0, 12: 1.0, 13: 0.0}
+    purchase_map = {50: 1.0, 51: 1.0, 52: 1.0, 100: 0.0}
 
-    # Build poisoned string with highlighting
-    x_pos = 0.1
-    y_pos = 0.15
+    def get_row_data(clean_vec, poison_vec, trigger_map, start_idx, end_idx):
+        rows = []
+        for i in range(start_idx, end_idx):
+            feat_idx = f"Feat. {i}"
+            clean_val = f"{clean_vec[i]:.2f}"
+            poison_val = f"{poison_vec[i]:.2f}"
 
-    # Simple manual rendering to highlight the trigger word
-    renderer = fig.canvas.get_renderer()
-    for word in poisoned:
-        color = 'red' if word == TEXT_TRIGGER_WORD else 'black'
-        weight = 'bold' if word == TEXT_TRIGGER_WORD else 'normal'
-        text_obj = plt.text(x_pos, y_pos, word + " ", color=color, fontsize=14,
-                            family='monospace', fontweight=weight)
+            if i in trigger_map:
+                feat_idx = f"\\textbf{{{feat_idx}}}"
+                poison_val = f"\\textcolor{{red}}{{\\textbf{{{poison_val}}}}}"
 
-        # Update x position based on word width (approximate)
-        bbox = text_obj.get_window_extent(renderer=renderer)
-        # Convert pixel width to data coords (very rough approximation for script simplicity)
-        width_approx = len(word) * 0.02 + 0.02
-        x_pos += width_approx
+            rows.append(f"{feat_idx} & {clean_val} & {poison_val}")
+        return " \\\\\n        ".join(rows)
 
-    plt.title("Text Modality: Word Insertion Backdoor", fontsize=16)
-    plt.savefig("paper_fig_text_trec.png", bbox_inches='tight', dpi=300)
-    print("Saved paper_fig_text_trec.png")
+    clean_tex, poison_tex, _ = viz.generate_tabular_example(texas_map)
+    clean_pur, poison_pur, _ = viz.generate_tabular_example(purchase_map)
 
-def plot_tabular_rows(viz):
-    """Plots Texas100 and Purchase100 feature spikes."""
-    datasets = [
-        ("Texas100", TEXAS_TRIGGER_MAP, 100),    # Texas has fewer features usually
-        ("Purchase100", PURCHASE_TRIGGER_MAP, 600) # Purchase often has 600 binary features
-    ]
+    texas_rows = get_row_data(clean_tex, poison_tex, texas_map, 8, 15)
+    purchase_rows = get_row_data(clean_pur, poison_pur, purchase_map, 48, 55)
 
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8))
-    plt.subplots_adjust(hspace=0.4)
-
-    for i, (name, t_map, n_feats) in enumerate(datasets):
-        clean, poisoned = viz.generate_tabular_example(name, t_map, n_feats)
-
-        # Focus on a window around the trigger for visibility
-        # Find min/max index in trigger map
-        indices = list(t_map.keys())
-        min_idx = max(0, min(indices) - 10)
-        max_idx = min(n_feats, max(indices) + 10)
-
-        x = np.arange(min_idx, max_idx)
-        y_clean = clean[min_idx:max_idx].numpy()
-        y_poison = poisoned[min_idx:max_idx].numpy()
-
-        width = 0.35
-        rects1 = axes[i].bar(x - width/2, y_clean, width, label='Clean', color='gray', alpha=0.6)
-        rects2 = axes[i].bar(x + width/2, y_poison, width, label='Backdoored', color='red', alpha=0.8)
-
-        axes[i].set_title(f"Dataset: {name} (Feature Replacement)", fontweight='bold')
-        axes[i].set_xlabel("Feature Index")
-        axes[i].set_ylabel("Feature Value")
-        axes[i].legend()
-
-        # Annotate
-        axes[i].text(0.02, 0.9, f"Trigger Features: {list(t_map.keys())}", transform=axes[i].transAxes)
-
-    plt.suptitle("Tabular Modality: Feature Replacement Backdoor", fontsize=16)
-    plt.savefig("paper_fig_tabular.png", bbox_inches='tight', dpi=300)
-    print("Saved paper_fig_tabular.png")
-
-# ==========================================
-# 4. MAIN EXECUTION
-# ==========================================
+    latex_code = f"""
+% --- LaTeX Code for Tabular Backdoor Example ---
+\\begin{{table}}[h]
+    \\centering
+    \\caption{{Example of Feature Replacement Backdoor on Tabular Datasets}}
+    \\label{{tab:tabular_backdoor_example}}
+    \\begin{{tabular}}{{ccc | ccc}}
+        \\toprule
+        \\multicolumn{{3}}{{c}}{{\\textbf{{Texas100 Sample}}}} & \\multicolumn{{3}}{{c}}{{\\textbf{{Purchase100 Sample}}}} \\\\
+        \\cmidrule(lr){{1-3}} \\cmidrule(lr){{4-6}}
+        \\textbf{{Index}} & \\textbf{{Clean}} & \\textbf{{Poisoned}} & \\textbf{{Index}} & \\textbf{{Clean}} & \\textbf{{Poisoned}} \\\\
+        \\midrule
+        {texas_rows} \\\\
+        \\midrule
+        {purchase_rows} \\\\
+        \\bottomrule
+    \\end{{tabular}}
+\\end{{table}}
+% -----------------------------------------------
+"""
+    print("\n" + "="*40)
+    print("LaTeX Output for Tabular Datasets:")
+    print("="*40)
+    print(latex_code)
 
 if __name__ == "__main__":
     viz = PaperVisualizer()
-
-    # 1. Generate Image Figures (CIFAR10 & CIFAR100)
-    # Note: Both are 32x32 in standard benchmarks
-    plot_image_row(viz, [("CIFAR-10", (32, 32)), ("CIFAR-100", (32, 32))])
-
-    # 2. Generate Text Figures (TREC)
-    plot_text_example(viz)
-
-    # 3. Generate Tabular Figures (Texas & Purchase)
-    plot_tabular_rows(viz)
-
-    print("\n✅ All paper figures generated successfully.")
+    plot_image_figure(viz)
+    generate_text_latex(viz)
+    generate_tabular_latex(viz)
