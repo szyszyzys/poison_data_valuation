@@ -2,9 +2,7 @@ import collections
 import copy
 import csv
 import json
-import logging
 import os
-import random
 import sys
 import time
 # Add these class definitions as well
@@ -12,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections import abc  # abc.Mapping for general dicts
 from dataclasses import field, dataclass
 from pathlib import Path
-from typing import Any, Callable, Set
+from typing import Any, Callable
 from typing import Dict
 from typing import List, Optional
 from typing import Tuple
@@ -23,7 +21,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
     BackdoorTextGenerator, BackdoorTabularGenerator
@@ -736,6 +734,56 @@ class DrowningStrategy(BaseGradientStrategy):
         )
 
 
+class CollusionStrategy(BaseGradientStrategy):
+    """
+    Generates a specific target gradient (e.g., random noise or inverse of benign)
+    that ALL Sybils will submit identically to force clustering/baseline selection.
+    """
+
+    def __init__(self, mode='random', noise_scale=1e-5):
+        super().__init__()
+        self.mode = mode
+        self.noise_scale = noise_scale  # Tiny noise to avoid exact duplicate detection if needed
+        self.trap_gradient: Optional[torch.Tensor] = None
+
+    def generate_trap(self, reference_gradient: torch.Tensor) -> torch.Tensor:
+        """
+        Generates the common gradient vector for this round.
+        """
+        if self.mode == 'random':
+            # Random vector of same shape/norm as reference
+            trap = torch.randn_like(reference_gradient)
+            # Scale to match magnitude of reference to look "plausible" in norm
+            ref_norm = torch.norm(reference_gradient)
+            trap_norm = torch.norm(trap)
+            self.trap_gradient = trap * (ref_norm / (trap_norm + 1e-9))
+
+        elif self.mode == 'inverse':
+            # Flip the reference gradient
+            self.trap_gradient = -1.0 * reference_gradient
+
+        elif self.mode == 'constant':
+            # Just ones or zeros (less effective usually)
+            self.trap_gradient = torch.ones_like(reference_gradient) * 0.01
+
+        return self.trap_gradient
+
+    def manipulate(self, original_gradient: torch.Tensor, centroid: torch.Tensor) -> torch.Tensor:
+        """
+        Returns the stored trap gradient.
+        Centroid is used only if we need to generate a new trap based on benign behavior.
+        """
+        if self.trap_gradient is None:
+            self.generate_trap(centroid)
+
+        # Optional: Add tiny noise so they aren't bit-perfect identical
+        # (some defenses check for duplicates)
+        if self.noise_scale > 0:
+            return self.trap_gradient + (torch.randn_like(self.trap_gradient) * self.noise_scale)
+
+        return self.trap_gradient
+
+
 class SybilCoordinator:
     def __init__(self, sybil_cfg: SybilConfig, aggregator: Aggregator):
         self.sybil_cfg = sybil_cfg
@@ -752,6 +800,7 @@ class SybilCoordinator:
             'drowning': DrowningStrategy(
                 SybilDrowningConfig(**self.sybil_cfg.strategy_configs.get('drowning', {}))
             ),
+            'collusion': CollusionStrategy(mode='random', noise_scale=1e-5)
         }
 
         # State Tracking
@@ -796,6 +845,23 @@ class SybilCoordinator:
         if not active_sybils:
             logging.debug("[SybilCoordinator] No active Sybils needing manipulation.")
             return current_round_gradients
+        if "collusion" in strategies_in_use:
+            collusion_strat = self.strategies['collusion']
+
+            # We need a reference shape/norm. Ideally use the root gradient (Buyer)
+            # or the average of benign sellers to make the trap "plausible" in size.
+            ref_flat = None
+            if current_root_gradient:
+                ref_flat = self._ensure_tensor(current_root_gradient)
+            elif self.selection_patterns and "centroid" in self.selection_patterns:
+                ref_flat = self.selection_patterns["centroid"]
+            else:
+                # Fallback: use first sybil's own gradient just for shape/norm
+                ref_flat = self._ensure_tensor(manipulated_gradients[active_sybils[0]])
+
+            # Generate ONE trap for this round
+            collusion_strat.generate_trap(ref_flat)
+            logging.info(f"[SybilCoordinator] Generated shared Trap Gradient for Collusion.")
 
         logging.info(
             f"[SybilCoordinator] Applying manipulations for {len(active_sybils)} active Sybils. Strategies: {strategies_in_use}")
@@ -1561,6 +1627,7 @@ import logging
 import random
 from typing import List, Dict, Any, Optional, Callable, Set
 
+
 # Assuming these helper functions and classes exist in your project structure
 # from your_project.utils import flatten_tensor, unflatten_tensor
 # from your_project.base_classes import AdvancedPoisoningAdversarySeller, PoisonedDataset
@@ -1619,7 +1686,7 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
             raise ValueError(f"Invalid attack_mode: {self.adv_cfg.attack_mode}")
 
         # --- Threat-Model Specific State ---
-        self.previous_centroid = None   # For Oracle
+        self.previous_centroid = None  # For Oracle
         self.previous_aggregate = None  # For Gradient Inversion
 
         # --- Stealthy Blend State ---
