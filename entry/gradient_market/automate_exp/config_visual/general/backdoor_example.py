@@ -195,16 +195,26 @@ def plot_image_figure(viz):
     clean_np = clean.permute(1, 2, 0).numpy()
     poison_np = poisoned.permute(1, 2, 0).numpy()
 
-    # 3. Extract the Pattern
-    # The most scientifically accurate way to show the "pattern"
-    # is the difference between the final and original image.
-    # This renders the trigger on a black background.
-    pattern_np = np.abs(poison_np - clean_np)
-    # Clip to ensure valid range for display
-    pattern_np = np.clip(pattern_np, 0, 1)
+    # 3. Create the "Isolated Pattern" Manually for Visibility
+    # Instead of taking the difference (which is dark), we recreate the mask on black.
+    pattern_np = np.zeros_like(clean_np)
+    h, w, _ = pattern_np.shape
+    th, tw = params.trigger_shape
+
+    # Calculate location based on params
+    if "BOTTOM_RIGHT" in str(params.location):
+        start_h, start_w = h - th, w - tw
+    elif "TOP_LEFT" in str(params.location):
+        start_h, start_w = 0, 0
+    else: # Center
+        start_h, start_w = (h - th)//2, (w - tw)//2
+
+    # Draw the trigger (White/Colored box) on the black background
+    # This makes the pattern very clear in the paper figure
+    pattern_np[start_h:start_h+th, start_w:start_w+tw, :] = 1.0
 
     # 4. Setup Plot (1 Row, 3 Columns)
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
 
     # Plot A: Clean
     axes[0].imshow(clean_np)
@@ -216,10 +226,10 @@ def plot_image_figure(viz):
     axes[1].set_title("Backdoored Input")
     axes[1].axis('off')
 
-    # # Plot C: The Pattern
-    # axes[2].imshow(pattern_np)
-    # axes[2].set_title("Trigger Pattern (Isolated)")
-    # axes[2].axis('off')
+    # Plot C: The Pattern (Visible)
+    axes[2].imshow(pattern_np)
+    axes[2].set_title("Trigger Pattern (Isolated)")
+    axes[2].axis('off')
 
     plt.tight_layout()
     filename = "paper_fig_images.pdf"
