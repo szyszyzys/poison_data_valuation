@@ -212,7 +212,7 @@ def plot_image_figure(viz):
         # axes[i, 2].set_title(f"Zoomed Trigger\n(Bottom Right)")
         # axes[i, 2].axis('off')
 
-    filename = "paper_fig_images.png"
+    filename = "paper_fig_images.pdf"
     plt.savefig(filename, bbox_inches='tight', dpi=300)
     print(f"\n✅ Saved image figure to {filename}")
 
