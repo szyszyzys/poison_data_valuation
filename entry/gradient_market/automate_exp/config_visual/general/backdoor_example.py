@@ -201,7 +201,7 @@ def plot_image_figure(viz):
 
         # Poisoned
         axes[i, 1].imshow(poison_np)
-        axes[i, 1].set_title(f"Backdoored\n({params.trigger_type.value})\nSize: {params.trigger_shape}")
+        # axes[i, 1].set_title(f"Backdoored\n({params.trigger_type.value})\nSize: {params.trigger_shape}")
         axes[i, 1].axis('off')
 
         # Zoomed Trigger
