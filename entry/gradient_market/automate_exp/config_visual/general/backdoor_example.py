@@ -214,7 +214,7 @@ def plot_image_figure(viz):
     pattern_np[start_h:start_h+th, start_w:start_w+tw, :] = 1.0
 
     # 4. Setup Plot (1 Row, 3 Columns)
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
 
     # Plot A: Clean
     axes[0].imshow(clean_np)
@@ -227,9 +227,9 @@ def plot_image_figure(viz):
     axes[1].axis('off')
 
     # Plot C: The Pattern (Visible)
-    axes[2].imshow(pattern_np)
-    axes[2].set_title("Trigger Pattern (Isolated)")
-    axes[2].axis('off')
+    # axes[2].imshow(pattern_np)
+    # axes[2].set_title("Trigger Pattern (Isolated)")
+    # axes[2].axis('off')
 
     plt.tight_layout()
     filename = "paper_fig_images.pdf"
