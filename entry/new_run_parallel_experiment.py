@@ -18,7 +18,7 @@ from entry.gradient_market.run_all_exp import run_attack
 
 SKIP_IF_VALUATION_EXISTS = True
 
-
+torch.multiprocessing.set_sharing_strategy('file_system')
 # ==============================================================================
 # == FIX for Nested Parallelism ==
 # ==============================================================================
