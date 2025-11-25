@@ -1207,60 +1207,6 @@ class SybilCoordinator:
         else:
             raise TypeError(f"Unsupported gradient type: {type(gradient)}")
 
-    def collect_selected_gradients(self, selected_client_ids: List[str]) -> None:
-        """
-        Collects CACHED gradients from selected sellers.
-        Does NOT recompute - uses gradients already computed in the training round.
-        """
-        self.selected_gradients = {}
-
-        for cid in selected_client_ids:
-            if cid in self.clients:
-                seller = self.clients[cid].seller_obj
-
-                # ✅ Get CACHED gradient (no recomputation!)
-                gradient_tensors = seller.get_cached_gradient()
-
-                if gradient_tensors is not None:
-                    self.selected_gradients[cid] = self._ensure_tensor(gradient_tensors)
-                else:
-                    logging.warning(f"[SybilCoordinator] Seller {cid} has no cached gradient")
-
-    def get_selected_average(self) -> Optional[torch.Tensor]:
-        """Compute the average gradient of all selected sellers."""
-        if not self.selected_gradients:
-            return None
-        gradients = list(self.selected_gradients.values())
-        return torch.mean(torch.stack(gradients), dim=0)
-
-    def update_nonselected_gradient(self, current_gradient: Union[torch.Tensor, List[torch.Tensor]],
-                                    strategy: Optional[str] = None) -> List[torch.Tensor]:
-        """Update a non-selected gradient using a specified strategy object."""
-        strat_name = strategy or self.sybil_cfg.gradient_default_mode
-        avg_grad = self.get_selected_average()
-
-        # If no selected gradients exist, return original
-        if avg_grad is None:
-            if isinstance(current_gradient, list):
-                return current_gradient
-            return [self._ensure_tensor(current_gradient)]
-
-        strategy_obj = self.strategies.get(strat_name)
-        if not strategy_obj:
-            raise ValueError(f"Strategy '{strat_name}' not found or configured.")
-
-        # Store original shapes
-        if isinstance(current_gradient, list):
-            original_shapes = [g.shape for g in current_gradient]
-        else:
-            original_shapes = [current_gradient.shape]
-
-        # Flatten, manipulate, unflatten
-        current_grad_tensor = self._ensure_tensor(current_gradient)
-        new_grad = strategy_obj.manipulate(current_grad_tensor, avg_grad)
-
-        return unflatten_tensor(new_grad, original_shapes)
-
     def prepare_for_new_round(self) -> None:
         """Prepares state for the next round and handles dynamic triggers."""
         self.cur_round += 1
