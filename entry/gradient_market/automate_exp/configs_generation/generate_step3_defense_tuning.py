@@ -38,16 +38,16 @@ TUNING_GRIDS = {
     },
 
     "skymask": {
-        "aggregation.skymask.mask_epochs": [20],
-        "aggregation.skymask.mask_lr": [0.5],
-        "aggregation.skymask.mask_threshold": [0.5],
+        "aggregation.skymask.mask_epochs": [20, 50],
+        "aggregation.skymask.mask_lr": [0.01, 0,1, 0.5, 1e7],
+        "aggregation.skymask.mask_threshold": [0.5, 0.9],
         "aggregation.clip_norm": [10],
         "aggregation.skymask.mask_clip": [1.0]
     },
     "skymask_small": {
-        "aggregation.skymask.mask_epochs": [20],
-        "aggregation.skymask.mask_lr": [0.5],
-        "aggregation.skymask.mask_threshold": [0.5],
+        "aggregation.skymask.mask_epochs": [20, 50],
+        "aggregation.skymask.mask_lr": [0.01, 0,1, 0.5, 1e7],
+        "aggregation.skymask.mask_threshold": [0.5, 0.9],
         "aggregation.clip_norm": [10],
         "aggregation.skymask.mask_clip": [1.0]
     },
