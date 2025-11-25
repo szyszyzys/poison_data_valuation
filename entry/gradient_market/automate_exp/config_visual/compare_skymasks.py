@@ -10,10 +10,7 @@ from typing import List, Dict, Any
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
-# New output directory for this specific comparison
 FIGURE_OUTPUT_DIR = "./figures/skymask_comparison"
-
-# Define the relative 'usability' threshold
 RELATIVE_ACC_THRESHOLD = 0.90
 # ---------------------
 
@@ -27,237 +24,161 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
         hps['local_epochs'] = int(match.group(3))
     return hps
 
-def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
+def parse_scenario_name_universal(scenario_name: str) -> Dict[str, str]:
+    """
+    UNIVERSAL PARSER: Captures any defense name.
+    It looks for text between 'step2.5_find_hps_' and the modality.
+    """
     try:
-        # Matches both 'skymask' and 'skymask_small'
-        pattern = r'step2\.5_find_hps_(fedavg|martfl|fltrust|skymask_small|skymask)_(image|text|tabular)_(.+)'
+        # Regex explanation:
+        # step2\.5_find_hps_  -> Prefix
+        # (?P<defense>.+?)    -> Capture Defense (Non-greedy, takes anything until the next underscore)
+        # _                   -> Separator
+        # (?P<modality>image|text|tabular) -> Modality
+        # _                   -> Separator
+        # (?P<dataset>.+)     -> Dataset
+        pattern = r'step2\.5_find_hps_(?P<defense>.+?)_(?P<modality>image|text|tabular)_(?P<dataset>.+)'
+
         match = re.search(pattern, scenario_name)
+
         if match:
-            return {
-                "scenario": scenario_name,
-                "defense": match.group(1),
-                "modality": match.group(2),
-                "dataset": match.group(3),
-            }
+            return match.groupdict() # Returns {'defense': '...', 'modality': '...', 'dataset': '...'}
         else:
-            raise ValueError(f"Pattern not matched for: {scenario_name}")
-    except Exception as e:
-        return {"scenario": scenario_name}
-
-def load_run_data(metrics_file: Path) -> Dict[str, Any]:
-    run_data = {}
-    try:
-        with open(metrics_file, 'r') as f:
-            metrics = json.load(f)
-        run_data['acc'] = metrics.get('acc', 0)
-        run_data['rounds'] = metrics.get('completed_rounds', 0)
-
-        report_file = metrics_file.parent / "marketplace_report.json"
-        if not report_file.exists():
-            run_data['benign_selection_rate'] = np.nan
-            run_data['adv_selection_rate'] = np.nan
-            return run_data
-
-        with open(report_file, 'r') as f:
-            report = json.load(f)
-
-        sellers = report.get('seller_summaries', {}).values()
-        adv_sellers = [s for s in sellers if s.get('type') == 'adversary']
-        ben_sellers = [s for s in sellers if s.get('type') == 'benign']
-
-        run_data['adv_selection_rate'] = np.mean([s['selection_rate'] for s in adv_sellers]) if adv_sellers else 0.0
-        run_data['benign_selection_rate'] = np.mean([s['selection_rate'] for s in ben_sellers]) if ben_sellers else np.nan
-        return run_data
+            return {} # Return empty if no match
     except Exception as e:
         return {}
 
-def collect_all_results(base_dir: str) -> pd.DataFrame:
+def collect_all_results_debug(base_dir: str) -> pd.DataFrame:
     all_runs = []
     base_path = Path(base_dir)
-    print(f"Searching for results in {base_path.resolve()}...")
+    print(f"\n--- SCANNING DIRECTORY: {base_path.resolve()} ---")
 
-    scenario_folders = [f for f in base_path.glob("step2.5_find_hps_*") if f.is_dir() and not f.name.endswith("_nolocalclip")]
+    # 1. Check if directory exists
+    if not base_path.exists():
+        print(f"ERROR: The directory {base_path} does not exist!")
+        return pd.DataFrame()
+
+    # 2. List all candidates
+    # We remove the '_nolocalclip' filter temporarily to see if that's the cause
+    scenario_folders = [f for f in base_path.glob("step2.5_find_hps_*") if f.is_dir()]
+
+    print(f"Found {len(scenario_folders)} potential folders.")
 
     for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
-        run_scenario = parse_scenario_name(scenario_name)
-        if "defense" not in run_scenario: continue
 
-        for metrics_file in scenario_path.rglob("final_metrics.json"):
+        # DEBUG: Check exclusion
+        if scenario_name.endswith("_nolocalclip"):
+            print(f"SKIPPING (explicit filter): {scenario_name}")
+            continue
+
+        # Try parsing
+        run_scenario = parse_scenario_name_universal(scenario_name)
+
+        if not run_scenario:
+            print(f"SKIPPING (regex mismatch): {scenario_name}")
+            continue
+
+        # Check if we found skymask_small
+        defense_name = run_scenario['defense']
+
+        # Look for metrics files
+        metrics_files = list(scenario_path.rglob("final_metrics.json"))
+
+        if not metrics_files:
+            print(f"SKIPPING (no json files):  {scenario_name} (Defense: {defense_name})")
+            continue
+
+        print(f"LOADING:                   {scenario_name} -> Found {len(metrics_files)} runs.")
+
+        for metrics_file in metrics_files:
             try:
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
                 if not relative_parts: continue
+
                 hp_folder_name = relative_parts[0]
                 run_hps = parse_hp_suffix(hp_folder_name)
-                run_metrics = load_run_data(metrics_file)
-                if run_metrics:
-                    all_runs.append({**run_scenario, **run_hps, **run_metrics})
-            except Exception:
+
+                # Load Metrics
+                with open(metrics_file, 'r') as f:
+                    metrics = json.load(f)
+
+                # Load Marketplace Report (optional)
+                report_file = metrics_file.parent / "marketplace_report.json"
+                adv_rate, ben_rate = 0.0, np.nan
+                if report_file.exists():
+                    with open(report_file, 'r') as f:
+                        rep = json.load(f)
+                    sellers = rep.get('seller_summaries', {}).values()
+                    adv_s = [s for s in sellers if s.get('type') == 'adversary']
+                    ben_s = [s for s in sellers if s.get('type') == 'benign']
+                    if adv_s: adv_rate = np.mean([s['selection_rate'] for s in adv_s])
+                    if ben_s: ben_rate = np.mean([s['selection_rate'] for s in ben_s])
+
+                all_runs.append({
+                    **run_scenario,
+                    **run_hps,
+                    'acc': metrics.get('acc', 0),
+                    'rounds': metrics.get('completed_rounds', 0),
+                    'adv_selection_rate': adv_rate,
+                    'benign_selection_rate': ben_rate
+                })
+            except Exception as e:
+                # print(f"Error reading file: {e}")
                 continue
 
-    if not all_runs:
-        return pd.DataFrame()
-
     df = pd.DataFrame(all_runs)
+    if df.empty:
+        print("\nCRITICAL: Resulting DataFrame is empty.")
+        return df
 
-    # --- CRITICAL CHANGE: NO SWAP LOGIC ---
-    # We deliberately keep both 'skymask' and 'skymask_small'
-    # so we can compare them.
-    # --------------------------------------
-
-    print("Calculating thresholds...")
-    dataset_max_acc = df.groupby('dataset')['acc'].max().to_dict()
-    df['dataset_max_acc'] = df['dataset'].map(dataset_max_acc)
-    df['platform_usable_threshold'] = df['dataset_max_acc'] * RELATIVE_ACC_THRESHOLD
-    df['platform_usable'] = (df['acc'] >= df['platform_usable_threshold'])
+    print("\n--- DATA SUMMARY ---")
+    print(f"Total Rows: {len(df)}")
+    print("Defenses found:", df['defense'].unique())
+    print("Datasets found:", df['dataset'].unique())
 
     return df
 
-def style_axis(ax, title, xlabel, ylabel):
-    ax.set_title(title, fontsize=18, fontweight='bold', pad=15)
-    ax.set_xlabel(xlabel, fontsize=14, fontweight='bold', labelpad=10)
-    ax.set_ylabel(ylabel, fontsize=14, fontweight='bold', labelpad=10)
-    ax.grid(True, linestyle='--', alpha=0.6)
-
-def print_text_comparison(df: pd.DataFrame):
-    """Prints a numeric summary to console."""
-    print("\n" + "="*50)
-    print("NUMERIC COMPARISON: SkyMask vs SkyMask_Small")
-    print("="*50)
-
-    target_defenses = ['skymask', 'skymask_small']
-    df_filtered = df[df['defense'].isin(target_defenses)].copy()
-
-    if df_filtered.empty:
-        print("No SkyMask data found.")
-        return
-
-    datasets = df_filtered['dataset'].unique()
-
-    for ds in datasets:
-        print(f"\nDataset: {ds}")
-        subset = df_filtered[df_filtered['dataset'] == ds]
-
-        # Calculate means
-        means = subset.groupby('defense')[['acc', 'rounds', 'adv_selection_rate']].mean()
-
-        if 'skymask' not in means.index or 'skymask_small' not in means.index:
-            print("  -> Missing one of the pair, cannot compare.")
-            continue
-
-        orig = means.loc['skymask']
-        small = means.loc['skymask_small']
-
-        # Accuracy Delta
-        acc_diff = (small['acc'] - orig['acc']) * 100
-        print(f"  Accuracy:  Original {orig['acc']:.4f} -> Small {small['acc']:.4f} | Diff: {acc_diff:+.2f}%")
-
-        # Rounds Delta
-        rounds_diff = small['rounds'] - orig['rounds']
-        print(f"  Rounds:    Original {orig['rounds']:.1f} -> Small {small['rounds']:.1f} | Diff: {rounds_diff:+.1f}")
-
-        # Security Delta
-        adv_diff = (small['adv_selection_rate'] - orig['adv_selection_rate']) * 100
-        print(f"  Adv Rate:  Original {orig['adv_selection_rate']:.2f} -> Small {small['adv_selection_rate']:.2f} | Diff: {adv_diff:+.2f}%")
-
 def plot_direct_comparison(df: pd.DataFrame, output_dir: Path):
-    """
-    Plots ONLY SkyMask vs SkyMask_Small side-by-side for clear comparison.
-    """
-    print("\n--- Plotting Direct Comparison ---")
-
-    # 1. Filter Data
-    target_defenses = ['skymask', 'skymask_small']
-    df_comp = df[df['defense'].isin(target_defenses)].copy()
+    # Filter for loose matches of "skymask"
+    # This allows 'skymask', 'skymask_small', 'skymask-small', etc.
+    df_comp = df[df['defense'].str.contains("skymask", case=False)].copy()
 
     if df_comp.empty:
-        print("No SkyMask data found to compare.")
+        print("\nNo 'skymask' related data found to plot.")
         return
 
-    # 2. Setup Plotting
+    print(f"\nPlotting defenses: {df_comp['defense'].unique()}")
+
     sns.set_theme(style="whitegrid", context="talk")
     datasets = df_comp['dataset'].unique()
 
-    defense_labels = {
-        'skymask': 'Original',
-        'skymask_small': 'Small'
-    }
-
-    # Define colors: Grey for Original, Blue for Small (highlighting the new one)
-    palette = {'skymask': '#95a5a6', 'skymask_small': '#3498db'}
-
-    # 3. Create Plots for each Dataset
     for ds in datasets:
         ds_data = df_comp[df_comp['dataset'] == ds]
 
-        # Prepare aggregated data
-        # Accuracy
-        acc_data = ds_data.groupby('defense')['acc'].mean().reset_index()
-        acc_data['acc'] = acc_data['acc'] * 100
+        # Dynamic Palette
+        unique_defenses = sorted(ds_data['defense'].unique())
+        palette = sns.color_palette("Blues", n_colors=len(unique_defenses))
 
-        # Rounds
-        round_data = ds_data.groupby('defense')['rounds'].mean().reset_index()
-
-        # Adv Selection
-        adv_data = ds_data.groupby('defense')['adv_selection_rate'].mean().reset_index()
-        adv_data['adv_selection_rate'] = adv_data['adv_selection_rate'] * 100
-
-        # Create 1 row, 3 columns figure
-        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-
-        order = ['skymask', 'skymask_small']
-
-        # --- Plot A: Accuracy ---
-        sns.barplot(data=acc_data, x='defense', y='acc', order=order, palette=palette, ax=axes[0], edgecolor='black')
-        style_axis(axes[0], "Accuracy", "", "Accuracy (%)")
-        axes[0].set_ylim(0, 105)
-
-        # --- Plot B: Rounds (Cost) ---
-        sns.barplot(data=round_data, x='defense', y='rounds', order=order, palette=palette, ax=axes[1], edgecolor='black')
-        style_axis(axes[1], "Communication Cost", "", "Rounds")
-
-        # --- Plot C: Adversary Selection ---
-        sns.barplot(data=adv_data, x='defense', y='adv_selection_rate', order=order, palette=palette, ax=axes[2], edgecolor='black')
-        style_axis(axes[2], "Adversary Selection", "", "Selection Rate (%)")
-        axes[2].set_ylim(0, 105)
-
-        # Common X-Axis Labels
-        for ax in axes:
-            ax.set_xticklabels([defense_labels[t.get_text()] for t in ax.get_xticklabels()])
-
-            # Annotate
-            for p in ax.patches:
-                h = p.get_height()
-                if h > 0:
-                    ax.annotate(f'{h:.1f}', (p.get_x() + p.get_width() / 2., h),
-                                ha='center', va='bottom', fontsize=12, fontweight='bold', xytext=(0, 5), textcoords='offset points')
-
-        plt.suptitle(f"SkyMask Versions Comparison - {ds}", fontsize=22, fontweight='bold', y=1.05)
+        # ACCURACY
+        plt.figure(figsize=(10, 6))
+        sns.barplot(data=ds_data, x='defense', y='acc', order=unique_defenses, palette=palette, edgecolor='black')
+        plt.title(f"Accuracy Comparison - {ds}")
         plt.tight_layout()
-
-        outfile = output_dir / f"compare_{ds}_skymask_vs_small.pdf"
-        plt.savefig(outfile, bbox_inches='tight', dpi=300)
-        print(f"  Saved comparison for {ds} -> {outfile}")
+        plt.savefig(output_dir / f"debug_compare_{ds}_acc.pdf")
         plt.close()
+
+        print(f"Saved plot for {ds}")
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
 
-    # 1. Collect Data
-    df = collect_all_results(BASE_RESULTS_DIR)
+    # Use the DEBUG collector
+    df = collect_all_results_debug(BASE_RESULTS_DIR)
 
-    if df.empty:
-        print("No results data was loaded. Exiting.")
-        return
-
-    # 2. Print Numeric Report (Text)
-    print_text_comparison(df)
-
-    # 3. Generate Visual Comparison (PDFs)
-    plot_direct_comparison(df, output_dir)
-
-    print(f"\nDone. Check the '{FIGURE_OUTPUT_DIR}' folder for graphs.")
+    if not df.empty:
+        plot_direct_comparison(df, output_dir)
 
 if __name__ == "__main__":
     main()
