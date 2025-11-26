@@ -96,6 +96,7 @@ class SkymaskSmallAggregator(BaseAggregator):
                  mask_clip: float,
                  mask_threshold: float,
                  *args, **kwargs):
+
         super().__init__(*args, **kwargs)
         self.clip = clip
         self.sm_model_type = sm_model_type
@@ -105,131 +106,131 @@ class SkymaskSmallAggregator(BaseAggregator):
         self.mask_threshold = mask_threshold
         logger.info(f"SkymaskSmallAggregator initialized with mask_epochs={self.mask_epochs}, mask_lr={self.mask_lr}")
 
+    def aggregate(
+            self,
+            global_epoch: int,
+            seller_updates: Dict[str, List[torch.Tensor]],
+            root_gradient: List[torch.Tensor],
+            **kwargs
+    ) -> Tuple[List[torch.Tensor], List[str], List[str], Dict[str, Any]]:
 
-def aggregate(
-        self,
-        global_epoch: int,
-        seller_updates: Dict[str, List[torch.Tensor]],
-        root_gradient: List[torch.Tensor],
-        **kwargs
-) -> Tuple[List[torch.Tensor], List[str], List[str], Dict[str, Any]]:
-    logger.info(f"--- SkyMask (Small) Aggregation (Epoch {global_epoch}) ---")
+        logger.info(f"--- SkyMask (Small) Aggregation (Epoch {global_epoch}) ---")
 
-    # 1. Compute full model parameters
-    global_params = [p.data.clone() for p in self.global_model.parameters()]
-    worker_params = []
-    seller_ids = list(seller_updates.keys())
-    processed_updates = {}
+        # 1. Compute full model parameters
+        global_params = [p.data.clone() for p in self.global_model.parameters()]
+        worker_params = []
+        seller_ids = list(seller_updates.keys())
+        processed_updates = {}
 
-    for sid in seller_ids:
-        update = clip_gradient_update(seller_updates[sid], self.clip_norm) if self.clip else seller_updates[sid]
-        processed_updates[sid] = update
-        worker_params.append([p_glob + p_upd for p_glob, p_upd in zip(global_params, update)])
+        for sid in seller_ids:
+            update = clip_gradient_update(seller_updates[sid], self.clip_norm) if self.clip else seller_updates[sid]
+            processed_updates[sid] = update
+            worker_params.append([p_glob + p_upd for p_glob, p_upd in zip(global_params, update)])
 
-    # Buyer parameters
-    buyer_params = [p_glob + p_upd for p_glob, p_upd in zip(global_params, root_gradient)]
-    worker_params.append(buyer_params)
+        # Buyer parameters
+        buyer_params = [p_glob + p_upd for p_glob, p_upd in zip(global_params, root_gradient)]
+        worker_params.append(buyer_params)
 
-    # 2. Determine model type
-    sm_model_type = self.sm_model_type if (self.sm_model_type and self.sm_model_type != 'None') else 'flexiblecnn'
+        # 2. Determine model type
+        sm_model_type = self.sm_model_type if (self.sm_model_type and self.sm_model_type != 'None') else 'flexiblecnn'
 
-    # 3. Create and train MaskNet
-    masknet = create_masknet(worker_params, sm_model_type, self.device)
-    if masknet is None:
-        raise RuntimeError(f"Failed to create masknet with type '{sm_model_type}'.")
+        # 3. Create and train MaskNet
+        masknet = create_masknet(worker_params, sm_model_type, self.device)
+        if masknet is None:
+            raise RuntimeError(f"Failed to create masknet with type '{sm_model_type}'.")
 
-    masknet = train_masknet_small(
-        masknet,
-        self.buyer_data_loader,
-        self.mask_epochs,
-        self.mask_lr,
-        self.mask_clip,
-        self.device
-    )
+        masknet = train_masknet_small(
+            masknet,
+            self.buyer_data_loader,
+            self.mask_epochs,
+            self.mask_lr,
+            self.mask_clip,
+            self.device
+        )
 
-    # 4. Extract SOFT masks (Floats)
-    seller_masks_np = []
+        # 4. Extract SOFT masks (Floats)
+        seller_masks_np = []
 
-    for i in range(len(seller_ids)):
-        seller_mask_layers = []
-        for layer in masknet.modules():
-            if isinstance(layer, (myconv2d, mylinear)):
-                if hasattr(layer, 'weight_mask'):
-                    seller_mask_layers.append(torch.flatten(torch.sigmoid(layer.weight_mask[i].data)))
-                if hasattr(layer, 'bias_mask') and layer.bias_mask is not None:
-                    seller_mask_layers.append(torch.flatten(torch.sigmoid(layer.bias_mask[i].data)))
+        for i in range(len(seller_ids)):
+            seller_mask_layers = []
+            for layer in masknet.modules():
+                if isinstance(layer, (myconv2d, mylinear)):
+                    if hasattr(layer, 'weight_mask'):
+                        seller_mask_layers.append(torch.flatten(torch.sigmoid(layer.weight_mask[i].data)))
+                    if hasattr(layer, 'bias_mask') and layer.bias_mask is not None:
+                        seller_mask_layers.append(torch.flatten(torch.sigmoid(layer.bias_mask[i].data)))
 
-        if not seller_mask_layers:
-            seller_masks_np.append(np.zeros(10))
-            continue
+            if not seller_mask_layers:
+                seller_masks_np.append(np.zeros(10))
+                continue
 
-        # Keep as float (Soft Mask)
-        flat_mask = torch.cat(seller_mask_layers).cpu().numpy()
-        threshold = self.mask_threshold  # Ensure this is passed/set, e.g., 0.5
-        flat_mask = (flat_mask > threshold).astype(float)
-        # ---------------------------------------
+            # Keep as float (Soft Mask)
+            flat_mask = torch.cat(seller_mask_layers).cpu().numpy()
+            threshold = self.mask_threshold  # Ensure this is passed/set, e.g., 0.5
+            flat_mask = (flat_mask > threshold).astype(float)
+            # ---------------------------------------
 
-        seller_masks_np.append(flat_mask)
-    masks_matrix = np.array(seller_masks_np)
+            seller_masks_np.append(flat_mask)
+        masks_matrix = np.array(seller_masks_np)
 
-    # --- ROBUST CLUSTERING BLOCK (VARIANCE FIX) ---
+        # --- ROBUST CLUSTERING BLOCK (VARIANCE FIX) ---
 
-    # 1. Sanitize
-    if np.isnan(masks_matrix).any():
-        logger.warning("NaNs detected in seller masks. Replacing with 0.5.")
-        masks_matrix = np.nan_to_num(masks_matrix, nan=0.5)
+        # 1. Sanitize
+        if np.isnan(masks_matrix).any():
+            logger.warning("NaNs detected in seller masks. Replacing with 0.5.")
+            masks_matrix = np.nan_to_num(masks_matrix, nan=0.5)
 
-    # 2. VARIANCE CHECK (The Fix)
-    # Instead of checking unique rows, we check if the max variance across sellers is essentially zero.
-    # If variance is < 1e-5, PCA will divide by zero.
-    max_variance = np.max(np.var(masks_matrix, axis=0))
+        # 2. VARIANCE CHECK (The Fix)
+        # Instead of checking unique rows, we check if the max variance across sellers is essentially zero.
+        # If variance is < 1e-5, PCA will divide by zero.
+        max_variance = np.max(np.var(masks_matrix, axis=0))
 
-    # Also require at least 2 sellers to cluster
-    if len(seller_ids) < 2 or max_variance < 1e-6:
-        logger.warning(f"⚠️ Low Mask Variance ({max_variance:.6f}). Skipping GMM (selecting all).")
-        gmm_labels = np.ones(len(seller_ids))
-    else:
-        try:
-            # 3. Run GMM
-            gmm_labels = GMM2(masks_matrix)
-
-            # 4. Enforce Honest Majority Rule
-            count_0 = np.sum(gmm_labels == 0)
-            count_1 = np.sum(gmm_labels == 1)
-
-            if count_0 > count_1:
-                logger.info(f"GMM Flip: Cluster 0 is majority ({count_0} vs {count_1}). Swapping labels.")
-                gmm_labels = 1 - gmm_labels
-
-        except Exception as e:
-            # Catch any residual sklearn errors
-            logger.error(f"GMM2 Clustering Exception: {e}. Defaulting to select all.")
+        # Also require at least 2 sellers to cluster
+        if len(seller_ids) < 2 or max_variance < 1e-6:
+            logger.warning(f"⚠️ Low Mask Variance ({max_variance:.6f}). Skipping GMM (selecting all).")
             gmm_labels = np.ones(len(seller_ids))
-
-    # 5. Aggregate
-    aggregated_gradient = [torch.zeros_like(p) for p in self.global_model.parameters()]
-    selected_sids, outlier_sids = [], []
-    inlier_updates = []
-
-    aggregation_stats = {}
-
-    for i, sid in enumerate(seller_ids):
-        is_inlier = (gmm_labels[i] == 1)
-        aggregation_stats[f"skymask_gmm_label_{sid}"] = int(is_inlier)
-
-        if is_inlier:
-            selected_sids.append(sid)
-            inlier_updates.append(processed_updates[sid])
         else:
-            outlier_sids.append(sid)
+            try:
+                # 3. Run GMM
+                gmm_labels = GMM2(masks_matrix)
 
-    if inlier_updates:
-        num_inliers = len(inlier_updates)
-        for update in inlier_updates:
-            for agg_grad, upd_grad in zip(aggregated_gradient, update):
-                agg_grad.add_(upd_grad, alpha=1 / num_inliers)
+                # 4. Enforce Honest Majority Rule
+                count_0 = np.sum(gmm_labels == 0)
+                count_1 = np.sum(gmm_labels == 1)
 
-    aggregation_stats["skymask_num_selected"] = len(selected_sids)
-    aggregation_stats["skymask_num_rejected"] = len(outlier_sids)
+                if count_0 > count_1:
+                    logger.info(f"GMM Flip: Cluster 0 is majority ({count_0} vs {count_1}). Swapping labels.")
+                    gmm_labels = 1 - gmm_labels
 
-    return aggregated_gradient, selected_sids, outlier_sids, aggregation_stats
+            except Exception as e:
+                # Catch any residual sklearn errors
+                logger.error(f"GMM2 Clustering Exception: {e}. Defaulting to select all.")
+                gmm_labels = np.ones(len(seller_ids))
+
+        # 5. Aggregate
+        aggregated_gradient = [torch.zeros_like(p) for p in self.global_model.parameters()]
+        selected_sids, outlier_sids = [], []
+        inlier_updates = []
+
+        aggregation_stats = {}
+
+        for i, sid in enumerate(seller_ids):
+            is_inlier = (gmm_labels[i] == 1)
+            aggregation_stats[f"skymask_gmm_label_{sid}"] = int(is_inlier)
+
+            if is_inlier:
+                selected_sids.append(sid)
+                inlier_updates.append(processed_updates[sid])
+            else:
+                outlier_sids.append(sid)
+
+        if inlier_updates:
+            num_inliers = len(inlier_updates)
+            for update in inlier_updates:
+                for agg_grad, upd_grad in zip(aggregated_gradient, update):
+                    agg_grad.add_(upd_grad, alpha=1 / num_inliers)
+
+        aggregation_stats["skymask_num_selected"] = len(selected_sids)
+        aggregation_stats["skymask_num_rejected"] = len(outlier_sids)
+
+        return aggregated_gradient, selected_sids, outlier_sids, aggregation_stats
