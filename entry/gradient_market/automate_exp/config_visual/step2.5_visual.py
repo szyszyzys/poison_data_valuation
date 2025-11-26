@@ -15,7 +15,7 @@ import seaborn as sns
 
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step2.5_figures_flexible"
-RELATIVE_ACC_THRESHOLD = 0.90
+RELATIVE_ACC_THRESHOLD = 0.85
 
 # 1. DEFENSE LABELS: Map your folder names (keys) to Plot Titles (values)
 #    If your folder is named 'skymask_lite', add 'skymask_lite': 'SkyMask (Small)' here.
