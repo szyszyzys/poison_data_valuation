@@ -84,10 +84,7 @@ def train_masknet_small(masknet: nn.Module, server_data_loader, epochs: int, lr:
 class SkymaskSmallAggregator(BaseAggregator):
     """
     Implements the SkyMask (Small Dataset Variant) aggregation strategy.
-
-    This aggregator uses a subsampling trick to simulate a small root dataset (100 samples)
-    regardless of the actual size of the buyer_data_loader. This prevents mask saturation
-    and aligns with the official paper's constraints.
+    Fixed to handle PCA/GMM convergence errors when masks are identical.
     """
 
     def __init__(self,
@@ -99,10 +96,7 @@ class SkymaskSmallAggregator(BaseAggregator):
                  mask_threshold: float,
                  *args, **kwargs):
 
-        # Pass all common arguments (global_model, device, etc.) up to the BaseAggregator
         super().__init__(*args, **kwargs)
-
-        # Handle the specific parameters for Skymask
         self.clip = clip
         self.sm_model_type = sm_model_type
         self.mask_epochs = mask_epochs
@@ -132,36 +126,22 @@ class SkymaskSmallAggregator(BaseAggregator):
             processed_updates[sid] = update
             worker_params.append([p_glob + p_upd for p_glob, p_upd in zip(global_params, update)])
 
-        # Here, we use the passed-in root_gradient to construct the buyer's parameters
+        # Buyer parameters (using root_gradient)
         buyer_params = [p_glob + p_upd for p_glob, p_upd in zip(global_params, root_gradient)]
         worker_params.append(buyer_params)
 
         # 2. Determine the correct model type
         if self.sm_model_type == 'None' or self.sm_model_type is None or self.sm_model_type == '':
             sm_model_type = 'flexiblecnn'
-            logger.warning(f"sm_model_type not set. Using 'dynamic' which auto-adapts to model architecture.")
         else:
             sm_model_type = self.sm_model_type
-            logger.info(f"Using explicitly set sm_model_type: {sm_model_type}")
 
         # 3. Create and train the MaskNet
         masknet = create_masknet(worker_params, sm_model_type, self.device)
 
-        # Debugging / Structure Analysis (Optional - can be commented out for production)
-        # print("\n" + "=" * 80)
-        # print("MASKNET STRUCTURE ANALYSIS:")
-        # print("=" * 80)
-        # for i, (name, module) in enumerate(masknet.named_modules()):
-        #     print(f"{i}: {name} -> {type(module).__name__}")
-        # print("=" * 80 + "\n")
-
         if masknet is None:
-            raise RuntimeError(
-                f"Failed to create masknet with type '{sm_model_type}'. "
-                f"Check your model architecture matches the sm_model_type."
-            )
+            raise RuntimeError(f"Failed to create masknet with type '{sm_model_type}'.")
 
-        # CALL THE RENAMED TRAINING FUNCTION
         masknet = train_masknet_small(
             masknet,
             self.buyer_data_loader,
@@ -171,7 +151,7 @@ class SkymaskSmallAggregator(BaseAggregator):
             self.device
         )
 
-        # 4. Extract masks and classify with GMM
+        # 4. Extract masks
         seller_masks_np = []
         t = torch.tensor([self.mask_threshold], device=self.device)
 
@@ -185,16 +165,44 @@ class SkymaskSmallAggregator(BaseAggregator):
                         seller_mask_layers.append(torch.flatten(torch.sigmoid(layer.bias_mask[i].data)))
 
             if not seller_mask_layers:
-                seller_masks_np.append(np.array([]))
+                # Fallback for empty layers
+                seller_masks_np.append(np.zeros(10))
                 continue
 
+            # Apply threshold to make binary
             flat_mask = (torch.cat(seller_mask_layers) > t).float()
             seller_masks_np.append(flat_mask.cpu().numpy())
 
-        if len(seller_masks_np) < 2:
-            gmm_labels = np.ones(len(seller_masks_np))
+        # Stack to create matrix (Sellers x Features)
+        masks_matrix = np.array(seller_masks_np)
+
+        # --- FIX START: ROBUST CLUSTERING ---
+
+        # 1. Handle NaNs (replace with 0 to prevent crash)
+        if np.isnan(masks_matrix).any():
+            logger.warning("NaNs detected in seller masks. Replacing with 0.")
+            masks_matrix = np.nan_to_num(masks_matrix, nan=0.0)
+
+        # 2. Check for duplicate masks or insufficient data
+        # If all sellers have the exact same mask, GMM will fail to find 2 clusters.
+        # We calculate unique rows to see if we have diversity.
+        unique_masks = np.unique(masks_matrix, axis=0)
+
+        num_sellers = len(seller_ids)
+        distinct_clusters_possible = len(unique_masks) >= 2
+
+        if num_sellers < 2 or not distinct_clusters_possible:
+            logger.warning(f"Distinct masks ({len(unique_masks)}) < 2. Skipping GMM, assuming all benign.")
+            gmm_labels = np.ones(num_sellers)
         else:
-            gmm_labels = GMM2(seller_masks_np)
+            try:
+                # Only run GMM if we have diverse data
+                gmm_labels = GMM2(masks_matrix)
+            except Exception as e:
+                logger.error(f"GMM2 clustering failed: {e}. Defaulting to all benign.")
+                gmm_labels = np.ones(num_sellers)
+
+        # --- FIX END ---
 
         # 5. Aggregate using inliers
         aggregated_gradient = [torch.zeros_like(p) for p in self.global_model.parameters()]
@@ -215,7 +223,7 @@ class SkymaskSmallAggregator(BaseAggregator):
 
         if inlier_updates:
             num_inliers = len(inlier_updates)
-            logger.info(f"Aggregating {num_inliers} inlier updates.")
+            # logger.info(f"Aggregating {num_inliers} inlier updates.")
             for update in inlier_updates:
                 for agg_grad, upd_grad in zip(aggregated_gradient, update):
                     agg_grad.add_(upd_grad, alpha=1 / num_inliers)
