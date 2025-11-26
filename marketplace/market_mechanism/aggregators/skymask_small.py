@@ -106,7 +106,7 @@ class SkymaskSmallAggregator(BaseAggregator):
         self.mask_threshold = mask_threshold
         logger.info(f"SkymaskSmallAggregator initialized with mask_epochs={self.mask_epochs}, mask_lr={self.mask_lr}")
 
-    def aggregate(
+def aggregate(
             self,
             global_epoch: int,
             seller_updates: Dict[str, List[torch.Tensor]],
@@ -127,19 +127,15 @@ class SkymaskSmallAggregator(BaseAggregator):
             processed_updates[sid] = update
             worker_params.append([p_glob + p_upd for p_glob, p_upd in zip(global_params, update)])
 
-        # Buyer parameters (using root_gradient)
+        # Buyer parameters
         buyer_params = [p_glob + p_upd for p_glob, p_upd in zip(global_params, root_gradient)]
         worker_params.append(buyer_params)
 
-        # 2. Determine the correct model type
-        if self.sm_model_type == 'None' or self.sm_model_type is None or self.sm_model_type == '':
-            sm_model_type = 'flexiblecnn'
-        else:
-            sm_model_type = self.sm_model_type
+        # 2. Determine model type
+        sm_model_type = self.sm_model_type if (self.sm_model_type and self.sm_model_type != 'None') else 'flexiblecnn'
 
-        # 3. Create and train the MaskNet
+        # 3. Create and train MaskNet
         masknet = create_masknet(worker_params, sm_model_type, self.device)
-
         if masknet is None:
             raise RuntimeError(f"Failed to create masknet with type '{sm_model_type}'.")
 
@@ -152,9 +148,8 @@ class SkymaskSmallAggregator(BaseAggregator):
             self.device
         )
 
-        # 4. Extract masks
+        # 4. Extract SOFT masks (Floats)
         seller_masks_np = []
-        t = torch.tensor([self.mask_threshold], device=self.device)
 
         for i in range(len(seller_ids)):
             seller_mask_layers = []
@@ -166,40 +161,50 @@ class SkymaskSmallAggregator(BaseAggregator):
                         seller_mask_layers.append(torch.flatten(torch.sigmoid(layer.bias_mask[i].data)))
 
             if not seller_mask_layers:
-                # Fallback for empty layers
                 seller_masks_np.append(np.zeros(10))
                 continue
 
-            # Apply threshold to make binary
-            flat_mask = (torch.cat(seller_mask_layers) > t).float()
-            seller_masks_np.append(flat_mask.cpu().numpy())
+            # Keep as float (Soft Mask)
+            flat_mask = torch.cat(seller_mask_layers).cpu().numpy()
+            seller_masks_np.append(flat_mask)
 
-        # Stack to create matrix (Sellers x Features)
         masks_matrix = np.array(seller_masks_np)
 
-        # --- ROBUST CLUSTERING BLOCK ---
+        # --- ROBUST CLUSTERING BLOCK (VARIANCE FIX) ---
 
-        # 1. Sanitize NaNs if training failed
+        # 1. Sanitize
         if np.isnan(masks_matrix).any():
-            logger.warning("NaNs detected in seller masks. Replacing with 0.")
-            masks_matrix = np.nan_to_num(masks_matrix, nan=0.0)
+            logger.warning("NaNs detected in seller masks. Replacing with 0.5.")
+            masks_matrix = np.nan_to_num(masks_matrix, nan=0.5)
 
-        # 2. Check for diversity BEFORE calling GMM
-        # This prevents the "Number of distinct clusters (1)" and "divide by zero" errors
-        unique_masks = np.unique(masks_matrix, axis=0)
+        # 2. VARIANCE CHECK (The Fix)
+        # Instead of checking unique rows, we check if the max variance across sellers is essentially zero.
+        # If variance is < 1e-5, PCA will divide by zero.
+        max_variance = np.max(np.var(masks_matrix, axis=0))
 
-        if len(unique_masks) < 2:
-            logger.warning(f"⚠️ All {len(masks_matrix)} generated masks are identical. Skipping GMM (selecting all).")
+        # Also require at least 2 sellers to cluster
+        if len(seller_ids) < 2 or max_variance < 1e-6:
+            logger.warning(f"⚠️ Low Mask Variance ({max_variance:.6f}). Skipping GMM (selecting all).")
             gmm_labels = np.ones(len(seller_ids))
         else:
             try:
-                # Only cluster if we have at least 2 different mask patterns
+                # 3. Run GMM
                 gmm_labels = GMM2(masks_matrix)
+
+                # 4. Enforce Honest Majority Rule
+                count_0 = np.sum(gmm_labels == 0)
+                count_1 = np.sum(gmm_labels == 1)
+
+                if count_0 > count_1:
+                    logger.info(f"GMM Flip: Cluster 0 is majority ({count_0} vs {count_1}). Swapping labels.")
+                    gmm_labels = 1 - gmm_labels
+
             except Exception as e:
-                logger.error(f"GMM2 Clustering failed: {e}. Defaulting to select all.")
+                # Catch any residual sklearn errors
+                logger.error(f"GMM2 Clustering Exception: {e}. Defaulting to select all.")
                 gmm_labels = np.ones(len(seller_ids))
 
-        # 5. Aggregate using inliers
+        # 5. Aggregate
         aggregated_gradient = [torch.zeros_like(p) for p in self.global_model.parameters()]
         selected_sids, outlier_sids = [], []
         inlier_updates = []
@@ -207,7 +212,7 @@ class SkymaskSmallAggregator(BaseAggregator):
         aggregation_stats = {}
 
         for i, sid in enumerate(seller_ids):
-            is_inlier = i < len(gmm_labels) and gmm_labels[i] == 1
+            is_inlier = (gmm_labels[i] == 1)
             aggregation_stats[f"skymask_gmm_label_{sid}"] = int(is_inlier)
 
             if is_inlier:
@@ -218,7 +223,6 @@ class SkymaskSmallAggregator(BaseAggregator):
 
         if inlier_updates:
             num_inliers = len(inlier_updates)
-            # logger.info(f"Aggregating {num_inliers} inlier updates.")
             for update in inlier_updates:
                 for agg_grad, upd_grad in zip(aggregated_gradient, update):
                     agg_grad.add_(upd_grad, alpha=1 / num_inliers)
