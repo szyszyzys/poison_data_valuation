@@ -24,7 +24,7 @@ DEFENSE_LABELS = {
     'fltrust': 'FLTrust',
     'martfl': 'MARTFL',
     'skymask': 'SkyMask',
-    'skymask_small': 'SkyMask (Paper Parameter)',
+    # 'skymask_small': 'SkyMask (Paper Parameter)',
 }
 
 # 2. PLOT ORDER & VISIBILITY
@@ -36,7 +36,7 @@ DEFENSE_ORDER = [
     'fltrust',
     'martfl',
     'skymask',
-    'skymask_small'
+    # 'skymask_small'
 ]
 
 # ==========================================
