@@ -81,6 +81,7 @@ def train_masknet_small(masknet: nn.Module, server_data_loader, epochs: int, lr:
     logger.info("MaskNet Training Finished.")
     return masknet
 
+
 class SkymaskSmallAggregator(BaseAggregator):
     """
     Implements the SkyMask (Small Dataset Variant) aggregation strategy.
@@ -176,33 +177,27 @@ class SkymaskSmallAggregator(BaseAggregator):
         # Stack to create matrix (Sellers x Features)
         masks_matrix = np.array(seller_masks_np)
 
-        # --- FIX START: ROBUST CLUSTERING ---
+        # --- ROBUST CLUSTERING BLOCK ---
 
-        # 1. Handle NaNs (replace with 0 to prevent crash)
+        # 1. Sanitize NaNs if training failed
         if np.isnan(masks_matrix).any():
             logger.warning("NaNs detected in seller masks. Replacing with 0.")
             masks_matrix = np.nan_to_num(masks_matrix, nan=0.0)
 
-        # 2. Check for duplicate masks or insufficient data
-        # If all sellers have the exact same mask, GMM will fail to find 2 clusters.
-        # We calculate unique rows to see if we have diversity.
+        # 2. Check for diversity BEFORE calling GMM
+        # This prevents the "Number of distinct clusters (1)" and "divide by zero" errors
         unique_masks = np.unique(masks_matrix, axis=0)
 
-        num_sellers = len(seller_ids)
-        distinct_clusters_possible = len(unique_masks) >= 2
-
-        if num_sellers < 2 or not distinct_clusters_possible:
-            logger.warning(f"Distinct masks ({len(unique_masks)}) < 2. Skipping GMM, assuming all benign.")
-            gmm_labels = np.ones(num_sellers)
+        if len(unique_masks) < 2:
+            logger.warning(f"⚠️ All {len(masks_matrix)} generated masks are identical. Skipping GMM (selecting all).")
+            gmm_labels = np.ones(len(seller_ids))
         else:
             try:
-                # Only run GMM if we have diverse data
+                # Only cluster if we have at least 2 different mask patterns
                 gmm_labels = GMM2(masks_matrix)
             except Exception as e:
-                logger.error(f"GMM2 clustering failed: {e}. Defaulting to all benign.")
-                gmm_labels = np.ones(num_sellers)
-
-        # --- FIX END ---
+                logger.error(f"GMM2 Clustering failed: {e}. Defaulting to select all.")
+                gmm_labels = np.ones(len(seller_ids))
 
         # 5. Aggregate using inliers
         aggregated_gradient = [torch.zeros_like(p) for p in self.global_model.parameters()]
