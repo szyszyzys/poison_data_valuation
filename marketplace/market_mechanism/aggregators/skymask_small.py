@@ -21,40 +21,33 @@ def train_masknet_small(masknet: nn.Module, server_data_loader, epochs: int, lr:
     """
     Helper function to train the SkyMask MaskNet for the 'Small Dataset' variant.
 
-    This function explicitly simulates a small root dataset (approx 100 samples)
-    by limiting the number of updates per epoch and using early stopping.
-    This prevents mask saturation when the actual dataset is large.
+    ALIGNED WITH OFFICIAL IMPLEMENTATION:
+    1. Uses a small subset of updates (simulating the 'minibatch' selection).
+    2. Checks convergence only every 10 epochs (Long-term stability).
     """
     masknet = masknet.to(device)
     optimizer = optim.SGD(masknet.parameters(), lr=lr)
     loss_fn = F.nll_loss
 
     # --- TRICK SETUP ---
-    # The paper relies on a small dataset (100 samples).
-    # If your batch_size is 32, roughly 3-4 batches = 100 samples.
-    # We restrict the loop to this number to prevent over-training.
-    UPDATES_PER_EPOCH = 4
+    UPDATES_PER_EPOCH = 4  # Keeps simulation of small dataset (~100 samples)
 
-    # Track loss for official convergence check
+    # Initialize prev_loss (temp) high, exactly like official 'temp = 1e4'
     prev_loss = 1e4
 
     logger.info(f"Starting MaskNet (Small) Training: Epochs={epochs}, LR={lr}, Updates/Epoch={UPDATES_PER_EPOCH}")
 
-    # Create an iterator so we can pull batches manually
     data_iter = iter(server_data_loader)
 
     for epoch in range(epochs):
         masknet.train()
-
         current_loss = 0.0
 
-        # --- THE TRICK LOOP ---
-        # Instead of 'for X, y in server_data_loader:', we loop a fixed number of times.
+        # --- TRAINING LOOP ---
         for _ in range(UPDATES_PER_EPOCH):
             try:
                 X, y = next(data_iter)
             except StopIteration:
-                # If we hit the end of the large dataset, restart
                 data_iter = iter(server_data_loader)
                 X, y = next(data_iter)
 
@@ -64,7 +57,7 @@ def train_masknet_small(masknet: nn.Module, server_data_loader, epochs: int, lr:
             loss = loss_fn(output, y)
             loss.backward()
 
-            # Manual gradient clipping
+            # Apply gradient clipping
             for group in optimizer.param_groups:
                 for param in group["params"]:
                     if param.grad is not None:
@@ -73,19 +66,26 @@ def train_masknet_small(masknet: nn.Module, server_data_loader, epochs: int, lr:
 
             current_loss = loss.item()
 
-        # --- CONVERGENCE CHECK ---
-        # Official logic: Stop if loss improvement is < 0.01
-        loss_diff = prev_loss - current_loss
+        # --- OFFICIAL CONVERGENCE LOGIC ---
+        # The official code ONLY checks when (epoch % 10 == 0).
+        # It compares the loss now vs 10 epochs ago.
 
-        if epoch > 0 and loss_diff < 1e-2:
-            logger.info(f"MaskNet Converged at epoch {epoch} (Loss diff {loss_diff:.4f}). Stopping.")
-            break
+        if epoch % 10 == 0:
+            loss_diff = prev_loss - current_loss
 
-        prev_loss = current_loss
+            logger.info(f"Epoch {epoch}: Loss={current_loss:.4f}, Diff from last check={loss_diff:.4f}")
+
+            # Official condition: if temp - loss < 1e-2: break
+            # We add 'epoch > 0' to ensure we don't stop at start.
+            if epoch > 0 and loss_diff < 1e-2:
+                logger.info(f"MaskNet Converged at epoch {epoch} (Loss diff {loss_diff:.4f} < 0.01). Stopping.")
+                break
+            else:
+                # Update 'temp' (prev_loss) only if we didn't break
+                prev_loss = current_loss
 
     logger.info("MaskNet Training Finished.")
     return masknet
-
 
 class SkymaskSmallAggregator(BaseAggregator):
     """
