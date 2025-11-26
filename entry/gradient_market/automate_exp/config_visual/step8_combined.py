@@ -13,7 +13,7 @@ from typing import List, Dict, Any
 # ==========================================
 
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/attack_effectiveness"
+FIGURE_OUTPUT_DIR = "./figures/step8_attack_effectiveness"
 TARGET_VICTIM_ID = "bn_5"  # The ID of the seller targeted by Pivot
 
 # Configuration to map attacks to their correct visual story
