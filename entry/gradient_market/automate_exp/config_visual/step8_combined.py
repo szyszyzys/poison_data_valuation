@@ -6,197 +6,258 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 
 # ==========================================
-# 1. CONFIGURATION & STYLING
+# 1. CONFIGURATION
 # ==========================================
 
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step8"
-# >>> CHOOSE YOUR DEEP DIVE ATTACK HERE <<<
-DEEP_DIVE_ATTACK = "Label Flip"
+FIGURE_OUTPUT_DIR = "./figures/attack_effectiveness"
+TARGET_VICTIM_ID = "bn_5"  # The ID of the seller targeted by Pivot
 
-# --- Naming & Colors ---
-PRETTY_NAMES = {
-    "fedavg": "FedAvg", "fltrust": "FLTrust", "martfl": "MARTFL",
-    "skymask": "SkyMask", "skymask_small": "SkyMask",
-    "min_max": "Min-Max", "min_sum": "Min-Sum",
-    "labelflip": "Label Flip", "label_flip": "Label Flip",
-    "fang_krum": "Fang-Krum", "fang_trim": "Fang-Trim",
-    "scaling": "Scaling", "dba": "DBA", "badnet": "BadNet",
-    "pivot": "Pivot", "0. Baseline": "Baseline"
+# Configuration to map attacks to their correct visual story
+ATTACK_CATEGORIES = {
+    "disruption": ["DoS", "Trust Erosion", "Oscillating", "BadNet", "DBA"],
+    "manipulation": ["Starvation", "Class Exclusion"],
+    "isolation": ["Pivot", "Targeted Pivot"]
 }
 
-DEFENSE_COLORS = {
-    "FedAvg": "#7f8c8d", "FLTrust": "#3498db",
-    "MARTFL": "#2ecc71", "SkyMask": "#e74c3c",
-}
+# Style Config
+sns.set_theme(style="whitegrid")
+sns.set_context("talk", font_scale=1.1)
+plt.rcParams.update({
+    'font.family': 'sans-serif',
+    'font.weight': 'bold',
+    'axes.labelweight': 'bold',
+    'axes.titleweight': 'bold',
+    'figure.figsize': (10, 6)
+})
 
 DEFENSE_ORDER = ["FedAvg", "FLTrust", "MARTFL", "SkyMask"]
+DEFENSE_COLORS = {"FedAvg": "#95a5a6", "FLTrust": "#3498db", "MARTFL": "#2ecc71", "SkyMask": "#e74c3c"}
+
+# ==========================================
+# 2. DATA LOADING
+# ==========================================
 
 def format_label(label: str) -> str:
-    if not isinstance(label, str): return str(label)
-    return PRETTY_NAMES.get(label.lower(), label.replace("_", " ").title())
+    # Quick mapping for cleaner names
+    param_map = {
+        "fedavg": "FedAvg", "fltrust": "FLTrust", "martfl": "MARTFL",
+        "skymask": "SkyMask", "skymask_small": "SkyMask",
+        "dos": "DoS", "erosion": "Trust Erosion",
+        "starvation": "Starvation", "class_exclusion": "Class Exclusion",
+        "orthogonal_pivot": "Pivot", "pivot": "Pivot",
+        "oscillating": "Oscillating", "0. Baseline": "Healthy Baseline"
+    }
+    return param_map.get(label.lower(), label.replace("_", " ").title())
 
-def set_style():
-    sns.set_theme(style="whitegrid")
-    sns.set_context("paper", font_scale=1.3)
-    plt.rcParams.update({
-        'font.weight': 'bold', 'axes.labelweight': 'bold',
-        'axes.titleweight': 'bold', 'axes.titlesize': 16,
-        'lines.linewidth': 2,
-    })
-
-# ==========================================
-# 2. DATA LOADING (Standardized)
-# ==========================================
-
-def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
+def parse_scenario(scenario_name: str):
+    # Regex to extract metadata from folder names
     pattern = r'(step[78])_(baseline_no_attack|buyer_attack)_(?:(.+?)_)?(fedavg|martfl|fltrust|skymask|skymask_small)_(.*)'
     match = re.search(pattern, scenario_name)
     if match:
         _, mode, attack_raw, defense, dataset = match.groups()
-        attack_name = "0. Baseline" if "baseline" in mode else attack_raw
-        return {"type": "baseline" if "baseline" in mode else "attack",
-                "attack": format_label(attack_name),
-                "defense": format_label(defense),
-                "dataset": dataset}
-    return {"type": "unknown"}
+        attack = "0. Baseline" if "baseline" in mode else attack_raw
+        return {
+            "scenario": scenario_name,
+            "attack": format_label(attack),
+            "defense": format_label(defense),
+            "dataset": dataset
+        }
+    return None
 
-def load_run_data(metrics_file: Path) -> List[Dict[str, Any]]:
-    try:
-        report_file = metrics_file.parent / "marketplace_report.json"
-        if not report_file.exists(): return []
-        with open(report_file, 'r') as f: report = json.load(f)
-        records = []
-        for sdata in report.get('seller_summaries', {}).values():
-            if sdata.get('type') == 'benign':
-                records.append({'selection_rate': sdata.get('selection_rate', 0.0)})
-        return records
-    except: return []
-
-def collect_data(base_dir: str) -> pd.DataFrame:
-    all_records = []
+def load_data(base_dir: str):
+    records = []
     base_path = Path(base_dir)
     folders = list(base_path.glob("step8_buyer_attack_*")) + list(base_path.glob("step7_baseline_no_attack_*"))
-    print(f"Processing {len(folders)} directories...")
+
+    print(f"Scanning {len(folders)} folders...")
+
     for path in folders:
-        info = parse_scenario_name(path.name)
-        if info["type"] == "unknown": continue
+        meta = parse_scenario(path.name)
+        if not meta: continue
+
+        # Load Metrics (Accuracy)
         for mfile in path.rglob("final_metrics.json"):
-            for r in load_run_data(mfile):
-                all_records.append({**info, **r})
-    return pd.DataFrame(all_records)
+            try:
+                with open(mfile) as f: metrics = json.load(f)
+                acc = metrics.get('acc', 0)
+                if acc > 1.0: acc /= 100.0
 
-def get_baseline_averages(df: pd.DataFrame) -> Dict[str, float]:
-    """Calculates average healthy selection rate per defense."""
-    base_df = df[df['attack'] == format_label("0. Baseline")]
-    if base_df.empty: return {}
-    return base_df.groupby('defense')['selection_rate'].mean().to_dict()
+                # Load Seller Reports (Selection Rates)
+                report_file = mfile.parent / "marketplace_report.json"
+                if report_file.exists():
+                    with open(report_file) as rf: report = json.load(rf)
+                    for sid, sdata in report.get('seller_summaries', {}).items():
+                        if sdata.get('type') == 'benign':
+                            records.append({
+                                **meta,
+                                "acc": acc,
+                                "seller_id": sid,
+                                "selection_rate": sdata.get('selection_rate', 0.0)
+                            })
+            except Exception as e: pass
+
+    return pd.DataFrame(records)
 
 # ==========================================
-# 3. THE COMBINED PLOTTING FUNCTION
+# 3. VISUALIZATION FUNCTIONS
 # ==========================================
 
-def plot_combined_summary_and_deep_dive(df: pd.DataFrame, deep_dive_attack: str, baseline_avgs: Dict, output_dir: Path):
-    print(f"\n--- Generating Combined Figure (Deep Dive: {deep_dive_attack}) ---")
+def plot_disruption_impact(df, output_dir):
+    """
+    VISUAL 1: The 'Utility Collapse' (Bar Chart)
+    Shows how DoS and Erosion destroy model accuracy compared to Baseline.
+    """
+    attacks = [a for a in ATTACK_CATEGORIES["disruption"] if a in df['attack'].unique()]
+    if not attacks: return
 
-    # Setup the figure: 1 row, 2 columns.
-    # width_ratios=[1.3, 1] makes the heatmap on the left slightly wider.
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6), gridspec_kw={'width_ratios': [1.3, 1]})
-    plt.subplots_adjust(wspace=0.25) # Space between the two plots
+    print(f"--- Generating Disruption Plot for {attacks} ---")
 
-    # ==========================
-    # LEFT PANEL: OVERALL HEATMAP
-    # ==========================
-    ax_left = axes[0]
+    # Filter Data
+    subset = df[df['attack'].isin(attacks + ["Healthy Baseline"])].copy()
 
-    # 1. Filter data: Remove Baseline rows (keeps heatmap focused on attacks)
-    heatmap_df = df[df['attack'] != format_label("0. Baseline")].copy()
+    # We only need one row per scenario (accuracy is global, not per seller)
+    subset = subset.drop_duplicates(subset=['attack', 'defense', 'acc'])
 
-    # 2. Aggregate: Calculate mean selection rate
-    agg_df = heatmap_df.groupby(['attack', 'defense'])['selection_rate'].mean().reset_index()
+    plt.figure(figsize=(10, 6))
 
-    # 3. Pivot for heatmap structure
-    pivot_data = agg_df.pivot(index='attack', columns='defense', values='selection_rate')
-    pivot_data = pivot_data.reindex(columns=DEFENSE_ORDER) # Ensure column order
-
-    # 4. Plot Heatmap
-    sns.heatmap(
-        pivot_data, annot=True, fmt=".2f",
-        cmap="RdYlGn", # Red=Low Selection (Attack wins), Green=High (Defense wins)
-        linewidths=1, linecolor='white',
-        cbar_kws={'label': 'Avg Selection Rate'},
-        ax=ax_left
+    sns.barplot(
+        data=subset, x="defense", y="acc", hue="attack",
+        order=DEFENSE_ORDER,
+        palette="magma", # Dark colors for severe attacks
+        edgecolor="black", linewidth=1.5
     )
-    ax_left.set_title("A. Overall Attack Impact (Mean Selection Rate)")
-    ax_left.set_ylabel("Attack Strategy")
-    ax_left.set_xlabel("Defense Mechanism")
 
-    # ==========================
-    # RIGHT PANEL: DEEP DIVE BOXPLOT
-    # ==========================
-    ax_right = axes[1]
-    target_attack_label = format_label(deep_dive_attack)
+    plt.title("Service Disruption: Impact on Model Utility", pad=15)
+    plt.ylabel("Global Test Accuracy")
+    plt.xlabel("Defense Mechanism")
+    plt.legend(title="Attack Scenario", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.ylim(0, 1.0)
 
-    # 1. Filter data for the specific attack
-    subset_df = df[df['attack'] == target_attack_label].copy()
+    plt.savefig(output_dir / "Visual_1_Disruption_Utility.pdf", bbox_inches='tight')
+    plt.close()
 
-    if subset_df.empty:
-        print(f"⚠️ Warning: No data found for attack '{target_attack_label}'. Skipping right panel.")
-        ax_right.text(0.5, 0.5, "Data Not Found", ha='center')
-    else:
-        # 2. Plot Boxplot
+def plot_manipulation_fairness(df, output_dir):
+    """
+    VISUAL 2: The 'Bifurcation' (Stripplot + Boxplot)
+    Shows how Starvation splits honest sellers into 'Winners' and 'Losers'.
+    """
+    attacks = [a for a in ATTACK_CATEGORIES["manipulation"] if a in df['attack'].unique()]
+    if not attacks: return
+
+    print(f"--- Generating Manipulation Plot for {attacks} ---")
+
+    subset = df[df['attack'].isin(attacks)].copy()
+
+    for attack in attacks:
+        attack_sub = subset[subset['attack'] == attack]
+
+        plt.figure(figsize=(10, 6))
+
+        # 1. Boxplot shows the overall statistics
         sns.boxplot(
-            data=subset_df, x='defense', y='selection_rate',
-            order=DEFENSE_ORDER, palette=DEFENSE_COLORS,
-            linewidth=2, fliersize=4, ax=ax_right
+            data=attack_sub, x="defense", y="selection_rate",
+            order=DEFENSE_ORDER, color="white",
+            linewidth=2, fliersize=0 # Hide outliers in box, show them in strip
         )
 
-        # 3. Add Baseline Dashed Lines (optional but recommended)
-        # This shows where the selection rate *should* be if there was no attack.
-        for i, defense in enumerate(DEFENSE_ORDER):
-             base_val = baseline_avgs.get(defense)
-             if base_val is not None:
-                 ax_right.hlines(y=base_val, xmin=i-0.4, xmax=i+0.4,
-                                 colors='black', linestyles='--', lw=2, alpha=0.6,
-                                 label="Healthy Baseline" if i == 0 else "")
+        # 2. Stripplot shows the individual sellers (The Split)
+        # jitter=True spreads them out so you can see the two groups
+        sns.stripplot(
+            data=attack_sub, x="defense", y="selection_rate",
+            order=DEFENSE_ORDER,
+            color="#e74c3c", alpha=0.6, jitter=0.2, size=6
+        )
 
-        # Add legend just for the baseline line if it exists
-        if baseline_avgs:
-             ax_right.legend(loc='lower right', frameon=True, fontsize=11)
+        plt.title(f"Market Manipulation: Seller Reward Bifurcation\n({attack})", pad=15)
+        plt.ylabel("Seller Selection Rate")
+        plt.xlabel("Defense Mechanism")
+        plt.ylim(-0.05, 1.05)
 
-        ax_right.set_title(f"B. Deep Dive: {target_attack_label} Distribution")
-        ax_right.set_ylim(-0.05, 1.05)
-        ax_right.set_ylabel("Selection Rate")
-        ax_right.set_xlabel("Defense Mechanism")
+        # Add annotation explaining the visual
+        plt.text(0.02, 0.05, "Points = Individual Honest Sellers.\nNote the split between 'Preferred' and 'Starved'.",
+                 transform=plt.gca().transAxes, fontsize=10, bbox=dict(facecolor='white', alpha=0.8))
 
-    # ==========================
-    # FINAL SAVING
-    # ==========================
-    safe_name = re.sub(r'[^\w]', '', target_attack_label)
-    fname = output_dir / f"Combined_Summary_{safe_name}.pdf"
-    # use bbox_inches='tight' to ensure nothing gets cut off
-    plt.savefig(fname, bbox_inches='tight', dpi=300)
-    print(f"  Saved: {fname.name}")
+        plt.savefig(output_dir / f"Visual_2_Manipulation_{attack.replace(' ','')}.pdf", bbox_inches='tight')
+        plt.close()
+
+def plot_victim_isolation(df, output_dir):
+    """
+    VISUAL 3: The 'Broken Tooth' (Bar Chart)
+    Shows specific exclusion of the victim ID vs others.
+    """
+    attacks = [a for a in ATTACK_CATEGORIES["isolation"] if a in df['attack'].unique()]
+    if not attacks: return
+
+    print(f"--- Generating Isolation Plot for {attacks} ---")
+
+    # Pick the most relevant scenario (e.g., SkyMask defense) to show the attack working
+    # We choose SkyMask or FedAvg as representative examples
+    target_defense = "SkyMask"
+
+    subset = df[
+        (df['attack'].isin(attacks)) &
+        (df['defense'] == target_defense)
+    ].copy()
+
+    if subset.empty: return
+
+    # Sort sellers to put Victim in the middle or highlight them
+    subset['is_victim'] = subset['seller_id'].apply(lambda x: x == TARGET_VICTIM_ID)
+    subset = subset.sort_values(by=['seller_id'])
+
+    # We create a new column for color mapping
+    subset['Status'] = subset['is_victim'].map({True: 'Targeted Victim', False: 'Other Sellers'})
+
+    plt.figure(figsize=(12, 6))
+
+    sns.barplot(
+        data=subset, x="seller_id", y="selection_rate", hue="Status",
+        palette={'Targeted Victim': '#c0392b', 'Other Sellers': '#bdc3c7'},
+        dodge=False, edgecolor="black"
+    )
+
+    plt.title(f"Targeted Censorship: Victim Isolation (Defense: {target_defense})", pad=15)
+    plt.ylabel("Selection Rate")
+    plt.xlabel("Seller ID")
+    plt.xticks(rotation=45, ha='right', fontsize=10)
+    plt.ylim(0, 1.05)
+    plt.legend(loc='upper right')
+
+    # Arrow annotation pointing to the victim
+    victim_x = subset.reset_index().index[subset['is_victim']].tolist()
+    if victim_x:
+        idx = victim_x[0]
+        plt.annotate('Selection Forced to 0', xy=(idx, 0.05), xytext=(idx, 0.3),
+                     arrowprops=dict(facecolor='black', shrink=0.05),
+                     ha='center', color='black', fontweight='bold')
+
+    plt.savefig(output_dir / "Visual_3_Targeted_Isolation.pdf", bbox_inches='tight')
+    plt.close()
 
 # ==========================================
-# MAIN
+# MAIN EXECUTION
 # ==========================================
+
 def main():
-    set_style()
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
 
-    df = collect_data(BASE_RESULTS_DIR)
-    if df.empty: return print("No data found.")
+    # 1. Load Everything
+    df = load_data(BASE_RESULTS_DIR)
+    if df.empty:
+        print("No data found.")
+        return
 
-    # Calculate healthy baselines once
-    baseline_avgs = get_baseline_averages(df)
+    # 2. Generate Story-Specific Visuals
+    plot_disruption_impact(df, output_dir)
+    plot_manipulation_fairness(df, output_dir)
+    plot_victim_isolation(df, output_dir)
 
-    # Generate the combined plot
-    plot_combined_summary_and_deep_dive(df, DEEP_DIVE_ATTACK, baseline_avgs, output_dir)
+    print(f"\n✅ Analysis Complete. Figures saved to {output_dir.resolve()}")
 
 if __name__ == "__main__":
     main()
