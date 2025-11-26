@@ -61,7 +61,7 @@ def generate_collusion_attack_scenarios() -> List[Scenario]:
     model_cfg_name = COLLUSION_SETUP["model_config_name"]
 
     # Testing FLTrust (Vulnerable) and MartFL (Target of Baseline Hijacking)
-    current_defenses = ["fltrust", "martfl", "fedavg", "skymask"]
+    current_defenses = ["fltrust", "martfl", "fedavg", "skymask", "skymask_small"]
 
     for defense_name in current_defenses:
         tuned_defense_params = get_tuned_defense_params(
