@@ -2,7 +2,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -24,7 +24,6 @@ DEFENSE_LABELS = {
     'fltrust': 'FLTrust',
     'martfl': 'MARTFL',
     'skymask': 'SkyMask',
-    # 'skymask_small': 'SkyMask (Paper Parameter)',
 }
 
 # 2. PLOT ORDER & VISIBILITY
@@ -36,8 +35,8 @@ DEFENSE_ORDER = [
     'fltrust',
     'martfl',
     'skymask',
-    # 'skymask_small'
 ]
+
 
 # ==========================================
 
@@ -50,6 +49,34 @@ def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
         hps['learning_rate'] = float(match.group(2))
         hps['local_epochs'] = int(match.group(3))
     return hps
+
+
+def save_utility_csv(df: pd.DataFrame, output_dir: Path):
+    print("\n--- Generating Utility Breakdown CSV ---")
+
+    # We calculate the stats that go into the Utility Rate
+    summary = df.groupby(['dataset', 'defense']).agg(
+        total_runs=('acc', 'count'),  # Denominator
+        usable_runs=('platform_usable', 'sum'),  # Numerator
+        utility_rate=('platform_usable', 'mean'),  # Result
+        avg_acc=('acc', 'mean'),
+        max_acc=('acc', 'max'),
+        threshold_used=('platform_usable_threshold', 'mean')
+    ).reset_index()
+
+    # Add explicit percentage column for readability
+    summary['utility_rate_percent'] = summary['utility_rate'] * 100
+
+    # Sort for cleaner CSV
+    summary = summary.sort_values(by=['dataset', 'utility_rate_percent'], ascending=[True, False])
+
+    # Save to file
+    csv_path = output_dir / "utility_rate_breakdown.csv"
+    summary.to_csv(csv_path, index=False)
+
+    print(f"✅ Saved CSV to: {csv_path}")
+    print("Preview of calculation:")
+    print(summary[['dataset', 'defense', 'total_runs', 'usable_runs', 'utility_rate_percent']].head(10).to_string())
 
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
@@ -95,7 +122,8 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
         ben_sellers = [s for s in sellers if s.get('type') == 'benign']
 
         run_data['adv_selection_rate'] = np.mean([s['selection_rate'] for s in adv_sellers]) if adv_sellers else 0.0
-        run_data['benign_selection_rate'] = np.mean([s['selection_rate'] for s in ben_sellers]) if ben_sellers else np.nan
+        run_data['benign_selection_rate'] = np.mean(
+            [s['selection_rate'] for s in ben_sellers]) if ben_sellers else np.nan
         return run_data
     except Exception:
         return {}
@@ -106,7 +134,8 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     base_path = Path(base_dir)
     print(f"Searching for results in {base_path.resolve()}...")
 
-    scenario_folders = [f for f in base_path.glob("step2.5_find_hps_*") if f.is_dir() and not f.name.endswith("_nolocalclip")]
+    scenario_folders = [f for f in base_path.glob("step2.5_find_hps_*") if
+                        f.is_dir() and not f.name.endswith("_nolocalclip")]
 
     for scenario_path in scenario_folders:
         run_scenario = parse_scenario_name(scenario_path.name)
@@ -140,7 +169,8 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     # Check for missing config
     missing_in_config = available_defenses - requested_defenses
     if missing_in_config:
-        print(f"⚠️  Note: The following defenses were found in data but are NOT in DEFENSE_ORDER and will be skipped: {missing_in_config}")
+        print(
+            f"⚠️  Note: The following defenses were found in data but are NOT in DEFENSE_ORDER and will be skipped: {missing_in_config}")
 
     df = df[df['defense'].isin(DEFENSE_ORDER)].copy()
 
@@ -202,7 +232,8 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
     # Selection Prep
     df_sel = df.groupby(['defense', 'dataset'])[['benign_selection_rate', 'adv_selection_rate']].mean().reset_index()
     df_sel = df_sel.rename(columns={'benign_selection_rate': 'Benign', 'adv_selection_rate': 'Adversary'})
-    df_sel_melt = df_sel.melt(id_vars=['defense', 'dataset'], value_vars=['Benign', 'Adversary'], var_name='Type', value_name='Rate')
+    df_sel_melt = df_sel.melt(id_vars=['defense', 'dataset'], value_vars=['Benign', 'Adversary'], var_name='Type',
+                              value_name='Rate')
     df_sel_melt['Rate'] *= 100
 
     all_datasets = df['dataset'].unique()
@@ -219,11 +250,13 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
 
         # Plot 1-4 Metrics
         for metric in df_metrics['Metric'].unique():
-            plot_df = df_metrics[(df_metrics['dataset'] == dataset) & (df_metrics['Metric'] == metric) & (df_metrics['defense'].isin(current_order))]
+            plot_df = df_metrics[(df_metrics['dataset'] == dataset) & (df_metrics['Metric'] == metric) & (
+                df_metrics['defense'].isin(current_order))]
             if plot_df.empty: continue
 
             plt.figure(figsize=(12, 8))
-            ax = sns.barplot(data=plot_df, x='defense', y='Value', order=current_order, palette='viridis', edgecolor="black", linewidth=1.2)
+            ax = sns.barplot(data=plot_df, x='defense', y='Value', order=current_order, palette='viridis',
+                             edgecolor="black", linewidth=1.2)
 
             # Thresholds
             if "Accuracy" in metric:
@@ -233,7 +266,8 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
 
                 # Hatching
                 for i, defense in enumerate(current_order):
-                    usab = df_metrics[(df_metrics['dataset'] == dataset) & (df_metrics['defense'] == defense) & (df_metrics['Metric'] == 'Usability Rate (%)')]['Value']
+                    usab = df_metrics[(df_metrics['dataset'] == dataset) & (df_metrics['defense'] == defense) & (
+                            df_metrics['Metric'] == 'Usability Rate (%)')]['Value']
                     if not usab.empty and usab.values[0] == 0:
                         ax.patches[i].set_hatch('///')
                         ax.patches[i].set_edgecolor('black')
@@ -245,7 +279,8 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
             # Annotations
             for p in ax.patches:
                 if p.get_height() > 0:
-                    ax.annotate(f'{p.get_height():.1f}', (p.get_x() + p.get_width() / 2., p.get_height()), ha='center', va='bottom', fontsize=14, fontweight='bold', xytext=(0, 5), textcoords='offset points')
+                    ax.annotate(f'{p.get_height():.1f}', (p.get_x() + p.get_width() / 2., p.get_height()), ha='center',
+                                va='bottom', fontsize=14, fontweight='bold', xytext=(0, 5), textcoords='offset points')
 
             plt.tight_layout()
             safe_metric = re.sub(r'[^\w]', '', metric.split(' ')[0]) + "_" + re.sub(r'[^\w]', '', metric.split(' ')[-1])
@@ -256,14 +291,16 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
         sel_plot = df_sel_melt[(df_sel_melt['dataset'] == dataset) & (df_sel_melt['defense'].isin(current_order))]
         if not sel_plot.empty:
             plt.figure(figsize=(12, 8))
-            ax = sns.barplot(data=sel_plot, x='defense', y='Rate', hue='Type', order=current_order, palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor="black", linewidth=1.2)
+            ax = sns.barplot(data=sel_plot, x='defense', y='Rate', hue='Type', order=current_order,
+                             palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor="black", linewidth=1.2)
             style_axis(ax, f"Avg. Selection Rates ({dataset})", "Defense", "Selection Rate (%)")
             ax.set_xticklabels(labels)
             ax.set_ylim(0, 105)
 
             for p in ax.patches:
                 if p.get_height() > 0:
-                    ax.annotate(f'{p.get_height():.1f}', (p.get_x() + p.get_width() / 2., p.get_height()), ha='center', va='bottom', xytext=(0, 5), textcoords='offset points', fontsize=14, fontweight='bold')
+                    ax.annotate(f'{p.get_height():.1f}', (p.get_x() + p.get_width() / 2., p.get_height()), ha='center',
+                                va='bottom', xytext=(0, 5), textcoords='offset points', fontsize=14, fontweight='bold')
 
             plt.legend(fontsize=18, loc='upper center', bbox_to_anchor=(0.5, -0.22), ncol=2, frameon=False)
             plt.tight_layout()
@@ -293,13 +330,16 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
     def calc_best_acc_comp(g):
         u = g[g['platform_usable'] == True]
         return u['acc'].mean() if not u.empty else g['acc'].max()
+
     d2 = subset.groupby('defense').apply(calc_best_acc_comp).reindex(current_order).reset_index(name='acc')
     d2['Value'] = d2['acc'] * 100
 
-    d3 = subset[subset['platform_usable'] == True].groupby('defense')['rounds'].mean().reindex(current_order).reset_index()
+    d3 = subset[subset['platform_usable'] == True].groupby('defense')['rounds'].mean().reindex(
+        current_order).reset_index()
     d3['Value'] = d3['rounds']
 
-    d4 = subset.groupby('defense')[['benign_selection_rate', 'adv_selection_rate']].mean().reindex(current_order).reset_index()
+    d4 = subset.groupby('defense')[['benign_selection_rate', 'adv_selection_rate']].mean().reindex(
+        current_order).reset_index()
     d4 = d4.melt(id_vars='defense', var_name='Type', value_name='Rate')
     d4['Rate'] *= 100
     d4['Type'] = d4['Type'].replace({'benign_selection_rate': 'Benign', 'adv_selection_rate': 'Adversary'})
@@ -314,13 +354,14 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
     axes[1].set_ylim(0, 105)
     for i, defense in enumerate(current_order):
         if d1[d1['defense'] == defense]['Value'].values[0] == 0:
-             axes[1].patches[i].set_hatch('///')
-             axes[1].patches[i].set_edgecolor('black')
+            axes[1].patches[i].set_hatch('///')
+            axes[1].patches[i].set_edgecolor('black')
 
     sns.barplot(ax=axes[2], data=d3, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black')
     axes[2].set_title("Avg. Cost (Rounds)", fontweight='bold')
 
-    sns.barplot(ax=axes[3], data=d4, x='defense', y='Rate', hue='Type', order=current_order, palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor='black')
+    sns.barplot(ax=axes[3], data=d4, x='defense', y='Rate', hue='Type', order=current_order,
+                palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor='black')
     axes[3].set_title("Avg. Selection Rates", fontweight='bold')
     axes[3].set_ylim(0, 105)
     axes[3].legend(loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False)
@@ -332,10 +373,12 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
         for p in ax.patches:
             h = p.get_height()
             if not np.isnan(h) and h > 0:
-                 ax.annotate(f'{h:.0f}', (p.get_x() + p.get_width() / 2., h), ha='center', va='bottom', fontsize=11, fontweight='bold', xytext=(0, 2), textcoords='offset points')
+                ax.annotate(f'{h:.0f}', (p.get_x() + p.get_width() / 2., h), ha='center', va='bottom', fontsize=11,
+                            fontweight='bold', xytext=(0, 2), textcoords='offset points')
 
     plt.savefig(output_dir / f"plot_row_combined_{target_dataset}.pdf", bbox_inches='tight', format='pdf', dpi=300)
     print(f"Saved composite row to: {output_dir}")
+
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
@@ -343,8 +386,13 @@ def main():
 
     df = collect_all_results(BASE_RESULTS_DIR)
     if not df.empty:
+        # Generate CSV first
+        save_utility_csv(df, output_dir)
+
+        # Then plot
         plot_platform_usability_with_selection(df, output_dir)
         plot_composite_row(df, output_dir)
+
 
 if __name__ == "__main__":
     main()
