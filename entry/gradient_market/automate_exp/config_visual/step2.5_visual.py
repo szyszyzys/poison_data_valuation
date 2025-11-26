@@ -367,7 +367,7 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
     axes[3].legend(loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False)
 
     for ax in axes:
-        ax.set_xticklabels(labels, fontsize=12, fontweight='bold', rotation=15)
+        ax.set_xticklabels(labels, fontsize=12, fontweight='bold')
         ax.set_xlabel("")
         ax.grid(axis='y', alpha=0.5)
         for p in ax.patches:
@@ -379,7 +379,53 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
     plt.savefig(output_dir / f"plot_row_combined_{target_dataset}.pdf", bbox_inches='tight', format='pdf', dpi=300)
     print(f"Saved composite row to: {output_dir}")
 
+def save_threshold_debug_csv(df: pd.DataFrame, output_dir: Path, target_dataset: str = "CIFAR100"):
+    """
+    Generates a row-by-row CSV showing exactly which configs passed/failed the threshold.
+    Useful for tuning the RELATIVE_ACC_THRESHOLD.
+    """
+    print(f"\n--- Generating Threshold Debug CSV for {target_dataset} ---")
 
+    # 1. Filter for the specific dataset
+    subset = df[df['dataset'] == target_dataset].copy()
+
+    if subset.empty:
+        print(f"⚠️  No data found for dataset: {target_dataset}")
+        return
+
+    # 2. Select useful columns for debugging
+    cols = [
+        'defense',
+        'learning_rate',
+        'local_epochs',
+        'acc',                       # The run's accuracy
+        'platform_usable_threshold', # The cutoff value
+        'platform_usable',           # Did it pass?
+        'dataset_max_acc'            # The Global Max (Baseline)
+    ]
+
+    # Handle missing columns gracefully
+    cols = [c for c in cols if c in subset.columns]
+    debug_df = subset[cols].copy()
+
+    # 3. Add a "Distance to Threshold" column (Positive = Safe, Negative = Failed)
+    if 'platform_usable_threshold' in debug_df.columns:
+        debug_df['diff_from_threshold'] = debug_df['acc'] - debug_df['platform_usable_threshold']
+
+    # 4. Sort: Defenses first, then Best Accuracy descending
+    debug_df = debug_df.sort_values(by=['defense', 'acc'], ascending=[True, False])
+
+    # 5. Save
+    csv_name = f"debug_thresholds_{target_dataset}.csv"
+    csv_path = output_dir / csv_name
+    debug_df.to_csv(csv_path, index=False)
+
+    print(f"✅ Saved Debug CSV to: {csv_path}")
+    print("   (Check the 'diff_from_threshold' column to see how close runs were to passing)")
+
+    # Preview top rows
+    print("\nPreview (Top 5 Best Runs per Defense):")
+    print(debug_df.groupby('defense').head(2).to_string(index=False))
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
@@ -387,12 +433,12 @@ def main():
     df = collect_all_results(BASE_RESULTS_DIR)
     if not df.empty:
         # Generate CSV first
-        save_utility_csv(df, output_dir)
+        # save_utility_csv(df, output_dir)
+        #
+        # # Then plot
+        # plot_platform_usability_with_selection(df, output_dir)
+        # plot_composite_row(df, output_dir)
 
-        # Then plot
-        plot_platform_usability_with_selection(df, output_dir)
-        plot_composite_row(df, output_dir)
-
-
+        save_threshold_debug_csv(df, output_dir, target_dataset="CIFAR100")
 if __name__ == "__main__":
     main()
