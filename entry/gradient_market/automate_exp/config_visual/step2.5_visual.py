@@ -15,7 +15,7 @@ import seaborn as sns
 
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step2.5_figures_flexible"
-RELATIVE_ACC_THRESHOLD = 0.85
+RELATIVE_ACC_THRESHOLD = 0.90
 
 # 1. DEFENSE LABELS: Map your folder names (keys) to Plot Titles (values)
 #    If your folder is named 'skymask_lite', add 'skymask_lite': 'SkyMask (Small)' here.
@@ -433,11 +433,11 @@ def main():
     df = collect_all_results(BASE_RESULTS_DIR)
     if not df.empty:
         # Generate CSV first
-        # save_utility_csv(df, output_dir)
-        #
-        # # Then plot
-        # plot_platform_usability_with_selection(df, output_dir)
-        # plot_composite_row(df, output_dir)
+        save_utility_csv(df, output_dir)
+
+        # Then plot
+        plot_platform_usability_with_selection(df, output_dir)
+        plot_composite_row(df, output_dir)
 
         save_threshold_debug_csv(df, output_dir, target_dataset="CIFAR100")
 if __name__ == "__main__":
