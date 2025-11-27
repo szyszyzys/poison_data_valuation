@@ -52,6 +52,34 @@ class MimicStrategy(BaseGradientStrategy):
         return (1 - self.alpha) * current_grad + self.alpha * avg_grad
 
 
+class BuyerCollusionStrategy(BaseGradientStrategy):
+    """
+    The Sybil simply copies the Buyer's root gradient.
+    This ensures Cosine Similarity = 1.0 against the buyer's baseline.
+    """
+
+    def __init__(self, noise_scale=1e-6):
+        self.noise_scale = noise_scale
+
+    def manipulate(self, original_malicious_flat: torch.Tensor,
+                   root_gradient_flat: torch.Tensor) -> torch.Tensor:
+
+        if root_gradient_flat is None:
+            # Fallback if no root gradient is provided (shouldn't happen in this attack mode)
+            return original_malicious_flat
+
+        # Copy the buyer's gradient
+        sybil_gradient = root_gradient_flat.clone()
+
+        # Optional: Add insignificant noise to avoid bit-exact duplicate detection
+        # (Some defenses filter out updates that are mathematically identical)
+        if self.noise_scale > 0:
+            noise = torch.randn_like(sybil_gradient) * self.noise_scale
+            sybil_gradient += noise
+
+        return sybil_gradient
+
+
 class PivotStrategy(BaseGradientStrategy):
     """Completely replaces the current gradient with the average one."""
 
@@ -734,56 +762,6 @@ class DrowningStrategy(BaseGradientStrategy):
         )
 
 
-class CollusionStrategy(BaseGradientStrategy):
-    """
-    Generates a specific target gradient (e.g., random noise or inverse of benign)
-    that ALL Sybils will submit identically to force clustering/baseline selection.
-    """
-
-    def __init__(self, mode='random', noise_scale=1e-5):
-        super().__init__()
-        self.mode = mode
-        self.noise_scale = noise_scale  # Tiny noise to avoid exact duplicate detection if needed
-        self.trap_gradient: Optional[torch.Tensor] = None
-
-    def generate_trap(self, reference_gradient: torch.Tensor) -> torch.Tensor:
-        """
-        Generates the common gradient vector for this round.
-        """
-        if self.mode == 'random':
-            # Random vector of same shape/norm as reference
-            trap = torch.randn_like(reference_gradient)
-            # Scale to match magnitude of reference to look "plausible" in norm
-            ref_norm = torch.norm(reference_gradient)
-            trap_norm = torch.norm(trap)
-            self.trap_gradient = trap * (ref_norm / (trap_norm + 1e-9))
-
-        elif self.mode == 'inverse':
-            # Flip the reference gradient
-            self.trap_gradient = -1.0 * reference_gradient
-
-        elif self.mode == 'constant':
-            # Just ones or zeros (less effective usually)
-            self.trap_gradient = torch.ones_like(reference_gradient) * 0.01
-
-        return self.trap_gradient
-
-    def manipulate(self, original_gradient: torch.Tensor, centroid: torch.Tensor) -> torch.Tensor:
-        """
-        Returns the stored trap gradient.
-        Centroid is used only if we need to generate a new trap based on benign behavior.
-        """
-        if self.trap_gradient is None:
-            self.generate_trap(centroid)
-
-        # Optional: Add tiny noise so they aren't bit-perfect identical
-        # (some defenses check for duplicates)
-        if self.noise_scale > 0:
-            return self.trap_gradient + (torch.randn_like(self.trap_gradient) * self.noise_scale)
-
-        return self.trap_gradient
-
-
 class SybilCoordinator:
     def __init__(self, sybil_cfg: SybilConfig, aggregator: Aggregator):
         self.sybil_cfg = sybil_cfg
@@ -800,7 +778,7 @@ class SybilCoordinator:
             'drowning': DrowningStrategy(
                 SybilDrowningConfig(**self.sybil_cfg.strategy_configs.get('drowning', {}))
             ),
-            'collusion': CollusionStrategy(mode='random', noise_scale=1e-5)
+            'collusion': BuyerCollusionStrategy(noise_scale=1e-5)
         }
 
         # State Tracking
@@ -842,31 +820,24 @@ class SybilCoordinator:
                 strategies_in_use.add(strategy_name)
                 active_sybils.append(sybil_id)
 
+
         if not active_sybils:
             logging.debug("[SybilCoordinator] No active Sybils needing manipulation.")
             return current_round_gradients
-        if "collusion" in strategies_in_use:
-            collusion_strat = self.strategies['collusion']
-
-            # We need a reference shape/norm. Ideally use the root gradient (Buyer)
-            # or the average of benign sellers to make the trap "plausible" in size.
-            ref_flat = None
-            if current_root_gradient:
-                ref_flat = self._ensure_tensor(current_root_gradient)
-            elif self.selection_patterns and "centroid" in self.selection_patterns:
-                ref_flat = self.selection_patterns["centroid"]
-            else:
-                # Fallback: use first sybil's own gradient just for shape/norm
-                ref_flat = self._ensure_tensor(manipulated_gradients[active_sybils[0]])
-
-            # Generate ONE trap for this round
-            collusion_strat.generate_trap(ref_flat)
-            logging.info(f"[SybilCoordinator] Generated shared Trap Gradient for Collusion.")
 
         logging.info(
             f"[SybilCoordinator] Applying manipulations for {len(active_sybils)} active Sybils. Strategies: {strategies_in_use}")
 
-        # --- 1.5 (NEW) Pre-calculate Drowning Attack Gradient ---
+
+        root_grad_flat = None
+        if "collusion" in strategies_in_use or "buyer_collusion" in strategies_in_use:
+            if current_root_gradient:
+                root_grad_flat = self._ensure_tensor(current_root_gradient)
+            elif self.selection_patterns and "centroid" in self.selection_patterns:
+                # Fallback to historical centroid if root gradient missing
+                root_grad_flat = self.selection_patterns["centroid"]
+                logging.warning("[SybilCoordinator] Root gradient missing for collusion. Using historical centroid.")
+
         drowning_repulsion_grad: Optional[torch.Tensor] = None
         if "drowning" in strategies_in_use:
             # Type-check to ensure we have the right strategy object
@@ -969,7 +940,24 @@ class SybilCoordinator:
             original_malicious_flat = self._ensure_tensor(original_malicious_grad_list)
 
             manipulated_grad_flat: Optional[torch.Tensor] = None
-            if strategy_name == "drowning":
+
+            if strategy_name == "collusion":
+                if root_grad_flat is not None:
+                    # Note: Ensure key in self.strategies matches initialization
+                    # If you initialized it as 'collusion', use 'collusion'.
+                    # If 'buyer_collusion', use that.
+                    strategy_key = 'collusion'
+                    strategy_obj = self.strategies[strategy_key]
+
+                    manipulated_grad_flat = strategy_obj.manipulate(
+                        original_malicious_flat,
+                        root_grad_flat
+                    )
+                    logging.info(f"   Buyer Collusion applied to {sybil_id}")
+                else:
+                    logging.warning(f"   Buyer Collusion failed (No root gradient). Submitting original.")
+                    manipulated_grad_flat = original_malicious_flat
+            elif strategy_name == "drowning":
                 if drowning_repulsion_grad is not None:
                     # This Sybil's gradient is REPLACED with the common
                     # repulsion gradient, regardless of its original payload.
