@@ -18,7 +18,6 @@ TARGET_VICTIM_ID = "bn_5"
 
 # --- UPDATED CATEGORIES TO MATCH YOUR DATA ---
 ATTACK_CATEGORIES = {
-    # Attacks that break the model or create chaos
     "disruption": [
         "DoS",
         "Trust Erosion",
@@ -26,15 +25,13 @@ ATTACK_CATEGORIES = {
         "Oscillating (Random)",
         "Oscillating (Drift)"
     ],
-    # Attacks that rig the market rewards
     "manipulation": [
         "Starvation",
         "Class Exclusion (Neg)",
         "Class Exclusion (Pos)"
     ],
-    # Attacks that target specific victims
     "isolation": [
-        "Pivot"  # This will map from 'orthogonal_pivot_legacy'
+        "Pivot"
     ]
 }
 
@@ -49,6 +46,7 @@ plt.rcParams.update({
     'figure.figsize': (10, 6)
 })
 
+# These must match the output of format_label EXACTLY
 DEFENSE_ORDER = ["FedAvg", "FLTrust", "MARTFL", "SkyMask"]
 
 # ==========================================
@@ -58,24 +56,31 @@ DEFENSE_ORDER = ["FedAvg", "FLTrust", "MARTFL", "SkyMask"]
 def format_label(label: str) -> str:
     """
     Maps raw folder names to clean publication labels.
-    Crucial for matching the ATTACK_CATEGORIES above.
+    Crucial for matching the ATTACK_CATEGORIES and DEFENSE_ORDER.
     """
     label = label.lower()
     mapping = {
-        # --- Disruption ---
+        # --- Defenses (CRITICAL FIX: Ensure Casing Matches DEFENSE_ORDER) ---
+        "fedavg": "FedAvg",
+        "fltrust": "FLTrust",
+        "martfl": "MARTFL",
+        "skymask": "SkyMask",
+        "skymask_small": "SkyMask",
+
+        # --- Disruption Attacks ---
         "dos": "DoS",
         "erosion": "Trust Erosion",
         "oscillating_binary": "Oscillating (Binary)",
         "oscillating_random": "Oscillating (Random)",
         "oscillating_drift": "Oscillating (Drift)",
 
-        # --- Manipulation ---
+        # --- Manipulation Attacks ---
         "starvation": "Starvation",
         "class_exclusion_neg": "Class Exclusion (Neg)",
         "class_exclusion_pos": "Class Exclusion (Pos)",
 
-        # --- Isolation ---
-        "orthogonal_pivot_legacy": "Pivot", # <--- FIXES YOUR ERROR
+        # --- Isolation Attacks ---
+        "orthogonal_pivot_legacy": "Pivot",
         "pivot": "Pivot",
 
         # --- Baseline ---
@@ -87,7 +92,6 @@ def format_label(label: str) -> str:
 
 def parse_scenario(scenario_name: str):
     # Matches: step8_buyer_attack_[ATTACK_NAME]_[DEFENSE]_[DATASET]
-    # Also matches: step7_baseline_no_attack_[DEFENSE]_[DATASET]
     pattern = r'(step[78])_(baseline_no_attack|buyer_attack)_(?:(.+?)_)?(fedavg|martfl|fltrust|skymask|skymask_small)_(.*)'
     match = re.search(pattern, scenario_name)
     if match:
@@ -104,7 +108,6 @@ def parse_scenario(scenario_name: str):
 def load_data(base_dir: str):
     records = []
     base_path = Path(base_dir)
-    # Grab both Step 7 (Baseline) and Step 8 (Attacks)
     folders = list(base_path.glob("step8_buyer_attack_*")) + list(base_path.glob("step7_baseline_no_attack_*"))
 
     print(f"Scanning {len(folders)} folders...")
@@ -113,10 +116,9 @@ def load_data(base_dir: str):
         meta = parse_scenario(path.name)
         if not meta: continue
 
-        # Look for metrics file
         for mfile in path.rglob("final_metrics.json"):
             try:
-                # 1. Global Metrics (Accuracy)
+                # 1. Global Metrics
                 with open(mfile) as f: metrics = json.load(f)
                 acc = metrics.get('acc', 0)
                 if acc > 1.0: acc /= 100.0
@@ -142,8 +144,6 @@ def load_data(base_dir: str):
 # ==========================================
 
 def plot_disruption_impact(df, output_dir):
-    """ Visual 1: Bar chart of Model Utility (Accuracy) """
-    # Filter for attacks in our Disruption category that actually exist in the DF
     attacks = [a for a in ATTACK_CATEGORIES["disruption"] if a in df['attack'].unique()]
     if not attacks: return
 
@@ -167,7 +167,6 @@ def plot_disruption_impact(df, output_dir):
     plt.close()
 
 def plot_manipulation_fairness(df, output_dir):
-    """ Visual 2: Split Boxplots showing preferred vs starved sellers """
     attacks = [a for a in ATTACK_CATEGORIES["manipulation"] if a in df['attack'].unique()]
     if not attacks: return
 
@@ -175,20 +174,19 @@ def plot_manipulation_fairness(df, output_dir):
 
     subset = df[df['attack'].isin(attacks)].copy()
 
-    # We create one plot per attack type to keep it clean
     for attack in attacks:
         attack_sub = subset[subset['attack'] == attack]
         if attack_sub.empty: continue
 
         plt.figure(figsize=(10, 6))
 
-        # Boxplot for summary stats
+        # Boxplot
         sns.boxplot(
             data=attack_sub, x="defense", y="selection_rate",
             order=DEFENSE_ORDER, color="white",
             linewidth=2, fliersize=0
         )
-        # Stripplot to show the 'split'
+        # Stripplot
         sns.stripplot(
             data=attack_sub, x="defense", y="selection_rate",
             order=DEFENSE_ORDER,
@@ -205,26 +203,22 @@ def plot_manipulation_fairness(df, output_dir):
         plt.close()
 
 def plot_victim_isolation(df, output_dir):
-    """ Visual 3: Victim vs Others bar chart """
-    # Check for attacks mapping to 'isolation'
     attacks = [a for a in ATTACK_CATEGORIES["isolation"] if a in df['attack'].unique()]
 
     if not attacks:
         print(f"⚠️ Skipping Isolation Plot: No attacks found matching {ATTACK_CATEGORIES['isolation']}")
-        print(f"   (Available attacks: {df['attack'].unique()})")
         return
 
     print(f"--- Generating Isolation Plot for {attacks} ---")
 
     isolation_df = df[df['attack'].isin(attacks)].copy()
 
-    # DYNAMIC DEFENSE SELECTION: Use SkyMask if avail, else FedAvg
+    # Dynamic defense selection
     avail_defenses = isolation_df['defense'].unique()
     target_defense = "SkyMask" if "SkyMask" in avail_defenses else avail_defenses[0]
 
     subset = isolation_df[isolation_df['defense'] == target_defense].copy()
 
-    # Sort so Victim is distinct
     subset['is_victim'] = subset['seller_id'].apply(lambda x: str(x) == str(TARGET_VICTIM_ID))
     subset = subset.sort_values(by=['seller_id'])
     subset['Status'] = subset['is_victim'].map({True: 'Targeted Victim', False: 'Other Sellers'})
@@ -243,7 +237,6 @@ def plot_victim_isolation(df, output_dir):
     plt.ylim(0, 1.05)
     plt.legend(loc='upper right')
 
-    # Add Arrow
     victim_x = subset.reset_index().index[subset['is_victim']].tolist()
     if victim_x:
         idx = victim_x[0]
@@ -267,7 +260,6 @@ def main():
         print("No data found.")
         return
 
-    # Generate Visuals
     plot_disruption_impact(df, output_dir)
     plot_manipulation_fairness(df, output_dir)
     plot_victim_isolation(df, output_dir)
