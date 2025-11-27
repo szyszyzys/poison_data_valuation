@@ -165,7 +165,7 @@ def plot_disruption_impact(df, output_dir):
         edgecolor="black", linewidth=1.5
     )
 
-    plt.title("Disruption Attacks: Model Accuracy Impact", pad=15)
+    # plt.title("Disruption Attacks: Model Accuracy Impact", pad=15)
     plt.ylabel("Test Accuracy")
     plt.xlabel("")
     plt.ylim(0, 1.0)
@@ -247,7 +247,7 @@ def plot_manipulation_fairness(df, output_dir):
             edgecolor='gray'  # Subtle border
         )
 
-        plt.title(f"Impact on Selection: {attack}", pad=15)
+        # plt.title(f"Impact on Selection: {attack}", pad=15)
         plt.ylabel("Seller Selection Rate")
         plt.xlabel("")
         plt.ylim(-0.05, 1.05)
