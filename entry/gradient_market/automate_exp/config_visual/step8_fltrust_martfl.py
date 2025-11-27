@@ -260,23 +260,39 @@ def plot_manipulation_fairness(df, output_dir):
 def plot_victim_isolation(df, output_dir):
     """
     SHOWS: Specific Victim ID (Did they get hit?)
+    UPDATED: X-axis now shows clean numbers (0, 1, 2...) instead of 'bn_0'.
     """
     attacks = [a for a in ATTACK_CATEGORIES["isolation"] if a in df['attack'].unique()]
     if not attacks: return
 
     print(f"--- Plotting Isolation (Victim Focus) ---")
 
-    # We iterate through defenses to show if they succumbed
+    # 1. Filter Data
     isolation_df = df[df['attack'].isin(attacks)].copy()
+
+    # 2. Define Victim Status (Logic remains on original ID)
     isolation_df['is_victim'] = isolation_df['seller_id'].apply(lambda x: str(x) == str(TARGET_VICTIM_ID))
     isolation_df['Status'] = isolation_df['is_victim'].map({True: 'Victim', False: 'Others'})
 
-    # Sort for visual consistency
-    isolation_df = isolation_df.sort_values(by=['seller_id'])
+    # 3. CLEANING STEP: Extract numeric ID
+    #    Assumption: seller_id format is 'bn_X'
+    try:
+        # Extract the number after 'bn_'
+        isolation_df['id_num'] = isolation_df['seller_id'].apply(lambda x: int(str(x).split('_')[-1]))
 
-    # Create a FacetGrid to show FLTrust side-by-side with MARTFL
+        # OPTIONAL: If you want 1-based indexing (e.g. Seller 1 instead of Seller 0)
+        # isolation_df['id_num'] = isolation_df['id_num'] + 1
+
+    except ValueError:
+        # Fallback if IDs aren't in 'bn_X' format
+        isolation_df['id_num'] = isolation_df['seller_id']
+
+    # 4. Sort by the numeric ID (Crucial for correct ordering 1, 2, ... 10)
+    isolation_df = isolation_df.sort_values(by=['id_num'])
+
+    # 5. Create Plot using the new 'id_num' for X-axis
     g = sns.catplot(
-        data=isolation_df, x="seller_id", y="selection_rate",
+        data=isolation_df, x="id_num", y="selection_rate",
         col="defense", col_order=DEFENSE_ORDER,
         hue="Status", palette={'Victim': '#e74c3c', 'Others': '#95a5a6'},
         kind="bar", height=5, aspect=1.2,
@@ -285,7 +301,9 @@ def plot_victim_isolation(df, output_dir):
 
     g.fig.suptitle("Targeted Pivot: Victim Isolation per Defense", y=1.05, fontsize=18, fontweight='bold')
     g.set_axis_labels("Seller ID", "Selection Rate")
-    g.set_xticklabels(rotation=45, ha='right', fontsize=9)
+
+    # Clean up X-ticks (straight text, no rotation needed for simple numbers)
+    g.set_xticklabels(rotation=0, fontsize=11)
     g.set(ylim=(0, 1.05))
 
     plt.savefig(output_dir / "3_Isolation_VictimCheck.pdf", bbox_inches='tight')
