@@ -1489,79 +1489,48 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
 
     @staticmethod
     def _create_poison_generator(adv_cfg: AdversarySellerConfig, model_type: str, device: str,
-                                 **kwargs: Any) -> PoisonGenerator:
-        """Factory method to create the correct backdoor generator from configuration."""
+                                 **kwargs: Any) -> Optional[PoisonGenerator]:
         poison_cfg = adv_cfg.poisoning
+
+        if not poison_cfg:
+            return None
 
         try:
             poison_type = PoisonType(poison_cfg.type)
-        except ValueError:
-            raise ValueError(f"Invalid poison type in config: '{poison_cfg.type}'.")
 
-        # Check that this factory is only being used for backdoors
-        if 'backdoor' not in poison_type.value:
-            raise ValueError(f"This factory only supports backdoor types, but got '{poison_type.value}'.")
+            # Reuse the robust logic from AdvancedBackdoorAdversarySeller
+            if model_type == 'image':
+                params = poison_cfg.image_backdoor_params.simple_data_poison_params
+                backdoor_image_cfg = BackdoorImageConfig(
+                    target_label=params.target_label,
+                    trigger_type=ImageTriggerType(params.trigger_type),
+                    location=ImageTriggerLocation(params.location)
+                )
+                return BackdoorImageGenerator(backdoor_image_cfg, device=device)
 
-        # --- START: NEW VALIDATION BLOCK ---
-        # This is the validator you asked for. It prevents the config bug.
-        if model_type == 'image' and poison_type != PoisonType.IMAGE_BACKDOOR:
-            raise ValueError(
-                f"Config mismatch: model_type is 'image' but "
-                f"poisoning.type is '{poison_type.value}' (should be 'image_backdoor')."
-            )
-        elif model_type == 'text' and poison_type != PoisonType.TEXT_BACKDOOR:
-            raise ValueError(
-                f"Config mismatch: model_type is 'text' but "
-                f"poisoning.type is '{poison_type.value}' (should be 'text_backdoor')."
-            )
-        elif model_type == 'tabular' and poison_type != PoisonType.TABULAR_BACKDOOR:
-            raise ValueError(
-                f"Config mismatch: model_type is 'tabular' but "
-                f"poisoning.type is '{poison_type.value}' (should be 'tabular_backdoor')."
-            )
-        # --- END: NEW VALIDATION BLOCK ---
+            elif model_type == 'text':
+                params = poison_cfg.text_backdoor_params
+                vocab = kwargs.get('vocab')
+                backdoor_text_cfg = BackdoorTextConfig(
+                    vocab=vocab,
+                    target_label=params.target_label,
+                    trigger_content=params.trigger_content,
+                    location=params.location
+                )
+                return BackdoorTextGenerator(backdoor_text_cfg)
 
-        # Now, the rest of your factory logic is guaranteed to be correct.
-        if model_type == 'image':
-            params = poison_cfg.image_backdoor_params.simple_data_poison_params
-            backdoor_image_cfg = BackdoorImageConfig(
-                target_label=params.target_label,
-                trigger_type=ImageTriggerType(params.trigger_type),
-                location=ImageTriggerLocation(params.location)
-            )
-            return BackdoorImageGenerator(backdoor_image_cfg, device=device)
+            elif model_type == 'tabular':
+                feature_to_idx = kwargs.get('feature_to_idx')
+                main_params = poison_cfg.tabular_backdoor_params
+                backdoor_tabular_cfg = BackdoorTabularConfig(
+                    target_label=main_params.target_label,
+                    trigger_conditions=main_params.feature_trigger_params.trigger_conditions
+                )
+                return BackdoorTabularGenerator(backdoor_tabular_cfg, feature_to_idx)
 
-        elif model_type == 'text':
-            params = poison_cfg.text_backdoor_params
-            vocab = kwargs.get('vocab')
-            if not vocab:
-                raise ValueError("Text backdoor generator requires 'vocab' to be provided in kwargs.")
-
-            backdoor_text_cfg = BackdoorTextConfig(
-                vocab=vocab,
-                target_label=params.target_label,
-                trigger_content=params.trigger_content,
-                location=params.location
-            )
-            return BackdoorTextGenerator(backdoor_text_cfg)
-
-        elif model_type == 'tabular':
-            logging.debug("Factory: Creating BackdoorTabularGenerator.")
-            main_params = poison_cfg.tabular_backdoor_params
-            trigger_params = main_params.feature_trigger_params
-            feature_to_idx = kwargs.get('feature_to_idx')
-
-            if not feature_to_idx:
-                raise ValueError("Tabular backdoor generator requires 'feature_to_idx' in kwargs.")
-
-            backdoor_tabular_cfg = BackdoorTabularConfig(
-                target_label=main_params.target_label,
-                trigger_conditions=trigger_params.trigger_conditions
-            )
-            return BackdoorTabularGenerator(backdoor_tabular_cfg, feature_to_idx)
-
-        else:
-            raise ValueError(f"Unsupported model_type for backdoor: {model_type}")
+        except Exception as e:
+            logging.error(f"AdaptiveAttacker factory failed: {e}")
+            return None
 
 
 import torch
