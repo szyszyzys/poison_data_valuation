@@ -820,14 +820,12 @@ class SybilCoordinator:
                 strategies_in_use.add(strategy_name)
                 active_sybils.append(sybil_id)
 
-
         if not active_sybils:
             logging.debug("[SybilCoordinator] No active Sybils needing manipulation.")
             return current_round_gradients
 
         logging.info(
             f"[SybilCoordinator] Applying manipulations for {len(active_sybils)} active Sybils. Strategies: {strategies_in_use}")
-
 
         root_grad_flat = None
         if "collusion" in strategies_in_use or "buyer_collusion" in strategies_in_use:
@@ -1651,18 +1649,29 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
             pass
 
     def _add_class_based_strategies(self):
-        """Add class-specific strategies if we can determine dataset classes."""
+        """Adds strategies like 'focus_class_0', 'exclude_class_1' to the pool."""
         try:
+            # Detect number of classes
             if hasattr(self.dataset, 'classes'):
                 num_classes = len(self.dataset.classes)
             elif hasattr(self.dataset, 'targets'):
                 num_classes = len(set(self.dataset.targets))
+            elif hasattr(self.dataset, 'dataset') and hasattr(self.dataset.dataset, 'targets'):
+                # Handle Subset
+                targets = [self.dataset.dataset.targets[i] for i in self.dataset.indices]
+                num_classes = len(set(targets))
             else:
-                return
+                return  # Can't determine classes
+
+            # Add strategies for every single class
+            # The bandit will find which specific class the Aggregator prefers!
             for c in range(num_classes):
-                self.base_strategies.extend([f"focus_class_{c}", f"exclude_class_{c}"])
-        except:
-            pass
+                self.base_strategies.append(f"focus_class_{c}")
+                # Exclude might be useful if one class is "noisy" and causing rejection
+                self.base_strategies.append(f"exclude_class_{c}")
+
+        except Exception as e:
+            logging.warning(f"Could not add class strategies: {e}")
 
     # ========================================================================
     # THREAT MODELS 1 & 2: ORACLE / GRADIENT INVERSION
@@ -1678,7 +1687,7 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
         self.model_factory().to(self.device)
         true_honest_grad, _ = self._compute_local_grad(
             self.model_factory().to(self.device),
-            self.validation_loader.dataset # <--- CHEATING: Using Global Validation Data
+            self.validation_loader.dataset  # <--- CHEATING: Using Global Validation Data
         )
 
         honest_flat = flatten_tensor(true_honest_grad)
@@ -1755,7 +1764,7 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
         # This naturally finds a gradient that satisfies both tasks without
         # looking like a linear blend of two distinct vectors.
 
-        lambda_val = 2.0 # Inversion allows us to be aggressive because we match the honest signal perfectly
+        lambda_val = 2.0  # Inversion allows us to be aggressive because we match the honest signal perfectly
         total_loss = loss_honest + lambda_val * loss_mal
 
         total_loss.backward()
@@ -1814,6 +1823,12 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
         """Apply data manipulation based on learned strategy."""
         if strategy == "honest":
             return self.dataset
+        elif strategy == "balance_classes":
+            return self._create_balanced_subset()  # Helper function call
+
+        # 3. HYGIENE: EASY SAMPLES (Variance Reduction)
+        elif strategy == "easy_samples":
+            return self._create_easy_subset()  # Helper function call
         elif strategy == "subsample_clean":
             subset_ratio = self.adv_cfg.subset_ratio
             subset_size = max(1, int(len(self.dataset) * subset_ratio))
@@ -1823,6 +1838,47 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
             return self._apply_class_filter_strategy(strategy)
         else:
             return self.dataset
+
+    def _create_balanced_subset(self):
+        # (Logic from previous response)
+        targets = self._get_targets()
+        if targets is None: return self.dataset
+
+        targets = np.array(targets)
+        class_counts = np.bincount(targets)
+        weights = 1.0 / np.maximum(class_counts[targets], 1)
+
+        num_samples = len(self.dataset)
+        balanced_indices = torch.multinomial(torch.DoubleTensor(weights), num_samples, replacement=True)
+        return Subset(self.dataset, balanced_indices.tolist())
+
+    def _create_easy_subset(self):
+        # (Logic from previous response)
+        # Random sample to save time
+        subset_indices = random.sample(range(len(self.dataset)), min(len(self.dataset), 512))
+
+        model = self.model_factory().to(self.device)
+        model.eval()
+        criterion = nn.CrossEntropyLoss(reduction='none')
+        losses = []
+
+        # Quick eval
+        temp_loader = DataLoader(Subset(self.dataset, subset_indices), batch_size=64, shuffle=False)
+        with torch.no_grad():
+            for batch in temp_loader:
+                if len(batch) == 2:
+                    data, target = batch
+                else:
+                    _, data, target = batch
+                data, target = data.to(self.device), target.to(self.device)
+                loss = criterion(model(data), target)
+                losses.extend(loss.cpu().numpy())
+
+        # Take bottom 50%
+        sorted_args = np.argsort(losses)
+        cutoff = int(len(sorted_args) * 0.5)
+        final_indices = [subset_indices[i] for i in sorted_args[:cutoff]]
+        return Subset(self.dataset, final_indices)
 
     def _apply_class_filter_strategy(self, strategy: str) -> Dataset:
         """Filter dataset by class."""
@@ -1895,7 +1951,12 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
                     beta * self.blend_honest_gradient_stats['mean_norm'] +
                     (1 - beta) * grad_norm
             )
-
+    def _get_targets(self):
+        # Robust helper to get targets from any dataset wrapper
+        if hasattr(self.dataset, 'targets'): return self.dataset.targets
+        if hasattr(self.dataset, 'dataset') and hasattr(self.dataset.dataset, 'targets'):
+             return [self.dataset.dataset.targets[i] for i in self.dataset.indices]
+        return None
     def _compute_malicious_gradient(self) -> Optional[List[torch.Tensor]]:
         """Compute gradient on malicious objective."""
         model = self.model_factory().to(self.device)
