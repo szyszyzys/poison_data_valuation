@@ -109,7 +109,128 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, Any]:
         print(f"Warning: Error parsing '{scenario_name}': {e}")
         return {"defense": "unknown"}
 
+def plot_selection_gap_highlight(df: pd.DataFrame, output_dir: Path):
+    """
+    Visualizes the GAP between Benign and Adversary.
+    Shades the area Red if Adv > Benign (Advantage), Blue otherwise.
+    """
+    if df.empty: return
+    print("Generating 'Gap Highlight' plots...")
 
+    # Aggregate across seeds first to get a clean mean line for the area fill
+    group_cols = ['defense', 'threat_label', 'adaptive_mode', 'round', 'seller_type']
+    df_agg = df.groupby(group_cols)['selected'].mean().reset_index()
+
+    # Pivot so we have 'Adversary' and 'Benign' as columns for easy math
+    df_pivoted = df_agg.pivot_table(
+        index=['defense', 'threat_label', 'adaptive_mode', 'round'],
+        columns='seller_type',
+        values='selected'
+    ).reset_index()
+
+    # Ensure we have both columns (handle cases where one might be missing)
+    if 'Adversary' not in df_pivoted.columns: df_pivoted['Adversary'] = 0.0
+    if 'Benign' not in df_pivoted.columns: df_pivoted['Benign'] = 0.0
+
+    # Smooth the lines slightly for better visualization
+    df_pivoted['Adv_Smooth'] = df_pivoted.groupby(['defense', 'threat_label'])['Adversary'].transform(lambda x: x.rolling(5, min_periods=1).mean())
+    df_pivoted['Ben_Smooth'] = df_pivoted.groupby(['defense', 'threat_label'])['Benign'].transform(lambda x: x.rolling(5, min_periods=1).mean())
+
+    unique_defenses = df_pivoted['defense'].unique()
+
+    for defense in unique_defenses:
+        defense_data = df_pivoted[df_pivoted['defense'] == defense]
+
+        for threat in defense_data['threat_label'].unique():
+            subset = defense_data[defense_data['threat_label'] == threat]
+            if subset.empty: continue
+
+            plt.figure(figsize=(10, 6))
+
+            # 1. Draw the "Event Horizon" (Round 30)
+            plt.axvline(x=EXPLORATION_ROUNDS, color='black', linestyle='--', linewidth=2, alpha=0.8)
+            plt.text(EXPLORATION_ROUNDS + 1, 0.95, "Attack Starts", fontsize=12, fontweight='bold', ha='left')
+
+            # 2. Draw Lines
+            plt.plot(subset['round'], subset['Ben_Smooth'], color=COLOR_MAP['Benign'], label='Benign', lw=2)
+            plt.plot(subset['round'], subset['Adv_Smooth'], color=COLOR_MAP['Adversary'], label='Adversary', lw=2)
+
+            # 3. FILL THE GAP (The Key Visual)
+            # Fill Green/Blue where Benign > Adversary (System Safe)
+            plt.fill_between(
+                subset['round'],
+                subset['Ben_Smooth'],
+                subset['Adv_Smooth'],
+                where=(subset['Ben_Smooth'] >= subset['Adv_Smooth']),
+                interpolate=True, color=COLOR_MAP['Benign'], alpha=0.15, label='Defense Advantage'
+            )
+
+            # Fill Red where Adversary > Benign (System Compromised)
+            plt.fill_between(
+                subset['round'],
+                subset['Ben_Smooth'],
+                subset['Adv_Smooth'],
+                where=(subset['Adv_Smooth'] > subset['Ben_Smooth']),
+                interpolate=True, color=COLOR_MAP['Adversary'], alpha=0.25, hatch='//', label='Attacker Advantage'
+            )
+
+            threat_file = threat.replace(' ', '').replace('.', '')
+            plt.title(f"Attack Impact Analysis: {defense.upper()}\n{threat}")
+            plt.ylabel("Selection Rate")
+            plt.xlabel("Round")
+            plt.ylim(0, 1.05)
+            plt.legend(loc='upper right')
+
+            plt.savefig(output_dir / f"visual_gap_{defense}_{threat_file}.pdf", bbox_inches='tight')
+            plt.close()
+
+
+def plot_pre_post_change_bar(df: pd.DataFrame, output_dir: Path):
+    """
+    Quantifies the "Change": Bar chart comparing Pre-Attack vs Post-Attack averages.
+    """
+    if df.empty: return
+    print("Generating 'Pre/Post Change' plots...")
+
+    # 1. Label data as Pre-Attack or Post-Attack
+    df_calc = df.copy()
+    df_calc['Phase'] = df_calc['round'].apply(lambda x: 'Pre-Attack (Exploration)' if x <= EXPLORATION_ROUNDS else 'Post-Attack')
+
+    # 2. Filter only for Adversary (since we care about their gain)
+    df_adv = df_calc[df_calc['seller_type'] == 'Adversary']
+
+    # 3. Calculate Mean Selection Rate per Phase per Seed
+    bar_data = df_adv.groupby(['defense', 'threat_label', 'adaptive_mode', 'Phase'])['selected'].mean().reset_index()
+
+    for defense in bar_data['defense'].unique():
+        subset = bar_data[bar_data['defense'] == defense]
+        if subset.empty: continue
+
+        plt.figure(figsize=(10, 6))
+
+        # Create Bar Chart
+        ax = sns.barplot(
+            data=subset,
+            x='threat_label',
+            y='selected',
+            hue='Phase',
+            palette={'Pre-Attack (Exploration)': 'gray', 'Post-Attack': '#D62728'},
+            edgecolor='black',
+            alpha=0.9
+        )
+
+        # Add specific value labels on top of bars
+        for container in ax.containers:
+            ax.bar_label(container, fmt='%.2f', padding=3)
+
+        plt.title(f"Impact of Attack Activation: {defense.upper()}")
+        plt.ylabel("Avg Adversary Selection Rate")
+        plt.xlabel("")
+        plt.legend(title="Experiment Phase")
+        plt.xticks(rotation=15, ha='right')
+
+        plt.savefig(output_dir / f"visual_bar_change_{defense}.pdf", bbox_inches='tight')
+        plt.close()
 def collect_all_results(base_dir: str, target_defense: Optional[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     all_seller_dfs, all_global_log_dfs, all_summary_rows = [], [], []
     base_path = Path(base_dir)
@@ -422,7 +543,9 @@ def main():
     plot_attacker_advantage(df_seller_ts, output_dir)
     plot_final_summary_distribution(df_summary, output_dir)
     plot_stealth_vs_damage(df_summary, output_dir)
-
+    print("\n--- Generating Enhanced Visuals ---")
+    plot_selection_gap_highlight(df_seller_ts, output_dir)
+    plot_pre_post_change_bar(df_seller_ts, output_dir)
     print(f"\n✅ Analysis complete. Check '{FIGURE_OUTPUT_DIR}'")
 
 
