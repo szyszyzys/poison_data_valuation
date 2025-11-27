@@ -1,4 +1,4 @@
-import copy
+import collections
 import collections
 import copy
 import csv
@@ -1664,55 +1664,52 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
     # ========================================================================
     # THREAT MODELS 1 & 2: ORACLE / GRADIENT INVERSION
     # ========================================================================
-
     def _apply_oracle_attack(self, malicious_gradient: List[torch.Tensor]) -> List[torch.Tensor]:
         if self.validation_loader is None:
             logging.error(f"[{self.seller_id}] Oracle attack requires validation_loader!")
             return malicious_gradient
 
         # 1. Get True Honest Direction (from Validation Data)
-        self.model_factory().to(self.device)
+        # Note: We create a temporary model to avoid mutating the main one
+        temp_model = self.model_factory().to(self.device)
         true_honest_grad, _ = self._compute_local_grad(
-            self.model_factory().to(self.device),
+            temp_model,
             self.validation_loader.dataset
         )
 
         honest_flat = flatten_tensor(true_honest_grad)
-        malicious_flat = flatten_tensor(malicious_gradient)  # <--- Input must be malicious
+        malicious_flat = flatten_tensor(malicious_gradient)
 
+        # 2. Constraint: Target Cosine Similarity
         target_similarity = 0.95
 
-        # Normalize
         h_norm = torch.norm(honest_flat)
         h_unit = honest_flat / (h_norm + 1e-9)
 
-        m_norm = torch.norm(malicious_flat)
-
-        # 3. Geometric Projection (The "Boundary Ride")
-        # We construct a vector 'v' that is exactly 'target_similarity' close to honest
-        # but captures as much of the malicious direction as possible.
-
-        # Remove the part of malicious that is already parallel to honest
+        # 3. Geometric Projection ("Boundary Riding")
+        # Decompose malicious vector into Parallel (honest) and Orthogonal components
         parallel_component = torch.dot(malicious_flat, h_unit) * h_unit
         orthogonal_component = malicious_flat - parallel_component
 
-        # If perfectly aligned, just return honest (scaled)
+        # Edge Case: Malicious is already perfectly aligned with Honest
         if torch.norm(orthogonal_component) < 1e-9:
             return true_honest_grad
 
         orth_unit = orthogonal_component / torch.norm(orthogonal_component)
 
-        # Construct the optimal vector at the boundary
-        # v = (cos_theta * h_unit + sin_theta * orth_unit) * scale
+        # 4. Construct the vector at exactly 'theta' degrees
         import math
-        theta = math.acos(target_similarity)
+        # Clamp to avoid domain errors if target_similarity > 1.0 due to float precision
+        theta = math.acos(min(max(target_similarity, -1.0), 1.0))
 
+        # New Direction = (Cos(theta) * Honest_Dir) + (Sin(theta) * Malicious_Orth_Dir)
         boundary_dir = (target_similarity * h_unit) + (math.sin(theta) * orth_unit)
 
         # Scale: Mimic the honest norm to avoid norm-clipping defenses
         final_flat = boundary_dir * h_norm
 
-        return unflatten_tensor(final_flat, [p.shape for p in gradient])
+        # --- FIX IS HERE: Use 'malicious_gradient' for shapes ---
+        return unflatten_tensor(final_flat, [p.shape for p in malicious_gradient])
 
     def _apply_gradient_inversion_attack(self, _unused_gradient_input) -> List[torch.Tensor]:
         """
