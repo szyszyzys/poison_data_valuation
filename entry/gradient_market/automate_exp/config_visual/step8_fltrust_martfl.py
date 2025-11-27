@@ -1,12 +1,11 @@
-import pandas as pd
 import json
-import re
-import seaborn as sns
-import matplotlib.pyplot as plt
-import numpy as np
 import os
+import re
 from pathlib import Path
-from typing import List, Dict, Any
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 
 # ==========================================
 # 1. CONFIGURATION
@@ -23,23 +22,32 @@ DEFENSE_ORDER = ["FLTrust", "MARTFL"]
 # Consistent Colors for these two
 DEFENSE_COLORS = {
     "FLTrust": "#3498db",  # Blue
-    "MARTFL": "#2ecc71"    # Green
+    "MARTFL": "#2ecc71"  # Green
 }
 
-# --- ATTACK GROUPINGS ---
 ATTACK_CATEGORIES = {
+    # 1. These generate the Grouped Bar Chart (Accuracy Impact)
     "disruption": [
         "DoS",
         "Trust Erosion",
-        "Oscillating (Binary)", "Oscillating (Random)", "Oscillating (Drift)",
-        "BadNet", "DBA"
+        # We keep Oscillating here so we see their Accuracy drop too
+        "Oscillating (Binary)", "Oscillating (Random)", "Oscillating (Drift)"
     ],
+
+    # 2. These generate Individual Strip Plots (Selection Rate Splits)
     "manipulation": [
         "Starvation",
-        "Class Exclusion (Neg)", "Class Exclusion (Pos)"
+        "Class Exclusion (Neg)",
+        "Class Exclusion (Pos)",
+        # CRITICAL: Added here so you get individual PDF plots for them
+        "Oscillating (Binary)",
+        "Oscillating (Random)",
+        "Oscillating (Drift)"
     ],
+
+    # 3. This generates the Victim Isolation Bar Chart
     "isolation": [
-        "Pivot"
+        "Pivot"  # Maps to 'orthogonal_pivot_legacy'
     ]
 }
 
@@ -51,8 +59,9 @@ plt.rcParams.update({
     'font.weight': 'bold',
     'axes.labelweight': 'bold',
     'axes.titleweight': 'bold',
-    'figure.figsize': (8, 6) # Slightly narrower since we have fewer bars
+    'figure.figsize': (8, 6)  # Slightly narrower since we have fewer bars
 })
+
 
 # ==========================================
 # 2. DATA PROCESSING
@@ -75,6 +84,7 @@ def format_label(label: str) -> str:
     }
     return mapping.get(label, label.replace("_", " ").title())
 
+
 def parse_scenario(scenario_name: str):
     pattern = r'(step[78])_(baseline_no_attack|buyer_attack)_(?:(.+?)_)?(fedavg|martfl|fltrust|skymask|skymask_small)_(.*)'
     match = re.search(pattern, scenario_name)
@@ -87,6 +97,7 @@ def parse_scenario(scenario_name: str):
             "dataset": dataset
         }
     return None
+
 
 def load_data(base_dir: str):
     records = []
@@ -105,13 +116,15 @@ def load_data(base_dir: str):
 
         for mfile in path.rglob("final_metrics.json"):
             try:
-                with open(mfile) as f: metrics = json.load(f)
+                with open(mfile) as f:
+                    metrics = json.load(f)
                 acc = metrics.get('acc', 0)
                 if acc > 1.0: acc /= 100.0
 
                 report_file = mfile.parent / "marketplace_report.json"
                 if report_file.exists():
-                    with open(report_file) as rf: report = json.load(rf)
+                    with open(report_file) as rf:
+                        report = json.load(rf)
                     for sid, sdata in report.get('seller_summaries', {}).items():
                         if sdata.get('type') == 'benign':
                             records.append({
@@ -120,9 +133,11 @@ def load_data(base_dir: str):
                                 "seller_id": sid,
                                 "selection_rate": sdata.get('selection_rate', 0.0)
                             })
-            except Exception: pass
+            except Exception:
+                pass
 
     return pd.DataFrame(records)
+
 
 # ==========================================
 # 3. VISUALIZATION LOGIC
@@ -159,6 +174,7 @@ def plot_disruption_impact(df, output_dir):
     plt.savefig(output_dir / "1_Disruption_Accuracy.pdf", bbox_inches='tight')
     plt.close()
 
+
 def plot_manipulation_fairness(df, output_dir):
     """
     SHOWS: Selection Rate (Is there a split between winners/losers?)
@@ -188,7 +204,7 @@ def plot_manipulation_fairness(df, output_dir):
         sns.boxplot(
             data=attack_sub, x="defense", y="selection_rate",
             order=DEFENSE_ORDER,
-            boxprops={'facecolor':'none', 'edgecolor':'black'}, # Transparent box
+            boxprops={'facecolor': 'none', 'edgecolor': 'black'},  # Transparent box
             linewidth=2, fliersize=0, zorder=10
         )
 
@@ -200,6 +216,7 @@ def plot_manipulation_fairness(df, output_dir):
         safe_name = attack.replace(" ", "_").replace("(", "").replace(")", "")
         plt.savefig(output_dir / f"2_Manipulation_{safe_name}.pdf", bbox_inches='tight')
         plt.close()
+
 
 def plot_victim_isolation(df, output_dir):
     """
@@ -235,6 +252,7 @@ def plot_victim_isolation(df, output_dir):
     plt.savefig(output_dir / "3_Isolation_VictimCheck.pdf", bbox_inches='tight')
     plt.close()
 
+
 # ==========================================
 # MAIN
 # ==========================================
@@ -253,6 +271,7 @@ def main():
     plot_victim_isolation(df, output_dir)
 
     print(f"\nFigures saved to {output_dir.resolve()}")
+
 
 if __name__ == "__main__":
     main()
