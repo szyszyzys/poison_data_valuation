@@ -1669,47 +1669,99 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
     # ========================================================================
 
     def _apply_oracle_attack(self, gradient: List[torch.Tensor]) -> List[torch.Tensor]:
-        """Oracle: Move gradient toward the previous centroid."""
-        if self.previous_centroid is None:
-            return gradient
-        flat_grad = flatten_tensor(gradient)
-        centroid = self.previous_centroid.to(self.device)
+        """
+        Oracle Attack: Uses the GLOBAL VALIDATION DATA to calculate the 'True' Honest Gradient,
+        then projects the malicious gradient exactly onto the boundary of acceptance.
+        """
+        # 1. ORACLE KNOWLEDGE: Compute gradient on Global Validation Set
+        # (This simulates knowing the true distribution of all clients)
+        self.model_factory().to(self.device)
+        true_honest_grad, _ = self._compute_local_grad(
+            self.model_factory().to(self.device),
+            self.validation_loader.dataset # <--- CHEATING: Using Global Validation Data
+        )
 
-        if flat_grad.numel() != centroid.numel():
-            return gradient
+        honest_flat = flatten_tensor(true_honest_grad)
+        malicious_flat = flatten_tensor(gradient)
 
-        alpha = self.adv_cfg.mimic_strength
-        original_norm = torch.norm(flat_grad)
-        direction_to_centroid = centroid - flat_grad
-        manipulated = flat_grad + alpha * direction_to_centroid
-        # Rescale to look like original
-        manipulated = manipulated * (original_norm / (torch.norm(manipulated) + 1e-9))
-        return unflatten_tensor(manipulated, [p.shape for p in gradient])
+        # 2. Decompose Malicious Vector
+        # We want to maximize the malicious component while keeping
+        # Cosine Similarity > Threshold.
+        # Let's assume a safe threshold based on Oracle knowledge of MartFL (e.g., 0.95)
 
-    def _apply_gradient_inversion_attack(self, gradient: List[torch.Tensor]) -> List[torch.Tensor]:
-        """Gradient Inversion: Blend gradient toward aggregate."""
-        if self.previous_aggregate is None:
-            return gradient
-        flat_grad = flatten_tensor(gradient)
-        aggregate = self.previous_aggregate.to(self.device)
+        target_similarity = 0.95
 
-        if flat_grad.numel() != aggregate.numel():
-            return gradient
+        # Normalize
+        h_norm = torch.norm(honest_flat)
+        h_unit = honest_flat / (h_norm + 1e-9)
 
-        alpha = self.adv_cfg.mimic_strength
-        original_norm = torch.norm(flat_grad)
-        aggregate_norm = torch.norm(aggregate)
+        m_norm = torch.norm(malicious_flat)
 
-        normalized_aggregate = aggregate / (aggregate_norm + 1e-9)
-        normalized_grad = flat_grad / (original_norm + 1e-9)
+        # 3. Geometric Projection (The "Boundary Ride")
+        # We construct a vector 'v' that is exactly 'target_similarity' close to honest
+        # but captures as much of the malicious direction as possible.
 
-        blended_direction = (1 - alpha) * normalized_grad + alpha * normalized_aggregate
-        manipulated = blended_direction * original_norm
-        return unflatten_tensor(manipulated, [p.shape for p in gradient])
+        # Remove the part of malicious that is already parallel to honest
+        parallel_component = torch.dot(malicious_flat, h_unit) * h_unit
+        orthogonal_component = malicious_flat - parallel_component
 
-    # ========================================================================
-    # THREAT MODEL 3: BLACK BOX (UCB BANDIT)
-    # ========================================================================
+        # If perfectly aligned, just return honest (scaled)
+        if torch.norm(orthogonal_component) < 1e-9:
+            return true_honest_grad
+
+        orth_unit = orthogonal_component / torch.norm(orthogonal_component)
+
+        # Construct the optimal vector at the boundary
+        # v = (cos_theta * h_unit + sin_theta * orth_unit) * scale
+        import math
+        theta = math.acos(target_similarity)
+
+        boundary_dir = (target_similarity * h_unit) + (math.sin(theta) * orth_unit)
+
+        # Scale: Mimic the honest norm to avoid norm-clipping defenses
+        final_flat = boundary_dir * h_norm
+
+        return unflatten_tensor(final_flat, [p.shape for p in gradient])
+
+    def _apply_gradient_inversion_attack(self, malicious_gradient: List[torch.Tensor]) -> List[torch.Tensor]:
+        """
+        Gradient Inversion: Simulates having reconstructed honest data.
+        We mix the LOSS, not the gradients. This creates a much more natural vector.
+        """
+        # 1. EXTRA KNOWLEDGE: We have 'inverted' data (simulated by a subset of training data)
+        # In a real attack, this comes from the reconstruction algorithm.
+        inverted_batch_data, inverted_batch_label = next(iter(self.train_loader))
+        inverted_batch_data = inverted_batch_data.to(self.device)
+        inverted_batch_label = inverted_batch_label.to(self.device)
+
+        model = self.model_factory().to(self.device)
+        model.train()
+
+        # 2. Compute Honest Loss on Inverted Data
+        outputs_honest = model(inverted_batch_data)
+        loss_honest = nn.functional.cross_entropy(outputs_honest, inverted_batch_label)
+
+        # 3. Compute Malicious Loss on Backdoor Data (The goal)
+        # (Assuming self.backdoor_dataset is set up)
+        bd_data, bd_label = next(iter(DataLoader(self.backdoor_dataset, batch_size=32)))
+        bd_data = bd_data.to(self.device)
+        bd_label = bd_label.to(self.device)
+
+        outputs_mal = model(bd_data)
+        loss_mal = nn.functional.cross_entropy(outputs_mal, bd_label)
+
+        # 4. Joint Optimization (The "Shadow Imitator")
+        # We minimize: Loss_Honest + lambda * Loss_Malicious
+        # This naturally finds a gradient that satisfies both tasks without
+        # looking like a linear blend of two distinct vectors.
+
+        lambda_val = 2.0 # Inversion allows us to be aggressive because we match the honest signal perfectly
+        total_loss = loss_honest + lambda_val * loss_mal
+
+        total_loss.backward()
+
+        grad_list = [p.grad.clone() for p in model.parameters()]
+        return grad_list
 
     def _select_black_box_strategy(self) -> str:
         """Selects a strategy using UCB1 with epsilon-greedy fallback."""
