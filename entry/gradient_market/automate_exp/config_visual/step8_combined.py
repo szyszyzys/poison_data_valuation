@@ -1,12 +1,11 @@
-import pandas as pd
 import json
-import re
-import seaborn as sns
-import matplotlib.pyplot as plt
-import numpy as np
 import os
+import re
 from pathlib import Path
-from typing import List, Dict, Any
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 
 # ==========================================
 # 1. CONFIGURATION
@@ -37,6 +36,7 @@ plt.rcParams.update({
 DEFENSE_ORDER = ["FedAvg", "FLTrust", "MARTFL", "SkyMask"]
 DEFENSE_COLORS = {"FedAvg": "#95a5a6", "FLTrust": "#3498db", "MARTFL": "#2ecc71", "SkyMask": "#e74c3c"}
 
+
 # ==========================================
 # 2. DATA LOADING
 # ==========================================
@@ -53,6 +53,7 @@ def format_label(label: str) -> str:
     }
     return param_map.get(label.lower(), label.replace("_", " ").title())
 
+
 def parse_scenario(scenario_name: str):
     # Regex to extract metadata from folder names
     pattern = r'(step[78])_(baseline_no_attack|buyer_attack)_(?:(.+?)_)?(fedavg|martfl|fltrust|skymask|skymask_small)_(.*)'
@@ -68,6 +69,7 @@ def parse_scenario(scenario_name: str):
         }
     return None
 
+
 def load_data(base_dir: str):
     records = []
     base_path = Path(base_dir)
@@ -82,14 +84,16 @@ def load_data(base_dir: str):
         # Load Metrics (Accuracy)
         for mfile in path.rglob("final_metrics.json"):
             try:
-                with open(mfile) as f: metrics = json.load(f)
+                with open(mfile) as f:
+                    metrics = json.load(f)
                 acc = metrics.get('acc', 0)
                 if acc > 1.0: acc /= 100.0
 
                 # Load Seller Reports (Selection Rates)
                 report_file = mfile.parent / "marketplace_report.json"
                 if report_file.exists():
-                    with open(report_file) as rf: report = json.load(rf)
+                    with open(report_file) as rf:
+                        report = json.load(rf)
                     for sid, sdata in report.get('seller_summaries', {}).items():
                         if sdata.get('type') == 'benign':
                             records.append({
@@ -98,9 +102,11 @@ def load_data(base_dir: str):
                                 "seller_id": sid,
                                 "selection_rate": sdata.get('selection_rate', 0.0)
                             })
-            except Exception as e: pass
+            except Exception as e:
+                pass
 
     return pd.DataFrame(records)
+
 
 # ==========================================
 # 3. VISUALIZATION FUNCTIONS
@@ -127,7 +133,7 @@ def plot_disruption_impact(df, output_dir):
     sns.barplot(
         data=subset, x="defense", y="acc", hue="attack",
         order=DEFENSE_ORDER,
-        palette="magma", # Dark colors for severe attacks
+        palette="magma",  # Dark colors for severe attacks
         edgecolor="black", linewidth=1.5
     )
 
@@ -139,6 +145,7 @@ def plot_disruption_impact(df, output_dir):
 
     plt.savefig(output_dir / "Visual_1_Disruption_Utility.pdf", bbox_inches='tight')
     plt.close()
+
 
 def plot_manipulation_fairness(df, output_dir):
     """
@@ -161,7 +168,7 @@ def plot_manipulation_fairness(df, output_dir):
         sns.boxplot(
             data=attack_sub, x="defense", y="selection_rate",
             order=DEFENSE_ORDER, color="white",
-            linewidth=2, fliersize=0 # Hide outliers in box, show them in strip
+            linewidth=2, fliersize=0  # Hide outliers in box, show them in strip
         )
 
         # 2. Stripplot shows the individual sellers (The Split)
@@ -181,37 +188,53 @@ def plot_manipulation_fairness(df, output_dir):
         plt.text(0.02, 0.05, "Points = Individual Honest Sellers.\nNote the split between 'Preferred' and 'Starved'.",
                  transform=plt.gca().transAxes, fontsize=10, bbox=dict(facecolor='white', alpha=0.8))
 
-        plt.savefig(output_dir / f"Visual_2_Manipulation_{attack.replace(' ','')}.pdf", bbox_inches='tight')
+        plt.savefig(output_dir / f"Visual_2_Manipulation_{attack.replace(' ', '')}.pdf", bbox_inches='tight')
         plt.close()
+
 
 def plot_victim_isolation(df, output_dir):
     """
     VISUAL 3: The 'Broken Tooth' (Bar Chart)
     Shows specific exclusion of the victim ID vs others.
     """
+    # 1. Check if isolation attacks exist in the data
     attacks = [a for a in ATTACK_CATEGORIES["isolation"] if a in df['attack'].unique()]
-    if not attacks: return
+
+    if not attacks:
+        print(f"⚠️ Skipping Isolation Plot: No attacks found matching {ATTACK_CATEGORIES['isolation']}")
+        # Debug: Show what we DID find
+        print(f"   (Available attacks in data: {df['attack'].unique()})")
+        return
 
     print(f"--- Generating Isolation Plot for {attacks} ---")
 
-    # Pick the most relevant scenario (e.g., SkyMask defense) to show the attack working
-    # We choose SkyMask or FedAvg as representative examples
-    target_defense = "SkyMask"
+    # 2. Filter for Isolation Attacks
+    isolation_df = df[df['attack'].isin(attacks)].copy()
 
-    subset = df[
-        (df['attack'].isin(attacks)) &
-        (df['defense'] == target_defense)
-    ].copy()
+    # 3. DYNAMICALLY pick a defense that actually exists in the data
+    # We prefer SkyMask if available (it looks best), otherwise take whatever is there (e.g., FedAvg)
+    available_defenses = isolation_df['defense'].unique()
+    if "SkyMask" in available_defenses:
+        target_defense = "SkyMask"
+    elif "FedAvg" in available_defenses:
+        target_defense = "FedAvg"
+    else:
+        target_defense = available_defenses[0]  # Pick the first one found
 
-    if subset.empty: return
+    print(f"   -> Using Defense: {target_defense} for visualization")
 
-    # Sort sellers to put Victim in the middle or highlight them
-    subset['is_victim'] = subset['seller_id'].apply(lambda x: x == TARGET_VICTIM_ID)
+    subset = isolation_df[isolation_df['defense'] == target_defense].copy()
+
+    if subset.empty:
+        print("   -> Subset empty after filtering defense. Skipping.")
+        return
+
+    # 4. Sort and Format
+    subset['is_victim'] = subset['seller_id'].apply(lambda x: str(x) == str(TARGET_VICTIM_ID))
     subset = subset.sort_values(by=['seller_id'])
-
-    # We create a new column for color mapping
     subset['Status'] = subset['is_victim'].map({True: 'Targeted Victim', False: 'Other Sellers'})
 
+    # 5. Plot
     plt.figure(figsize=(12, 6))
 
     sns.barplot(
@@ -220,7 +243,7 @@ def plot_victim_isolation(df, output_dir):
         dodge=False, edgecolor="black"
     )
 
-    plt.title(f"Targeted Censorship: Victim Isolation (Defense: {target_defense})", pad=15)
+    plt.title(f"Targeted Censorship: Victim Isolation (Defense: {target_defense})\nAttack: {attacks[0]}", pad=15)
     plt.ylabel("Selection Rate")
     plt.xlabel("Seller ID")
     plt.xticks(rotation=45, ha='right', fontsize=10)
@@ -235,8 +258,11 @@ def plot_victim_isolation(df, output_dir):
                      arrowprops=dict(facecolor='black', shrink=0.05),
                      ha='center', color='black', fontweight='bold')
 
-    plt.savefig(output_dir / "Visual_3_Targeted_Isolation.pdf", bbox_inches='tight')
+    fname = output_dir / "Visual_3_Targeted_Isolation.pdf"
+    plt.savefig(fname, bbox_inches='tight')
     plt.close()
+    print(f"   -> Saved: {fname.name}")
+
 
 # ==========================================
 # MAIN EXECUTION
@@ -258,6 +284,7 @@ def main():
     plot_victim_isolation(df, output_dir)
 
     print(f"\n✅ Analysis Complete. Figures saved to {output_dir.resolve()}")
+
 
 if __name__ == "__main__":
     main()
