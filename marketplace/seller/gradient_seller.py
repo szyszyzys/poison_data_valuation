@@ -619,7 +619,8 @@ class GradientSeller(BaseSeller):
             round_number: int,
             was_selected: bool,
             was_outlier: bool = False,
-            marketplace_metrics: Dict = None
+            marketplace_metrics: Dict = None,
+            **kwargs
     ):
         """Enhanced round end processing with marketplace tracking."""
 
@@ -1564,16 +1565,31 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
         logging.info(f"[{self.seller_id}] Initialized Reputation Farmer. Strategies: {len(self.base_strategies)}")
 
     def _add_class_based_strategies(self):
-        """Adds strategies to focus on specific classes to see if they boost selection."""
+        """
+        Adds strategies to focus on specific classes, BUT only if the client
+        actually possesses data for that class.
+        """
         try:
             targets = self._get_targets()
+
             if targets is not None:
-                num_classes = len(set(targets))
-                # Add a strategy for focusing on each specific class
-                for c in range(num_classes):
+                # 1. Identify which classes are actually present locally
+                # (e.g., in Non-IID, this client might only have classes [0, 1, 2])
+                present_classes = set(targets)
+
+                # 2. Only add strategies for THOSE classes
+                count = 0
+                for c in present_classes:
                     self.base_strategies.append(f"focus_class_{c}")
-        except Exception:
-            pass
+                    count += 1
+
+                logging.info(
+                    f"[{self.seller_id}] Smart Init: Added {count} class-focus strategies (ignored missing classes).")
+            else:
+                logging.warning(f"[{self.seller_id}] Could not extract targets. Skipping class strategies.")
+
+        except Exception as e:
+            logging.warning(f"[{self.seller_id}] Error initializing class strategies: {e}")
 
     def get_gradient_for_upload(self, all_seller_gradients=None, target_seller_id=None):
         self.round_counter += 1
@@ -1718,10 +1734,25 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
             return [self.dataset.dataset.targets[i] for i in self.dataset.indices]
         return None
 
-    def round_end_process(self, round_number: int, was_selected: bool, marketplace_metrics: Dict = None, **kwargs):
-        # Record feedback for the Bandit
-        super().round_end_process(round_number, was_selected, marketplace_metrics, **kwargs)
+    def round_end_process(self, round_number: int, was_selected: bool, was_outlier: bool = False,
+                          marketplace_metrics: Dict = None, **kwargs):
+        """
+        Record outcome and update threat-model-specific state.
+        Fixed signature to match GradientSeller parent class.
+        """
+        # 1. Update Bandit History (The specific Adaptive logic)
+        # We record: (Round, Strategy Used, Success/Failure)
         self.strategy_history.append((round_number, self.current_strategy, was_selected))
+
+        # 2. Call Parent (Standard logic)
+        # Pass arguments explicitly by name to avoid positional mix-ups
+        super().round_end_process(
+            round_number=round_number,
+            was_selected=was_selected,
+            was_outlier=was_outlier,
+            marketplace_metrics=marketplace_metrics,
+            **kwargs
+        )
 
 
 # class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
