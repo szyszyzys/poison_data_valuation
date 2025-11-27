@@ -257,13 +257,12 @@ def plot_manipulation_fairness(df, output_dir):
         plt.close()
 
 
+import matplotlib.patches as mpatches # <--- ADD THIS IMPORT
+
 def plot_victim_isolation(df, output_dir):
     """
     SHOWS: Specific Target ID (Did they get hit/promoted?)
-    UPDATED:
-      1. Renamed 'Victim' -> 'Target' to reflect the "Kingmaker" result.
-      2. X-axis shows clean numbers.
-      3. Legend moved INSIDE the figure (on the right subplot where there is space).
+    UPDATED: Manually constructs the legend to prevent empty box.
     """
     attacks = [a for a in ATTACK_CATEGORIES["isolation"] if a in df['attack'].unique()]
     if not attacks: return
@@ -273,8 +272,7 @@ def plot_victim_isolation(df, output_dir):
     # 1. Filter Data
     isolation_df = df[df['attack'].isin(attacks)].copy()
 
-    # 2. Define Status: Rename 'Victim' to 'Target'
-    #    The specific seller is the 'Target' of the geometric pivot.
+    # 2. Define Status
     isolation_df['is_target'] = isolation_df['seller_id'].apply(lambda x: str(x) == str(TARGET_VICTIM_ID))
     isolation_df['Status'] = isolation_df['is_target'].map({True: 'Target', False: 'Others'})
 
@@ -286,17 +284,19 @@ def plot_victim_isolation(df, output_dir):
 
     isolation_df = isolation_df.sort_values(by=['id_num'])
 
-    # 4. Create Plot
-    #    IMPORTANT: Set legend=False here so we can build our own custom one inside
+    # 4. Define Colors Explicitly
+    # We define this outside so we can use it for both the plot and the legend
+    my_palette = {'Target': '#e74c3c', 'Others': '#95a5a6'}
+
+    # 5. Create Plot
     g = sns.catplot(
         data=isolation_df, x="id_num", y="selection_rate",
         col="defense", col_order=DEFENSE_ORDER,
         hue="Status",
-        # Use a neutral color for 'Others' and a highlight color for 'Target'
-        palette={'Target': '#e74c3c', 'Others': '#95a5a6'},
+        palette=my_palette,
         kind="bar", height=5, aspect=1.2,
         dodge=False, edgecolor="black",
-        legend=False # <--- Disable default outside legend
+        legend=False # Disable default legend
     )
 
     g.fig.suptitle("Targeted Pivot: Selection Rate Impact", y=1.05, fontsize=18, fontweight='bold')
@@ -304,17 +304,17 @@ def plot_victim_isolation(df, output_dir):
     g.set_xticklabels(rotation=0, fontsize=11)
     g.set(ylim=(0, 1.05))
 
-    # 5. CUSTOM LEGEND INSIDE THE PLOT
-    # We place the legend in the RIGHT subplot (MartFL) because its bars are usually lower (~0.6),
-    # leaving plenty of white space at the top (0.7-1.0) for the legend.
-    # The Left subplot (FLTrust) has a bar at 1.0, which might overlap.
+    # 6. CUSTOM LEGEND (MANUAL CONSTRUCTION)
+    # We create "patches" (colored squares) manually to ensure the legend is never empty
+    target_patch = mpatches.Patch(color=my_palette['Target'], label='Target')
+    others_patch = mpatches.Patch(color=my_palette['Others'], label='Others')
 
     # Get the axes (ax[0] is Left/FLTrust, ax[1] is Right/MartFL)
     axes = g.axes.flatten()
 
-    # Create the legend on the second axis (MartFL)
-    # loc='upper right' puts it in the top-right corner of that subplot
+    # Place legend in the Right Plot (MartFL) where there is empty space at the top
     axes[1].legend(
+        handles=[target_patch, others_patch], # <--- Pass handles explicitly
         title="Seller Status",
         loc='upper right',
         frameon=True,
@@ -324,7 +324,6 @@ def plot_victim_isolation(df, output_dir):
 
     plt.savefig(output_dir / "3_Isolation_VictimCheck.pdf", bbox_inches='tight')
     plt.close()
-
 
 # ==========================================
 # MAIN
