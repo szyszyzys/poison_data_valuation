@@ -177,8 +177,8 @@ def plot_disruption_impact(df, output_dir):
 
 def plot_manipulation_fairness(df, output_dir):
     """
-    SHOWS: Selection Rate (Is there a split between winners/losers?)
-    Now includes 'Healthy Baseline' for comparison.
+    SHOWS: Selection Rate split (Baseline vs Attack).
+    FEATURES: Legend inside box (bottom left), smaller font, comparing Healthy vs Attack.
     """
     # 1. Identify Manipulation Attacks
     manipulation_attacks = [a for a in ATTACK_CATEGORIES["manipulation"] if a in df['attack'].unique()]
@@ -186,53 +186,76 @@ def plot_manipulation_fairness(df, output_dir):
 
     print(f"--- Plotting Manipulation (Selection Rates) ---")
 
-    # 2. explicitely add 'Healthy Baseline' to the list of attacks to plot
-    #    (Check if 'Healthy Baseline' exists in the dataframe first)
+    # 2. Add 'Healthy Baseline' to the plotting list if available
     attacks_to_plot = manipulation_attacks
     if "Healthy Baseline" in df['attack'].unique():
         attacks_to_plot = ["Healthy Baseline"] + manipulation_attacks
 
-    # 3. Filter Data
     subset = df[df['attack'].isin(attacks_to_plot)].copy()
 
-    # 4. Plot loop (Skip the baseline in the LOOP, or handle it differently?
-    #    Actually, it's better to plot Baseline vs Attack side-by-side for each attack)
-
-    for attack in manipulation_attacks: # Iterate only through attacks
-        # Create a mini-subset of JUST this attack AND the Baseline
+    for attack in manipulation_attacks:
+        # Create comparison subset: Just this Attack + Baseline
         comparison_subset = subset[subset['attack'].isin(["Healthy Baseline", attack])].copy()
 
         if comparison_subset.empty: continue
 
+        # Create Plot
         plt.figure(figsize=(8, 6))
 
-        # Strip Plot
-        sns.stripplot(
+        # Define Colors: Grey for Baseline, Red for Attack
+        my_palette = {"Healthy Baseline": "#95a5a6", attack: "#e74c3c"}
+
+        # STRIP PLOT (The Dots)
+        ax = sns.stripplot(
             data=comparison_subset, x="defense", y="selection_rate", hue="attack",
             order=DEFENSE_ORDER,
-            palette={"Healthy Baseline": "#95a5a6", attack: "#e74c3c"}, # Grey for Baseline, Red for Attack
+            palette=my_palette,
             alpha=0.6, jitter=0.25, size=8, edgecolor='black', linewidth=1,
-            dodge=True # Important: Separates the Baseline and Attack dots side-by-side
+            dodge=True  # IMPORTANT: Splits the dots side-by-side
         )
 
-        # Box Plot Overlay
+        # BOX PLOT (The Summary)
         sns.boxplot(
             data=comparison_subset, x="defense", y="selection_rate", hue="attack",
             order=DEFENSE_ORDER,
-            boxprops={'facecolor':'none', 'edgecolor':'gray'},
+            palette=my_palette,
+            boxprops={'facecolor': 'none', 'edgecolor': 'gray'},  # Transparent box
             linewidth=2, fliersize=0, zorder=10,
             dodge=True
         )
 
-        plt.title(f"Mechanism Perturbation: {attack}", pad=15)
+        # --- LEGEND CUSTOMIZATION ---
+        # 1. Get handles/labels to avoid duplicates (Strip + Box creates 4 entries, we want 2)
+        handles, labels = ax.get_legend_handles_labels()
+
+        # 2. Filter: Keep only the first 2 (Baseline and Attack) to avoid duplicates
+        #    We check specifically for the attack name and 'Healthy Baseline'
+        unique_labels = {}
+        for h, l in zip(handles, labels):
+            if l in [attack, "Healthy Baseline"] and l not in unique_labels:
+                unique_labels[l] = h
+
+        # 3. Place Legend INSIDE the box (Lower Left is usually empty for these attacks)
+        plt.legend(
+            handles=unique_labels.values(),
+            labels=unique_labels.keys(),
+            loc='lower left',  # Put inside, bottom left corner
+            fontsize='small',  # Smaller text
+            title=None,  # No title to save space
+            frameon=True,  # Keep the box
+            framealpha=0.8,  # Semi-transparent background
+            edgecolor='gray'  # Subtle border
+        )
+
+        plt.title(f"Impact on Selection: {attack}", pad=15)
         plt.ylabel("Seller Selection Rate")
         plt.xlabel("")
         plt.ylim(-0.05, 1.05)
-        plt.legend(title="Scenario", bbox_to_anchor=(1.05, 1), loc='upper left')
 
         safe_name = attack.replace(" ", "_").replace("(", "").replace(")", "")
         plt.savefig(output_dir / f"2_Manipulation_{safe_name}_vs_Baseline.pdf", bbox_inches='tight')
         plt.close()
+
 
 def plot_victim_isolation(df, output_dir):
     """
