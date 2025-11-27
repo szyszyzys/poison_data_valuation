@@ -299,7 +299,7 @@ def plot_victim_isolation(df, output_dir):
         legend=False # Disable default legend
     )
 
-    g.fig.suptitle("Targeted Pivot: Selection Rate Impact", y=1.05, fontsize=18, fontweight='bold')
+    # g.fig.suptitle("Targeted Pivot: Selection Rate Impact", y=1.05, fontsize=18, fontweight='bold')
     g.set_axis_labels("Seller ID", "Selection Rate")
     g.set_xticklabels(rotation=0, fontsize=11)
     g.set(ylim=(0, 1.05))
