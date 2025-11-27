@@ -1,8 +1,11 @@
+import copy
 import collections
 import copy
 import csv
 import json
+import logging
 import os
+import random
 import sys
 import time
 # Add these class definitions as well
@@ -10,9 +13,7 @@ from abc import ABC, abstractmethod
 from collections import abc  # abc.Mapping for general dicts
 from dataclasses import field, dataclass
 from pathlib import Path
-from typing import Any, Callable
-from typing import Dict
-from typing import List, Optional
+from typing import List, Dict, Any, Optional, Callable, Set
 from typing import Tuple
 from typing import Union
 
@@ -22,6 +23,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Subset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
     BackdoorTextGenerator, BackdoorTabularGenerator
@@ -1519,21 +1521,6 @@ class AdvancedBackdoorAdversarySeller(AdvancedPoisoningAdversarySeller):
             return None
 
 
-import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, Subset
-import numpy as np
-import collections
-import logging
-import random
-from typing import List, Dict, Any, Optional, Callable, Set
-
-
-# Assuming these helper functions and classes exist in your project structure
-# from your_project.utils import flatten_tensor, unflatten_tensor
-# from your_project.base_classes import AdvancedPoisoningAdversarySeller, PoisonedDataset
-# from your_project.configs import ...
-
 class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
     """
     Adaptive adversary simulating three threat models.
@@ -1552,55 +1539,57 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
                  training_config: Any, model_factory: Callable[[], nn.Module],
                  adversary_config: Any,
                  model_type: str,
-                 device: str = "cpu", **kwargs):
+                 device: str = "cpu",
+                 # --- FIX 1: Explicitly accept the argument to prevent crash ---
+                 validation_loader: DataLoader = None,
+                 **kwargs):
 
         super().__init__(seller_id=seller_id, data_config=data_config,
                          training_config=training_config, model_factory=model_factory,
                          adversary_config=adversary_config, poison_generator=None,
                          device=device, **kwargs)
 
+        # --- FIX 2: Store it so the Oracle attack can use it ---
+        self.validation_loader = validation_loader
+
+        # Fallback: Check kwargs just in case
+        if self.validation_loader is None and 'validation_loader' in kwargs:
+            self.validation_loader = kwargs['validation_loader']
+
         self.adv_cfg = adversary_config.adaptive_attack
         if not self.adv_cfg.is_active:
             raise ValueError("AdaptiveAttackerSeller requires is_active=True")
 
         self.model_type = model_type
-        self.kwargs = kwargs  # Store for poison generator
+        self.kwargs = kwargs
 
-        # Determine threat model: "oracle", "gradient_inversion", "black_box"
         self.threat_model = self.adv_cfg.threat_model
 
-        # --- Adaptive Learning State (UCB Bandit) ---
         self.phase = "exploration"
-        # We use a deque to create a sliding window. This allows the adversary
-        # to adapt if the marketplace defense mechanism changes mid-training.
         self.strategy_history = collections.deque(maxlen=200)
         self.current_strategy = "honest"
         self.round_counter = 0
 
-        # --- Strategy Pool ---
+        # --- FIX 3: Use the "Selection Boosting" Strategy Pool ---
         if self.adv_cfg.attack_mode == "gradient_manipulation":
-            self.base_strategies = ["honest", "reduce_norm", "add_noise", "stealthy_blend"]
+            # Removed 'add_noise' because it gets rejected by MartFL
+            self.base_strategies = ["honest", "reduce_norm", "stealthy_blend"]
+
         elif self.adv_cfg.attack_mode == "data_poisoning":
-            self.base_strategies = ["honest", "subsample_clean"]
+            # Removed 'subsample_clean' because it creates high variance (rejection)
+            # Added 'balance_classes' and 'easy_samples' to look like the Global Mean (selection)
+            self.base_strategies = ["honest", "balance_classes", "easy_samples"]
             self._add_class_based_strategies()
-        else:
-            raise ValueError(f"Invalid attack_mode: {self.adv_cfg.attack_mode}")
 
-        # --- Threat-Model Specific State ---
-        self.previous_centroid = None  # For Oracle
-        self.previous_aggregate = None  # For Gradient Inversion
-
-        # --- Stealthy Blend State ---
+        # ... (Rest of resources remains the same) ...
+        self.previous_centroid = None
+        self.previous_aggregate = None
         self.blend_cfg = adversary_config.drowning_attack
         self.blend_phase = "mimicry"
         self.blend_mimicry_rounds = self.blend_cfg.mimicry_rounds
         self.blend_attack_intensity = self.blend_cfg.attack_intensity
-        self.blend_honest_gradient_stats = {
-            'mean_norm': None,
-            'direction_estimate': None
-        }
+        self.blend_honest_gradient_stats = {'mean_norm': None, 'direction_estimate': None}
 
-        # Initialize Malicious Datasets & Maps
         self.backdoor_dataset: Optional[Dataset] = None
         self.poisoned_dataset: Optional[Dataset] = None
         self.layer_name_to_index: Dict[str, int] = {}
@@ -1609,7 +1598,6 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
         self._initialize_malicious_resources()
 
         logging.info(f"[{self.seller_id}] Initialized AdaptiveAttacker ({self.threat_model})")
-        logging.info(f"  Attack Mode: {self.adv_cfg.attack_mode}")
 
     def _initialize_malicious_resources(self):
         """Helper to setup malicious datasets and layer maps."""
@@ -1677,26 +1665,20 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
     # THREAT MODELS 1 & 2: ORACLE / GRADIENT INVERSION
     # ========================================================================
 
-    def _apply_oracle_attack(self, gradient: List[torch.Tensor]) -> List[torch.Tensor]:
-        """
-        Oracle Attack: Uses the GLOBAL VALIDATION DATA to calculate the 'True' Honest Gradient,
-        then projects the malicious gradient exactly onto the boundary of acceptance.
-        """
-        # 1. ORACLE KNOWLEDGE: Compute gradient on Global Validation Set
-        # (This simulates knowing the true distribution of all clients)
+    def _apply_oracle_attack(self, malicious_gradient: List[torch.Tensor]) -> List[torch.Tensor]:
+        if self.validation_loader is None:
+            logging.error(f"[{self.seller_id}] Oracle attack requires validation_loader!")
+            return malicious_gradient
+
+        # 1. Get True Honest Direction (from Validation Data)
         self.model_factory().to(self.device)
         true_honest_grad, _ = self._compute_local_grad(
             self.model_factory().to(self.device),
-            self.validation_loader.dataset  # <--- CHEATING: Using Global Validation Data
+            self.validation_loader.dataset
         )
 
         honest_flat = flatten_tensor(true_honest_grad)
-        malicious_flat = flatten_tensor(gradient)
-
-        # 2. Decompose Malicious Vector
-        # We want to maximize the malicious component while keeping
-        # Cosine Similarity > Threshold.
-        # Let's assume a safe threshold based on Oracle knowledge of MartFL (e.g., 0.95)
+        malicious_flat = flatten_tensor(malicious_gradient)  # <--- Input must be malicious
 
         target_similarity = 0.95
 
@@ -1732,39 +1714,66 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
 
         return unflatten_tensor(final_flat, [p.shape for p in gradient])
 
-    def _apply_gradient_inversion_attack(self, malicious_gradient: List[torch.Tensor]) -> List[torch.Tensor]:
+    def _apply_gradient_inversion_attack(self, _unused_gradient_input) -> List[torch.Tensor]:
         """
         Gradient Inversion: Simulates having reconstructed honest data.
         We mix the LOSS, not the gradients. This creates a much more natural vector.
         """
-        # 1. EXTRA KNOWLEDGE: We have 'inverted' data (simulated by a subset of training data)
+        # 1. IDENTIFY MALICIOUS DATASET
+        # We need actual data to calculate the 'malicious loss'.
+        # Check backdoor first, then poisoned (e.g. targeted poisoning).
+        malicious_dataset = self.backdoor_dataset
+        if malicious_dataset is None:
+            malicious_dataset = self.poisoned_dataset
+
+        # SAFETY CHECK: If no malicious data is configured/loaded, we cannot attack.
+        if malicious_dataset is None:
+            logging.warning(f"[{self.seller_id}] GradInv skipped: No malicious dataset found. Returning honest grad.")
+            # Fallback: Compute honest gradient
+            model = self.model_factory().to(self.device)
+            grad, _ = self._compute_local_grad(model, self.dataset)
+            return grad
+
+        # 2. EXTRA KNOWLEDGE: Get 'Inverted' (Honest) Data
         # In a real attack, this comes from the reconstruction algorithm.
-        inverted_batch_data, inverted_batch_label = next(iter(self.train_loader))
+        try:
+            # Safe iterator handling
+            inverted_iter = iter(self.train_loader)
+            inverted_batch_data, inverted_batch_label = next(inverted_iter)
+        except StopIteration:
+            # Handle edge case of empty loader
+            return self._compute_local_grad(self.model_factory().to(self.device), self.dataset)[0]
+
         inverted_batch_data = inverted_batch_data.to(self.device)
         inverted_batch_label = inverted_batch_label.to(self.device)
 
         model = self.model_factory().to(self.device)
         model.train()
 
-        # 2. Compute Honest Loss on Inverted Data
+        # 3. Compute Honest Loss on Inverted Data
         outputs_honest = model(inverted_batch_data)
         loss_honest = nn.functional.cross_entropy(outputs_honest, inverted_batch_label)
 
-        # 3. Compute Malicious Loss on Backdoor Data (The goal)
-        # (Assuming self.backdoor_dataset is set up)
-        bd_data, bd_label = next(iter(DataLoader(self.backdoor_dataset, batch_size=32)))
+        # 4. Compute Malicious Loss on Malicious Data
+        # [FIX] Use the safely resolved 'malicious_dataset'
+        try:
+            # Note: Creating a DataLoader inside a loop is inefficient but functional for small batch attacks.
+            # Using shuffle=True ensures we don't just overfit to the first 32 examples.
+            bd_iter = iter(DataLoader(malicious_dataset, batch_size=32, shuffle=True))
+            bd_data, bd_label = next(bd_iter)
+        except Exception as e:
+            logging.error(f"[{self.seller_id}] Failed to load malicious batch: {e}")
+            return self._compute_local_grad(model, self.dataset)[0]
+
         bd_data = bd_data.to(self.device)
         bd_label = bd_label.to(self.device)
 
         outputs_mal = model(bd_data)
         loss_mal = nn.functional.cross_entropy(outputs_mal, bd_label)
 
-        # 4. Joint Optimization (The "Shadow Imitator")
+        # 5. Joint Optimization (The "Shadow Imitator")
         # We minimize: Loss_Honest + lambda * Loss_Malicious
-        # This naturally finds a gradient that satisfies both tasks without
-        # looking like a linear blend of two distinct vectors.
-
-        lambda_val = 2.0  # Inversion allows us to be aggressive because we match the honest signal perfectly
+        lambda_val = 2.0
         total_loss = loss_honest + lambda_val * loss_mal
 
         total_loss.backward()
@@ -1951,12 +1960,14 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
                     beta * self.blend_honest_gradient_stats['mean_norm'] +
                     (1 - beta) * grad_norm
             )
+
     def _get_targets(self):
         # Robust helper to get targets from any dataset wrapper
         if hasattr(self.dataset, 'targets'): return self.dataset.targets
         if hasattr(self.dataset, 'dataset') and hasattr(self.dataset.dataset, 'targets'):
-             return [self.dataset.dataset.targets[i] for i in self.dataset.indices]
+            return [self.dataset.dataset.targets[i] for i in self.dataset.indices]
         return None
+
     def _compute_malicious_gradient(self) -> Optional[List[torch.Tensor]]:
         """Compute gradient on malicious objective."""
         model = self.model_factory().to(self.device)
@@ -2036,8 +2047,8 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
 
         stats['attack_strategy'] = self.current_strategy
 
-        # 2. OPTIMIZATION: Data Poisoning Check
-        # If strategy is data-based, we change the dataset and compute once.
+        # 2. OPTIMIZATION: Black-Box Data Poisoning
+        # If strategy changes data, compute on that data directly and return.
         if self.adv_cfg.attack_mode == "data_poisoning" and self.threat_model == "black_box":
             dataset_for_training = self._apply_black_box_data_strategy(self.current_strategy)
 
@@ -2049,22 +2060,32 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
             return final_gradient, stats
 
         # 3. Base Computation: Honest Gradient
-        # Required for gradient manipulations, oracle, and stealthy blend base
-        base_gradient, train_stats = self._compute_local_grad(local_model, self.dataset)
+        # We compute this ONCE. It serves as the "Mask" for attacks or the fallback.
+        honest_gradient, train_stats = self._compute_local_grad(local_model, self.dataset)
         stats.update(train_stats)
 
-        if base_gradient is None:
-            stats['error'] = 'Base gradient computation failed'
+        if honest_gradient is None:
+            stats['error'] = 'Honest gradient computation failed'
             return None, stats
 
-        final_gradient = base_gradient
+        final_gradient = honest_gradient  # Default fallback
 
-        # 4. Apply Manipulations
+        # 4. Apply Advanced Attacks
         if self.threat_model == "oracle":
-            final_gradient = self._apply_oracle_attack(base_gradient)
+            # [FIXED LOGIC]
+            # 1. Compute the MALICIOUS target (Poison/Backdoor)
+            malicious_gradient = self._compute_malicious_gradient()
+
+            if malicious_gradient is not None:
+                # 2. Project the MALICIOUS target onto the Honest Boundary
+                final_gradient = self._apply_oracle_attack(malicious_gradient)
+            else:
+                logging.warning(f"[{self.seller_id}] Oracle attack missing malicious dataset. Sending honest.")
+                final_gradient = honest_gradient
 
         elif self.threat_model == "gradient_inversion":
-            final_gradient = self._apply_gradient_inversion_attack(base_gradient)
+            # Pass None because this method calculates gradients via Joint Loss Optimization
+            final_gradient = self._apply_gradient_inversion_attack(None)
 
         elif self.threat_model == "black_box":
             # Gradient Manipulation Mode
@@ -2077,18 +2098,18 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
                     logging.info(f"[{self.seller_id}] Blend strategy entering ATTACK phase.")
 
                 if self.blend_phase == "mimicry":
-                    self._update_honest_gradient_stats(base_gradient)
-                    final_gradient = base_gradient
+                    self._update_honest_gradient_stats(honest_gradient)
+                    final_gradient = honest_gradient
                 else:
                     malicious_gradient = self._compute_malicious_gradient()
                     if malicious_gradient:
                         final_gradient = self._create_stealthy_malicious_gradient(
-                            base_gradient, malicious_gradient
+                            honest_gradient, malicious_gradient
                         )
             else:
-                # Standard manipulations (add_noise, reduce_norm)
+                # Standard manipulations (reduce_norm, etc.)
                 final_gradient = self._apply_black_box_gradient_manipulation(
-                    base_gradient, self.current_strategy
+                    honest_gradient, self.current_strategy
                 )
 
         # Cache and Return
