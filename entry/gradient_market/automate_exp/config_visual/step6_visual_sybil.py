@@ -399,7 +399,7 @@ def main():
     # Plot
     defenses = df_agg['defense'].unique()
     for defense in defenses:
-        plot_sybil_comparison(df_agg[df_agg['defense'] == defense].copy(), defense, output_dir)
+        # plot_sybil_comparison(df_agg[df_agg['defense'] == defense].copy(), defense, output_dir)
         plot_sybil_comparison_new(df_agg[df_agg['defense'] == defense].copy(), defense, output_dir)
     print("\nAnalysis complete.")
 
