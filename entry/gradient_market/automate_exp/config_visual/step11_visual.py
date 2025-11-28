@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from matplotlib.ticker import FixedLocator, FixedFormatter
+from matplotlib.ticker import FixedLocator, FixedFormatter, FuncFormatter
 
 # ==========================================
 # 1. GLOBAL CONFIGURATION & STYLING
@@ -45,8 +45,9 @@ CUSTOM_MARKERS = {
 }
 
 # --- Constants for Heterogeneity Plot ---
-ALPHAS_IN_TEST = [100.0, 1.0, 0.5, 0.1]
-ALPHA_LABELS = ["IID", "1.0", "0.5", "0.1"]
+# We map these to integers 0, 1, 2, 3 to avoid visual gaps
+HET_VAL_MAP = {100.0: 0, 1.0: 1, 0.5: 2, 0.1: 3}
+HET_LABELS = ["IID", "1.0", "0.5", "0.1"]
 
 # --- Constants for Scarcity Plot ---
 RATIOS_IN_TEST = [0.01, 0.05, 0.1, 0.2]
@@ -59,11 +60,19 @@ def format_label(label: str) -> str:
 def set_publication_style():
     """Sets the 'Big & Bold' professional style globally."""
     sns.set_theme(style="whitegrid")
-    sns.set_context("paper", font_scale=1.8) # Consistent Scale
+    sns.set_context("paper", font_scale=1.8)
 
     plt.rcParams.update({
         'font.family': 'sans-serif',
+        # 'font.sans-serif': ['Arial'], # Uncomment if you have Arial installed
         'font.weight': 'bold',
+
+        # --- FIX: Font Embedding for LaTeX ---
+        'pdf.fonttype': 42,         # Type 42 (TrueType) ensures editable text in PDF
+        'ps.fonttype': 42,
+        'mathtext.fontset': 'cm',   # Computer Modern for math expressions
+
+        # --- Axis & Grid ---
         'axes.labelweight': 'bold',
         'axes.titleweight': 'bold',
         'axes.titlesize': 24,
@@ -74,6 +83,10 @@ def set_publication_style():
         'legend.title_fontsize': 20,
         'axes.linewidth': 2.0,
         'axes.edgecolor': '#333333',
+        'grid.alpha': 0.6,
+        'grid.linestyle': '--',
+
+        # --- Lines ---
         'lines.linewidth': 3.5,
         'lines.markersize': 11,
     })
@@ -83,20 +96,23 @@ def set_publication_style():
 # ==========================================
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
-    """Parses folder suffixes."""
+    """Parses folder suffixes into numerical values."""
     hps = {}
+    # Case 1: Baseline IID (mapped to 100.0 internally for sorting)
     if hp_folder_name == "iid":
         hps['experiment_type'] = 'heterogeneity'
         hps['x_val'] = 100.0
         return hps
 
+    # Case 2: Dirichlet Alpha Sweep
     match_alpha = re.search(r'alpha_([0-9\.]+)', hp_folder_name)
     if match_alpha:
         hps['experiment_type'] = 'heterogeneity'
         hps['x_val'] = float(match_alpha.group(1))
         return hps
 
-    match_ratio = re.search(r'ratio_sweep_([0-9\.]+)', hp_folder_name)
+    # Case 3: Scarcity Ratio Sweep
+    match_ratio = re.search(r'ratio_([0-9\.]+)', hp_folder_name)
     if match_ratio:
         hps['experiment_type'] = 'scarcity'
         hps['x_val'] = float(match_ratio.group(1))
@@ -112,12 +128,14 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
 
+        # Normalize accuracy to 0-1.0 range if it isn't already
         acc = metrics.get('acc', 0)
         if acc > 1.0: acc /= 100.0
 
         run_data['acc'] = acc
         run_data['asr'] = metrics.get('asr', 0)
 
+        # Try to load marketplace report for selection rates
         report_file = metrics_file.parent / "marketplace_report.json"
         if report_file.exists():
             with open(report_file, 'r') as f:
@@ -142,51 +160,39 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     all_runs = []
     base_path = Path(base_dir)
 
+    # Look for folders starting with step11
     scenario_folders = [f for f in base_path.glob("step11_*") if f.is_dir()]
     print(f"Found {len(scenario_folders)} step11 folders.")
 
     for folder in scenario_folders:
         folder_name = folder.name
 
-        match_old = re.match(r'step11_(market_wide|buyer_only|seller_only)_(fedavg|martfl|fltrust|skymask)_(.*)', folder_name)
-        match_new = re.match(r'step11_(fedavg|martfl|fltrust|skymask)_(.*)', folder_name)
+        # Regex to extract Defense and Dataset from folder name
+        # Matches: step11_fedavg_CIFAR100 OR step11_vary_seller_fedavg_CIFAR100
+        match = re.match(r'step11_([a-zA-Z0-9]+)_([a-zA-Z0-9]+)', folder_name)
 
-        defense = None
-        dataset = None
-        bias_from_folder = None
-        is_nested = False
-
-        if match_old:
-            bias_raw = match_old.group(1)
-            bias_from_folder = bias_raw.replace('_', '-').title() + " Bias"
-            defense = match_old.group(2)
-            dataset = match_old.group(3)
-            is_nested = False
-        elif match_new:
-            defense = match_new.group(1)
-            dataset = match_new.group(2)
-            is_nested = True
-        else:
+        if not match:
             continue
 
+        defense = match.group(1)
+        dataset = match.group(2)
+
+        # Traverse subdirectories looking for results
         for metrics_file in folder.rglob("final_metrics.json"):
             try:
+                # Structure expectation: .../step11_.../vary_seller/alpha_0.1/seed_0/final_metrics.json
                 parts = metrics_file.parent.relative_to(folder).parts
-                bias_source = "unknown"
-                hp_folder = None
 
-                if is_nested:
-                    if len(parts) < 2: continue
-                    subdir_bias = parts[0]
-                    if subdir_bias == "vary_buyer": bias_source = "Buyer-Only Bias"
-                    elif subdir_bias == "vary_seller": bias_source = "Seller-Only Bias"
-                    elif subdir_bias == "vary_market": bias_source = "Market-Wide Bias"
-                    else: continue
-                    hp_folder = parts[1]
-                else:
-                    if len(parts) < 1: continue
-                    bias_source = bias_from_folder
-                    hp_folder = parts[0]
+                if len(parts) < 2: continue # Ensure deep enough
+
+                subdir_type = parts[0] # e.g., "vary_seller"
+                hp_folder = parts[1]   # e.g., "alpha_0.1"
+
+                # Map directory name to readable Bias Source
+                if subdir_type == "vary_buyer": bias_source = "Buyer-Only Bias"
+                elif subdir_type == "vary_seller": bias_source = "Seller-Only Bias"
+                elif subdir_type == "scarcity": bias_source = "Data Scarcity"
+                else: continue # Skip unrelated folders
 
                 run_hps = parse_hp_suffix(hp_folder)
                 if 'experiment_type' not in run_hps: continue
@@ -200,7 +206,8 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                         **run_hps,
                         **metrics
                     })
-            except Exception:
+            except Exception as e:
+                # print(f"Skipping {metrics_file}: {e}")
                 continue
 
     df = pd.DataFrame(all_runs)
@@ -225,10 +232,14 @@ def plot_heterogeneity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
     for col in ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']:
         dataset_df[col] = dataset_df[col] * 100
 
-    valid_biases = ['Market-Wide Bias', 'Buyer-Only Bias', 'Seller-Only Bias']
+    # --- FIX: Map X-Values to Integers to close the "IID Gap" ---
+    dataset_df['x_mapped'] = dataset_df['x_val'].map(HET_VAL_MAP)
+    # Filter out any undefined mappings
+    dataset_df = dataset_df.dropna(subset=['x_mapped'])
+
+    valid_biases = ['Buyer-Only Bias', 'Seller-Only Bias']
     metrics_order = [('acc', 'Accuracy'), ('asr', 'ASR'), ('benign_selection_rate', 'Benign Select'), ('adv_selection_rate', 'Attacker Select')]
 
-    # Only plot active defenses
     active_defenses = [d for d in DEFENSE_ORDER if d in dataset_df['defense'].unique()]
 
     for bias in valid_biases:
@@ -239,24 +250,27 @@ def plot_heterogeneity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
 
         for i, (col_name, display_name) in enumerate(metrics_order):
             ax = axes[i]
+
+            # Plot using MAPPED integer X-axis
             sns.lineplot(
-                ax=ax, data=bias_df, x='x_val', y=col_name,
+                ax=ax, data=bias_df, x='x_mapped', y=col_name,
                 hue='defense', style='defense',
                 hue_order=active_defenses, style_order=active_defenses,
                 palette=DEFENSE_COLORS, markers=CUSTOM_MARKERS,
                 dashes=False, errorbar=('ci', 95)
             )
             ax.set_title(f"{display_name}", pad=15)
-            ax.set_xlabel("Heterogeneity", labelpad=10)
 
             if i == 0: ax.set_ylabel("Rate / Score (%)", labelpad=10)
             else: ax.set_ylabel("")
 
-            # IID Logic (100 on Left)
-            ax.set_xscale('log')
-            ax.xaxis.set_major_locator(FixedLocator(ALPHAS_IN_TEST))
-            ax.xaxis.set_major_formatter(FixedFormatter(ALPHA_LABELS))
-            ax.set_xlim(max(ALPHAS_IN_TEST) * 1.4, min(ALPHAS_IN_TEST) * 0.8)
+            # --- FIX: Manually label the integer ticks ---
+            ax.set_xticks(sorted(HET_VAL_MAP.values()))
+            ax.set_xticklabels(HET_LABELS)
+            ax.set_xlabel(r"Heterogeneity ($\alpha \to$)", labelpad=10)
+
+            # Set Limits to center the plot nicely
+            ax.set_xlim(-0.2, 3.2)
 
             if ax.get_legend(): ax.get_legend().remove()
 
@@ -282,8 +296,10 @@ def plot_scarcity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
     for col in ['acc', 'asr', 'benign_selection_rate', 'adv_selection_rate']:
         dataset_df[col] = dataset_df[col] * 100
 
-    bias = 'Seller-Only Bias' # Default view
-    bias_df = dataset_df[dataset_df['bias_source'] == bias]
+    # Scarcity is usually run with Seller-Only Bias (Fixed Seller 0.5, Vary Buyer Ratio)
+    # Check your generation script if you named the folder "scarcity" or reused "vary_seller"
+    # The collector currently maps "scarcity" folder -> "Data Scarcity" source.
+    bias_df = dataset_df # Use all scarcity data found
     if bias_df.empty: return
 
     metrics_order = [('acc', 'Accuracy'), ('asr', 'ASR'), ('benign_selection_rate', 'Benign Select'), ('adv_selection_rate', 'Attacker Select')]
@@ -301,21 +317,24 @@ def plot_scarcity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
             dashes=False, errorbar=('ci', 95)
         )
         ax.set_title(f"{display_name}", pad=15)
-        ax.set_xlabel("Buyer Data Ratio", labelpad=10)
 
         if i == 0: ax.set_ylabel("Rate / Score (%)", labelpad=10)
         else: ax.set_ylabel("")
 
-        ax.xaxis.set_major_locator(FixedLocator(RATIOS_IN_TEST))
+        # --- FIX: Log Scale for Scarcity Ratios ---
+        ax.set_xscale('log')
+        ax.set_xticks(RATIOS_IN_TEST)
+        # Format ticks as decimals (0.01) instead of scientific (10^-2)
+        ax.get_xaxis().set_major_formatter(FuncFormatter(lambda x, _: f"{x:g}"))
+
+        ax.set_xlabel("Buyer Data Ratio (Log Scale)", labelpad=10)
+
         if ax.get_legend(): ax.get_legend().remove()
 
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
         fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.16),
                    ncol=len(active_defenses), frameon=True, title="Defense Methods")
-
-    # Main Title
-    # plt.suptitle(f"Impact of Root Data Scarcity (Seller-Only Bias, Alpha=0.5)", fontsize=24, fontweight='bold', y=1.05)
 
     fname = output_dir / f"Step11_Scarcity_{dataset}.pdf"
     plt.savefig(fname, bbox_inches='tight', format='pdf')
@@ -333,10 +352,13 @@ def main():
 
     df = collect_all_results(BASE_RESULTS_DIR)
     if df.empty:
-        print("No valid data found.")
+        print("No valid data found. Check BASE_RESULTS_DIR or folder naming.")
         return
 
-    df.to_csv(output_dir / "step11_full_summary.csv", index=False)
+    # Save CSV for debugging
+    csv_path = output_dir / "step11_full_summary.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"Summary CSV saved to: {csv_path}")
 
     for dataset in df['dataset'].unique():
         if dataset != 'unknown':
