@@ -1582,23 +1582,31 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
     def _add_class_based_strategies(self):
         """
         SMART INIT: Analyzes local data and only adds 'focus_class_X'
-        if the client actually possesses samples of Class X.
+        if the client has ENOUGH data for that class to train stably.
         """
+        MIN_SAMPLES_REQUIRED = 8  # Safety threshold to avoid Batch Norm crashes
+
         try:
             targets = self._get_targets()
+
             if targets is not None:
-                # Find unique classes present in this specific client's data
-                present_classes = set(targets)
+                targets = np.array(targets)
+                # Count instances of each class
+                classes, counts = np.unique(targets, return_counts=True)
 
-                count = 0
-                for c in present_classes:
-                    # Only add strategy if we have data for it
-                    self.base_strategies.append(f"focus_class_{int(c)}")
-                    count += 1
+                count_added = 0
+                for c, num_samples in zip(classes, counts):
+                    # SAFETY CHECK: Only add if we have enough samples
+                    if num_samples >= MIN_SAMPLES_REQUIRED:
+                        self.base_strategies.append(f"focus_class_{int(c)}")
+                        count_added += 1
+                    else:
+                        logging.debug(f"[{self.seller_id}] Skipped class {c} (only {num_samples} samples).")
 
-                logging.info(f"[{self.seller_id}] Smart Init: Added {count} class strategies (skipped missing).")
+                logging.info(f"[{self.seller_id}] Smart Init: Added {count_added} viable class strategies.")
             else:
                 logging.warning(f"[{self.seller_id}] Could not extract targets. Skipping class strategies.")
+
         except Exception as e:
             logging.warning(f"[{self.seller_id}] Error initializing class strategies: {e}")
 
@@ -1730,13 +1738,29 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
         return Subset(self.dataset, final_indices)
 
     def _apply_class_filter_strategy(self, strategy):
+        """
+        Applies filtering but returns full dataset if resulting subset is dangerously small.
+        """
+        MIN_SAMPLES_RUNTIME = 4  # Absolute minimum to run a forward pass
+
         try:
+            # Parse "focus_class_19" -> 19
             c = int(strategy.rpartition('_')[2])
             targets = np.array(self._get_targets())
+
+            # Find indices where target == c
             indices = np.where(targets == c)[0]
-            if len(indices) == 0: return self.dataset
+
+            # RUNTIME SAFETY CHECK
+            if len(indices) < MIN_SAMPLES_RUNTIME:
+                logging.warning(
+                    f"[{self.seller_id}] Strategy '{strategy}' yields only {len(indices)} samples. Unsafe. Returning full dataset.")
+                return self.dataset
+
             return Subset(self.dataset, indices.tolist())
-        except:
+
+        except Exception as e:
+            logging.error(f"[{self.seller_id}] Filter failed for '{strategy}': {e}")
             return self.dataset
 
     def _get_targets(self):
