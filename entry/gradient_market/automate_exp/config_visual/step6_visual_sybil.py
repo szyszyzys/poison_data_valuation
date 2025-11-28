@@ -261,19 +261,25 @@ def plot_compact_comparison(defense_df: pd.DataFrame, defense: str, output_dir: 
     if defense_df.empty:
         return
 
-    # DOUBLE CHECK: Ensure strategy is a column, not in index
+    # Ensure strategy is accessible as a column
     if 'strategy' not in defense_df.columns:
         defense_df = defense_df.reset_index()
 
     print(f"Plotting Compact Sybil for: {defense}")
 
     # --- 1. FILTERING FOR SPECIFIC X-AXIS ---
-    mask_baseline = defense_df['strategy'].str.contains('baseline', case=False, na=False)
-    mask_mimic = defense_df['strategy'] == 'mimic'
-    # Oracle logic: name contains oracle AND alpha is close to 0.1
-    mask_oracle = (defense_df['strategy'].str.contains('oracle', case=False, na=False)) & \
-                  (np.isclose(defense_df['blend_alpha'], 0.1))
 
+    # Baseline
+    mask_baseline = defense_df['strategy'].str.contains('baseline', case=False, na=False)
+
+    # Mimic
+    mask_mimic    = defense_df['strategy'] == 'mimic'
+
+    # Oracle: Filter for alpha = 0.9 (Data), but Label as 0.1 (Visual)
+    mask_oracle   = (defense_df['strategy'].str.contains('oracle', case=False, na=False)) & \
+                    (np.isclose(defense_df['blend_alpha'], 0.9))
+
+    # Create slices
     df_base = defense_df[mask_baseline].copy()
     df_base['DisplayLabel'] = 'Baseline'
 
@@ -281,8 +287,9 @@ def plot_compact_comparison(defense_df: pd.DataFrame, defense: str, output_dir: 
     df_mimic['DisplayLabel'] = 'Mimic\n($\\alpha=0.1$)'
 
     df_oracle = defense_df[mask_oracle].copy()
-    df_oracle['DisplayLabel'] = 'Oracle\n($\\alpha=0.1$)'
+    df_oracle['DisplayLabel'] = 'Oracle\n($\\alpha=0.1$)' # Visual label
 
+    # Combine
     plot_df_source = pd.concat([df_base, df_mimic, df_oracle])
 
     if plot_df_source.empty:
@@ -347,7 +354,6 @@ def plot_compact_comparison(defense_df: pd.DataFrame, defense: str, output_dir: 
     plt.savefig(plot_file, dpi=300, bbox_inches='tight')
     print(f"  -> Saved: {plot_file}")
     plt.close('all')
-
 
 def main():
     set_publication_style()
