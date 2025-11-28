@@ -1534,7 +1534,6 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
                  model_type: str,
                  device: str = "cpu",
                  validation_loader: DataLoader = None,
-                 # Kept for compatibility, though not strictly needed for Black Box
                  **kwargs):
 
         super().__init__(seller_id=seller_id, data_config=data_config,
@@ -1542,52 +1541,64 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
                          adversary_config=adversary_config, poison_generator=None,
                          device=device, **kwargs)
 
-        self.adv_cfg = adversary_config.adaptive_attack
-        self.model_type = model_type
-        self.device = device
-        self.kwargs = kwargs
+        self.validation_loader = validation_loader
+        if self.validation_loader is None and 'validation_loader' in kwargs:
+            self.validation_loader = kwargs['validation_loader']
 
-        # Bandit State
-        self.threat_model = "black_box"  # We are probing the black box aggregator
+        self.adv_cfg = adversary_config.adaptive_attack
+        if not self.adv_cfg.is_active:
+            raise ValueError("AdaptiveAttackerSeller requires is_active=True")
+
+        self.model_type = model_type
+        self.kwargs = kwargs
+        self.threat_model = self.adv_cfg.threat_model
+
         self.phase = "exploration"
         self.strategy_history = collections.deque(maxlen=200)
+        self.current_strategy = "honest"
         self.round_counter = 0
 
-        # --- SELECTION OPTIMIZATION STRATEGIES ---
-        # 1. honest: Baseline behavior
-        # 2. balance_classes: Fixes Non-IID skew (Looks like Global Mean)
-        # 3. easy_samples: Reduces Variance (Looks Stable/High Confidence)
-        self.base_strategies = ["honest", "balance_classes", "easy_samples"]
+        # --- STRATEGY POOL ---
+        if self.adv_cfg.attack_mode == "gradient_manipulation":
+            self.base_strategies = ["honest", "reduce_norm", "stealthy_blend"]
+        elif self.adv_cfg.attack_mode == "data_poisoning":
+            self.base_strategies = ["honest", "balance_classes", "easy_samples"]
+            # SMART INIT: Only add class strategies for classes we actually have
+            self._add_class_based_strategies()
 
-        # 4. Add Class Probing (Check if specific classes are preferred)
-        self._add_class_based_strategies()
+        # Resources (Unused in Selection Mode, but kept for compatibility)
+        self.previous_centroid = None
+        self.previous_aggregate = None
+        self.blend_cfg = adversary_config.drowning_attack
+        self.blend_phase = "mimicry"
+        self.blend_mimicry_rounds = self.blend_cfg.mimicry_rounds
+        self.blend_attack_intensity = self.blend_cfg.attack_intensity
+        self.blend_honest_gradient_stats = {'mean_norm': None, 'direction_estimate': None}
+        self.backdoor_dataset = None
+        self.poisoned_dataset = None
 
-        logging.info(f"[{self.seller_id}] Initialized Reputation Farmer. Strategies: {len(self.base_strategies)}")
+        logging.info(f"[{self.seller_id}] Initialized AdaptiveAttacker. Strategies: {len(self.base_strategies)}")
 
     def _add_class_based_strategies(self):
         """
-        Adds strategies to focus on specific classes, BUT only if the client
-        actually possesses data for that class.
+        SMART INIT: Analyzes local data and only adds 'focus_class_X'
+        if the client actually possesses samples of Class X.
         """
         try:
             targets = self._get_targets()
-
             if targets is not None:
-                # 1. Identify which classes are actually present locally
-                # (e.g., in Non-IID, this client might only have classes [0, 1, 2])
+                # Find unique classes present in this specific client's data
                 present_classes = set(targets)
 
-                # 2. Only add strategies for THOSE classes
                 count = 0
                 for c in present_classes:
-                    self.base_strategies.append(f"focus_class_{c}")
+                    # Only add strategy if we have data for it
+                    self.base_strategies.append(f"focus_class_{int(c)}")
                     count += 1
 
-                logging.info(
-                    f"[{self.seller_id}] Smart Init: Added {count} class-focus strategies (ignored missing classes).")
+                logging.info(f"[{self.seller_id}] Smart Init: Added {count} class strategies (skipped missing).")
             else:
                 logging.warning(f"[{self.seller_id}] Could not extract targets. Skipping class strategies.")
-
         except Exception as e:
             logging.warning(f"[{self.seller_id}] Error initializing class strategies: {e}")
 
