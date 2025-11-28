@@ -252,7 +252,105 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
     plt.clf()
     plt.close('all')
 
+def plot_compact_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Path):
+    if defense_df.empty:
+        return
 
+    print(f"Plotting Compact Sybil for: {defense}")
+
+    # --- 1. FILTERING FOR SPECIFIC X-AXIS ---
+    # We only want: Baseline, Mimic (force alpha 0.1), Oracle (actual alpha 0.1)
+
+    # Logic:
+    # - Baseline: strategy contains "baseline"
+    # - Mimic: strategy == "mimic"
+    # - Oracle: strategy contains "oracle" AND blend_alpha is close to 0.1
+
+    mask_baseline = defense_df['strategy'].str.contains('baseline', case=False, na=False)
+    mask_mimic    = defense_df['strategy'] == 'mimic'
+    mask_oracle   = (defense_df['strategy'].str.contains('oracle', case=False, na=False)) & \
+                    (np.isclose(defense_df['blend_alpha'], 0.1))
+
+    # Create copies to assign pretty labels
+    df_base = defense_df[mask_baseline].copy()
+    df_base['DisplayLabel'] = 'Baseline'
+
+    df_mimic = defense_df[mask_mimic].copy()
+    df_mimic['DisplayLabel'] = 'Mimic\n($\\alpha=0.1$)'
+
+    df_oracle = defense_df[mask_oracle].copy()
+    df_oracle['DisplayLabel'] = 'Oracle\n($\\alpha=0.1$)'
+
+    # Combine
+    plot_df_source = pd.concat([df_base, df_mimic, df_oracle])
+
+    if plot_df_source.empty:
+        print(f"  -> Skipping {defense}: No matching strategies found (Baseline, Mimic, Oracle alpha=0.1).")
+        return
+
+    # --- 2. PREPARE METRICS ---
+    metric_map = {
+        'acc': 'Model Accuracy',
+        'asr': 'Attack Success Rate',
+        'adv_selection_rate': 'Adv. Selection Rate',
+        'benign_selection_rate': 'Benign Selection Rate'
+    }
+    metrics_to_plot = [m for m in metric_map.keys() if m in plot_df_source.columns]
+
+    # Scale to percentages
+    for m in metrics_to_plot:
+        plot_df_source[m] = plot_df_source[m] * 100
+
+    # Melt
+    plot_df = plot_df_source.melt(
+        id_vars=['DisplayLabel'],
+        value_vars=metrics_to_plot,
+        var_name='Metric',
+        value_name='Value'
+    )
+    plot_df['Metric'] = plot_df['Metric'].map(metric_map)
+
+    # --- 3. PLOTTING ---
+    plt.figure(figsize=(10, 6)) # Compact size
+
+    # Order of X-Axis
+    x_order = ['Baseline', 'Mimic\n($\\alpha=0.1$)', 'Oracle\n($\\alpha=0.1$)']
+
+    ax = sns.barplot(
+        data=plot_df,
+        x='DisplayLabel',
+        y='Value',
+        hue='Metric',
+        order=[x for x in x_order if x in plot_df['DisplayLabel'].unique()], # Safety check
+        palette="deep",
+        edgecolor="black",
+        linewidth=2.0
+    )
+
+    plt.ylabel('Rate (%)')
+    plt.xlabel(None) # Remove "DisplayLabel" text to save space
+    plt.title(f"Sybil Effectiveness: {defense}", pad=15)
+
+    ax.set_ylim(0, 105)
+
+    # Compact Legend Placement
+    plt.legend(
+        title=None,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.12),
+        ncol=2, # Stack legend slightly more vertically for compactness
+        frameon=False,
+        columnspacing=1.5
+    )
+
+    plt.tight_layout()
+
+    # Sanitize filename
+    safe_defense = re.sub(r'[^\w]', '', defense)
+    plot_file = output_dir / f"compact_sybil_{safe_defense}.pdf"
+    plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+    print(f"  -> Saved: {plot_file}")
+    plt.close('all')
 def main():
     set_publication_style()
 
@@ -288,8 +386,8 @@ def main():
     # Plot
     defenses = df_agg['defense'].unique()
     for defense in defenses:
-        plot_sybil_comparison(df_agg[df_agg['defense'] == defense].copy(), defense, output_dir)
-
+        # plot_sybil_comparison(df_agg[df_agg['defense'] == defense].copy(), defense, output_dir)
+        plot_compact_comparison(df_agg[df_agg['defense'] == defense].copy(), defense, output_dir)
     print("\nAnalysis complete.")
 
 
