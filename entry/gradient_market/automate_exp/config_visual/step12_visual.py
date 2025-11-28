@@ -1,11 +1,12 @@
-import pandas as pd
 import json
-import seaborn as sns
-import matplotlib.pyplot as plt
-import numpy as np
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
 
 # --- Configuration ---
 BASE_RESULTS_DIR = "./results"
@@ -307,6 +308,100 @@ def plot_valuation_row(df: pd.DataFrame, dataset: str, output_dir: Path):
 
 
 # --- MAIN EXECUTION ---
+def plot_valuation_distribution(df_raw_points: pd.DataFrame, dataset: str, output_dir: Path):
+    """
+    Generates a Distribution (Strip) Plot to show Fairness/Differentiation.
+    Plots every individual seller's score as a dot.
+    """
+    print(f"\n--- Plotting Valuation Distribution: {dataset} ---")
+
+    # Filter for the specific dataset
+    subset = df_raw_points[df_raw_points['dataset'] == dataset].copy()
+    if subset.empty: return
+
+    # We likely have multiple valuation metrics (loo, shap, etc.), pick the most prominent one
+    # Heuristic: Find columns ending in '_score' or check known keys
+    val_keys = subset['metric_type'].unique()
+
+    defense_order = ['FedAvg', 'FLTrust', 'MARTFL', 'SkyMask']
+
+    for metric in val_keys:
+        metric_subset = subset[subset['metric_type'] == metric]
+
+        plt.figure(figsize=(12, 6))
+
+        # Strip Plot: Shows individual points
+        ax = sns.stripplot(
+            data=metric_subset, x='defense', y='score', hue='type',
+            order=[d for d in defense_order if d in metric_subset['defense'].unique()],
+            palette={"Benign": "#2ca02c", "Adversary": "#d62728"},
+            dodge=True, alpha=0.6, jitter=0.25, size=6
+        )
+
+        # Add a Box Plot behind it to show quartiles transparently
+        sns.boxplot(
+            data=metric_subset, x='defense', y='score', hue='type',
+            order=[d for d in defense_order if d in metric_subset['defense'].unique()],
+            palette={"Benign": "#2ca02c", "Adversary": "#d62728"},
+            dodge=True, ax=ax, boxprops={'facecolor': 'none'},
+            fliersize=0, zorder=0, linewidth=1.5
+        )
+
+        # Fix Legends (remove duplicates from combining strip/box)
+        handles, labels = ax.get_legend_handles_labels()
+        # We only want the first 2 handles (Benign, Adversary)
+        ax.legend(handles[:2], labels[:2], title="Seller Type", loc='upper right')
+
+        ax.set_title(f"Valuation Distribution ({metric}) - {dataset}", fontweight='bold')
+        ax.set_ylabel("Valuation Score")
+        ax.set_xlabel("Defense Method")
+        ax.axhline(0, color='black', linewidth=1, linestyle='--')
+
+        fname = output_dir / f"Step12_Distribution_{dataset}_{metric}.pdf"
+        plt.savefig(fname, bbox_inches='tight', format='pdf')
+        print(f"  Saved: {fname.name}")
+        plt.close()
+
+
+# --- HELPER: Load Raw Points (Not Averages) ---
+def load_raw_valuations(run_dir: Path, scenario_info: Dict) -> List[Dict]:
+    """Extracts INDIVIDUAL scores for distribution plotting."""
+    jsonl_path = run_dir / "valuations.jsonl"
+    if not jsonl_path.exists(): return []
+
+    raw_points = []
+    # Only read the last 10 rounds to get "converged" valuations
+    # (Reading all rounds makes the plot too messy)
+
+    try:
+        with open(jsonl_path, 'r') as f:
+            lines = f.readlines()
+
+        # Take last 20% of rounds
+        start_idx = int(len(lines) * 0.8)
+
+        for line in lines[start_idx:]:
+            record = json.loads(line)
+            valuations = record.get('seller_valuations', {})
+
+            for seller_id, scores in valuations.items():
+                s_type = 'Adversary' if str(seller_id).startswith('adv') else 'Benign'
+
+                for key, val in scores.items():
+                    if key in ['round', 'seller_id'] or val is None: continue
+
+                    raw_points.append({
+                        "defense": scenario_info.get("defense", "Unknown").title(),
+                        "dataset": scenario_info.get("dataset", "Unknown"),
+                        "type": s_type,
+                        "metric_type": key,
+                        "score": float(val)
+                    })
+    except:
+        pass
+
+    return raw_points
+
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
@@ -333,7 +428,23 @@ def main():
             plot_valuation_row(df, dataset, output_dir)
         except Exception as e:
             print(f"Error plotting {dataset}: {e}")
+    all_raw_points = []
 
+    # 1. Loop folders
+    base_path = Path(BASE_RESULTS_DIR)
+    scenario_folders = [f for f in base_path.glob("step12_*") if f.is_dir()]
+
+    for folder in scenario_folders:
+        info = parse_scenario_name(folder.name)
+        # Collect raw points for the distribution plot
+        raw_data = load_raw_valuations(folder, info)
+        all_raw_points.extend(raw_data)
+
+    # 2. Generate the New Plot
+    if all_raw_points:
+        df_raw = pd.DataFrame(all_raw_points)
+        for dataset in df_raw['dataset'].unique():
+            plot_valuation_distribution(df_raw, dataset, output_dir)
     print("\n✅ Analysis complete.")
 
 
