@@ -363,7 +363,98 @@ def plot_sybil_comparison_new(defense_df: pd.DataFrame, defense: str, output_dir
     print(f"Saved compact plot: {plot_file}")
     plt.clf()
     plt.close('all')
+def plot_sybil_comparison_compact(defense_df: pd.DataFrame, defense: str, output_dir: Path):
+    if defense_df.empty:
+        print(f"No data for defense: {defense}")
+        return
 
+    print(f"\n--- Plotting Sybil Effectiveness for: {defense} ---")
+
+    # --- 1. STRICT FILTERING LOGIC ---
+    # You asked for:
+    # 1. Baseline
+    # 2. Mimic (Alpha 0.1) -> In your data, this is labeled just "mimic"
+    # 3. Oracle (Alpha 0.1) -> Labeled "oracle_blend_0.1"
+
+    target_strategies = [
+        'baseline_no_sybil',
+        'mimic',
+        'oracle_blend_0.1'
+    ]
+
+    # Filter the dataframe to keep ONLY these rows
+    filtered_df = defense_df[defense_df['strategy_label'].isin(target_strategies)].copy()
+
+    if filtered_df.empty:
+        print("Warning: No matching strategies found for this defense.")
+        return
+
+    # --- 2. ORDERING LOGIC ---
+    # Ensure they appear in the exact order you listed
+    def get_order(label):
+        if 'baseline' in label: return 0
+        if 'mimic' in label: return 1
+        if 'oracle' in label: return 2
+        return 99
+
+    sorted_labels = sorted(filtered_df['strategy_label'].unique(), key=get_order)
+
+    # --- 3. DATA PREP ---
+    # We only show Selection Rate as requested previously
+    metric_map = {
+        'adv_selection_rate': 'Attacker Selection Rate',
+        'benign_selection_rate': 'Honest Selection Rate'
+    }
+    metrics_to_plot = list(metric_map.keys())
+
+    plot_df = filtered_df.melt(
+        id_vars=['strategy_label'],
+        value_vars=metrics_to_plot,
+        var_name='Metric',
+        value_name='Value'
+    )
+    plot_df['Value'] = plot_df['Value'] * 100
+    plot_df['Metric'] = plot_df['Metric'].map(metric_map)
+
+    # --- 4. PLOTTING ---
+    plt.figure(figsize=(8, 6)) # Smaller figure for just 3 bars
+
+    ax = sns.barplot(
+        data=plot_df,
+        x='strategy_label',
+        y='Value',
+        hue='Metric',
+        order=sorted_labels,
+        palette={'Attacker Selection Rate': '#D62728', 'Honest Selection Rate': '#1F77B4'},
+        edgecolor="black",
+        linewidth=1.5
+    )
+
+    plt.ylabel('Selection Rate (%)')
+    plt.xlabel('')
+    plt.title(f"Sybil Attack Impact: {defense}", pad=15)
+    plt.ylim(0, 105)
+
+    # --- 5. CUSTOM TICKS ---
+    def format_tick(l):
+        if 'baseline' in l: return "No Attack"
+        if 'mimic' in l: return "Mimicry\n(Noise)"
+        if 'oracle' in l: return "Buyer Collusion\n(Alpha=0.1)"
+        return l
+
+    ax.set_xticklabels([format_tick(l) for l in sorted_labels])
+
+    # Legend
+    plt.legend(title=None, loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=2, frameon=False)
+
+    plt.tight_layout()
+
+    safe_defense = re.sub(r'[^\w]', '', defense)
+    plot_file = output_dir / f"plot_sybil_selected_{safe_defense}.pdf"
+    plt.savefig(plot_file, dpi=300)
+    print(f"Saved selected plot: {plot_file}")
+    plt.clf()
+    plt.close('all')
 def main():
     set_publication_style()
 
@@ -400,7 +491,7 @@ def main():
     defenses = df_agg['defense'].unique()
     for defense in defenses:
         # plot_sybil_comparison(df_agg[df_agg['defense'] == defense].copy(), defense, output_dir)
-        plot_sybil_comparison_new(df_agg[df_agg['defense'] == defense].copy(), defense, output_dir)
+        plot_sybil_comparison_compact(df_agg[df_agg['defense'] == defense].copy(), defense, output_dir)
     print("\nAnalysis complete.")
 
 
