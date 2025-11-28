@@ -291,4 +291,62 @@ def plot_payout_ratio(df_raw: pd.DataFrame, dataset: str, output_dir: Path):
 
     plt.figure(figsize=(10, 5))
     ax = sns.barplot(
-        data=agg, x='defense', y='score', hue='
+        data=agg, x='defense', y='score', hue='type',
+        order=defense_order, palette=TYPE_PALETTE
+    )
+
+    labels = [l.get_text().replace("skymask-s", "SkyMask-S").title() for l in ax.get_xticklabels()]
+    ax.set_xticklabels(labels)
+
+    ax.set_title(f"Average Payout Ratio ({dataset})", fontweight='bold')
+    ax.set_ylabel("Mean Valuation Score")
+    ax.set_xlabel("")
+    ax.axhline(0, color='black', linewidth=1)
+
+    plt.savefig(output_dir / f"Step12_Payout_{dataset}.pdf", bbox_inches='tight')
+    plt.close()
+
+
+# ==========================================
+# 4. MAIN EXECUTION
+# ==========================================
+
+def main():
+    print("--- Starting Step 12 Full Visualization ---")
+    set_plot_style()
+
+    output_dir = Path(FIGURE_OUTPUT_DIR)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 1. Load Data
+    df_global, df_raw = load_all_data(Path(BASE_RESULTS_DIR))
+
+    if df_global.empty:
+        print("❌ No data found. Check your directory structure (look for seed_x folders).")
+        return
+
+    # Save Summaries
+    df_global.to_csv(output_dir / "summary_global.csv", index=False)
+    df_raw.to_csv(output_dir / "summary_raw_valuations.csv", index=False)
+    print(f"Data Loaded. Global: {len(df_global)} rows, Raw: {len(df_raw)} rows.")
+
+    # 2. Generate Plots per Dataset
+    datasets = df_global['dataset'].unique()
+
+    for ds in datasets:
+        print(f"\nProcessing Dataset: {ds}")
+        try:
+            # Figure 1: Performance (Acc, Rounds, Select)
+            plot_performance_row(df_global, ds, output_dir)
+
+            # Figure 2 & 3: Financials (Distribution & Payout)
+            plot_valuation_distribution(df_raw, ds, output_dir)
+            plot_payout_ratio(df_raw, ds, output_dir)
+
+        except Exception as e:
+            print(f"  Error processing {ds}: {e}")
+
+    print("\n✅ All Figures Generated Successfully.")
+
+if __name__ == "__main__":
+    main()
