@@ -2,7 +2,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,6 +16,7 @@ import seaborn as sns
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step6_figures"
 
+
 def set_publication_style():
     """
     Sets the 'Big & Bold' professional style globally.
@@ -27,9 +28,9 @@ def set_publication_style():
     # Specific Parameter Overrides
     plt.rcParams.update({
         'font.family': 'sans-serif',
-        'font.weight': 'bold',              # Bold all text
-        'axes.labelweight': 'bold',         # Bold axis labels
-        'axes.titleweight': 'bold',         # Bold titles
+        'font.weight': 'bold',  # Bold all text
+        'axes.labelweight': 'bold',  # Bold axis labels
+        'axes.titleweight': 'bold',  # Bold titles
 
         'axes.titlesize': 24,
         'axes.labelsize': 22,
@@ -39,11 +40,12 @@ def set_publication_style():
         'legend.fontsize': 18,
         'legend.title_fontsize': 20,
 
-        'axes.linewidth': 2.5,              # Thicker axis borders
+        'axes.linewidth': 2.5,  # Thicker axis borders
         'axes.edgecolor': '#333333',
         'lines.linewidth': 3.0,
-        'figure.figsize': (20, 9)           # Default large size
+        'figure.figsize': (20, 9)  # Default large size
     })
+
 
 # ==========================================
 # 2. DATA LOADING & PARSING
@@ -98,7 +100,8 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
             ben_sellers = [s for s in sellers if s.get('type') == 'benign']
 
             run_data['adv_selection_rate'] = np.mean([s['selection_rate'] for s in adv_sellers]) if adv_sellers else 0.0
-            run_data['benign_selection_rate'] = np.mean([s['selection_rate'] for s in ben_sellers]) if ben_sellers else 0.0
+            run_data['benign_selection_rate'] = np.mean(
+                [s['selection_rate'] for s in ben_sellers]) if ben_sellers else 0.0
 
         return run_data
     except Exception:
@@ -146,6 +149,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
     return df
 
+
 # ==========================================
 # 3. PLOTTING LOGIC
 # ==========================================
@@ -160,7 +164,7 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
     # --- LOGIC: Standardize Alpha ---
     def get_standardized_alpha_and_order(label):
         if label == 'baseline_no_sybil': return (0, 0.0)
-        if label == 'mimic': return (1, 0.10) # Set baseline mimicry alpha here
+        if label == 'mimic': return (1, 0.10)  # Set baseline mimicry alpha here
         if label == 'knock_out': return (1, 0.20)
         if label == 'pivot': return (1, 1.00)
         if label.startswith('oracle_blend'):
@@ -252,26 +256,24 @@ def plot_sybil_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Pa
     plt.clf()
     plt.close('all')
 
+
 def plot_compact_comparison(defense_df: pd.DataFrame, defense: str, output_dir: Path):
     if defense_df.empty:
         return
 
+    # DOUBLE CHECK: Ensure strategy is a column, not in index
+    if 'strategy' not in defense_df.columns:
+        defense_df = defense_df.reset_index()
+
     print(f"Plotting Compact Sybil for: {defense}")
 
     # --- 1. FILTERING FOR SPECIFIC X-AXIS ---
-    # We only want: Baseline, Mimic (force alpha 0.1), Oracle (actual alpha 0.1)
-
-    # Logic:
-    # - Baseline: strategy contains "baseline"
-    # - Mimic: strategy == "mimic"
-    # - Oracle: strategy contains "oracle" AND blend_alpha is close to 0.1
-
     mask_baseline = defense_df['strategy'].str.contains('baseline', case=False, na=False)
-    mask_mimic    = defense_df['strategy'] == 'mimic'
-    mask_oracle   = (defense_df['strategy'].str.contains('oracle', case=False, na=False)) & \
-                    (np.isclose(defense_df['blend_alpha'], 0.1))
+    mask_mimic = defense_df['strategy'] == 'mimic'
+    # Oracle logic: name contains oracle AND alpha is close to 0.1
+    mask_oracle = (defense_df['strategy'].str.contains('oracle', case=False, na=False)) & \
+                  (np.isclose(defense_df['blend_alpha'], 0.1))
 
-    # Create copies to assign pretty labels
     df_base = defense_df[mask_baseline].copy()
     df_base['DisplayLabel'] = 'Baseline'
 
@@ -281,11 +283,10 @@ def plot_compact_comparison(defense_df: pd.DataFrame, defense: str, output_dir: 
     df_oracle = defense_df[mask_oracle].copy()
     df_oracle['DisplayLabel'] = 'Oracle\n($\\alpha=0.1$)'
 
-    # Combine
     plot_df_source = pd.concat([df_base, df_mimic, df_oracle])
 
     if plot_df_source.empty:
-        print(f"  -> Skipping {defense}: No matching strategies found (Baseline, Mimic, Oracle alpha=0.1).")
+        print(f"  -> Skipping {defense}: Strategies not found.")
         return
 
     # --- 2. PREPARE METRICS ---
@@ -297,11 +298,9 @@ def plot_compact_comparison(defense_df: pd.DataFrame, defense: str, output_dir: 
     }
     metrics_to_plot = [m for m in metric_map.keys() if m in plot_df_source.columns]
 
-    # Scale to percentages
     for m in metrics_to_plot:
         plot_df_source[m] = plot_df_source[m] * 100
 
-    # Melt
     plot_df = plot_df_source.melt(
         id_vars=['DisplayLabel'],
         value_vars=metrics_to_plot,
@@ -311,9 +310,8 @@ def plot_compact_comparison(defense_df: pd.DataFrame, defense: str, output_dir: 
     plot_df['Metric'] = plot_df['Metric'].map(metric_map)
 
     # --- 3. PLOTTING ---
-    plt.figure(figsize=(10, 6)) # Compact size
+    plt.figure(figsize=(10, 6))
 
-    # Order of X-Axis
     x_order = ['Baseline', 'Mimic\n($\\alpha=0.1$)', 'Oracle\n($\\alpha=0.1$)']
 
     ax = sns.barplot(
@@ -321,74 +319,69 @@ def plot_compact_comparison(defense_df: pd.DataFrame, defense: str, output_dir: 
         x='DisplayLabel',
         y='Value',
         hue='Metric',
-        order=[x for x in x_order if x in plot_df['DisplayLabel'].unique()], # Safety check
+        order=[x for x in x_order if x in plot_df['DisplayLabel'].unique()],
         palette="deep",
         edgecolor="black",
         linewidth=2.0
     )
 
     plt.ylabel('Rate (%)')
-    plt.xlabel(None) # Remove "DisplayLabel" text to save space
+    plt.xlabel(None)
     plt.title(f"Sybil Effectiveness: {defense}", pad=15)
 
     ax.set_ylim(0, 105)
 
-    # Compact Legend Placement
     plt.legend(
         title=None,
         loc='upper center',
         bbox_to_anchor=(0.5, -0.12),
-        ncol=2, # Stack legend slightly more vertically for compactness
+        ncol=2,
         frameon=False,
         columnspacing=1.5
     )
 
     plt.tight_layout()
 
-    # Sanitize filename
     safe_defense = re.sub(r'[^\w]', '', defense)
     plot_file = output_dir / f"compact_sybil_{safe_defense}.pdf"
     plt.savefig(plot_file, dpi=300, bbox_inches='tight')
     print(f"  -> Saved: {plot_file}")
     plt.close('all')
+
+
 def main():
     set_publication_style()
-
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
+
     print(f"Plots will be saved to: {output_dir.resolve()}")
 
     df = collect_all_results(BASE_RESULTS_DIR)
-
     if df.empty:
-        print("No data loaded. Exiting.")
+        print("No data loaded.")
         return
 
-    # Filter systematic_probe
     df = df[df['strategy'] != 'systematic_probe'].copy()
 
-    # Label Creation
-    df['strategy_label'] = df['strategy']
-    blend_rows = df['blend_alpha'].notna()
-    df.loc[blend_rows, 'strategy_label'] = df.loc[blend_rows].apply(
-        lambda row: f"oracle_blend_{row['blend_alpha']}", axis=1
-    )
+    metrics = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate', 'rounds']
+    metrics = [m for m in metrics if m in df.columns]
 
-    # Aggregate
-    metrics_to_agg = ['acc', 'asr', 'adv_selection_rate', 'benign_selection_rate', 'rounds']
-    metrics_to_agg = [m for m in metrics_to_agg if m in df.columns]
-    df_agg = df.groupby(['defense', 'strategy_label'])[metrics_to_agg].mean().reset_index()
+    group_cols = ['defense', 'strategy', 'blend_alpha']
+    df['blend_alpha'] = df['blend_alpha'].fillna(-1)
 
-    csv_path = output_dir / "step6_sybil_summary.csv"
-    df_agg.to_csv(csv_path, index=False, float_format="%.4f")
-    print(f"✅ Saved aggregated summary to: {csv_path}")
+    # --- FIX IS HERE: as_index=False ensures these keys remain columns ---
+    df_agg = df.groupby(group_cols, as_index=False)[metrics].mean()
 
-    # Plot
+    # Safety: If strategy is still in index for some reason, reset it
+    if 'strategy' not in df_agg.columns:
+        df_agg = df_agg.reset_index()
+
+    # Generate Plots
     defenses = df_agg['defense'].unique()
     for defense in defenses:
-        # plot_sybil_comparison(df_agg[df_agg['defense'] == defense].copy(), defense, output_dir)
         plot_compact_comparison(df_agg[df_agg['defense'] == defense].copy(), defense, output_dir)
-    print("\nAnalysis complete.")
+
+    print("\nCompact analysis complete.")
 
 
 if __name__ == "__main__":
