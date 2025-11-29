@@ -5,56 +5,46 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict
 
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step12_paper_simple"
+FIGURE_OUTPUT_DIR = "./figures/step12_financial_impact_by_metric"
 
-# --- TARGET CONFIGURATION ---
-# Only process CIFAR-100 by default as requested.
+# We only focus on CIFAR-100 as requested
 TARGET_DATASETS = ["CIFAR-100"]
 
-# --- VISUAL CONSISTENCY ---
-# Standard paper color palette
-CUSTOM_PALETTE = {
-    "fedavg": "#4c72b0",   # Blue
-    "fltrust": "#dd8452",  # Orange
-    "martfl": "#55a868",   # Green
-    "skymask": "#c44e52",  # Red
-    "skymask-s": "#8c564b" # Brown
-}
+# The specific metrics you want to analyze
+TARGET_METRICS = ["marginal_contrib_loo", "kernelshap", "influence"]
 
-# High contrast for the Payment Intuition plot
-TYPE_PALETTE = {
-    "Benign": "#2ca02c",   # Vivid Green
-    "Adversary": "#d62728" # Vivid Red
+# --- COLOR PALETTE ---
+# Green = Success (Paid to honest workers)
+# Grey  = Collateral Damage (Honest workers we accidentally filtered)
+# Red   = Security Failure (Money stolen by attackers)
+FINANCIAL_PALETTE = {
+    "Paid to Benign": "#2ca02c",      # Vivid Green
+    "Discarded Benign": "#bbbbbb",    # Light Grey
+    "Paid to Adversary": "#d62728"    # Vivid Red
 }
 
 def set_plot_style():
-    """Sets a clean, simple, rectangular plotting style."""
-    sns.set_theme(style="whitegrid", font="serif")
+    sns.set_theme(style="whitegrid")
     sns.set_context("paper", font_scale=1.6)
     plt.rcParams.update({
         'axes.linewidth': 1.5,
         'axes.edgecolor': 'black',
-        'grid.color': '#cccccc',
-        'grid.linewidth': 1.0,
-        # CRITICAL FOR LATEX: ensures text is searchable and clear
         'pdf.fonttype': 42,
         'ps.fonttype': 42,
         'legend.frameon': True,
         'legend.framealpha': 1.0,
-        'legend.edgecolor': 'black',
-        # Ensure bars/boxes have clean black outlines
         'patch.edgecolor': 'black',
-        'patch.linewidth': 1.2
+        'patch.linewidth': 1.0
     })
 
 # ==========================================
-# 2. DATA LOADING (Robust & Filtered)
+# 2. DATA PARSING
 # ==========================================
 def parse_scenario_name(folder_name: str) -> Dict[str, str]:
     parts = folder_name.split('_')
@@ -77,158 +67,148 @@ def parse_scenario_name(folder_name: str) -> Dict[str, str]:
     except Exception: pass
     return info
 
-def load_data(base_dir: Path, target_datasets: List[str]) -> (pd.DataFrame, pd.DataFrame):
-    global_records, raw_val_records = [], []
+def load_financial_data_by_metric(base_dir: Path, dataset: str, target_metrics: List[str]) -> pd.DataFrame:
+    records = []
     scenario_folders = list(base_dir.glob("step12_*"))
-    print(f"Scanning {len(scenario_folders)} folders...")
+    print(f"Scanning {len(scenario_folders)} folders for dataset: {dataset}...")
 
     for folder in scenario_folders:
         info = parse_scenario_name(folder.name)
-        if info['dataset'] == 'unknown': continue
-        if target_datasets and info['dataset'] not in target_datasets: continue
+        if info['dataset'] != dataset: continue
 
-        # Get Global Metrics
-        metrics_files = list(folder.rglob("final_metrics.json"))
-        seeds_acc, seeds_rounds = [], []
-        for m_file in metrics_files:
-            try:
-                with open(m_file, 'r') as f: d = json.load(f)
-                seeds_acc.append(d.get('acc', 0))
-                seeds_rounds.append(d.get('completed_rounds', 0))
-            except: pass
-        global_records.append({
-            **info,
-            "acc": np.mean(seeds_acc) if seeds_acc else 0,
-            "rounds": np.mean(seeds_rounds) if seeds_rounds else 0
-        })
-
-        # Get Valuation Data (Converged rounds only)
         jsonl_files = list(folder.rglob("valuations.jsonl"))
+
+        # We need to track totals PER METRIC for this specific scenario (Defense)
+        # Structure: { metric_name: { 'paid_benign': 0.0, 'discarded_benign': 0.0, 'paid_adv': 0.0 } }
+        scenario_totals = {m: {'paid_benign': 0.0, 'discarded_benign': 0.0, 'paid_adv': 0.0} for m in target_metrics}
+        round_counts = {m: 0 for m in target_metrics}
+
         for j_file in jsonl_files:
             try:
                 with open(j_file, 'r') as f: lines = f.readlines()
+                # Analyze converged rounds (last 20%)
                 start_idx = max(0, int(len(lines) * 0.8))
+
                 for line in lines[start_idx:]:
                     rec = json.loads(line)
-                    for sid, scores in rec.get('seller_valuations', {}).items():
-                        s_type = 'Adversary' if str(sid).startswith('adv') else 'Benign'
-                        for k, v in scores.items():
-                            if k in ['round', 'seller_id'] or v is None: continue
-                            metric = k.replace('_score', '').replace('val_', '')
-                            raw_val_records.append({**info, "type": s_type, "metric": metric, "score": float(v)})
+                    selected_ids = set(rec.get('selected_ids', []))
+                    valuations = rec.get('seller_valuations', {})
+
+                    # Check which metrics are available in this line
+                    # Usually a run has 1 or 2 metrics. We update the ones we find.
+                    found_metrics = set()
+
+                    for sid, scores in valuations.items():
+                        is_adv = str(sid).startswith('adv')
+                        is_selected = sid in selected_ids
+
+                        for m in target_metrics:
+                            # Look for keys like 'val_shapley_score' or just 'shapley'
+                            # The file might have 'marginal_contrib_loo_score'
+                            # We search for the metric name in the keys
+                            val = 0.0
+                            metric_key_found = False
+
+                            for k, v in scores.items():
+                                if m in k and v is not None:
+                                    val = max(0, float(v)) # Assume positive payment allocation
+                                    metric_key_found = True
+                                    break
+
+                            if metric_key_found:
+                                found_metrics.add(m)
+                                if is_adv:
+                                    if is_selected: scenario_totals[m]['paid_adv'] += val
+                                else:
+                                    if is_selected: scenario_totals[m]['paid_benign'] += val
+                                    else:           scenario_totals[m]['discarded_benign'] += val
+
+                    for m in found_metrics:
+                        round_counts[m] += 1
             except: pass
-    return pd.DataFrame(global_records), pd.DataFrame(raw_val_records)
+
+        # Add records for this Defense
+        for m in target_metrics:
+            if round_counts[m] > 0:
+                records.append({
+                    "defense": info['defense'],
+                    "metric": m,
+                    "Paid to Benign": scenario_totals[m]['paid_benign'] / round_counts[m],
+                    "Discarded Benign": scenario_totals[m]['discarded_benign'] / round_counts[m],
+                    "Paid to Adversary": scenario_totals[m]['paid_adv'] / round_counts[m]
+                })
+
+    return pd.DataFrame(records)
 
 # ==========================================
-# 3. CLEAN, RECTANGULAR PLOTTING
+# 3. PLOTTING
 # ==========================================
+def plot_financial_impact(df: pd.DataFrame, metric: str, output_dir: Path):
+    print(f"  -> Generating Chart for Metric: {metric}")
+    subset = df[df['metric'] == metric].copy()
+    if subset.empty:
+        print(f"     [Warning] No data found for metric '{metric}'")
+        return
 
-def plot_utility_bars(df: pd.DataFrame, dataset: str, output_dir: Path):
-    """Fig 1: Simple, side-by-side bar charts for Accuracy and Efficiency."""
-    print(f"  -> Generating Fig 1 (Utility Bars) for {dataset}")
-    subset = df[df['dataset'] == dataset].copy()
-    if subset.empty: return
+    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask', 'skymask-s']
+    defense_order = [d for d in defense_order if d in subset['defense'].unique()]
 
-    subset['acc'] = subset['acc'].apply(lambda x: x*100 if x <= 1.0 else x)
-    defense_order = [d for d in ['fedavg', 'fltrust', 'martfl', 'skymask', 'skymask-s'] if d in subset['defense'].unique()]
+    # Prepare Data for Stacked Bar
+    plot_df = subset.set_index('defense')[['Paid to Benign', 'Discarded Benign', 'Paid to Adversary']]
+    plot_df = plot_df.loc[defense_order]
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
+    # Plot
+    ax = plot_df.plot(
+        kind='bar',
+        stacked=True,
+        figsize=(9, 6),
+        color=[FINANCIAL_PALETTE[x] for x in plot_df.columns],
+        width=0.75,
+        edgecolor='black'
+    )
 
-    # 1. Accuracy Bar Plot
-    sns.barplot(ax=axes[0], data=subset, x='defense', y='acc', order=defense_order, palette=CUSTOM_PALETTE)
-    axes[0].set_title("Final Model Accuracy", fontweight='bold', pad=10)
-    axes[0].set_ylabel("Test Accuracy (%)", fontweight='bold')
-    axes[0].set_xlabel("")
-    axes[0].set_ylim(0, 100)
+    # Clean Metric Name for Title
+    pretty_name = metric.replace("_", " ").replace("loo", "LOO").replace("contrib", "Contribution").title()
+    if "Kernelshap" in pretty_name: pretty_name = "Shapley Value (KernelShap)"
 
-    # 2. Rounds Bar Plot
-    sns.barplot(ax=axes[1], data=subset, x='defense', y='rounds', order=defense_order, palette=CUSTOM_PALETTE)
-    axes[1].set_title("Training Efficiency", fontweight='bold', pad=10)
-    axes[1].set_ylabel("Rounds to Converge", fontweight='bold')
-    axes[1].set_xlabel("")
+    ax.set_title(f"Financial Impact on {pretty_name}", fontweight='bold', pad=15)
+    ax.set_ylabel("Average Total Payment (Per Round)", fontweight='bold')
+    ax.set_xlabel("", fontweight='bold')
 
-    for ax in axes:
-        labels = [l.get_text().replace("skymask-s", "SkyMask-S").title() for l in ax.get_xticklabels()]
-        ax.set_xticklabels(labels, fontweight='bold', fontsize=12)
-        ax.grid(axis='y', linestyle='-', alpha=0.5)
+    # Labels
+    labels = [l.get_text().replace("skymask-s", "SkyMask-S").title() for l in ax.get_xticklabels()]
+    ax.set_xticklabels(labels, rotation=0, fontweight='bold', fontsize=12)
+
+    # Legend
+    plt.legend(title="Budget Allocation", loc='upper left', bbox_to_anchor=(1.0, 1.0))
 
     plt.tight_layout()
-    plt.savefig(output_dir / f"Fig1_Utility_Bars_{dataset}.pdf", bbox_inches='tight')
+    plt.savefig(output_dir / f"Fig3_Impact_{metric}.pdf", bbox_inches='tight')
     plt.close()
 
-def plot_payment_box(df_raw: pd.DataFrame, dataset: str, output_dir: Path):
-    """
-    Fig 2: Grouped Box Plot.
-    This is the best rectangular design to stress the "payment" intuition.
-    It visually demonstrates how adversarial payments are squashed to zero.
-    """
-    print(f"  -> Generating Fig 2 (Payment Box Plot) for {dataset}")
-    subset = df_raw[df_raw['dataset'] == dataset].copy()
-    if subset.empty: return
-
-    defense_order = [d for d in ['fedavg', 'fltrust', 'martfl', 'skymask', 'skymask-s'] if d in subset['defense'].unique()]
-
-    # Iterate through metrics (e.g., shapley, influence)
-    for metric in subset['metric'].unique():
-        m_subset = subset[subset['metric'] == metric]
-        plt.figure(figsize=(12, 6.5))
-
-        # --- THE CORE VISUALIZATION ---
-        # A Grouped Box Plot clearly compares the distributions side-by-side.
-        ax = sns.boxplot(
-            data=m_subset, x='defense', y='score', hue='type',
-            order=defense_order, palette=TYPE_PALETTE,
-            linewidth=1.8,    # Thicker lines for a "solid" look
-            fliersize=4,      # Visible outlier dots
-            saturation=1.0    # Solid, vivid colors
-        )
-
-        # Add a thick zero line to emphasize no-payment zone
-        ax.axhline(0, color='black', linestyle='-', linewidth=2.5, alpha=0.8, zorder=0)
-
-        # Labels stressing the payment intuition
-        ax.set_title(f"Approximated Payment Distribution ({dataset})", fontweight='bold', fontsize=16, pad=15)
-        # Clear Y-axis label linking score to payment
-        ax.set_ylabel("Valuation Score (Approx. Payment)", fontweight='bold', fontsize=14)
-        ax.set_xlabel("", fontsize=14)
-
-        # Clean X-axis labels
-        labels = [l.get_text().replace("skymask-s", "SkyMask-S").title() for l in ax.get_xticklabels()]
-        ax.set_xticklabels(labels, fontweight='bold', fontsize=13)
-
-        # Prominent Legend
-        plt.legend(title="Participant Type", title_fontsize='13', fontsize='12', loc='upper right',
-                   bbox_to_anchor=(1.15, 1.0), borderaxespad=0.)
-
-        plt.grid(axis='y', linestyle='-', alpha=0.5)
-        plt.tight_layout(rect=[0, 0, 0.9, 1]) # Make room for legend
-        plt.savefig(output_dir / f"Fig2_Payment_Box_{dataset}_{metric}.pdf", bbox_inches='tight')
-        plt.close()
-
 # ==========================================
-# 4. MAIN EXECUTION
+# 4. MAIN
 # ==========================================
 def main():
-    print("--- Generating Simplified Paper Figures ---")
+    print("--- Generating Financial Impact Analysis ---")
     set_plot_style()
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
 
     # 1. Load Data
-    df_global, df_raw = load_data(Path(BASE_RESULTS_DIR), TARGET_DATASETS)
-    if df_global.empty:
-        print("❌ No data found for the specified configuration.")
+    # We process CIFAR-100 as the primary benchmark
+    dataset = "CIFAR-100"
+    df_finance = load_financial_data_by_metric(Path(BASE_RESULTS_DIR), dataset, TARGET_METRICS)
+
+    if df_finance.empty:
+        print("❌ No data found. Check directory structure.")
         return
 
-    # 2. Generate Figures
-    for ds in df_global['dataset'].unique():
-        print(f"\nProcessing Dataset: {ds}")
-        # Figure 1: The "It works" charts (Accuracy & Rounds)
-        plot_utility_bars(df_global, ds, output_dir)
-        # Figure 2: The "Intuition" chart (Payment Box Plot)
-        plot_payment_box(df_raw, ds, output_dir)
+    # 2. Generate One Figure Per Metric
+    for metric in TARGET_METRICS:
+        plot_financial_impact(df_finance, metric, output_dir)
 
-    print(f"\n✅ Done. Simplified figures saved to: {FIGURE_OUTPUT_DIR}")
+    print(f"\n✅ Done. Figures saved to {FIGURE_OUTPUT_DIR}")
 
 if __name__ == "__main__":
     main()
