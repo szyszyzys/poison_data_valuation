@@ -1,20 +1,20 @@
+import pandas as pd
 import json
-import os
-import re
-from pathlib import Path
-from typing import Dict, Any, List, Optional
-
+import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-import seaborn as sns
+import os
+from pathlib import Path
+from typing import Dict, List, Any
 
 # ==========================================
-# 1. GLOBAL CONFIGURATION & STYLING
+# 1. CONFIGURATION & STYLING
 # ==========================================
-
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step12_main_summary"
+FIGURE_OUTPUT_DIR = "./figures/paper_final_impact"
+
+# TARGET CONFIGURATION
+TARGET_DATASET = "CIFAR-100"
 
 # --- Naming Standards ---
 PRETTY_NAMES = {
@@ -25,12 +25,10 @@ PRETTY_NAMES = {
     "skymask_small": "SkyMask",
 }
 
-# --- Color Standards ---
-METRIC_PALETTE = {
-    "Accuracy": "#2ca02c",      # Green (Good)
-    "ASR": "#d62728",           # Red (Bad)
-    "Benign Select": "#1f77b4", # Blue (Neutral)
-    "Adv Select": "#ff7f0e"     # Orange (Warning)
+# --- Color Standards (Green for Good, Red for Bad) ---
+PAYMENT_PALETTE = {
+    "Benign": "#2ca02c",   # Green (Matches 'Accuracy' in your other script)
+    "Adversary": "#d62728" # Red (Matches 'ASR' in your other script)
 }
 
 DEFENSE_ORDER = ["FedAvg", "FLTrust", "MARTFL", "SkyMask"]
@@ -41,7 +39,7 @@ def format_label(label: str) -> str:
     return PRETTY_NAMES.get(label.lower(), label.replace("_", " ").title())
 
 def set_publication_style():
-    """Sets the 'Big & Bold' professional style globally."""
+    """Sets the 'Big & Bold' professional style (Matches your Benchmark script)."""
     sns.set_theme(style="whitegrid")
     sns.set_context("paper", font_scale=1.8)
 
@@ -54,13 +52,16 @@ def set_publication_style():
         'axes.labelsize': 20,
         'xtick.labelsize': 18,
         'ytick.labelsize': 18,
-        'legend.fontsize': 16,     # Slightly smaller to fit inside
+        'legend.fontsize': 16,
         'legend.title_fontsize': 18,
         'axes.linewidth': 2.0,
         'axes.edgecolor': '#333333',
         'lines.linewidth': 3.0,
-        # Tighter figure size since legend is inside
+        # Compact figure size
         'figure.figsize': (12, 6),
+        # Font Type 42 for papers
+        'pdf.fonttype': 42,
+        'ps.fonttype': 42,
     })
 
 # ==========================================
@@ -80,187 +81,179 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
         pass
     return {"defense": "unknown", "dataset": "unknown"}
 
+def load_realized_payments(base_dir: Path, dataset: str, metric_name: str) -> pd.DataFrame:
+    """
+    Loads valuation data and applies the ZEROING LOGIC.
+    If a participant is NOT in 'selected_ids', their payment is 0.0.
+    """
+    records = []
+    scenario_folders = list(base_dir.glob("step12_*"))
+    print(f"Scanning folders for {dataset} ({metric_name})...")
 
-def load_metrics_from_csv(run_dir: Path) -> pd.DataFrame:
-    csv_path = run_dir / "seller_metrics.csv"
-    if not csv_path.exists(): return pd.DataFrame()
-    try:
-        df = pd.read_csv(csv_path, on_bad_lines='skip')
-        if df.empty or 'seller_id' not in df.columns: return pd.DataFrame()
+    for folder in scenario_folders:
+        info = parse_scenario_name(folder.name)
 
-        df['type'] = df['seller_id'].apply(
-            lambda x: 'Adversary' if str(x).startswith('adv') else 'Benign'
-        )
+        # Filter for the target dataset only
+        if info['dataset'].lower() != dataset.lower().replace("-", "") and info['dataset'] != dataset:
+             # handle loose matching (cifar100 vs CIFAR-100)
+             if "cifar" in info['dataset'].lower() and "cifar" in dataset.lower():
+                 pass # Acceptable match
+             else:
+                 continue
 
-        if 'selected' in df.columns:
-            df['selected'] = df['selected'].astype(int)
-            summary = df.groupby('type')[['selected']].mean().reset_index()
-            return summary
-        return pd.DataFrame()
-    except:
-        return pd.DataFrame()
+        jsonl_files = list(folder.rglob("valuations.jsonl"))
 
-
-def collect_all_results(base_dir: str) -> pd.DataFrame:
-    all_runs = []
-    base_path = Path(base_dir)
-    print(f"Searching for Step 12 results in {base_path}...")
-
-    scenario_folders = [f for f in base_path.glob("step12_*") if f.is_dir()]
-
-    for scenario_path in scenario_folders:
-        run_scenario = parse_scenario_name(scenario_path.name)
-        if run_scenario.get("defense") == "unknown": continue
-
-        for metrics_file in scenario_path.rglob("final_metrics.json"):
-            run_dir = metrics_file.parent
+        for j_file in jsonl_files:
             try:
-                with open(metrics_file, 'r') as f:
-                    metrics = json.load(f)
-                acc = metrics.get('acc', 0)
-                asr = metrics.get('asr', 0)
-            except:
-                acc = 0; asr = 0
+                with open(j_file, 'r') as f:
+                    lines = f.readlines()
 
-            df_val = load_metrics_from_csv(run_dir)
-            flat_record = {**run_scenario, "acc": acc, "asr": asr}
+                # Analyze converged state (last 20%)
+                start_idx = max(0, int(len(lines) * 0.8))
 
-            if not df_val.empty:
-                for _, row in df_val.iterrows():
-                    s_type = row['type']
-                    if 'selected' in row:
-                        flat_record[f"{s_type}_selected"] = row['selected']
+                for line in lines[start_idx:]:
+                    rec = json.loads(line)
+                    selected_ids = set(rec.get('selected_ids', []))
+                    valuations = rec.get('seller_valuations', {})
 
-            all_runs.append(flat_record)
+                    for sid, scores in valuations.items():
+                        is_adv = str(sid).startswith('adv')
 
-    df = pd.DataFrame(all_runs)
-    if not df.empty:
-        df['defense'] = df['defense'].apply(format_label)
+                        # 1. Find the Raw Score
+                        raw_score = 0.0
+                        score_found = False
+                        for k, v in scores.items():
+                            if metric_name in k and v is not None:
+                                raw_score = float(v)
+                                score_found = True
+                                break
 
-    return df
+                        if not score_found: continue
+
+                        # 2. APPLY ZEROING (Filter Logic)
+                        realized_payment = raw_score if sid in selected_ids else 0.0
+
+                        records.append({
+                            "defense": format_label(info['defense']), # Apply formatting here
+                            "dataset": info['dataset'],
+                            "Type": "Adversary" if is_adv else "Benign",
+                            "Realized Payment": realized_payment
+                        })
+            except Exception:
+                pass
+
+    return pd.DataFrame(records)
 
 # ==========================================
-# 3. PLOTTING FUNCTIONS
+# 3. PLOTTING FUNCTION (UPDATED STYLE)
 # ==========================================
 
-def plot_grouped_benchmark(df: pd.DataFrame, dataset: str, output_dir: Path):
-    """Generates the Grouped Bar Chart with INTERNAL LEGEND."""
-    print(f"\n--- Generating Grouped Benchmark for {dataset} ---")
+def plot_compact_realized_payment(df: pd.DataFrame, metric: str, output_dir: Path):
+    """
+    Generates the Realized Payment Chart using the COMPACT STYLE.
+    Legend is inside the chart, Y-axis has headroom.
+    """
+    print(f"  -> Plotting {metric}...")
 
-    subset = df[df['dataset'] == dataset].copy()
-    if subset.empty: return
+    if df.empty:
+        print("     [Warning] No data found.")
+        return
 
-    # Normalize
-    if subset['acc'].max() <= 1.0: subset['acc'] *= 100
-    if subset['asr'].max() <= 1.0: subset['asr'] *= 100
-    if 'Benign_selected' in subset.columns: subset['Benign_selected'] *= 100
-    if 'Adversary_selected' in subset.columns: subset['Adversary_selected'] *= 100
+    # Ensure consistent order
+    defense_order = [d for d in DEFENSE_ORDER if d in df['defense'].unique()]
 
-    # Aggregate
-    agg_df = subset.groupby('defense').mean(numeric_only=True).reset_index()
+    fig, ax = plt.subplots(figsize=(12, 6))
 
-    # Melt
-    rename_map = {
-        'acc': 'Accuracy',
-        'asr': 'ASR',
-        'Benign_selected': 'Benign Select',
-        'Adversary_selected': 'Adv Select'
-    }
-    cols_to_melt = [c for c in rename_map.keys() if c in agg_df.columns]
-
-    melted = agg_df.melt(
-        id_vars=['defense'],
-        value_vars=cols_to_melt,
-        var_name='Metric Type',
-        value_name='Percentage'
-    )
-    melted['Metric Type'] = melted['Metric Type'].map(rename_map)
-
-    # Plot
-    fig, ax = plt.subplots(figsize=(12, 6)) # Compact size
-
-    defense_order = [d for d in DEFENSE_ORDER if d in melted['defense'].unique()]
-
+    # --- MAIN PLOT ---
     sns.barplot(
-        data=melted,
+        data=df,
         x='defense',
-        y='Percentage',
-        hue='Metric Type',
+        y='Realized Payment',
+        hue='Type',
         order=defense_order,
-        palette=METRIC_PALETTE,
-        edgecolor='black', # Consistent black edge
+        palette=PAYMENT_PALETTE,
+        edgecolor='black',
         linewidth=1.2,
+        capsize=0.1,
+        errwidth=1.5,
         ax=ax
     )
 
-    # Labels
+    # --- LABELS & TITLES ---
+    clean_metric = metric.replace("_", " ").replace("loo", "LOO").replace("contrib", "Contribution").title()
+    if "Kernelshap" in clean_metric: clean_metric = "Shapley Value"
+
+    ax.set_ylabel("Avg Payment", labelpad=10) # Shortened for compactness
     ax.set_xlabel("")
-    ax.set_ylabel("Percentage (%)", labelpad=10)
+    # ax.set_title(f"Realized Payment: {clean_metric}", pad=15) # Optional Title
 
-    # --- SPACE SAVING LEGEND CONFIGURATION ---
-    # 1. Increase Y-Limit to make room INSIDE the axes
-    ax.set_ylim(0, 135)
+    # --- LEGEND & LAYOUT ( The "Compact" Logic ) ---
 
-    # 2. Place Legend INSIDE (upper center)
+    # 1. Zero Line
+    ax.axhline(0, color='black', linewidth=1.5, zorder=0)
+
+    # 2. Calculate dynamic Y-limits to fit legend
+    # Get current limits
+    y_min, y_max = ax.get_ylim()
+    # If data is all negative or zero, we need room at top for legend
+    if y_max <= 0: y_max = abs(y_min) * 0.2
+
+    # Add 30% headroom for the internal legend
+    headroom = (y_max - y_min) * 0.35
+    ax.set_ylim(y_min, y_max + headroom)
+
+    # 3. Internal Legend (Upper Center)
     ax.legend(
         loc='upper center',
-        ncol=4,                 # Horizontal layout
-        frameon=False,          # Cleaner look without box
-        fontsize=15,
-        columnspacing=1.2,
-        handletextpad=0.4
+        ncol=2,                 # 2 Columns (Benign, Adversary)
+        frameon=False,
+        fontsize=16,
+        columnspacing=1.5,
+        handletextpad=0.5
     )
 
-    # Bar Annotations
-    for container in ax.containers:
-        ax.bar_label(container, fmt='%.0f', padding=3, fontsize=13, fontweight='bold')
-
+    # 4. Despine
     sns.despine(left=False, bottom=False, right=True, top=True)
     ax.grid(axis='y', linestyle='--', alpha=0.5)
 
     # Save
-    fname = output_dir / f"Step12_Grouped_Benchmark_{dataset}.pdf"
-    plt.savefig(fname, bbox_inches='tight', format='pdf', dpi=300)
-    print(f"  Saved plot to: {fname}")
+    filename = f"Fig3_Realized_Payment_{metric}.pdf"
+    save_path = output_dir / filename
+    plt.tight_layout()
+    plt.savefig(save_path, bbox_inches='tight', format='pdf', dpi=300)
+    print(f"  Saved to {save_path}")
     plt.close()
 
-
 # ==========================================
-# 4. MAIN EXECUTION (UPDATED)
+# 4. MAIN EXECUTION (LOOP OVER METRICS)
 # ==========================================
 
 def main():
-    print("--- Starting Realized Payment Analysis ---")
+    print("--- Starting Compact Realized Payment Analysis ---")
 
-    set_plot_style()
+    set_publication_style()
     base_dir = Path(BASE_RESULTS_DIR)
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
 
-    # List of metrics you want to visualize
-    # These match the substrings in your valuations.jsonl keys
+    # THE LIST OF METRICS TO GENERATE
     METRICS_TO_PLOT = [
-        "marginal_contrib_loo",  # The LOO metric
-        "kernelshap",            # The Shapley metric
-        "influence"              # The Influence metric
+        "marginal_contrib_loo",  # LOO
+        "kernelshap",            # Shapley
+        "influence"              # Influence
     ]
 
     for metric in METRICS_TO_PLOT:
-        print(f"\n--- Processing Metric: {metric} ---")
-
-        # 1. Load Data specifically for this metric
+        # 1. Load
         df = load_realized_payments(base_dir, TARGET_DATASET, metric)
 
-        if df.empty:
-            print(f"⚠️ Warning: No data found for '{metric}'. Skipping.")
-            continue
+        # 2. Plot (if data exists)
+        if not df.empty:
+            plot_compact_realized_payment(df, metric, output_dir)
+        else:
+            print(f"⚠️  No data found for {metric}. Did you run the valuation experiment?")
 
-        print(f"✅ Loaded {len(df)} records for {metric}.")
-
-        # 2. Generate the Figure
-        plot_realized_payment_chart(df, metric, output_dir)
-
-    print("\n✅ All figures generated successfully.")
+    print("\n✅ All figures generated.")
 
 if __name__ == "__main__":
     main()
