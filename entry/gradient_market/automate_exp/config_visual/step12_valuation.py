@@ -10,25 +10,22 @@ from typing import Dict, List, Any
 # 1. CONFIGURATION
 # ==========================================
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step12_dual_stack_fixed"
+FIGURE_OUTPUT_DIR = "./figures/step12_dual_stack_polished"
 
 TARGET_DATASET = "CIFAR-100"
 
 METRICS_TO_PLOT = [
-    "selection_rate",             # Participation (Dense - All Rounds)
-    "marginal_contrib_loo",       # Economic Value (Sparse - Every 10 Rounds)
-    "kernelshap_score",           # Economic Value (Sparse)
-    "influence_score"             # Economic Value (Sparse)
+    "selection_rate",             # Participation
+    "marginal_contrib_loo",       # Economic Value
+    "kernelshap_score",           # Economic Value
+    "influence_score"             # Economic Value
 ]
 
 # --- COLORS ---
-# Benign Stack
 COLOR_BENIGN_PAID = "#2ca02c"      # Green
-COLOR_BENIGN_LOST = "#bbbbbb"      # Grey (Collateral Damage)
-
-# Adversary Stack
-COLOR_ADV_PAID = "#d62728"         # Red (Security Failure)
-COLOR_ADV_CAUGHT = "#2c3e50"       # Dark Blue/Black (Successful Defense)
+COLOR_BENIGN_LOST = "#bbbbbb"      # Grey
+COLOR_ADV_PAID = "#d62728"         # Red
+COLOR_ADV_CAUGHT = "#2c3e50"       # Dark Blue/Black
 
 PRETTY_NAMES = {
     "fedavg": "FedAvg", "fltrust": "FLTrust",
@@ -42,18 +39,26 @@ def format_label(label: str) -> str:
     return PRETTY_NAMES.get(label.lower(), label.replace("_", " ").title())
 
 def set_publication_style():
+    """Sets a style with VERY readable fonts and tight layout."""
     plt.style.use('seaborn-v0_8-whitegrid')
     plt.rcParams.update({
-        'font.family': 'sans-serif', 'font.weight': 'bold',
-        'font.size': 14, 'axes.labelsize': 16, 'axes.titlesize': 18,
-        'xtick.labelsize': 14, 'ytick.labelsize': 14,
-        'legend.fontsize': 13, 'figure.figsize': (12, 7),
-        'axes.linewidth': 2.0, 'axes.edgecolor': '#333333',
-        'pdf.fonttype': 42, 'ps.fonttype': 42
+        'font.family': 'sans-serif',
+        'font.weight': 'bold',
+        # Increased font sizes for readability
+        'font.size': 20,
+        'axes.labelsize': 22,
+        'xtick.labelsize': 20,
+        'ytick.labelsize': 20,
+        'legend.fontsize': 18,
+        'figure.figsize': (12, 6), # Wider, shorter to save vertical space
+        'axes.linewidth': 2.5,
+        'axes.edgecolor': '#333333',
+        'pdf.fonttype': 42,
+        'ps.fonttype': 42
     })
 
 # ==========================================
-# 2. DATA LOADING (DENSE VS SPARSE LOGIC)
+# 2. DATA LOADING
 # ==========================================
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
@@ -78,7 +83,6 @@ def load_dual_breakdown(base_dir: Path, dataset: str, target_metric: str) -> pd.
         defense_name = format_label(info['defense'])
         jsonl_files = list(folder.rglob("valuations.jsonl"))
 
-        # Accumulators
         benign_paid = 0.0
         benign_discarded = 0.0
         adv_paid = 0.0
@@ -88,7 +92,6 @@ def load_dual_breakdown(base_dir: Path, dataset: str, target_metric: str) -> pd.
         for j_file in jsonl_files:
             try:
                 with open(j_file, 'r') as f: lines = f.readlines()
-                # Use last 50% for stability
                 start_idx = max(0, int(len(lines) * 0.5))
 
                 for line in lines[start_idx:]:
@@ -96,13 +99,9 @@ def load_dual_breakdown(base_dir: Path, dataset: str, target_metric: str) -> pd.
                     selected_ids = set(rec.get('selected_ids', []))
                     valuations = rec.get('seller_valuations', {})
 
-                    # --- MODE A: DENSE (Selection Rate) ---
-                    # Process EVERY round to capture true filtering behavior
+                    # Mode Selection
                     if target_metric == "selection_rate":
                         has_metric = True
-
-                    # --- MODE B: SPARSE (Economic Metrics) ---
-                    # Only process rounds where the expensive metric exists
                     else:
                         if not valuations: continue
                         first_val = next(iter(valuations.values()))
@@ -113,9 +112,7 @@ def load_dual_breakdown(base_dir: Path, dataset: str, target_metric: str) -> pd.
                     for sid, data in valuations.items():
                         is_adv = str(sid).startswith('adv')
 
-                        # Get Value
                         if target_metric == "selection_rate":
-                            # Count 1.0 for every round (Participation)
                             val = 1.0
                         else:
                             if target_metric in data and data[target_metric] is not None:
@@ -123,7 +120,6 @@ def load_dual_breakdown(base_dir: Path, dataset: str, target_metric: str) -> pd.
                             else:
                                 continue
 
-                        # Distribute to Buckets
                         if is_adv:
                             if sid in selected_ids: adv_paid += val
                             else: adv_discarded += val
@@ -135,7 +131,6 @@ def load_dual_breakdown(base_dir: Path, dataset: str, target_metric: str) -> pd.
             except: pass
 
         if round_count > 0:
-            print(f"  -> {defense_name}: Processed {round_count} rounds")
             records.append({
                 "defense": defense_name,
                 "Benign_Paid": benign_paid,
@@ -153,11 +148,10 @@ def load_dual_breakdown(base_dir: Path, dataset: str, target_metric: str) -> pd.
 def plot_dual_stack(df: pd.DataFrame, metric_name: str, output_dir: Path):
     if df.empty: return
 
-    # Normalize to Percentages within groups
+    # Normalize
     df['Total_Benign'] = df['Benign_Paid'] + df['Benign_Discarded']
     df['Total_Adv'] = df['Adv_Paid'] + df['Adv_Discarded']
 
-    # Avoid div by zero
     df['Total_Benign'] = df['Total_Benign'].replace(0, 1)
     df['Total_Adv'] = df['Total_Adv'].replace(0, 1)
 
@@ -166,56 +160,62 @@ def plot_dual_stack(df: pd.DataFrame, metric_name: str, output_dir: Path):
     df['Pct_Adv_Paid'] = (df['Adv_Paid'] / df['Total_Adv']) * 100
     df['Pct_Adv_Discarded'] = (df['Adv_Discarded'] / df['Total_Adv']) * 100
 
-    # Filtering Order
     df = df.set_index("defense")
     existing_order = [d for d in DEFENSE_ORDER if d in df.index]
     df = df.loc[existing_order]
 
-    # SETUP PLOT
-    fig, ax = plt.subplots(figsize=(12, 7))
+    # PLOT
+    fig, ax = plt.subplots(figsize=(12, 6))
     x = np.arange(len(df))
-    width = 0.35  # Width of bars
+    width = 0.35
 
-    # --- BAR GROUP 1: BENIGN (Left) ---
+    # Group 1: Benign
     p1 = ax.bar(x - width/2, df['Pct_Benign_Paid'], width, label='Benign: Paid',
-                color=COLOR_BENIGN_PAID, edgecolor='black')
+                color=COLOR_BENIGN_PAID, edgecolor='black', linewidth=1.5)
     p2 = ax.bar(x - width/2, df['Pct_Benign_Discarded'], width, bottom=df['Pct_Benign_Paid'],
-                label='Benign: Discarded', color=COLOR_BENIGN_LOST, edgecolor='black', hatch='//')
+                label='Benign: Discarded', color=COLOR_BENIGN_LOST, edgecolor='black', linewidth=1.5, hatch='//')
 
-    # --- BAR GROUP 2: ADVERSARY (Right) ---
-    p3 = ax.bar(x + width/2, df['Pct_Adv_Paid'], width, label='Adversary: Paid (Leak)',
-                color=COLOR_ADV_PAID, edgecolor='black')
+    # Group 2: Adversary
+    p3 = ax.bar(x + width/2, df['Pct_Adv_Paid'], width, label='Adversary: Paid',
+                color=COLOR_ADV_PAID, edgecolor='black', linewidth=1.5)
     p4 = ax.bar(x + width/2, df['Pct_Adv_Discarded'], width, bottom=df['Pct_Adv_Paid'],
-                label='Adversary: Caught', color=COLOR_ADV_CAUGHT, edgecolor='black', hatch='..')
+                label='Adversary: Blocked', color=COLOR_ADV_CAUGHT, edgecolor='black', linewidth=1.5, hatch='..')
 
-    # --- LABELS ---
+    # Data Labels
     def add_labels(rects):
         for rect in rects:
             height = rect.get_height()
-            if height > 5:  # Only label visible segments
+            if height > 5:
                 ax.annotate(f'{height:.0f}%',
                             xy=(rect.get_x() + rect.get_width() / 2, rect.get_y() + height / 2),
                             xytext=(0, 0), textcoords="offset points",
-                            ha='center', va='center', color='white', fontweight='bold', fontsize=12)
+                            ha='center', va='center', color='white',
+                            fontweight='bold', fontsize=16) # Larger, bold font
 
     add_labels(p1)
     add_labels(p2)
     add_labels(p3)
     add_labels(p4)
 
-    # Styling
-    clean_title = metric_name.replace("_", " ").title().replace("Loo", "LOO")
-    if "Selection" in clean_title: clean_title = "Participation Rate"
-    if "Kernelshap" in clean_title: clean_title = "Shapley Value"
+    # Clean Layout
+    ax.set_ylabel('Percentage (%)', fontweight='bold')
+    # REMOVED TITLE AS REQUESTED
+    # ax.set_title(...)
 
-    ax.set_ylabel('Percentage of Group Value (%)')
-    ax.set_title(f'Filtering Impact on {clean_title} (Split View)')
     ax.set_xticks(x)
-    ax.set_xticklabels(df.index)
-    ax.set_ylim(0, 105) # Headroom for legend
+    ax.set_xticklabels(df.index, fontweight='bold')
+    ax.set_ylim(0, 115) # Headroom for 1-row legend
 
-    # Custom Legend
-    ax.legend(bbox_to_anchor=(0.5, 1.05), loc='lower center', ncol=2, frameon=False)
+    # 1-ROW LEGEND
+    ax.legend(
+        bbox_to_anchor=(0.5, 1.02),
+        loc='lower center',
+        ncol=4,             # Forces 1 row
+        frameon=False,
+        fontsize=16,
+        columnspacing=1.0,  # Tighten spacing to fit 1 row
+        handletextpad=0.5
+    )
 
     plt.tight_layout()
     filename = f"Fig_DualStack_{metric_name}.pdf"
@@ -228,7 +228,7 @@ def plot_dual_stack(df: pd.DataFrame, metric_name: str, output_dir: Path):
 # 4. MAIN
 # ==========================================
 def main():
-    print("--- Starting Dual Stack Analysis (Fixed) ---")
+    print("--- Starting Polished Dual Stack Analysis ---")
     set_publication_style()
     base_dir = Path(BASE_RESULTS_DIR)
     output_dir = Path(FIGURE_OUTPUT_DIR)
