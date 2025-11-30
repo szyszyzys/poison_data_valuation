@@ -8,13 +8,19 @@ from pathlib import Path
 from typing import Dict, List, Any
 
 # ==========================================
-# 1. CONFIGURATION & COMPACT STYLING
+# 1. CONFIGURATION
 # ==========================================
 BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step12_valuation_comparison"
 
 # TARGET CONFIGURATION
 TARGET_DATASET = "CIFAR-100"
+
+# KEYS TO IGNORE (Don't plot these as valuation metrics)
+IGNORE_KEYS = {
+    "selected", "outlier", "train_loss", "num_samples",
+    "selection_score", "gradient_norm", "price_paid", "round"
+}
 
 # --- Naming Standards ---
 PRETTY_NAMES = {
@@ -25,7 +31,6 @@ PRETTY_NAMES = {
     "skymask_small": "SkyMask",
 }
 
-# --- Color Standards (Green=Benign, Red=Adversary) ---
 PAYMENT_PALETTE = {
     "Benign": "#2ca02c",   # Green
     "Adversary": "#d62728" # Red
@@ -38,10 +43,9 @@ def format_label(label: str) -> str:
     return PRETTY_NAMES.get(label.lower(), label.replace("_", " ").title())
 
 def set_publication_style():
-    """Sets the 'Compact & Bold' style you requested."""
+    """Sets the Compact & Bold style."""
     sns.set_theme(style="whitegrid")
     sns.set_context("paper", font_scale=1.8)
-
     plt.rcParams.update({
         'font.family': 'sans-serif',
         'font.weight': 'bold',
@@ -56,13 +60,13 @@ def set_publication_style():
         'axes.linewidth': 2.0,
         'axes.edgecolor': '#333333',
         'lines.linewidth': 3.0,
-        'figure.figsize': (12, 6), # Compact Size
+        'figure.figsize': (12, 6),
         'pdf.fonttype': 42,
         'ps.fonttype': 42,
     })
 
 # ==========================================
-# 2. DATA LOADING (Updated for your JSON keys)
+# 2. AUTO-DISCOVERY DATA LOADING
 # ==========================================
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
@@ -70,27 +74,19 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
         parts = scenario_name.split('_')
         if 'step12' in parts and 'main' in parts:
             idx = parts.index('summary')
-            return {
-                "defense": parts[idx + 1],
-                "dataset": parts[idx + 3]
-            }
-    except Exception:
-        pass
+            return {"defense": parts[idx + 1], "dataset": parts[idx + 3]}
+    except: pass
     return {"defense": "unknown", "dataset": "unknown"}
 
-def load_realized_payments(base_dir: Path, dataset: str, target_key: str) -> pd.DataFrame:
-    """
-    Reads valuations.jsonl and looks for the 'target_key'
-    (e.g., 'influence_score', 'sim_to_buyer', 'marginal_contrib_loo_score').
-    """
+def load_all_metrics_auto(base_dir: Path, dataset: str) -> pd.DataFrame:
     records = []
     scenario_folders = list(base_dir.glob("step12_*"))
-    print(f"Scanning for metric key: '{target_key}'...")
+    print(f"Scanning {len(scenario_folders)} folders for {dataset}...")
 
     for folder in scenario_folders:
         info = parse_scenario_name(folder.name)
 
-        # Loose matching for dataset name
+        # Loose dataset matching
         if dataset.lower().replace("-", "") not in info['dataset'].lower().replace("-", ""):
             continue
 
@@ -99,7 +95,6 @@ def load_realized_payments(base_dir: Path, dataset: str, target_key: str) -> pd.
         for j_file in jsonl_files:
             try:
                 with open(j_file, 'r') as f: lines = f.readlines()
-
                 # Analyze converged state (last 20%)
                 start_idx = max(0, int(len(lines) * 0.8))
 
@@ -111,40 +106,49 @@ def load_realized_payments(base_dir: Path, dataset: str, target_key: str) -> pd.
                     for sid, data in valuations.items():
                         is_adv = str(sid).startswith('adv')
 
-                        # --- KEY CHANGE: Direct Key Access ---
-                        # We check if the specific key exists in the JSON dictionary
-                        if target_key in data and data[target_key] is not None:
-                            raw_score = float(data[target_key])
+                        # --- AUTO DISCOVERY LOGIC ---
+                        # Loop through ALL keys in the seller's dictionary
+                        for key, value in data.items():
+                            # Skip non-metric keys (metadata, booleans, nulls)
+                            if key in IGNORE_KEYS or value is None or isinstance(value, (bool, str)):
+                                continue
 
-                            # Realized Payment Logic: 0 if not selected
-                            realized_payment = raw_score if sid in selected_ids else 0.0
+                            try:
+                                raw_score = float(value)
 
-                            records.append({
-                                "defense": format_label(info['defense']),
-                                "Type": "Adversary" if is_adv else "Benign",
-                                "Realized Payment": realized_payment
-                            })
-            except Exception:
-                pass
+                                # Realized Payment Logic: 0 if filtered
+                                realized_payment = raw_score if sid in selected_ids else 0.0
+
+                                records.append({
+                                    "defense": format_label(info['defense']),
+                                    "Type": "Adversary" if is_adv else "Benign",
+                                    "Metric": key,  # Capture the metric name dynamically
+                                    "Realized Payment": realized_payment
+                                })
+                            except:
+                                continue
+            except: pass
 
     return pd.DataFrame(records)
 
 # ==========================================
-# 3. PLOTTING (Compact Style)
+# 3. PLOTTING FUNCTION
 # ==========================================
 
-def plot_compact_payment(df: pd.DataFrame, metric_name: str, output_dir: Path):
-    if df.empty:
-        print(f"  [Warning] No data found for {metric_name}")
-        return
+def plot_metric(df: pd.DataFrame, metric_name: str, output_dir: Path):
+    """Plots a single metric from the large dataframe."""
+    print(f"  -> Plotting {metric_name}...")
 
-    # Filter Defenses
-    defense_order = [d for d in DEFENSE_ORDER if d in df['defense'].unique()]
+    # Filter for just this metric
+    subset = df[df['Metric'] == metric_name].copy()
+    if subset.empty: return
+
+    defense_order = [d for d in DEFENSE_ORDER if d in subset['defense'].unique()]
 
     fig, ax = plt.subplots(figsize=(12, 6))
 
     sns.barplot(
-        data=df,
+        data=subset,
         x='defense',
         y='Realized Payment',
         hue='Type',
@@ -157,20 +161,22 @@ def plot_compact_payment(df: pd.DataFrame, metric_name: str, output_dir: Path):
         ax=ax
     )
 
-    # --- Labels ---
+    # Clean Labels
     clean_title = metric_name.replace("_", " ").replace("sim", "Similarity").title()
+    if "Loo" in clean_title: clean_title = clean_title.replace("Loo", "LOO")
+
     ax.set_ylabel("Avg Score", labelpad=10)
     ax.set_xlabel("")
+    # ax.set_title(clean_title, pad=15) # Optional title
 
-    # --- Compact Internal Legend ---
+    # Layout: Internal Legend + Zero Line
     ax.axhline(0, color='black', linewidth=1.5, zorder=0)
 
-    # Dynamic Y-Limits to fit legend inside
     y_min, y_max = ax.get_ylim()
     y_range = y_max - y_min
-    if y_max <= 0: y_max = abs(y_min) * 0.2 # Handle negative-only plots
+    if y_max <= 0: y_max = abs(y_min) * 0.2
 
-    # Add 35% headroom
+    # Add headroom for legend
     ax.set_ylim(y_min, y_max + (y_range * 0.35))
 
     ax.legend(
@@ -195,32 +201,28 @@ def plot_compact_payment(df: pd.DataFrame, metric_name: str, output_dir: Path):
 # ==========================================
 
 def main():
+    print("--- Starting Auto-Discovery Visualization ---")
     set_publication_style()
     base_dir = Path(BASE_RESULTS_DIR)
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
 
-    # --- METRICS TO PLOT ---
-    # These keys MUST match the keys in your JSONL file exactly
-    METRICS_TO_PROCESS = [
-        "influence_score",              # Found in your snippet
-        "sim_to_buyer",                 # Found in your snippet
-        "sim_to_oracle",                # Found in your snippet
-        "marginal_contrib_loo_score",   # Try this if you have LOO data
-        "kernel_shap_score"             # Try this if you have Shapley data
-    ]
+    # 1. Load EVERYTHING
+    df = load_all_metrics_auto(base_dir, TARGET_DATASET)
 
-    print(f"--- Generating Comparisons for {len(METRICS_TO_PROCESS)} Metrics ---")
+    if df.empty:
+        print("❌ No data found.")
+        return
 
-    for metric_key in METRICS_TO_PROCESS:
-        df = load_realized_payments(base_dir, TARGET_DATASET, metric_key)
+    # 2. Identify Unique Metrics Found
+    found_metrics = df['Metric'].unique()
+    print(f"✅ Found {len(df)} records across these metrics: {found_metrics}")
 
-        if not df.empty:
-            plot_compact_payment(df, metric_key, output_dir)
-        else:
-            print(f"⚠️  Skipping {metric_key} (Key not found in JSON data)")
+    # 3. Plot Each Metric Found
+    for metric in found_metrics:
+        plot_metric(df, metric, output_dir)
 
-    print("\n✅ Done.")
+    print("\n✅ All figures generated.")
 
 if __name__ == "__main__":
     main()
