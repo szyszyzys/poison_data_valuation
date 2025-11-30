@@ -117,8 +117,8 @@ def generate_main_summary_scenarios() -> List[Scenario]:
             valuation_modifier = lambda config: enable_valuation(
                 config,
                 influence=True,
-                loo=True, loo_freq=10,
-                kernelshap=True, kshap_freq=10,
+                loo=True, loo_freq=5,
+                kernelshap=True, kshap_freq=5,
                 kshap_samples=500
             )
 
