@@ -26,7 +26,6 @@ PRETTY_NAMES = {
 }
 
 # --- Color Standards ---
-# Matches your screenshot requirement: Green/Red/Blue/Orange
 METRIC_PALETTE = {
     "Accuracy": "#2ca02c",      # Green (Good)
     "ASR": "#d62728",           # Red (Bad)
@@ -53,14 +52,15 @@ def set_publication_style():
         'axes.titleweight': 'bold',
         'axes.titlesize': 24,
         'axes.labelsize': 20,
-        'xtick.labelsize': 16,
-        'ytick.labelsize': 16,
-        'legend.fontsize': 18,
-        'legend.title_fontsize': 20,
+        'xtick.labelsize': 18,
+        'ytick.labelsize': 18,
+        'legend.fontsize': 16,     # Slightly smaller to fit inside
+        'legend.title_fontsize': 18,
         'axes.linewidth': 2.0,
         'axes.edgecolor': '#333333',
         'lines.linewidth': 3.0,
-        'figure.figsize': (14, 7),
+        # Tighter figure size since legend is inside
+        'figure.figsize': (12, 6),
     })
 
 # ==========================================
@@ -71,12 +71,10 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     try:
         parts = scenario_name.split('_')
         if 'step12' in parts and 'main' in parts:
-            # Expected format: step12_main_summary_{defense}_on_{dataset}
-            # Index of 'summary':
             idx = parts.index('summary')
             return {
                 "defense": parts[idx + 1],
-                "dataset": parts[idx + 3] # Skip 'on'
+                "dataset": parts[idx + 3]
             }
     except Exception:
         pass
@@ -84,7 +82,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
 
 
 def load_metrics_from_csv(run_dir: Path) -> pd.DataFrame:
-    """Loads selection details from CSV if available."""
     csv_path = run_dir / "seller_metrics.csv"
     if not csv_path.exists(): return pd.DataFrame()
     try:
@@ -96,7 +93,6 @@ def load_metrics_from_csv(run_dir: Path) -> pd.DataFrame:
         )
 
         if 'selected' in df.columns:
-            # 'selected' column might be boolean or int
             df['selected'] = df['selected'].astype(int)
             summary = df.groupby('type')[['selected']].mean().reset_index()
             return summary
@@ -106,7 +102,6 @@ def load_metrics_from_csv(run_dir: Path) -> pd.DataFrame:
 
 
 def collect_all_results(base_dir: str) -> pd.DataFrame:
-    """Walks directories to find Step 12 results."""
     all_runs = []
     base_path = Path(base_dir)
     print(f"Searching for Step 12 results in {base_path}...")
@@ -127,9 +122,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
             except:
                 acc = 0; asr = 0
 
-            # Get selection rates from CSV
             df_val = load_metrics_from_csv(run_dir)
-
             flat_record = {**run_scenario, "acc": acc, "asr": asr}
 
             if not df_val.empty:
@@ -151,23 +144,22 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 # ==========================================
 
 def plot_grouped_benchmark(df: pd.DataFrame, dataset: str, output_dir: Path):
-    """Generates the Grouped Bar Chart (4 bars per defense)."""
+    """Generates the Grouped Bar Chart with INTERNAL LEGEND."""
     print(f"\n--- Generating Grouped Benchmark for {dataset} ---")
 
     subset = df[df['dataset'] == dataset].copy()
     if subset.empty: return
 
-    # 1. Normalize to Percentages
+    # Normalize
     if subset['acc'].max() <= 1.0: subset['acc'] *= 100
     if subset['asr'].max() <= 1.0: subset['asr'] *= 100
     if 'Benign_selected' in subset.columns: subset['Benign_selected'] *= 100
     if 'Adversary_selected' in subset.columns: subset['Adversary_selected'] *= 100
 
-    # 2. Aggregate
-    # We take the mean over multiple seeds/runs
+    # Aggregate
     agg_df = subset.groupby('defense').mean(numeric_only=True).reset_index()
 
-    # 3. Melt
+    # Melt
     rename_map = {
         'acc': 'Accuracy',
         'asr': 'ASR',
@@ -184,11 +176,9 @@ def plot_grouped_benchmark(df: pd.DataFrame, dataset: str, output_dir: Path):
     )
     melted['Metric Type'] = melted['Metric Type'].map(rename_map)
 
-    # 4. Plot Setup
-    # Use global style implicitly
-    fig, ax = plt.subplots(figsize=(16, 8)) # Slightly wider for grouped bars
+    # Plot
+    fig, ax = plt.subplots(figsize=(12, 6)) # Compact size
 
-    # Ensure only present defenses are plotted
     defense_order = [d for d in DEFENSE_ORDER if d in melted['defense'].unique()]
 
     sns.barplot(
@@ -198,36 +188,37 @@ def plot_grouped_benchmark(df: pd.DataFrame, dataset: str, output_dir: Path):
         hue='Metric Type',
         order=defense_order,
         palette=METRIC_PALETTE,
-        edgecolor='white',
-        linewidth=1.5,
+        edgecolor='black', # Consistent black edge
+        linewidth=1.2,
         ax=ax
     )
 
-    # 5. Labels & Ticks
-    # Font sizes are handled by global rcParams, just setting text here
+    # Labels
     ax.set_xlabel("")
-    ax.set_ylabel("Percentage (%)", labelpad=15)
-    # ax.set_title(f"Main Benchmark: {dataset}", pad=20)
+    ax.set_ylabel("Percentage (%)", labelpad=10)
 
-    ax.set_ylim(0, 119) # Extra headroom for legend/labels
+    # --- SPACE SAVING LEGEND CONFIGURATION ---
+    # 1. Increase Y-Limit to make room INSIDE the axes
+    ax.set_ylim(0, 135)
 
-    # 6. Bar Annotations
-    for container in ax.containers:
-        ax.bar_label(container, fmt='%.0f', padding=3, fontsize=14, fontweight='bold')
-
-    # 7. Legend (Top Center)
+    # 2. Place Legend INSIDE (upper center)
     ax.legend(
-        loc='lower center',
-        bbox_to_anchor=(0.5, 1.02),
-        ncol=4,
-        frameon=True,
-        title=None
+        loc='upper center',
+        ncol=4,                 # Horizontal layout
+        frameon=False,          # Cleaner look without box
+        fontsize=15,
+        columnspacing=1.2,
+        handletextpad=0.4
     )
+
+    # Bar Annotations
+    for container in ax.containers:
+        ax.bar_label(container, fmt='%.0f', padding=3, fontsize=13, fontweight='bold')
 
     sns.despine(left=False, bottom=False, right=True, top=True)
     ax.grid(axis='y', linestyle='--', alpha=0.5)
 
-    # 8. Save
+    # Save
     fname = output_dir / f"Step12_Grouped_Benchmark_{dataset}.pdf"
     plt.savefig(fname, bbox_inches='tight', format='pdf', dpi=300)
     print(f"  Saved plot to: {fname}")
@@ -235,26 +226,21 @@ def plot_grouped_benchmark(df: pd.DataFrame, dataset: str, output_dir: Path):
 
 
 def main():
-    # 1. Apply Global Style
     set_publication_style()
-
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
-    print(f"Output Directory: {output_dir.resolve()}")
 
-    # 2. Load Data
     df = collect_all_results(BASE_RESULTS_DIR)
 
     if df.empty:
         print("No data found.")
         return
 
-    # 3. Plot
     for dataset in df['dataset'].unique():
         if dataset != 'unknown':
             plot_grouped_benchmark(df, dataset, output_dir)
 
-    print("\n✅ Grouped Benchmark Figure Generated.")
+    print("\n✅ Compact Grouped Benchmark Generated.")
 
 
 if __name__ == "__main__":
