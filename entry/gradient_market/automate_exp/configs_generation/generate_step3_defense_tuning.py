@@ -38,16 +38,16 @@ TUNING_GRIDS = {
     },
 
     "skymask": {
-        "aggregation.skymask.mask_epochs": [20, 50],
+        "aggregation.skymask.mask_epochs": [20],
         "aggregation.skymask.mask_lr": [0.01, 0,1, 0.5, 1e7],
-        "aggregation.skymask.mask_threshold": [0.5, 0.9],
+        "aggregation.skymask.mask_threshold": [0.5],
         "aggregation.clip_norm": [10],
         "aggregation.skymask.mask_clip": [1.0]
     },
     "skymask_small": {
-        "aggregation.skymask.mask_epochs": [20, 50],
-        "aggregation.skymask.mask_lr": [0.01, 0,1, 0.5, 1e7],
-        "aggregation.skymask.mask_threshold": [0.5, 0.9],
+        "aggregation.skymask.mask_epochs": [20],
+        "aggregation.skymask.mask_lr": [0.01, 0,1, 0.5],
+        "aggregation.skymask.mask_threshold": [0.5],
         "aggregation.clip_norm": [10],
         "aggregation.skymask.mask_clip": [1.0]
     },
@@ -164,7 +164,7 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
                 full_parameter_grid = {**base_grid, **defense_grid_to_sweep}
 
                 scenarios.append(Scenario(
-                    name=f"step3_tune_{defense_name}_{attack_type}_{modality}_{target['dataset_name']}_{model_cfg_name}_new",
+                    name=f"step3_tune_{defense_name}_{attack_type}_{modality}_{target['dataset_name']}_{model_cfg_name}",
                     base_config_factory=target["base_config_factory"],
                     modifiers=[setup_modifier_func, target["dataset_modifier"]],
                     parameter_grid=full_parameter_grid
@@ -241,7 +241,7 @@ if __name__ == "__main__":
 
             # Set the unique save path for the *results*
             # This is the path your run_parallel.py will use
-            unique_save_path = f"./results_new/{scenario.name}/{hp_suffix}"
+            unique_save_path = f"./results/{scenario.name}/{hp_suffix}"
             current_grid["experiment.save_path"] = [unique_save_path]
 
             # Set the unique name for the *config file*
