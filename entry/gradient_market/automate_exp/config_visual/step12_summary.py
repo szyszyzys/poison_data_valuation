@@ -225,23 +225,42 @@ def plot_grouped_benchmark(df: pd.DataFrame, dataset: str, output_dir: Path):
     plt.close()
 
 
+# ==========================================
+# 4. MAIN EXECUTION (UPDATED)
+# ==========================================
+
 def main():
-    set_publication_style()
+    print("--- Starting Realized Payment Analysis ---")
+
+    set_plot_style()
+    base_dir = Path(BASE_RESULTS_DIR)
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
 
-    df = collect_all_results(BASE_RESULTS_DIR)
+    # List of metrics you want to visualize
+    # These match the substrings in your valuations.jsonl keys
+    METRICS_TO_PLOT = [
+        "marginal_contrib_loo",  # The LOO metric
+        "kernelshap",            # The Shapley metric
+        "influence"              # The Influence metric
+    ]
 
-    if df.empty:
-        print("No data found.")
-        return
+    for metric in METRICS_TO_PLOT:
+        print(f"\n--- Processing Metric: {metric} ---")
 
-    for dataset in df['dataset'].unique():
-        if dataset != 'unknown':
-            plot_grouped_benchmark(df, dataset, output_dir)
+        # 1. Load Data specifically for this metric
+        df = load_realized_payments(base_dir, TARGET_DATASET, metric)
 
-    print("\n✅ Compact Grouped Benchmark Generated.")
+        if df.empty:
+            print(f"⚠️ Warning: No data found for '{metric}'. Skipping.")
+            continue
 
+        print(f"✅ Loaded {len(df)} records for {metric}.")
+
+        # 2. Generate the Figure
+        plot_realized_payment_chart(df, metric, output_dir)
+
+    print("\n✅ All figures generated successfully.")
 
 if __name__ == "__main__":
     main()
