@@ -10,25 +10,25 @@ from typing import Dict, List, Any
 # 1. CONFIGURATION
 # ==========================================
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step12_percentage_distribution"
+FIGURE_OUTPUT_DIR = "./figures/step12_dual_stack"
 
 TARGET_DATASET = "CIFAR-100"
 
-# METRICS TO PROCESS
-# We treat 'selection_rate' as a special metric where Value = 1.0
 METRICS_TO_PLOT = [
-    "selection_rate",             # NEW: Participation as value
+    "selection_rate",             # Participation
     "marginal_contrib_loo",       # Economic Value
     "kernelshap_score",           # Economic Value
     "influence_score"             # Economic Value
 ]
 
-# COLORS (Traffic Light)
-STACK_COLORS = {
-    "Paid to Benign": "#2ca02c",      # Green (Efficient)
-    "Discarded Benign": "#bbbbbb",    # Grey (Waste)
-    "Paid to Adversary": "#d62728"    # Red (Theft)
-}
+# --- COLORS ---
+# Benign Stack
+COLOR_BENIGN_PAID = "#2ca02c"      # Green
+COLOR_BENIGN_LOST = "#bbbbbb"      # Grey
+
+# Adversary Stack
+COLOR_ADV_PAID = "#d62728"         # Red
+COLOR_ADV_CAUGHT = "#2c3e50"       # Dark Blue/Black
 
 PRETTY_NAMES = {
     "fedavg": "FedAvg", "fltrust": "FLTrust",
@@ -47,13 +47,13 @@ def set_publication_style():
         'font.family': 'sans-serif', 'font.weight': 'bold',
         'font.size': 14, 'axes.labelsize': 16, 'axes.titlesize': 18,
         'xtick.labelsize': 14, 'ytick.labelsize': 14,
-        'legend.fontsize': 14, 'figure.figsize': (10, 7),
+        'legend.fontsize': 13, 'figure.figsize': (12, 7),
         'axes.linewidth': 2.0, 'axes.edgecolor': '#333333',
         'pdf.fonttype': 42, 'ps.fonttype': 42
     })
 
 # ==========================================
-# 2. DATA LOADING (SUMMING TOTALS)
+# 2. DATA LOADING
 # ==========================================
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
@@ -65,7 +65,7 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     except: pass
     return {"defense": "unknown", "dataset": "unknown"}
 
-def load_financial_totals(base_dir: Path, dataset: str, target_metric: str) -> pd.DataFrame:
+def load_dual_breakdown(base_dir: Path, dataset: str, target_metric: str) -> pd.DataFrame:
     records = []
     scenario_folders = list(base_dir.glob("step12_*"))
     print(f"Scanning for '{target_metric}'...")
@@ -79,125 +79,138 @@ def load_financial_totals(base_dir: Path, dataset: str, target_metric: str) -> p
         jsonl_files = list(folder.rglob("valuations.jsonl"))
 
         # Accumulators
-        total_paid_benign = 0.0
-        total_discarded_benign = 0.0
-        total_paid_adv = 0.0
+        benign_paid = 0.0
+        benign_discarded = 0.0
+        adv_paid = 0.0
+        adv_discarded = 0.0
         round_count = 0
 
         for j_file in jsonl_files:
             try:
                 with open(j_file, 'r') as f: lines = f.readlines()
-                start_idx = max(0, int(len(lines) * 0.5)) # Converged stages
+                start_idx = max(0, int(len(lines) * 0.5))
 
                 for line in lines[start_idx:]:
                     rec = json.loads(line)
                     selected_ids = set(rec.get('selected_ids', []))
                     valuations = rec.get('seller_valuations', {})
 
-                    # --- SPECIAL LOGIC FOR SELECTION RATE ---
+                    # Handle Selection Rate special case
                     if target_metric == "selection_rate":
-                        round_valid = True
-                        for sid in valuations.keys():
-                            is_adv = str(sid).startswith('adv')
-                            # Value is 1.0 if selected, 0.0 if not?
-                            # Actually, for "distribution", every seller represents 1 unit of potential value.
-                            val = 1.0
+                        has_metric = True
+                    else:
+                        first_val = next(iter(valuations.values()))
+                        has_metric = target_metric in first_val
 
-                            if is_adv:
-                                if sid in selected_ids: total_paid_adv += val
-                            else:
-                                if sid in selected_ids: total_paid_benign += val
-                                else: total_discarded_benign += val
+                    if not has_metric: continue
 
-                        if round_valid: round_count += 1
-                        continue
-
-                    # --- LOGIC FOR ECONOMIC METRICS ---
-                    # Check existence
-                    first_val = next(iter(valuations.values()))
-                    if target_metric not in first_val: continue
-
-                    round_valid = False
                     for sid, data in valuations.items():
                         is_adv = str(sid).startswith('adv')
-                        if target_metric in data and data[target_metric] is not None:
-                            val = max(0, float(data[target_metric])) # Clamp negative values for pie chart logic
-                            round_valid = True
 
-                            if is_adv:
-                                if sid in selected_ids: total_paid_adv += val
+                        # Get Value
+                        if target_metric == "selection_rate":
+                            val = 1.0
+                        else:
+                            if target_metric in data and data[target_metric] is not None:
+                                val = max(0, float(data[target_metric]))
                             else:
-                                if sid in selected_ids: total_paid_benign += val
-                                else: total_discarded_benign += val
+                                continue
 
-                    if round_valid: round_count += 1
+                        # Distribute to Buckets
+                        if is_adv:
+                            if sid in selected_ids: adv_paid += val
+                            else: adv_discarded += val
+                        else:
+                            if sid in selected_ids: benign_paid += val
+                            else: benign_discarded += val
+
+                    round_count += 1
             except: pass
 
         if round_count > 0:
             records.append({
                 "defense": defense_name,
-                "Paid to Benign": total_paid_benign,
-                "Discarded Benign": total_discarded_benign,
-                "Paid to Adversary": total_paid_adv
+                "Benign_Paid": benign_paid,
+                "Benign_Discarded": benign_discarded,
+                "Adv_Paid": adv_paid,
+                "Adv_Discarded": adv_discarded
             })
 
     return pd.DataFrame(records)
 
 # ==========================================
-# 3. 100% STACKED BAR PLOTTING
+# 3. DUAL STACK PLOTTING
 # ==========================================
 
-def plot_percentage_distribution(df: pd.DataFrame, metric_name: str, output_dir: Path):
+def plot_dual_stack(df: pd.DataFrame, metric_name: str, output_dir: Path):
     if df.empty: return
 
-    # Prepare DataFrame
+    # Normalize to Percentages within groups
+    df['Total_Benign'] = df['Benign_Paid'] + df['Benign_Discarded']
+    df['Total_Adv'] = df['Adv_Paid'] + df['Adv_Discarded']
+
+    # Avoid div by zero
+    df['Total_Benign'] = df['Total_Benign'].replace(0, 1)
+    df['Total_Adv'] = df['Total_Adv'].replace(0, 1)
+
+    df['Pct_Benign_Paid'] = (df['Benign_Paid'] / df['Total_Benign']) * 100
+    df['Pct_Benign_Discarded'] = (df['Benign_Discarded'] / df['Total_Benign']) * 100
+    df['Pct_Adv_Paid'] = (df['Adv_Paid'] / df['Total_Adv']) * 100
+    df['Pct_Adv_Discarded'] = (df['Adv_Discarded'] / df['Total_Adv']) * 100
+
+    # Filtering Order
     df = df.set_index("defense")
     existing_order = [d for d in DEFENSE_ORDER if d in df.index]
     df = df.loc[existing_order]
 
-    cols = ["Paid to Benign", "Discarded Benign", "Paid to Adversary"]
-    df = df[cols]
+    # SETUP PLOT
+    fig, ax = plt.subplots(figsize=(12, 7))
+    x = np.arange(len(df))
+    width = 0.35  # Width of bars
 
-    # --- NORMALIZE TO PERCENTAGES (The Magic Step) ---
-    df_pct = df.div(df.sum(axis=1), axis=0) * 100
+    # --- BAR GROUP 1: BENIGN (Left) ---
+    p1 = ax.bar(x - width/2, df['Pct_Benign_Paid'], width, label='Benign: Paid',
+                color=COLOR_BENIGN_PAID, edgecolor='black')
+    p2 = ax.bar(x - width/2, df['Pct_Benign_Discarded'], width, bottom=df['Pct_Benign_Paid'],
+                label='Benign: Discarded', color=COLOR_BENIGN_LOST, edgecolor='black', hatch='//')
 
-    # Create Plot
-    ax = df_pct.plot(
-        kind='bar', stacked=True, figsize=(10, 7),
-        color=[STACK_COLORS[c] for c in cols],
-        edgecolor='black', linewidth=1.2, width=0.65
-    )
+    # --- BAR GROUP 2: ADVERSARY (Right) ---
+    p3 = ax.bar(x + width/2, df['Pct_Adv_Paid'], width, label='Adversary: Paid (Leak)',
+                color=COLOR_ADV_PAID, edgecolor='black')
+    p4 = ax.bar(x + width/2, df['Pct_Adv_Discarded'], width, bottom=df['Pct_Adv_Paid'],
+                label='Adversary: Caught', color=COLOR_ADV_CAUGHT, edgecolor='black', hatch='..')
 
-    # --- ADD LABELS ---
-    for c in ax.containers:
-        labels = []
-        for v in c.datavalues:
-            # Only label if segment is big enough (>3%)
-            if v < 3.0:
-                labels.append("")
-            else:
-                labels.append(f"{v:.0f}%")
+    # --- LABELS ---
+    def add_labels(rects):
+        for rect in rects:
+            height = rect.get_height()
+            if height > 5:  # Only label visible segments
+                ax.annotate(f'{height:.0f}%',
+                            xy=(rect.get_x() + rect.get_width() / 2, rect.get_y() + height / 2),
+                            xytext=(0, 0), textcoords="offset points",
+                            ha='center', va='center', color='white', fontweight='bold', fontsize=12)
 
-        ax.bar_label(c, labels=labels, label_type='center', fontsize=14, fontweight='bold', color='white')
+    add_labels(p1)
+    add_labels(p2)
+    add_labels(p3)
+    add_labels(p4)
 
-    # Titles & Labels
+    # Styling
     clean_title = metric_name.replace("_", " ").title().replace("Loo", "LOO")
-    if "Selection" in clean_title: clean_title = "Selection Count (Participation)"
+    if "Selection" in clean_title: clean_title = "Participation Rate"
     if "Kernelshap" in clean_title: clean_title = "Shapley Value"
 
-    ax.set_ylabel("Percentage of Total Value Distributed", labelpad=10)
-    ax.set_xlabel("")
-    ax.set_title(f"Value Distribution: {clean_title}", pad=20)
-    ax.set_ylim(0, 100)
+    ax.set_ylabel('Percentage of Group Value (%)')
+    ax.set_title(f'Filtering Impact on {clean_title} (Split View)')
+    ax.set_xticks(x)
+    ax.set_xticklabels(df.index)
+    ax.set_ylim(0, 105) # Headroom for legend
 
-    plt.xticks(rotation=0)
-
-    # Legend
-    plt.legend(bbox_to_anchor=(0.5, 1.05), loc='lower center', borderaxespad=0., ncol=3, frameon=False)
+    # Custom Legend
+    ax.legend(bbox_to_anchor=(0.5, 1.05), loc='lower center', ncol=2, frameon=False)
 
     plt.tight_layout()
-
-    filename = f"Fig_PctDistribution_{metric_name}.pdf"
+    filename = f"Fig_DualStack_{metric_name}.pdf"
     save_path = output_dir / filename
     plt.savefig(save_path, bbox_inches='tight', dpi=300)
     print(f"✅ Saved: {save_path}")
@@ -207,16 +220,16 @@ def plot_percentage_distribution(df: pd.DataFrame, metric_name: str, output_dir:
 # 4. MAIN
 # ==========================================
 def main():
-    print("--- Starting Percentage Distribution Analysis ---")
+    print("--- Starting Dual Stack Analysis ---")
     set_publication_style()
     base_dir = Path(BASE_RESULTS_DIR)
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
 
     for metric in METRICS_TO_PLOT:
-        df = load_financial_totals(base_dir, TARGET_DATASET, metric)
+        df = load_dual_breakdown(base_dir, TARGET_DATASET, metric)
         if not df.empty:
-            plot_percentage_distribution(df, metric, output_dir)
+            plot_dual_stack(df, metric, output_dir)
         else:
             print(f"  -> Skipping {metric} (No data)")
 
