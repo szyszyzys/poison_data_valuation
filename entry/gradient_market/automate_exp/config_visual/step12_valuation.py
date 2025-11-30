@@ -11,17 +11,17 @@ from typing import Dict, List, Any
 # 1. CONFIGURATION
 # ==========================================
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step12_valuation_sparse"
+FIGURE_OUTPUT_DIR = "./figures/step12_final_benchmark"
 
 # TARGET CONFIGURATION
 TARGET_DATASET = "CIFAR-100"
 
-# --- THE METRICS YOU WANT TO FIND ---
-# The script will scan every round. If a round has these keys, it keeps it.
-# If a round is missing them (e.g. Round 33), it ignores just that round.
-REQUIRED_KEYS = [
-    "marginal_contrib_loo_score",
-    "kernel_shap_score",
+# --- EXACT KEYS FROM YOUR JSON ---
+# The script will look for these specific keys.
+# Note: I removed '_score' from LOO based on your JSON snippet.
+METRICS_TO_PLOT = [
+    "marginal_contrib_loo",
+    "kernelshap_score",
     "influence_score"
 ]
 
@@ -49,7 +49,7 @@ def set_publication_style():
     })
 
 # ==========================================
-# 2. SPARSE DATA LOADING
+# 2. DATA LOADING (SPARSE + ZEROING)
 # ==========================================
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
@@ -61,16 +61,15 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     except: pass
     return {"defense": "unknown", "dataset": "unknown"}
 
-def load_sparse_metrics(base_dir: Path, dataset: str, target_metric: str) -> pd.DataFrame:
+def load_realized_payments(base_dir: Path, dataset: str, target_key: str) -> pd.DataFrame:
     records = []
-
     scenario_folders = list(base_dir.glob("step12_*"))
-    print(f"Scanning for '{target_metric}' in {dataset}...")
+    print(f"Scanning for metric: '{target_key}'...")
 
     for folder in scenario_folders:
         info = parse_scenario_name(folder.name)
 
-        # Dataset Matching
+        # Dataset Match
         if dataset.lower().replace("-", "") not in info['dataset'].lower().replace("-", ""):
             continue
 
@@ -79,7 +78,7 @@ def load_sparse_metrics(base_dir: Path, dataset: str, target_metric: str) -> pd.
         for j_file in jsonl_files:
             try:
                 with open(j_file, 'r') as f: lines = f.readlines()
-                # Check last 50% of rounds to ensure we hit some multiples of 10
+                # Check last 50% of rounds
                 start_idx = max(0, int(len(lines) * 0.5))
 
                 for line in lines[start_idx:]:
@@ -87,46 +86,39 @@ def load_sparse_metrics(base_dir: Path, dataset: str, target_metric: str) -> pd.
                     selected_ids = set(rec.get('selected_ids', []))
                     valuations = rec.get('seller_valuations', {})
 
-                    # --- SPARSE CHECK ---
-                    # Check if ANY seller has the target metric for this specific round
-                    # If not (e.g. Round 33), skip this round silently
-                    has_metric = False
-                    for val in valuations.values():
-                        if target_metric in val:
-                            has_metric = True
-                            break
+                    # --- CHECK: Does this round have the metric? ---
+                    # (e.g. Round 140 has it, Round 141 does not)
+                    first_seller = next(iter(valuations.values()))
+                    if target_key not in first_seller:
+                        continue # Skip this round
 
-                    if not has_metric:
-                        continue # Skip Round 33, go to next line
-
-                    # If we found the metric, record it!
+                    # --- EXTRACT DATA ---
                     for sid, data in valuations.items():
                         is_adv = str(sid).startswith('adv')
 
-                        if target_metric in data and data[target_metric] is not None:
+                        if target_key in data and data[target_key] is not None:
                             try:
-                                raw_score = float(data[target_metric])
+                                raw_score = float(data[target_key])
+                                # Realized Payment Logic: 0 if filtered
                                 realized_payment = raw_score if sid in selected_ids else 0.0
 
                                 records.append({
                                     "defense": format_label(info['defense']),
                                     "Type": "Adversary" if is_adv else "Benign",
-                                    "Metric": target_metric,
                                     "Realized Payment": realized_payment
                                 })
                             except: continue
-
             except Exception: pass
 
     return pd.DataFrame(records)
 
 # ==========================================
-# 3. PLOTTING FUNCTION
+# 3. PLOTTING
 # ==========================================
 
-def plot_metric(df: pd.DataFrame, metric_name: str, output_dir: Path):
+def plot_compact_payment(df: pd.DataFrame, metric_name: str, output_dir: Path):
     if df.empty:
-        print(f"⚠️  No data found for {metric_name} (Sparse load returned 0 records)")
+        print(f"⚠️  No data found for {metric_name}")
         return
 
     defense_order = [d for d in DEFENSE_ORDER if d in df['defense'].unique()]
@@ -138,24 +130,32 @@ def plot_metric(df: pd.DataFrame, metric_name: str, output_dir: Path):
         edgecolor='black', linewidth=1.2, capsize=0.1, errwidth=1.5, ax=ax
     )
 
-    clean_title = metric_name.replace("_", " ").replace("sim", "Similarity").title()
+    # Clean Title
+    clean_title = metric_name.replace("_score", "").replace("_", " ").title()
+    if "Loo" in clean_title: clean_title = "LOO Contribution"
+    if "Kernelshap" in clean_title: clean_title = "Shapley Value"
+
     ax.set_ylabel("Avg Score", labelpad=10)
     ax.set_xlabel("")
 
+    # Internal Legend Layout
     ax.axhline(0, color='black', linewidth=1.5, zorder=0)
+
     y_min, y_max = ax.get_ylim()
     y_range = y_max - y_min
     if y_max <= 0: y_max = abs(y_min) * 0.2
+
+    # Add headroom for legend
     ax.set_ylim(y_min, y_max + (y_range * 0.35))
 
     ax.legend(loc='upper center', ncol=2, frameon=False, fontsize=16, columnspacing=1.5)
     sns.despine(left=False, bottom=False, right=True, top=True)
     ax.grid(axis='y', linestyle='--', alpha=0.5)
 
-    filename = f"Fig_Sparse_{metric_name}.pdf"
+    filename = f"Fig3_Payment_{metric_name}.pdf"
     plt.tight_layout()
     plt.savefig(output_dir / filename, bbox_inches='tight', format='pdf', dpi=300)
-    print(f"✅ Saved {filename} (based on {len(df)} sparse records)")
+    print(f"✅ Saved {filename} ({len(df)} records)")
     plt.close()
 
 # ==========================================
@@ -163,16 +163,15 @@ def plot_metric(df: pd.DataFrame, metric_name: str, output_dir: Path):
 # ==========================================
 
 def main():
-    print("--- Starting Sparse Valuation Analysis ---")
+    print("--- Starting Final Benchmark Visualization ---")
     set_publication_style()
     base_dir = Path(BASE_RESULTS_DIR)
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
 
-    # 1. Loop through the keys you expect to exist (sparsely)
-    for metric in REQUIRED_KEYS:
-        df = load_sparse_metrics(base_dir, TARGET_DATASET, metric)
-        plot_metric(df, metric, output_dir)
+    for metric in METRICS_TO_PLOT:
+        df = load_realized_payments(base_dir, TARGET_DATASET, metric)
+        plot_compact_payment(df, metric, output_dir)
 
     print("\nProcessing Complete.")
 
