@@ -2,13 +2,13 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from matplotlib.ticker import FixedLocator, FixedFormatter, FuncFormatter
+from matplotlib.ticker import FuncFormatter
 
 # ==========================================
 # 1. GLOBAL CONFIGURATION & STYLING
@@ -28,9 +28,9 @@ PRETTY_NAMES = {
 
 # --- Color Standards ---
 DEFENSE_COLORS = {
-    "FedAvg": "#7f8c8d",   # Grey
+    "FedAvg": "#7f8c8d",  # Grey
     "FLTrust": "#3498db",  # Blue
-    "MARTFL": "#2ecc71",   # Green
+    "MARTFL": "#2ecc71",  # Green
     "SkyMask": "#e74c3c",  # Red (Highlighted)
 }
 
@@ -52,10 +52,12 @@ HET_LABELS = ["IID", "1.0", "0.5", "0.1"]
 # --- Constants for Scarcity Plot ---
 RATIOS_IN_TEST = [0.01, 0.05, 0.1, 0.2]
 
+
 def format_label(label: str) -> str:
     """Standardizes names."""
     if not isinstance(label, str): return str(label)
     return PRETTY_NAMES.get(label.lower(), label.replace("_", " ").title())
+
 
 def set_publication_style():
     """Sets the 'Big & Bold' professional style globally."""
@@ -68,9 +70,9 @@ def set_publication_style():
         'font.weight': 'bold',
 
         # --- FIX: Font Embedding for LaTeX ---
-        'pdf.fonttype': 42,         # Type 42 (TrueType) ensures editable text in PDF
+        'pdf.fonttype': 42,  # Type 42 (TrueType) ensures editable text in PDF
         'ps.fonttype': 42,
-        'mathtext.fontset': 'cm',   # Computer Modern for math expressions
+        'mathtext.fontset': 'cm',  # Computer Modern for math expressions
 
         # --- Axis & Grid ---
         'axes.labelweight': 'bold',
@@ -90,6 +92,7 @@ def set_publication_style():
         'lines.linewidth': 3.5,
         'lines.markersize': 11,
     })
+
 
 # ==========================================
 # 2. DATA LOADING & PARSING
@@ -183,16 +186,20 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
                 # Structure expectation: .../step11_.../vary_seller/alpha_0.1/seed_0/final_metrics.json
                 parts = metrics_file.parent.relative_to(folder).parts
 
-                if len(parts) < 2: continue # Ensure deep enough
+                if len(parts) < 2: continue  # Ensure deep enough
 
-                subdir_type = parts[0] # e.g., "vary_seller"
-                hp_folder = parts[1]   # e.g., "alpha_0.1"
+                subdir_type = parts[0]  # e.g., "vary_seller"
+                hp_folder = parts[1]  # e.g., "alpha_0.1"
 
                 # Map directory name to readable Bias Source
-                if subdir_type == "vary_buyer": bias_source = "Buyer-Only Bias"
-                elif subdir_type == "vary_seller": bias_source = "Seller-Only Bias"
-                elif subdir_type == "scarcity": bias_source = "Data Scarcity"
-                else: continue # Skip unrelated folders
+                if subdir_type == "vary_buyer":
+                    bias_source = "Buyer-Only Bias"
+                elif subdir_type == "vary_seller":
+                    bias_source = "Seller-Only Bias"
+                elif subdir_type == "scarcity":
+                    bias_source = "Data Scarcity"
+                else:
+                    continue  # Skip unrelated folders
 
                 run_hps = parse_hp_suffix(hp_folder)
                 if 'experiment_type' not in run_hps: continue
@@ -218,6 +225,7 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
 
     return df
 
+
 # ==========================================
 # 3. PLOTTING FUNCTIONS
 # ==========================================
@@ -238,7 +246,8 @@ def plot_heterogeneity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
     dataset_df = dataset_df.dropna(subset=['x_mapped'])
 
     valid_biases = ['Buyer-Only Bias', 'Seller-Only Bias']
-    metrics_order = [('acc', 'Accuracy'), ('asr', 'ASR'), ('benign_selection_rate', 'Benign Select'), ('adv_selection_rate', 'Attacker Select')]
+    metrics_order = [('acc', 'Accuracy'), ('asr', 'ASR'), ('benign_selection_rate', 'Benign Select'),
+                     ('adv_selection_rate', 'Attacker Select')]
 
     active_defenses = [d for d in DEFENSE_ORDER if d in dataset_df['defense'].unique()]
 
@@ -261,8 +270,10 @@ def plot_heterogeneity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
             )
             ax.set_title(f"{display_name}", pad=15)
 
-            if i == 0: ax.set_ylabel("Rate / Score (%)", labelpad=10)
-            else: ax.set_ylabel("")
+            if i == 0:
+                ax.set_ylabel("Rate / Score (%)", labelpad=10)
+            else:
+                ax.set_ylabel("")
 
             # --- FIX: Manually label the integer ticks ---
             ax.set_xticks(sorted(HET_VAL_MAP.values()))
@@ -299,10 +310,11 @@ def plot_scarcity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
     # Scarcity is usually run with Seller-Only Bias (Fixed Seller 0.5, Vary Buyer Ratio)
     # Check your generation script if you named the folder "scarcity" or reused "vary_seller"
     # The collector currently maps "scarcity" folder -> "Data Scarcity" source.
-    bias_df = dataset_df # Use all scarcity data found
+    bias_df = dataset_df  # Use all scarcity data found
     if bias_df.empty: return
 
-    metrics_order = [('acc', 'Accuracy'), ('asr', 'ASR'), ('benign_selection_rate', 'Benign Select'), ('adv_selection_rate', 'Attacker Select')]
+    metrics_order = [('acc', 'Accuracy'), ('asr', 'ASR'), ('benign_selection_rate', 'Benign Select'),
+                     ('adv_selection_rate', 'Attacker Select')]
     active_defenses = [d for d in DEFENSE_ORDER if d in dataset_df['defense'].unique()]
 
     fig, axes = plt.subplots(1, 4, figsize=(24, 6), constrained_layout=True)
@@ -318,8 +330,10 @@ def plot_scarcity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
         )
         ax.set_title(f"{display_name}", pad=15)
 
-        if i == 0: ax.set_ylabel("Rate / Score (%)", labelpad=10)
-        else: ax.set_ylabel("")
+        if i == 0:
+            ax.set_ylabel("Rate / Score (%)", labelpad=10)
+        else:
+            ax.set_ylabel("")
 
         # --- FIX: Log Scale for Scarcity Ratios ---
         ax.set_xscale('log')
@@ -337,6 +351,135 @@ def plot_scarcity_row(df: pd.DataFrame, dataset: str, output_dir: Path):
                    ncol=len(active_defenses), frameon=True, title="Defense Methods")
 
     fname = output_dir / f"Step11_Scarcity_{dataset}.pdf"
+    plt.savefig(fname, bbox_inches='tight', format='pdf')
+    print(f"  Saved: {fname.name}")
+    plt.close()
+
+
+def plot_heterogeneity_selection_only(df: pd.DataFrame, dataset: str, output_dir: Path):
+    """Plots only Benign and Malicious selection rates for Heterogeneity experiments."""
+    print(f"\n--- Generating Heterogeneity Selection Rate Plots for {dataset} ---")
+
+    dataset_df = df[(df['dataset'] == dataset) & (df['experiment_type'] == 'heterogeneity')].copy()
+    if dataset_df.empty: return
+
+    # Convert to percentages
+    for col in ['benign_selection_rate', 'adv_selection_rate']:
+        dataset_df[col] = dataset_df[col] * 100
+
+    # Map X-Values to Integers
+    dataset_df['x_mapped'] = dataset_df['x_val'].map(HET_VAL_MAP)
+    dataset_df = dataset_df.dropna(subset=['x_mapped'])
+
+    valid_biases = ['Buyer-Only Bias', 'Seller-Only Bias']
+
+    # ONLY Selection metrics
+    metrics_order = [
+        ('benign_selection_rate', 'Benign Selection Rate'),
+        ('adv_selection_rate', 'Malicious Selection Rate')
+    ]
+
+    active_defenses = [d for d in DEFENSE_ORDER if d in dataset_df['defense'].unique()]
+
+    for bias in valid_biases:
+        bias_df = dataset_df[dataset_df['bias_source'] == bias]
+        if bias_df.empty: continue
+
+        # 1 Row, 2 Columns
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6), constrained_layout=True)
+
+        for i, (col_name, display_name) in enumerate(metrics_order):
+            ax = axes[i]
+
+            sns.lineplot(
+                ax=ax, data=bias_df, x='x_mapped', y=col_name,
+                hue='defense', style='defense',
+                hue_order=active_defenses, style_order=active_defenses,
+                palette=DEFENSE_COLORS, markers=CUSTOM_MARKERS,
+                dashes=False, errorbar=('ci', 95)
+            )
+            ax.set_title(f"{display_name}", pad=15)
+
+            if i == 0:
+                ax.set_ylabel("Selection Rate (%)", labelpad=10)
+            else:
+                ax.set_ylabel("")
+
+            # Custom Labels
+            ax.set_xticks(sorted(HET_VAL_MAP.values()))
+            ax.set_xticklabels(HET_LABELS)
+            ax.set_xlabel(r"Heterogeneity ($\alpha \to$)", labelpad=10)
+            ax.set_xlim(-0.2, 3.2)
+
+            if ax.get_legend(): ax.get_legend().remove()
+
+        # Global Legend
+        handles, labels = axes[0].get_legend_handles_labels()
+        if handles:
+            fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.15),
+                       ncol=len(active_defenses), frameon=True, title="Defense Methods")
+
+        safe_bias = bias.replace(' ', '').replace('-', '')
+        fname = output_dir / f"Step11_Heterogeneity_SelectionOnly_{dataset}_{safe_bias}.pdf"
+        plt.savefig(fname, bbox_inches='tight', format='pdf')
+        print(f"  Saved: {fname.name}")
+        plt.close()
+
+
+def plot_scarcity_selection_only(df: pd.DataFrame, dataset: str, output_dir: Path):
+    """Plots only Benign and Malicious selection rates for Scarcity experiments."""
+    print(f"\n--- Generating Scarcity Selection Rate Plots for {dataset} ---")
+
+    dataset_df = df[(df['dataset'] == dataset) & (df['experiment_type'] == 'scarcity')].copy()
+    if dataset_df.empty: return
+
+    for col in ['benign_selection_rate', 'adv_selection_rate']:
+        dataset_df[col] = dataset_df[col] * 100
+
+    bias_df = dataset_df
+    if bias_df.empty: return
+
+    # ONLY Selection metrics
+    metrics_order = [
+        ('benign_selection_rate', 'Benign Selection Rate'),
+        ('adv_selection_rate', 'Malicious Selection Rate')
+    ]
+
+    active_defenses = [d for d in DEFENSE_ORDER if d in dataset_df['defense'].unique()]
+
+    # 1 Row, 2 Columns
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6), constrained_layout=True)
+
+    for i, (col_name, display_name) in enumerate(metrics_order):
+        ax = axes[i]
+        sns.lineplot(
+            ax=ax, data=bias_df, x='x_val', y=col_name,
+            hue='defense', style='defense',
+            hue_order=active_defenses, style_order=active_defenses,
+            palette=DEFENSE_COLORS, markers=CUSTOM_MARKERS,
+            dashes=False, errorbar=('ci', 95)
+        )
+        ax.set_title(f"{display_name}", pad=15)
+
+        if i == 0:
+            ax.set_ylabel("Selection Rate (%)", labelpad=10)
+        else:
+            ax.set_ylabel("")
+
+        # Log Scale Logic
+        ax.set_xscale('log')
+        ax.set_xticks(RATIOS_IN_TEST)
+        ax.get_xaxis().set_major_formatter(FuncFormatter(lambda x, _: f"{x:g}"))
+        ax.set_xlabel("Buyer Data Ratio (Log Scale)", labelpad=10)
+
+        if ax.get_legend(): ax.get_legend().remove()
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.15),
+                   ncol=len(active_defenses), frameon=True, title="Defense Methods")
+
+    fname = output_dir / f"Step11_Scarcity_SelectionOnly_{dataset}.pdf"
     plt.savefig(fname, bbox_inches='tight', format='pdf')
     print(f"  Saved: {fname.name}")
     plt.close()
@@ -364,7 +507,8 @@ def main():
         if dataset != 'unknown':
             plot_heterogeneity_row(df, dataset, output_dir)
             plot_scarcity_row(df, dataset, output_dir)
-
+            plot_heterogeneity_selection_only(df, dataset, output_dir)
+            plot_scarcity_selection_only(df, dataset, output_dir)
     print("\nAnalysis complete.")
 
 
