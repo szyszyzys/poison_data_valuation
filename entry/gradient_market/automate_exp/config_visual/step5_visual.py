@@ -252,7 +252,7 @@ def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, 
 
     # Save
     safe_dataset = re.sub(r'[^\w]', '', dataset)
-    filename = output_dir / f"plot_sensitivity_composite_{safe_dataset}_{attack}.pdf"
+    filename = output_dir / f"plot_sensitivity_{safe_dataset}_{attack}.pdf"
 
     # bbox_inches='tight' will crop exactly around the new shorter figure
     plt.savefig(filename, bbox_inches='tight', format='pdf', dpi=300)
