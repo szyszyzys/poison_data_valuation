@@ -359,9 +359,8 @@ def save_threshold_debug_csv(df: pd.DataFrame, output_dir: Path, target_dataset:
 
 
 def plot_composite_row(df: pd.DataFrame, output_dir: Path):
-    print("\n--- Plotting Composite Row (High Visibility) ---")
+    print("\n--- Plotting Composite Row (Compact Legend) ---")
 
-    # 1. Base Style: "talk" context makes everything larger by default
     sns.set_theme(style="whitegrid")
     sns.set_context("talk", font_scale=1.1)
 
@@ -379,10 +378,10 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
 
         labels = get_formatted_labels(current_order)
 
-        # Increased figure height slightly to accommodate the legend at the bottom
-        fig, axes = plt.subplots(1, 4, figsize=(26, 7), constrained_layout=True)
+        # Reduced height slightly since we don't need extra bottom space for legend
+        fig, axes = plt.subplots(1, 4, figsize=(26, 6), constrained_layout=True)
 
-        # --- Data Prep (Same as before) ---
+        # --- Data Prep ---
         d1 = subset.groupby('defense')['platform_usable'].mean().reindex(current_order).reset_index()
         d1['Value'] = d1['platform_usable'] * 100
 
@@ -421,44 +420,42 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
         sns.barplot(ax=axes[2], data=d3, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black', linewidth=2)
         axes[2].set_title(f"{markers[2]} Avg. Cost (Rounds)", fontweight='bold', fontsize=24, pad=15)
 
-        # (d) Selection - Legend Moved to Bottom
+        # (d) Selection
         sns.barplot(ax=axes[3], data=d4, x='defense', y='Rate', hue='Type', order=current_order,
                     palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor='black', linewidth=2)
         axes[3].set_title(f"{markers[3]} Avg. Selection Rates", fontweight='bold', fontsize=24, pad=15)
         axes[3].set_ylim(0, 105)
 
-        # LEGEND FIX: Place below the plot to avoid title overlap
-        axes[3].legend(loc='upper center', bbox_to_anchor=(0.5, -0.1),
-                       ncol=2, frameon=False, fontsize=18)
+        # --- LEGEND INSIDE FIGURE ---
+        # loc='upper center': Top middle of the plot box
+        # ncol=2: Side-by-side labels
+        # framealpha=0.9: Semi-transparent white background so bars don't make text unreadable
+        axes[3].legend(loc='upper center', ncol=2, frameon=True, framealpha=0.9, fontsize=16)
 
-        # --- Common Styling (Big & Bold) ---
+        # --- Common Styling ---
         for ax in axes:
-            # X-Axis Labels
             ax.set_xticklabels(labels, fontsize=18, fontweight='bold')
             ax.set_xlabel("")
 
-            # Y-Axis Ticks
             ax.tick_params(axis='y', labelsize=16)
             for label in ax.get_yticklabels():
                 label.set_fontweight('bold')
 
             ax.grid(axis='y', alpha=0.5, linewidth=1.5)
 
-            # Bar Annotations (Big numbers)
             for p in ax.patches:
                 h = p.get_height()
                 if not np.isnan(h) and h > 0:
                     ax.annotate(f'{h:.0f}',
                                 (p.get_x() + p.get_width() / 2., h),
                                 ha='center', va='bottom',
-                                fontsize=16, fontweight='bold', # Bigger numbers
+                                fontsize=16, fontweight='bold',
                                 xytext=(0, 4), textcoords='offset points')
 
         save_path = output_dir / f"plot_row_combined_{target_dataset}.pdf"
         plt.savefig(save_path, bbox_inches='tight', format='pdf', dpi=300)
         print(f"     Saved composite row to: {save_path}")
         plt.close(fig)
-
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
