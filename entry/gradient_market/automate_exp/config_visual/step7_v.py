@@ -152,7 +152,7 @@ def plot_selection_dynamics(df: pd.DataFrame, output_dir: Path):
         sns.lineplot(data=data, x='round', y='rolling_sel', hue='seller_type',
                      style='adaptive_mode', palette=COLOR_MAP, lw=2.5)
 
-        plt.title(f'Marketplace Manipulation Dynamics: {defense.upper()}')
+        # plt.title(f'Marketplace Manipulation Dynamics: {defense.upper()}')
         plt.ylabel("Selection Rate (Smoothed)")
         plt.ylim(0, 1.05)
         plt.legend(loc='lower right')
@@ -192,7 +192,7 @@ def plot_economic_exploitation(df_sum: pd.DataFrame, output_dir: Path):
         plt.axvline(base_sel, color='gray', linestyle=':', label='Baseline Sel Rate')
         plt.plot(base_sel, base_acc, marker='*', color='gold', markersize=25, markeredgecolor='black', label='Honest Behavior')
 
-    plt.title("Manipulation Impact: Stealth vs. Model Utility")
+    # plt.title("Manipulation Impact: Stealth vs. Model Utility")
     plt.xlabel("Adversary Selection Rate (Stealth)")
     plt.ylabel("Global Model Accuracy")
     plt.xlim(0, 1.0)
@@ -230,7 +230,7 @@ def plot_strategy_heatmap(df: pd.DataFrame, output_dir: Path):
         plt.figure(figsize=(12, 6))
         sns.heatmap(heatmap_data.T, cmap="YlOrRd", annot=True, fmt=".2f", cbar_kws={'label': 'Usage Probability'})
 
-        plt.title(f"Adaptive Strategy Convergence: {defense.upper()}")
+        # plt.title(f"Adaptive Strategy Convergence: {defense.upper()}")
         plt.xlabel("Training Phase (Round Bins)")
         plt.ylabel("Strategy Selected")
 
@@ -259,7 +259,7 @@ def plot_manipulation_fairness(df_sum: pd.DataFrame, output_dir: Path):
     plt.text(0.5, 0.05, "Adversary Wins (Unfair)", transform=plt.gca().transAxes, ha='center', color='red', alpha=0.5)
     plt.text(0.5, -0.05, "Defense Wins (Fair)", transform=plt.gca().transAxes, ha='center', color='blue', alpha=0.5)
 
-    plt.title("Marketplace Fairness Analysis")
+    # plt.title("Marketplace Fairness Analysis")
     plt.ylabel("Selection Advantage (Adv Rate - Benign Rate)")
     plt.xlabel("")
     plt.legend(loc='upper left')
