@@ -353,7 +353,7 @@ def plot_heterogeneity_selection_only(df: pd.DataFrame, dataset: str, output_dir
         if bias_df.empty: continue
 
         # 2-Col Layout: Bigger individual plots
-        fig, axes = plt.subplots(1, 2, figsize=(14, 3.5), constrained_layout=True)
+        fig, axes = plt.subplots(1, 2, figsize=(14, 4.8), constrained_layout=True)
 
         for i, (col_name, display_name) in enumerate(metrics_order):
             ax = axes[i]
