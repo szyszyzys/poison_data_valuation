@@ -177,7 +177,7 @@ def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, 
     # --- SPACE SAVING ADJUSTMENT ---
     # figsize changed from (28, 5.5) -> (28, 3.8)
     # This reduces the height significantly.
-    fig, axes = plt.subplots(1, 4, figsize=(28, 3.8), constrained_layout=True)
+    fig, axes = plt.subplots(1, 4, figsize=(28, 4.8), constrained_layout=True)
 
     defense_order = sorted(subset['defense'].unique())
 
