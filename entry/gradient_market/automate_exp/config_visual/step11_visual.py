@@ -342,8 +342,8 @@ def plot_heterogeneity_selection_only(df: pd.DataFrame, dataset: str, output_dir
     dataset_df['x_mapped'] = dataset_df['x_val'].map(HET_VAL_MAP)
     dataset_df = dataset_df.dropna(subset=['x_mapped'])
 
-    metrics_order = [('benign_selection_rate', '(Left) Benign Selection Rate'),
-                     ('adv_selection_rate', '(Right) Malicious Selection Rate')]
+    metrics_order = [('benign_selection_rate', '(a) Benign Selection Rate'),
+                     ('adv_selection_rate', '(b) Malicious Selection Rate')]
 
     active_defenses = [d for d in DEFENSE_ORDER if d in dataset_df['defense'].unique()]
     valid_biases = ['Buyer-Only Bias', 'Seller-Only Bias']
@@ -409,8 +409,8 @@ def plot_scarcity_selection_only(df: pd.DataFrame, dataset: str, output_dir: Pat
     for col in ['benign_selection_rate', 'adv_selection_rate']:
         dataset_df[col] = dataset_df[col] * 100
 
-    metrics_order = [('benign_selection_rate', '(Left) Benign Selection Rate'),
-                     ('adv_selection_rate', '(Right) Malicious Selection Rate')]
+    metrics_order = [('benign_selection_rate', '(a) Benign Selection Rate'),
+                     ('adv_selection_rate', '(b) Malicious Selection Rate')]
 
     active_defenses = [d for d in DEFENSE_ORDER if d in dataset_df['defense'].unique()]
 
