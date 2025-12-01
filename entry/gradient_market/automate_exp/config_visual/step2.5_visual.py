@@ -428,7 +428,7 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
         axes[3].set_ylim(0, 105)
 
         # LEGEND FIX: Place below the plot to avoid title overlap
-        axes[3].legend(loc='upper center', bbox_to_anchor=(0.5, -0.25),
+        axes[3].legend(loc='upper center', bbox_to_anchor=(0.5, -0.1),
                        ncol=2, frameon=False, fontsize=18)
 
         # --- Common Styling (Big & Bold) ---
