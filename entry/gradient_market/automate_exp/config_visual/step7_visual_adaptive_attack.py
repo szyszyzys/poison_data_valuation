@@ -222,7 +222,7 @@ def plot_gap_highlight_martfl(df: pd.DataFrame, output_dir: Path):
 
             # Titles
             readable_mode = mode.replace('_', ' ').title()
-            plt.title(f"MartFL Resilience: {threat}\nStrategy: {readable_mode}")
+            # plt.title(f"MartFL Resilience: {threat}\nStrategy: {readable_mode}")
             plt.ylabel("Selection Rate")
             plt.xlabel("Communication Round")
             plt.ylim(0, 1.05)
@@ -253,7 +253,7 @@ def plot_stealth_vs_damage_martfl(df_sum: pd.DataFrame, output_dir: Path):
     plt.text(0.95, 0.05, "High Evasion Zone", color='red',
              ha='right', transform=plt.gca().transAxes, fontweight='bold')
 
-    plt.title("Attack Effectiveness Summary (MartFL)")
+    # plt.title("Attack Effectiveness Summary (MartFL)")
     plt.xlabel("Adversary Selection Rate (Stealth)")
     plt.ylabel("Global Model Accuracy")
     plt.xlim(0, 1.05)
