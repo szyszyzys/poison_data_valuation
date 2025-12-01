@@ -100,7 +100,7 @@ class SellerFactory:
         """Creates a seller instance, assembling configs and dependencies on the fly."""
         data_cfg = RuntimeDataConfig(
             dataset=dataset,
-            num_classes=self.num_classes,  # Use it here
+            num_classes=self.num_classes,
             collate_fn=collate_fn
         )
         training_cfg = self.cfg.training
@@ -114,26 +114,36 @@ class SellerFactory:
         }
 
         if not is_adversary:
-            return GradientSeller(**base_kwargs, **self.runtime_kwargs)
+            # We strip validation_loader for benign sellers to save memory/confusion
+            benign_kwargs = self.runtime_kwargs.copy()
+            benign_kwargs.pop('validation_loader', None)
+            return GradientSeller(**base_kwargs, **benign_kwargs)
 
+        # --- FIX 2: Check Adaptive FIRST ---
+        # The Adaptive Attacker is the "Superset". It can do drowning/stealthy blend internally.
+        if self.cfg.adversary_seller_config.adaptive_attack.is_active:
+            logging.info(f"Creating AdaptiveAttackerSeller for {seller_id}")
+
+            # Ensure validation_loader is extracted from runtime_kwargs if present
+            # (It should be there because we added it in initialize_sellers)
+            return AdaptiveAttackerSeller(
+                **base_kwargs,
+                adversary_config=self.cfg.adversary_seller_config,
+                model_type=self.cfg.experiment.dataset_type,
+                **self.runtime_kwargs  # Contains validation_loader
+            )
+
+        # Then check standalone Drowning
         if self.cfg.adversary_seller_config.drowning_attack.is_active:
             logging.info(f"Creating DrowningAttackerSeller for {seller_id}")
             return DrowningAttackerSeller(
                 **base_kwargs,
                 adversary_config=self.cfg.adversary_seller_config,
+                model_type=self.cfg.experiment.dataset_type,  # Pass model type just in case
                 **self.runtime_kwargs
             )
 
-        if self.cfg.adversary_seller_config.adaptive_attack.is_active:
-            logging.info(f"Creating AdaptiveAttackerSeller for {seller_id}")
-
-            return AdaptiveAttackerSeller(
-                **base_kwargs,
-                adversary_config=self.cfg.adversary_seller_config,
-                model_type=self.cfg.experiment.dataset_type,
-                **self.runtime_kwargs
-            )
-        # --- UPDATED: Adversary Creation Logic ---
+        # --- Standard Poisoning Logic (Backdoor/Label Flip) ---
         attack_type = self.cfg.adversary_seller_config.poisoning.type
         AdversaryClass = self.ADVERSARY_CLASS_MAP.get(attack_type)
 
@@ -142,28 +152,25 @@ class SellerFactory:
             return GradientSeller(**base_kwargs, **self.runtime_kwargs)
 
         if AdversaryClass is AdvancedBackdoorAdversarySeller:
-            # For the backdoor seller, we do NOT pass a poison_generator.
-            # Instead, we pass the `model_type` it needs to build its own.
             logging.info(f"Creating AdvancedBackdoorAdversarySeller for {seller_id}")
-            # 1. Make a copy of kwargs to avoid modifying the original.
             kwargs_for_seller = self.runtime_kwargs.copy()
-            # 2. Safely remove the conflicting key.
             kwargs_for_seller.pop('model_type', None)
 
             return AdvancedBackdoorAdversarySeller(
                 **base_kwargs,
                 adversary_config=self.cfg.adversary_seller_config,
                 model_type=self.cfg.experiment.dataset_type,
-                **kwargs_for_seller  # 3. Unpack the cleaned dictionary
+                **kwargs_for_seller
             )
 
         elif AdversaryClass is AdvancedPoisoningAdversarySeller:
-            # For the generic poisoner (e.g., label-flip), we DO create
-            # and pass in the poison_generator.
             logging.info(f"Creating AdvancedPoisoningAdversarySeller for {seller_id}")
-            poison_generator = create_generic_poison_generator(self.cfg, **self.runtime_kwargs)
+            poison_generator = self._create_poison_generator(attack_type.value)  # Fixed call
+
             if not poison_generator:
-                logging.warning(f"Could not create generator for '{attack_type.value}'. Creating benign seller.")
+                # Use create_generic_poison_generator if _create_poison_generator returned None
+                # or handle fallback
+                logging.warning(f"Could not create generator. Creating benign seller.")
                 return GradientSeller(**base_kwargs, **self.runtime_kwargs)
 
             return AdvancedPoisoningAdversarySeller(
@@ -173,7 +180,6 @@ class SellerFactory:
                 **self.runtime_kwargs
             )
 
-        # Fallback for any unhandled adversary types
         logging.warning(f"Unhandled adversary class '{AdversaryClass.__name__}'. Creating benign seller.")
         return GradientSeller(**base_kwargs, **self.runtime_kwargs)
 

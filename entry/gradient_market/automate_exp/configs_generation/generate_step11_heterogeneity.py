@@ -9,7 +9,7 @@ from typing import List
 from config_common_utils import (
     GOLDEN_TRAINING_PARAMS,
     NUM_SEEDS_PER_CONFIG,
-    DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, get_tuned_defense_params,
+    DEFAULT_ADV_RATE, DEFAULT_POISON_RATE, get_tuned_defense_params, IMAGE_DEFENSES,
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar100_config, use_image_backdoor_attack
@@ -24,20 +24,22 @@ except ImportError as e:
 # --- Constants ---
 
 # DEFINITION: (Strategy, Alpha Value, Folder Suffix)
-# Changed 100.0 to None for IID to ensure clean config generation
 HETEROGENEITY_SWEEP = [
-    ("iid", None, "iid"),  # Baseline (No alpha param)
+    ("iid", None, "iid"),  # Baseline
     ("dirichlet", 1.0, "alpha_1.0"),  # Mild
     ("dirichlet", 0.5, "alpha_0.5"),  # Moderate
     ("dirichlet", 0.1, "alpha_0.1"),  # Severe
 ]
 
+# --- NEW: Scarcity Sweep ---
+SCARCITY_RATIOS = [0.01, 0.05, 0.1, 0.2]
+
 # Constants for the "Fixed" side of the experiments
 FIXED_BUYER_STRAT = "iid"
-FIXED_BUYER_ALPHA = None  # Buyer is pure IID
+FIXED_BUYER_ALPHA = None
 
 FIXED_SELLER_STRAT = "dirichlet"
-FIXED_SELLER_ALPHA = 0.5  # Seller fixed to moderate
+FIXED_SELLER_ALPHA = 0.5
 
 FIXED_ATTACK_ADV_RATE = DEFAULT_ADV_RATE
 FIXED_ATTACK_POISON_RATE = DEFAULT_POISON_RATE
@@ -52,7 +54,6 @@ HETEROGENEITY_SETUP = {
     "dataset_modifier": use_cifar100_config,
     "attack_modifier": use_image_backdoor_attack
 }
-DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl", "skymask"]
 
 
 def initialize_adversary_data_distribution(config: AppConfig) -> AppConfig:
@@ -64,15 +65,11 @@ def initialize_adversary_data_distribution(config: AppConfig) -> AppConfig:
 
 
 def generate_heterogeneity_scenarios() -> List[Scenario]:
-    """
-    Generates base scenarios per Defense.
-    The specific Heterogeneity sweeps are handled in the __main__ loop.
-    """
     print("\n--- Generating Step 11: Heterogeneity Impact Scenarios ---")
     scenarios = []
     model_cfg_name = HETEROGENEITY_SETUP["model_config_name"]
 
-    for defense_name in DEFENSES_TO_TEST:
+    for defense_name in IMAGE_DEFENSES:
         tuned_defense_params = get_tuned_defense_params(
             defense_name=defense_name,
             model_config_name=model_cfg_name,
@@ -95,7 +92,7 @@ def generate_heterogeneity_scenarios() -> List[Scenario]:
                 if current_params:
                     for key, value in current_params.items():
                         set_nested_attr(config, key, value)
-                if defense == "skymask":
+                if "skymask" in defense:
                     model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                     set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 
@@ -153,13 +150,12 @@ if __name__ == "__main__":
 
         # =======================================================================
         # EXPERIMENT A: VARY SELLER (Fix Buyer to IID)
-        # Goal: Show impact of seller heterogeneity when buyers are consistent.
         # =======================================================================
         print(f"  -> Generating Group A: Vary Seller (Buyer Fixed IID)")
         for sweep_strat, sweep_alpha, suffix in HETEROGENEITY_SWEEP:
             current_grid = scenario.parameter_grid.copy()
 
-            # 1. Seller: Sweeps [IID -> Severe]
+            # 1. Seller: Sweeps
             current_grid[f"data.{modality}.strategy"] = [sweep_strat]
             if sweep_alpha is not None:
                 current_grid[f"data.{modality}.dirichlet_alpha"] = [sweep_alpha]
@@ -169,34 +165,28 @@ if __name__ == "__main__":
             if FIXED_BUYER_ALPHA is not None:
                 current_grid[f"data.{modality}.buyer_dirichlet_alpha"] = [FIXED_BUYER_ALPHA]
 
-            # 3. Adversary: Matches Seller (to hide in the distribution)
+            # 3. Adversary: Matches Seller
             current_grid["adversary_seller_config.poisoning.data_distribution.strategy"] = [sweep_strat]
             if sweep_alpha is not None:
                 current_grid["adversary_seller_config.poisoning.data_distribution.dirichlet_alpha"] = [sweep_alpha]
 
-            # Path: results/step11_.../vary_seller/alpha_x
+            # Path: vary_seller/alpha_x
             save_suffix = f"vary_seller/{suffix}"
             current_grid["experiment.save_path"] = [f"./results/{scenario.name}/{save_suffix}"]
 
-            temp_scenario = Scenario(
-                name=f"{scenario.name}/{save_suffix}",
-                base_config_factory=scenario.base_config_factory,
-                modifiers=scenario.modifiers,
-                parameter_grid=current_grid
-            )
-
+            temp_scenario = Scenario(name=f"{scenario.name}/{save_suffix}",
+                                     base_config_factory=scenario.base_config_factory, modifiers=scenario.modifiers,
+                                     parameter_grid=current_grid)
             base_config = temp_scenario.base_config_factory()
             mod_config = initialize_adversary_data_distribution(copy.deepcopy(base_config))
             set_nested_attr(mod_config, "aggregation.aggregation_name", defense_name)
             for modifier in temp_scenario.modifiers: mod_config = modifier(mod_config)
-
             task_configs += generator.generate(mod_config, temp_scenario)
 
         # =======================================================================
-        # EXPERIMENT B: VARY BUYER (Fix Seller to Moderate Non-IID)
-        # Goal: Show impact of buyer heterogeneity when seller is already 0.5.
+        # EXPERIMENT B: VARY BUYER (Fix Seller to 0.5)
         # =======================================================================
-        print(f"  -> Generating Group B: Vary Buyer (Seller Fixed Alpha=0.5)")
+        print(f"  -> Generating Group B: Vary Buyer (Seller Fixed 0.5)")
         for sweep_strat, sweep_alpha, suffix in HETEROGENEITY_SWEEP:
             current_grid = scenario.parameter_grid.copy()
 
@@ -205,34 +195,68 @@ if __name__ == "__main__":
             if FIXED_SELLER_ALPHA is not None:
                 current_grid[f"data.{modality}.dirichlet_alpha"] = [FIXED_SELLER_ALPHA]
 
-            # 2. Buyer: Sweeps [IID -> Severe]
+            # 2. Buyer: Sweeps
             current_grid[f"data.{modality}.buyer_strategy"] = [sweep_strat]
-            # Only add alpha if it is not None (i.e., not IID)
             if sweep_alpha is not None:
                 current_grid[f"data.{modality}.buyer_dirichlet_alpha"] = [sweep_alpha]
 
-            # 3. Adversary: Matches Seller (Fixed at 0.5)
+            # 3. Adversary: Matches Seller
             current_grid["adversary_seller_config.poisoning.data_distribution.strategy"] = [FIXED_SELLER_STRAT]
             if FIXED_SELLER_ALPHA is not None:
                 current_grid["adversary_seller_config.poisoning.data_distribution.dirichlet_alpha"] = [
                     FIXED_SELLER_ALPHA]
 
-            # Path: results/step11_.../vary_buyer/alpha_x
+            # Path: vary_buyer/alpha_x
             save_suffix = f"vary_buyer/{suffix}"
             current_grid["experiment.save_path"] = [f"./results/{scenario.name}/{save_suffix}"]
 
-            temp_scenario = Scenario(
-                name=f"{scenario.name}/{save_suffix}",
-                base_config_factory=scenario.base_config_factory,
-                modifiers=scenario.modifiers,
-                parameter_grid=current_grid
-            )
-
+            temp_scenario = Scenario(name=f"{scenario.name}/{save_suffix}",
+                                     base_config_factory=scenario.base_config_factory, modifiers=scenario.modifiers,
+                                     parameter_grid=current_grid)
             base_config = temp_scenario.base_config_factory()
             mod_config = initialize_adversary_data_distribution(copy.deepcopy(base_config))
             set_nested_attr(mod_config, "aggregation.aggregation_name", defense_name)
             for modifier in temp_scenario.modifiers: mod_config = modifier(mod_config)
+            task_configs += generator.generate(mod_config, temp_scenario)
 
+        # =======================================================================
+        # EXPERIMENT C: VARY BUYER RATIO (Scarcity)
+        # Goal: Test impact of data quantity. Fixed Seller=0.5, Buyer=IID.
+        # =======================================================================
+        print(f"  -> Generating Group C: Scarcity (Buyer Ratio Sweep)")
+        for ratio in SCARCITY_RATIOS:
+            current_grid = scenario.parameter_grid.copy()
+
+            # 1. Fixed Seller: Dirichlet 0.5
+            current_grid[f"data.{modality}.strategy"] = [FIXED_SELLER_STRAT]
+            if FIXED_SELLER_ALPHA is not None:
+                current_grid[f"data.{modality}.dirichlet_alpha"] = [FIXED_SELLER_ALPHA]
+
+            # 2. Fixed Buyer: IID
+            current_grid[f"data.{modality}.buyer_strategy"] = [FIXED_BUYER_STRAT]
+            if FIXED_BUYER_ALPHA is not None:
+                current_grid[f"data.{modality}.buyer_dirichlet_alpha"] = [FIXED_BUYER_ALPHA]
+
+            # 3. VARY BUYER RATIO
+            current_grid[f"data.{modality}.buyer_ratio"] = [ratio]
+
+            # 4. Sync Adversary
+            current_grid["adversary_seller_config.poisoning.data_distribution.strategy"] = [FIXED_SELLER_STRAT]
+            if FIXED_SELLER_ALPHA is not None:
+                current_grid["adversary_seller_config.poisoning.data_distribution.dirichlet_alpha"] = [
+                    FIXED_SELLER_ALPHA]
+
+            # Path: scarcity/ratio_x
+            save_suffix = f"scarcity/ratio_{ratio}"
+            current_grid["experiment.save_path"] = [f"./results/{scenario.name}/{save_suffix}"]
+
+            temp_scenario = Scenario(name=f"{scenario.name}/{save_suffix}",
+                                     base_config_factory=scenario.base_config_factory, modifiers=scenario.modifiers,
+                                     parameter_grid=current_grid)
+            base_config = temp_scenario.base_config_factory()
+            mod_config = initialize_adversary_data_distribution(copy.deepcopy(base_config))
+            set_nested_attr(mod_config, "aggregation.aggregation_name", defense_name)
+            for modifier in temp_scenario.modifiers: mod_config = modifier(mod_config)
             task_configs += generator.generate(mod_config, temp_scenario)
 
         all_generated_configs += task_configs

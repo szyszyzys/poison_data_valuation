@@ -4,17 +4,18 @@ import argparse
 import copy
 import json
 import logging
-import numpy as np  # <-- Make sure numpy is imported
 import os
-import pandas as pd
 import shutil
 import tempfile
 import time
+from pathlib import Path
+from typing import List, Dict
+
+import numpy as np  # <-- Make sure numpy is imported
+import pandas as pd
 import torch
 import torch.nn as nn
-from pathlib import Path
 from torch.utils.data import DataLoader, random_split
-from typing import List, Dict
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
 from common.datasets.tabular_data_processor import get_tabular_dataset
@@ -181,11 +182,17 @@ def setup_data_and_model(cfg: AppConfig, device):
             generator = torch.Generator().manual_seed(cfg.seed)
             train_subset, val_subset = random_split(buyer_dataset, [train_size, val_size], generator=generator)
 
-            buyer_loader = DataLoader(train_subset, batch_size=cfg.training.batch_size, shuffle=True,
-                                      collate_fn=collate_fn)
-            validation_loader = DataLoader(val_subset, batch_size=cfg.training.batch_size, shuffle=False,
-                                           collate_fn=collate_fn)
+            # --- OPTIMIZATION START ---
+            loader_kwargs = {
+                "batch_size": cfg.training.batch_size,
+                "num_workers": 16,  # <--- Set this to 4 or 8
+                "pin_memory": True,  # <--- Critical for NVIDIA GPUs
+                "collate_fn": collate_fn,
+                "persistent_workers": True  # <--- Keeps workers alive (optional but good)
+            }
 
+            buyer_loader = DataLoader(train_subset, shuffle=True, **loader_kwargs)
+            validation_loader = DataLoader(val_subset, shuffle=False, **loader_kwargs)
             logging.info(f"  -> New buyer data size (for aggregator): {len(train_subset)}")
             logging.info(f"  -> Validation set size: {len(val_subset)}")
         else:
@@ -312,6 +319,7 @@ def initialize_sellers(
         seller_extra_args,
         collate_fn,
         num_classes: int,
+        validation_loader=None
 ):
     """
     Creates and registers all sellers in the marketplace using the factory.
@@ -356,7 +364,8 @@ def initialize_sellers(
     adversary_ids = all_client_ids[:n_adversaries]
 
     logging.info(f"\n📋 Adversary IDs: {adversary_ids}")
-
+    if validation_loader:
+        seller_extra_args['validation_loader'] = validation_loader
     # Create seller factory
     seller_factory = SellerFactory(
         cfg=cfg,
@@ -1029,10 +1038,15 @@ def run_attack(cfg: AppConfig):
         )
 
         # 5. Seller Initialization
-        # Remove global_model parameter - factory handles it now
         initialize_sellers(
-            cfg, marketplace, seller_loaders, model_factory,
-            seller_extra_args, collate_fn, num_classes
+            cfg,
+            marketplace,
+            seller_loaders,
+            model_factory,
+            seller_extra_args,
+            collate_fn,
+            num_classes,
+            validation_loader=validation_loader
         )
 
         initialize_root_sellers(

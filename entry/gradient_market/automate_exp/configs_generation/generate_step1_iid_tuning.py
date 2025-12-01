@@ -22,7 +22,6 @@ except ImportError as e:
     print("Verify base config factories (tabular, image, text) exist and use SGD.")
     sys.exit(1)
 
-
 # We define separate learning rate grids for each optimizer
 ADAM_LRS_TO_SWEEP = [0.001, 0.0005, 0.0001]
 SGD_LRS_TO_SWEEP = [0.1, 0.05, 0.01]  # SGD typically needs larger LRs

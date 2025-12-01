@@ -1,78 +1,114 @@
-import pandas as pd
 import json
+import os
 import re
-import seaborn as sns
+from pathlib import Path
+from typing import Dict, Any
+
 import matplotlib.pyplot as plt
 import numpy as np
-import os
-from pathlib import Path
-from typing import List, Dict, Any
+import pandas as pd
+import seaborn as sns
 
-# --- Configuration ---
+# ==========================================
+# --- USER CONFIGURATION ---
+# ==========================================
+
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step2.5_figures"
-
-# Define the relative 'usability' threshold
+FIGURE_OUTPUT_DIR = "./figures/step2.5_figures_flexible"
 RELATIVE_ACC_THRESHOLD = 0.90
 
-# ---------------------
+# 1. DEFENSE LABELS: Map your folder names (keys) to Plot Titles (values)
+#    If your folder is named 'skymask_lite', add 'skymask_lite': 'SkyMask (Small)' here.
+DEFENSE_LABELS = {
+    'fedavg': 'FedAvg',
+    'fltrust': 'FLTrust',
+    'martfl': 'MARTFL',
+    'skymask': 'SkyMask',
+}
+
+# 2. PLOT ORDER & VISIBILITY
+#    Only defenses listed here will be plotted.
+#    Comment out 'skymask_small' to hide it.
+#    Reorder this list to change the bar order.
+DEFENSE_ORDER = [
+    'fedavg',
+    'fltrust',
+    'martfl',
+    'skymask',
+]
+
+
+# ==========================================
 
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
-    """
-    Parses the HP suffix folder name (e.g., 'opt_Adam_lr_0.001_epochs_2')
-    """
     hps = {}
     pattern = r'opt_(\w+)_lr_([0-9\.]+)_epochs_([0-9]+)'
     match = re.search(pattern, hp_folder_name)
-
     if match:
         hps['optimizer'] = match.group(1)
         hps['learning_rate'] = float(match.group(2))
         hps['local_epochs'] = int(match.group(3))
-    else:
-        pass # Silence warnings for cleaner output
     return hps
+
+
+def save_utility_csv(df: pd.DataFrame, output_dir: Path):
+    print("\n--- Generating Utility Breakdown CSV ---")
+
+    # We calculate the stats that go into the Utility Rate
+    summary = df.groupby(['dataset', 'defense']).agg(
+        total_runs=('acc', 'count'),  # Denominator
+        usable_runs=('platform_usable', 'sum'),  # Numerator
+        utility_rate=('platform_usable', 'mean'),  # Result
+        avg_acc=('acc', 'mean'),
+        max_acc=('acc', 'max'),
+        threshold_used=('platform_usable_threshold', 'mean')
+    ).reset_index()
+
+    # Add explicit percentage column for readability
+    summary['utility_rate_percent'] = summary['utility_rate'] * 100
+
+    # Sort for cleaner CSV
+    summary = summary.sort_values(by=['dataset', 'utility_rate_percent'], ascending=[True, False])
+
+    # Save to file
+    csv_path = output_dir / "utility_rate_breakdown.csv"
+    summary.to_csv(csv_path, index=False)
+
+    print(f"✅ Saved CSV to: {csv_path}")
+    print("Preview of calculation:")
+    print(summary[['dataset', 'defense', 'total_runs', 'usable_runs', 'utility_rate_percent']].head(10).to_string())
 
 
 def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
     """
-    Parses the base scenario name (e.g., 'step2.5_find_hps_martfl_image_CIFAR10')
+    Universal Parser: Captures ANY defense string between prefix and modality.
     """
     try:
-        pattern = r'step2\.5_find_hps_(fedavg|martfl|fltrust|skymask)_(image|text|tabular)_(.+)'
+        # Regex explanation:
+        # step2\.5_find_hps_  -> Prefix
+        # (?P<defense>.+?)    -> Capture Defense (Non-greedy, takes anything until next underscore)
+        # _                   -> Separator
+        # (?P<modality>image|text|tabular) -> Modality
+        pattern = r'step2\.5_find_hps_(?P<defense>.+?)_(?P<modality>image|text|tabular)_(?P<dataset>.+)'
         match = re.search(pattern, scenario_name)
 
         if match:
-            return {
-                "scenario": scenario_name,
-                "defense": match.group(1),
-                "modality": match.group(2),
-                "dataset": match.group(3),
-            }
+            return match.groupdict()
         else:
-            raise ValueError(f"Pattern not matched for: {scenario_name}")
-
+            return {}
     except Exception as e:
-        print(f"Warning: Could not parse scenario name '{scenario_name}': {e}")
-        return {"scenario": scenario_name}
+        return {}
 
 
 def load_run_data(metrics_file: Path) -> Dict[str, Any]:
-    """
-    Loads metrics from final_metrics.json (acc, rounds)
-    AND calculates both benign and adversary selection rates from marketplace_report.json.
-    """
     run_data = {}
     try:
-        # 1. Load basic metrics
         with open(metrics_file, 'r') as f:
             metrics = json.load(f)
         run_data['acc'] = metrics.get('acc', 0)
         run_data['rounds'] = metrics.get('completed_rounds', 0)
 
-        # 2. Load Selection Rates
         report_file = metrics_file.parent / "marketplace_report.json"
-
         if not report_file.exists():
             run_data['benign_selection_rate'] = np.nan
             run_data['adv_selection_rate'] = np.nan
@@ -85,66 +121,62 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
         adv_sellers = [s for s in sellers if s.get('type') == 'adversary']
         ben_sellers = [s for s in sellers if s.get('type') == 'benign']
 
-        run_data['adv_selection_rate'] = np.mean(
-            [s['selection_rate'] for s in adv_sellers]
-        ) if adv_sellers else 0.0
-
+        run_data['adv_selection_rate'] = np.mean([s['selection_rate'] for s in adv_sellers]) if adv_sellers else 0.0
         run_data['benign_selection_rate'] = np.mean(
-            [s['selection_rate'] for s in ben_sellers]
-        ) if ben_sellers else np.nan
-
+            [s['selection_rate'] for s in ben_sellers]) if ben_sellers else np.nan
         return run_data
-    except Exception as e:
+    except Exception:
         return {}
 
 
 def collect_all_results(base_dir: str) -> pd.DataFrame:
-    """
-    Walks the results directory, aggregates all run data,
-    AND filters out any folders ending in '_nolocalclip'.
-    """
     all_runs = []
     base_path = Path(base_dir)
     print(f"Searching for results in {base_path.resolve()}...")
 
-    scenario_folders = [
-        f for f in base_path.glob("step2.5_find_hps_*")
-        if f.is_dir() and not f.name.endswith("_nolocalclip")
-    ]
-
-    if not scenario_folders:
-        print(f"Error: No 'step2.5_find_hps_*' directories (excluding '_nolocalclip') found.")
-        return pd.DataFrame()
-
-    print(f"Found {len(scenario_folders)} scenario base directories.")
+    scenario_folders = [f for f in base_path.glob("step2.5_find_hps_*") if
+                        f.is_dir() and not f.name.endswith("_nolocalclip")]
 
     for scenario_path in scenario_folders:
-        scenario_name = scenario_path.name
-        run_scenario = parse_scenario_name(scenario_name)
+        run_scenario = parse_scenario_name(scenario_path.name)
+        if not run_scenario: continue
 
         for metrics_file in scenario_path.rglob("final_metrics.json"):
             try:
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
-                if not relative_parts:
-                    continue
+                if not relative_parts: continue
 
                 hp_folder_name = relative_parts[0]
                 run_hps = parse_hp_suffix(hp_folder_name)
                 run_metrics = load_run_data(metrics_file)
 
                 if run_metrics:
-                    all_runs.append({
-                        **run_scenario,
-                        **run_hps,
-                        **run_metrics,
-                    })
-            except Exception as e:
+                    all_runs.append({**run_scenario, **run_hps, **run_metrics})
+            except Exception:
                 continue
 
     if not all_runs:
+        print("No run data found.")
         return pd.DataFrame()
 
     df = pd.DataFrame(all_runs)
+
+    # --- Filtering Logic ---
+    # Only keep defenses present in the User's DEFENSE_ORDER list
+    available_defenses = set(df['defense'].unique())
+    requested_defenses = set(DEFENSE_ORDER)
+
+    # Check for missing config
+    missing_in_config = available_defenses - requested_defenses
+    if missing_in_config:
+        print(
+            f"⚠️  Note: The following defenses were found in data but are NOT in DEFENSE_ORDER and will be skipped: {missing_in_config}")
+
+    df = df[df['defense'].isin(DEFENSE_ORDER)].copy()
+
+    if df.empty:
+        print("❌ Error: No data matched your DEFENSE_ORDER configuration.")
+        return pd.DataFrame()
 
     print("Calculating thresholds...")
     dataset_max_acc = df.groupby('dataset')['acc'].max().to_dict()
@@ -152,57 +184,38 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     df['platform_usable_threshold'] = df['dataset_max_acc'] * RELATIVE_ACC_THRESHOLD
     df['platform_usable'] = (df['acc'] >= df['platform_usable_threshold'])
 
+    print(f"✅ Data loaded for: {df['defense'].unique()}")
     return df
 
 
 def style_axis(ax, title, xlabel, ylabel):
-    """
-    Helper to apply the consistent "Publication Quality" typography.
-    """
-    # Title
     ax.set_title(title, fontsize=24, fontweight='bold', pad=20)
-
-    # Labels
     ax.set_xlabel(xlabel, fontsize=20, fontweight='bold', labelpad=15)
     ax.set_ylabel(ylabel, fontsize=22, fontweight='bold', labelpad=15)
-
-    # Ticks
     plt.xticks(fontsize=18, fontweight='bold')
     plt.yticks(fontsize=18)
 
 
+def get_formatted_labels(defense_list):
+    """Uses the User Config to format labels"""
+    return [DEFENSE_LABELS.get(d, d) for d in defense_list]
+
+
 def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
-    """
-    Plots the 5 key platform metrics using the requested "Sybil Comparison" visual style:
-    - Whitegrid, Talk context
-    - Bold labels, Large fonts
-    - Black edges on bars
-    - Bottom Legends
-    """
-    print("\n--- Plotting Platform Metrics (High-Res Style) ---")
-
-    if df.empty:
-        print("No data to plot.")
-        return
-
-    # --- 1. CONFIGURATION (Apply Global Theme) ---
+    print("\n--- Plotting Platform Metrics ---")
     sns.set_theme(style="whitegrid")
     sns.set_context("talk", font_scale=1.1)
 
-    # Data Prep
-    required_cols = ['acc', 'rounds', 'platform_usable', 'benign_selection_rate', 'adv_selection_rate']
-    if not all(col in df.columns for col in required_cols):
-        print("Error: Missing required data columns.")
-        return
-
-    # --- Metric Calculations ---
-
-    # 1-4: Usability Metrics
+    # Metric Prep
     df_usability = df.groupby(['defense', 'dataset'])['platform_usable'].mean().reset_index()
     df_usability['Value'] = df_usability['platform_usable'] * 100
     df_usability['Metric'] = 'Usability Rate (%)'
 
-    df_perf = df[df['platform_usable'] == True].groupby(['defense', 'dataset'])['acc'].mean().reset_index()
+    def calc_best_acc(group):
+        usable = group[group['platform_usable'] == True]
+        return usable['acc'].mean() if not usable.empty else group['acc'].max()
+
+    df_perf = df.groupby(['defense', 'dataset']).apply(calc_best_acc).reset_index(name='acc')
     df_perf['Value'] = df_perf['acc'] * 100
     df_perf['Metric'] = 'Avg. Usable Accuracy (%)'
 
@@ -214,262 +227,253 @@ def plot_platform_usability_with_selection(df: pd.DataFrame, output_dir: Path):
     df_speed_stability['Value'] = df_speed_stability['rounds']
     df_speed_stability['Metric'] = 'Rounds Instability (Std)'
 
-    df_metrics_1_4 = pd.concat([df_usability, df_perf, df_speed, df_speed_stability], ignore_index=True)
+    df_metrics = pd.concat([df_usability, df_perf, df_speed, df_speed_stability], ignore_index=True)
 
-    # 5: Selection Metrics
-    df_selection_raw = df.groupby(['defense', 'dataset'])[
-        ['benign_selection_rate', 'adv_selection_rate']].mean().reset_index()
+    # Selection Prep
+    df_sel = df.groupby(['defense', 'dataset'])[['benign_selection_rate', 'adv_selection_rate']].mean().reset_index()
+    df_sel = df_sel.rename(columns={'benign_selection_rate': 'Benign', 'adv_selection_rate': 'Adversary'})
+    df_sel_melt = df_sel.melt(id_vars=['defense', 'dataset'], value_vars=['Benign', 'Adversary'], var_name='Type',
+                              value_name='Rate')
+    df_sel_melt['Rate'] *= 100
 
-    df_selection_raw = df_selection_raw.rename(columns={
-        'benign_selection_rate': 'Benign',
-        'adv_selection_rate': 'Adversary'
-    })
-
-    df_selection_melted = df_selection_raw.melt(
-        id_vars=['defense', 'dataset'],
-        value_vars=['Benign', 'Adversary'],
-        var_name='Seller Type',
-        value_name='Selection Rate'
-    )
-    df_selection_melted['Selection Rate'] *= 100
-
-    # --- SAVE SUMMARY CSV ---
-    csv_path = output_dir / "step2.5_metrics_summary.csv"
-    # (Simplified CSV save for brevity, focusing on plotting)
-    df_metrics_1_4.to_csv(csv_path, index=False)
-
-    # --- PLOTTING LOOP ---
-    all_datasets = df_metrics_1_4['dataset'].unique()
-
-    # Pretty formatter for defense names
-    def format_defense(d):
-        d_map = {'fedavg': 'FedAvg', 'fltrust': 'FLTrust', 'martfl': 'MARTFL', 'skymask': 'SkyMask'}
-        return d_map.get(d.lower(), d.title())
+    all_datasets = df['dataset'].unique()
 
     for dataset in all_datasets:
-        # Determine defense order
-        if dataset in ['CIFAR10', 'CIFAR100']:
-            defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
-        else:
-            defense_order = ['fedavg', 'fltrust', 'martfl']
+        # Filter Order based on what exists for this dataset AND is in User Config
+        ds_defenses = df[df['dataset'] == dataset]['defense'].unique()
+        # Sort by the user's preferred order
+        current_order = [d for d in DEFENSE_ORDER if d in ds_defenses]
 
-        # Format x-tick labels
-        formatted_labels = [format_defense(d) for d in defense_order]
+        if not current_order: continue
 
-        # === A. Plot Metrics 1-4 (Single Bar Charts) ===
-        for metric in df_metrics_1_4['Metric'].unique():
-            plot_df = df_metrics_1_4[
-                (df_metrics_1_4['dataset'] == dataset) &
-                (df_metrics_1_4['Metric'] == metric)
-            ]
-            # Filter valid defenses
-            plot_df = plot_df[plot_df['defense'].isin(defense_order)]
+        labels = get_formatted_labels(current_order)
 
+        # Plot 1-4 Metrics
+        for metric in df_metrics['Metric'].unique():
+            plot_df = df_metrics[(df_metrics['dataset'] == dataset) & (df_metrics['Metric'] == metric) & (
+                df_metrics['defense'].isin(current_order))]
             if plot_df.empty: continue
 
-            # Cleanup Filename
-            safe_metric = re.sub(r'[^\w]', '', metric.split(' ')[0]) + "_" + re.sub(r'[^\w]', '', metric.split(' ')[-1])
+            plt.figure(figsize=(12, 8))
+            ax = sns.barplot(data=plot_df, x='defense', y='Value', order=current_order, palette='viridis',
+                             edgecolor="black", linewidth=1.2)
 
-            plt.figure(figsize=(10, 8)) # Consistent sizing
+            # Thresholds
+            if "Accuracy" in metric:
+                raw_max = df[df['dataset'] == dataset]['acc'].max()
+                threshold_val = raw_max * 0.90 * 100
+                ax.axhline(threshold_val, color='red', linestyle='--', linewidth=2.5, alpha=0.7)
 
-            ax = sns.barplot(
-                data=plot_df,
-                x='defense',
-                y='Value',
-                order=defense_order,
-                palette='viridis',
-                edgecolor="black", # KEY: Black border
-                linewidth=1.2      # KEY: Thicker line
-            )
+                # Hatching
+                for i, defense in enumerate(current_order):
+                    usab = df_metrics[(df_metrics['dataset'] == dataset) & (df_metrics['defense'] == defense) & (
+                            df_metrics['Metric'] == 'Usability Rate (%)')]['Value']
+                    if not usab.empty and usab.values[0] == 0:
+                        ax.patches[i].set_hatch('///')
+                        ax.patches[i].set_edgecolor('black')
 
-            # Apply Labels & Style
-            y_label = "Value"
-            if "%" in metric: y_label = "Percentage (%)"
-            elif "Rounds" in metric: y_label = "Rounds"
-
-            style_axis(ax, f"{metric} ({dataset})", "Defense Strategy", y_label)
-
-            # Set correct X-labels
-            ax.set_xticklabels(formatted_labels)
+            y_lbl = "Percentage (%)" if "%" in metric else "Rounds"
+            style_axis(ax, f"{metric} ({dataset})", "Defense", y_lbl)
+            ax.set_xticklabels(labels)
 
             # Annotations
             for p in ax.patches:
                 if p.get_height() > 0:
-                    ax.annotate(f'{p.get_height():.1f}',
-                                (p.get_x() + p.get_width() / 2., p.get_height()),
-                                ha='center', va='bottom',
-                                xytext=(0, 5), textcoords='offset points',
-                                fontsize=16, fontweight='bold') # Bold annotation
+                    ax.annotate(f'{p.get_height():.1f}', (p.get_x() + p.get_width() / 2., p.get_height()), ha='center',
+                                va='bottom', fontsize=14, fontweight='bold', xytext=(0, 5), textcoords='offset points')
 
-            # Save
             plt.tight_layout()
-            plt.savefig(output_dir / f"plot_{dataset}_{safe_metric}.pdf", bbox_inches='tight', format='pdf', dpi=300)
+            safe_metric = re.sub(r'[^\w]', '', metric.split(' ')[0]) + "_" + re.sub(r'[^\w]', '', metric.split(' ')[-1])
+            plt.savefig(output_dir / f"plot_{dataset}_{safe_metric}.pdf", format='pdf', dpi=300)
             plt.close('all')
 
-        # === B. Plot Metric 5 (Grouped Selection Rates) ===
-        sel_df = df_selection_melted[
-            (df_selection_melted['dataset'] == dataset) &
-            (df_selection_melted['defense'].isin(defense_order))
-        ]
-
-        if not sel_df.empty:
-            plt.figure(figsize=(12, 8)) # Wider for grouped bars
-
-            ax = sns.barplot(
-                data=sel_df,
-                x='defense',
-                y='Selection Rate',
-                hue='Seller Type',
-                order=defense_order,
-                palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, # Nice Green/Red
-                edgecolor="black",
-                linewidth=1.2
-            )
-
-            style_axis(ax, f"Avg. Selection Rates ({dataset})", "Defense Strategy", "Selection Rate (%)")
-            ax.set_xticklabels(formatted_labels)
+        # Plot Selection Rates
+        sel_plot = df_sel_melt[(df_sel_melt['dataset'] == dataset) & (df_sel_melt['defense'].isin(current_order))]
+        if not sel_plot.empty:
+            plt.figure(figsize=(12, 8))
+            ax = sns.barplot(data=sel_plot, x='defense', y='Rate', hue='Type', order=current_order,
+                             palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor="black", linewidth=1.2)
+            style_axis(ax, f"Avg. Selection Rates ({dataset})", "Defense", "Selection Rate (%)")
+            ax.set_xticklabels(labels)
             ax.set_ylim(0, 105)
 
-            # Annotations
             for p in ax.patches:
-                h = p.get_height()
-                if h > 0: # Only annotate non-zero
-                    ax.annotate(f'{h:.1f}',
-                                (p.get_x() + p.get_width() / 2., h),
-                                ha='center', va='bottom',
-                                xytext=(0, 5), textcoords='offset points',
-                                fontsize=14, fontweight='bold')
+                if p.get_height() > 0:
+                    ax.annotate(f'{p.get_height():.1f}', (p.get_x() + p.get_width() / 2., p.get_height()), ha='center',
+                                va='bottom', xytext=(0, 5), textcoords='offset points', fontsize=14, fontweight='bold')
 
-            # Legend Styling (Bottom, Horizontal)
-            plt.legend(
-                title=None,
-                fontsize=18,
-                loc='upper center',
-                bbox_to_anchor=(0.5, -0.22), # Move below X-axis
-                ncol=2,
-                frameon=False
-            )
-
+            plt.legend(fontsize=18, loc='upper center', bbox_to_anchor=(0.5, -0.22), ncol=2, frameon=False)
             plt.tight_layout()
-            plt.subplots_adjust(bottom=0.25) # Make room for legend
-
+            plt.subplots_adjust(bottom=0.25)
             plt.savefig(output_dir / f"plot_{dataset}_Selection_Rates.pdf", format='pdf', dpi=300)
             plt.close('all')
-            print(f"  Saved metrics for {dataset}")
 
-def plot_composite_row(df: pd.DataFrame, output_dir: Path):
-    """
-    Generates a SINGLE wide figure with 4 subplots in a row:
-    1. Usability Rate
-    2. Avg. Usable Accuracy
-    3. Avg. Usable Rounds
-    4. Selection Rates
-    """
-    print("\n--- Plotting Composite Row (4-in-1) ---")
-    sns.set_theme(style="whitegrid")
-    sns.set_context("paper", font_scale=1.4) # 'paper' context fits better for composite
 
-    # Filter for CIFAR100 (or loop datasets)
-    dataset = "CIFAR100"
-    subset = df[df['dataset'] == dataset]
+def save_threshold_debug_csv(df: pd.DataFrame, output_dir: Path, target_dataset: str = "CIFAR100"):
+    """
+    Generates a row-by-row CSV showing exactly which configs passed/failed the threshold.
+    Useful for tuning the RELATIVE_ACC_THRESHOLD.
+    """
+    print(f"\n--- Generating Threshold Debug CSV for {target_dataset} ---")
+
+    # 1. Filter for the specific dataset
+    subset = df[df['dataset'] == target_dataset].copy()
 
     if subset.empty:
+        print(f"⚠️  No data found for dataset: {target_dataset}")
         return
 
-    # Defense Order
-    defense_order = ['fedavg', 'fltrust', 'martfl', 'skymask']
-    formatted_labels = ['FedAvg', 'FLTrust', 'MARTFL', 'SkyMask']
+    # 2. Select useful columns for debugging
+    cols = [
+        'defense',
+        'learning_rate',
+        'local_epochs',
+        'acc',  # The run's accuracy
+        'platform_usable_threshold',  # The cutoff value
+        'platform_usable',  # Did it pass?
+        'dataset_max_acc'  # The Global Max (Baseline)
+    ]
 
-    # Create Figure: 1 Row, 4 Columns. Wide aspect ratio.
-    fig, axes = plt.subplots(1, 4, figsize=(22, 5), constrained_layout=True)
+    # Handle missing columns gracefully
+    cols = [c for c in cols if c in subset.columns]
+    debug_df = subset[cols].copy()
 
-    # --- DATA PREP ---
-    # 1. Usability
-    d1 = subset.groupby('defense')['platform_usable'].mean().reindex(defense_order).reset_index()
-    d1['Value'] = d1['platform_usable'] * 100
+    # 3. Add a "Distance to Threshold" column (Positive = Safe, Negative = Failed)
+    if 'platform_usable_threshold' in debug_df.columns:
+        debug_df['diff_from_threshold'] = debug_df['acc'] - debug_df['platform_usable_threshold']
 
-    # 2. Accuracy
-    d2 = subset[subset['platform_usable']==True].groupby('defense')['acc'].mean().reindex(defense_order).reset_index()
-    d2['Value'] = d2['acc'] * 100
+    # 4. Sort: Defenses first, then Best Accuracy descending
+    debug_df = debug_df.sort_values(by=['defense', 'acc'], ascending=[True, False])
 
-    # 3. Rounds
-    d3 = subset[subset['platform_usable']==True].groupby('defense')['rounds'].mean().reindex(defense_order).reset_index()
-    d3['Value'] = d3['rounds']
+    # 5. Save
+    csv_name = f"debug_thresholds_{target_dataset}.csv"
+    csv_path = output_dir / csv_name
+    debug_df.to_csv(csv_path, index=False)
 
-    # 4. Selection
-    d4 = subset.groupby('defense')[['benign_selection_rate', 'adv_selection_rate']].mean().reindex(defense_order).reset_index()
-    d4 = d4.melt(id_vars='defense', var_name='Type', value_name='Rate')
-    d4['Rate'] = d4['Rate'] * 100
-    d4['Type'] = d4['Type'].replace({'benign_selection_rate': 'Benign', 'adv_selection_rate': 'Adversary'})
+    print(f"✅ Saved Debug CSV to: {csv_path}")
+    print("   (Check the 'diff_from_threshold' column to see how close runs were to passing)")
 
-    # --- PLOTTING ---
+    # Preview top rows
+    print("\nPreview (Top 5 Best Runs per Defense):")
+    print(debug_df.groupby('defense').head(2).to_string(index=False))
 
-    # Plot 1: Usability
-    sns.barplot(ax=axes[0], data=d1, x='defense', y='Value', order=defense_order, palette='viridis', edgecolor='black')
-    axes[0].set_title("Usability Rate (%)", fontweight='bold')
-    axes[0].set_ylabel("Percentage", fontweight='bold')
-    axes[0].set_xlabel("")
-    axes[0].set_ylim(0, 105)
 
-    # Plot 2: Accuracy
-    sns.barplot(ax=axes[1], data=d2, x='defense', y='Value', order=defense_order, palette='viridis', edgecolor='black')
-    axes[1].set_title("Avg. Usable Acc (%)", fontweight='bold')
-    axes[1].set_ylabel("") # Save space
-    axes[1].set_xlabel("")
-    # Auto scale Y to zoom in on differences (e.g. 40-60) if needed, or keep 0-100
-    axes[1].set_ylim(0, 105)
+def plot_composite_row(df: pd.DataFrame, output_dir: Path):
+    print("\n--- Plotting Composite Row (Legend: Top Right, 2 Rows) ---")
 
-    # Plot 3: Rounds
-    sns.barplot(ax=axes[2], data=d3, x='defense', y='Value', order=defense_order, palette='viridis', edgecolor='black')
-    axes[2].set_title("Avg. Cost (Rounds)", fontweight='bold')
-    axes[2].set_ylabel("Rounds", fontweight='bold')
-    axes[2].set_xlabel("")
+    sns.set_theme(style="whitegrid")
+    sns.set_context("talk", font_scale=1.1)
 
-    # Plot 4: Selection
-    sns.barplot(ax=axes[3], data=d4, x='defense', y='Rate', hue='Type', order=defense_order,
-                palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor='black')
-    axes[3].set_title("Avg. Selection Rates", fontweight='bold')
-    axes[3].set_ylabel("")
-    axes[3].set_xlabel("")
-    axes[3].set_ylim(0, 105)
-    axes[3].legend(title=None, loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False) # Legend ABOVE plot to save vertical space
+    unique_datasets = df['dataset'].unique()
+    markers = ['(a)', '(b)', '(c)', '(d)']
 
-    # --- COMMON STYLING ---
-    letters = ['(a)', '(b)', '(c)', '(d)']
-    for i, ax in enumerate(axes):
-        ax.set_xticklabels(formatted_labels, fontsize=14, fontweight='bold', rotation=15)
-        ax.grid(axis='y', alpha=0.5)
-        # Add letter label inside plot (top left) to save space
-        # ax.text(-0.1, 1.05, letters[i], transform=ax.transAxes, size=16, weight='bold')
+    for target_dataset in unique_datasets:
+        print(f"   > Processing composite row for: {target_dataset}")
 
-        # Annotations
-        for p in ax.patches:
-            h = p.get_height()
-            if h > 0:
-                ax.annotate(f'{h:.0f}', (p.get_x() + p.get_width() / 2., h),
-                            ha='center', va='bottom', fontsize=11, fontweight='bold', xytext=(0, 2), textcoords='offset points')
+        subset = df[df['dataset'] == target_dataset]
 
-    # Save
-    outfile = output_dir / f"plot_row_combined_{dataset}.pdf"
-    plt.savefig(outfile, bbox_inches='tight', format='pdf', dpi=300)
-    print(f"Saved composite row to: {outfile}")
+        current_order = [d for d in DEFENSE_ORDER if d in subset['defense'].unique()]
+        if not current_order:
+            continue
 
-# --- Add this to your main() function ---
-# plot_composite_row(df, output_dir)
+        labels = get_formatted_labels(current_order)
+
+        fig, axes = plt.subplots(1, 4, figsize=(26, 6), constrained_layout=True)
+
+        # --- Data Prep ---
+        d1 = subset.groupby('defense')['platform_usable'].mean().reindex(current_order).reset_index()
+        d1['Value'] = d1['platform_usable'] * 100
+
+        def calc_best_acc_comp(g):
+            u = g[g['platform_usable'] == True]
+            return u['acc'].mean() if not u.empty else g['acc'].max()
+
+        d2 = subset.groupby('defense').apply(calc_best_acc_comp).reindex(current_order).reset_index(name='acc')
+        d2['Value'] = d2['acc'] * 100
+
+        d3 = subset[subset['platform_usable'] == True].groupby('defense')['rounds'].mean().reindex(current_order).reset_index()
+        d3['Value'] = d3['rounds']
+
+        d4 = subset.groupby('defense')[['benign_selection_rate', 'adv_selection_rate']].mean().reindex(current_order).reset_index()
+        d4 = d4.melt(id_vars='defense', var_name='Type', value_name='Rate')
+        d4['Rate'] *= 100
+        d4['Type'] = d4['Type'].replace({'benign_selection_rate': 'Benign', 'adv_selection_rate': 'Adversary'})
+
+        # --- Plotting ---
+
+        # (a) Usability
+        sns.barplot(ax=axes[0], data=d1, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black', linewidth=2)
+        axes[0].set_title(f"{markers[0]} Usability Rate (%)", fontweight='bold', fontsize=24, pad=15)
+        axes[0].set_ylim(0, 105)
+
+        # (b) Accuracy
+        sns.barplot(ax=axes[1], data=d2, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black', linewidth=2)
+        axes[1].set_title(f"{markers[1]} Avg. Usable Acc (%)", fontweight='bold', fontsize=24, pad=15)
+        axes[1].set_ylim(0, 105)
+        for i, defense in enumerate(current_order):
+            if d1[d1['defense'] == defense]['Value'].values[0] == 0:
+                axes[1].patches[i].set_hatch('///')
+                axes[1].patches[i].set_edgecolor('black')
+
+        # (c) Cost
+        sns.barplot(ax=axes[2], data=d3, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black', linewidth=2)
+        axes[2].set_title(f"{markers[2]} Avg. Cost (Rounds)", fontweight='bold', fontsize=24, pad=15)
+
+        # (d) Selection
+        sns.barplot(ax=axes[3], data=d4, x='defense', y='Rate', hue='Type', order=current_order,
+                    palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor='black', linewidth=2)
+        axes[3].set_title(f"{markers[3]} Avg. Selection Rates", fontweight='bold', fontsize=24, pad=15)
+        axes[3].set_ylim(0, 105)
+
+        # --- LEGEND: Top Right, 2 Rows ---
+        # loc='upper right': Puts it in the top right corner
+        # ncol=1: Stacks items vertically (2 rows for 2 items)
+        axes[3].legend(loc='upper right', ncol=1, frameon=True, framealpha=0.9, fontsize=16)
+
+        # --- Common Styling ---
+        for ax in axes:
+            ax.set_xticklabels(labels, fontsize=18, fontweight='bold')
+            ax.set_xlabel("")
+
+            ax.tick_params(axis='y', labelsize=16)
+            for label in ax.get_yticklabels():
+                label.set_fontweight('bold')
+
+            ax.grid(axis='y', alpha=0.5, linewidth=1.5)
+
+            for p in ax.patches:
+                h = p.get_height()
+                if not np.isnan(h) and h > 0:
+                    ax.annotate(f'{h:.0f}',
+                                (p.get_x() + p.get_width() / 2., h),
+                                ha='center', va='bottom',
+                                fontsize=16, fontweight='bold',
+                                xytext=(0, 4), textcoords='offset points')
+
+        save_path = output_dir / f"plot_row_combined_{target_dataset}.pdf"
+        plt.savefig(save_path, bbox_inches='tight', format='pdf', dpi=300)
+        print(f"     Saved composite row to: {save_path}")
+        plt.close(fig)
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
 
     df = collect_all_results(BASE_RESULTS_DIR)
+    if not df.empty:
+        # Generate Utility CSV
+        # save_utility_csv(df, output_dir)
+        #
+        # # Plot Individual Metrics (already loops internally)
+        # plot_platform_usability_with_selection(df, output_dir)
 
-    if df.empty:
-        print("No results data was loaded. Exiting.")
-        return
+        # Plot Composite Rows (Now loops internally for all datasets)
+        plot_composite_row(df, output_dir)
 
-    plot_platform_usability_with_selection(df, output_dir)
-    plot_composite_row(df, output_dir)
-    print("\nAnalysis complete.")
+        # Generate Debug CSVs for ALL datasets found
+        # for ds in df['dataset'].unique():
+        #     save_threshold_debug_csv(df, output_dir, target_dataset=ds)
+
 
 if __name__ == "__main__":
     main()

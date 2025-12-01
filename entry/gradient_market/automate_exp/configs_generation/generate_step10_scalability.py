@@ -3,13 +3,13 @@
 import copy
 import sys
 from pathlib import Path
-from typing import List, Callable, Dict, Any
+from typing import List
 
 # --- Imports ---
 from config_common_utils import (
     GOLDEN_TRAINING_PARAMS,
     NUM_SEEDS_PER_CONFIG,
-    get_tuned_defense_params
+    get_tuned_defense_params, IMAGE_DEFENSES
 )
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_image_backdoor_attack, use_cifar100_config
@@ -36,7 +36,6 @@ SCALABILITY_SETUP = {
     "dataset_modifier": use_cifar100_config,
     "attack_modifier": use_image_backdoor_attack
 }
-DEFENSES_TO_TEST = ["fedavg", "fltrust", "martfl", "skymask"]
 
 
 # === FUNCTION TO GENERATE BASE SCENARIOS ===
@@ -48,7 +47,7 @@ def generate_scalability_scenarios() -> List[Scenario]:
     model_cfg_name = SCALABILITY_SETUP["model_config_name"]
     print(f"Setup: {SCALABILITY_SETUP['dataset_name']} {model_cfg_name}, Fixed Adv Rate: {FIXED_ADV_RATE * 100}%")
 
-    for defense_name in DEFENSES_TO_TEST:
+    for defense_name in IMAGE_DEFENSES:
         # Get Tuned HPs (from Step 3)
         tuned_defense_params = get_tuned_defense_params(
             defense_name=defense_name,
@@ -84,7 +83,7 @@ def generate_scalability_scenarios() -> List[Scenario]:
                     for key, value in current_tuned_params.items():
                         set_nested_attr(config, key, value)
 
-                if current_defense_name == "skymask":
+                if "skymask" in current_defense_name:
                     model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                     set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 

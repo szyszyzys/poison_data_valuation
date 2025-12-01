@@ -64,6 +64,13 @@ DEFAULT_DEFENSE_HPS = {
         "aggregation.skymask.mask_threshold": 0.7,
         "aggregation.clip_norm": 10.0
     },
+    "skymask_small": {
+        "aggregation.method": "skymask",
+        "aggregation.skymask.mask_epochs": 20,
+        "aggregation.skymask.mask_lr": 0.5,
+        "aggregation.skymask.mask_threshold": 0.5,
+        "aggregation.clip_norm": 10.0
+    },
 }
 
 # --- All Models/Datasets Combinations (Copied from Step 3) ---
@@ -102,7 +109,6 @@ def generate_training_hp_scenarios() -> List[Scenario]:
 
         current_defenses = IMAGE_DEFENSES if modality == "image" else TEXT_TABULAR_DEFENSES
 
-        # Loop over all defenses
         for defense_name in current_defenses:
 
             # Get the *default* HPs for this defense
@@ -141,7 +147,7 @@ def generate_training_hp_scenarios() -> List[Scenario]:
                     set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
 
                     # Set SkyMask type if needed
-                    if current_defense_name == "skymask":
+                    if "skymask" in current_defense_name:
                         model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                         set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 
@@ -168,7 +174,7 @@ def generate_training_hp_scenarios() -> List[Scenario]:
                 "training.momentum": [0.0],
                 "training.weight_decay": [0.0],
             }
-            if defense_name == "skymask":
+            if "skymask" in defense_name:
                 model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                 grid["aggregation.skymask.sm_model_type"] = [model_struct]
 

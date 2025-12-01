@@ -97,7 +97,7 @@ def generate_main_summary_scenarios() -> List[Scenario]:
                             set_nested_attr(config, key, value)
                     else:
                         print(f"  WARNING: No Golden HPs found for key '{golden_hp_key}'!")
-                    if current_defense_name == "skymask":
+                    if "skymask" in current_defense_name:
                         model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                         set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 
@@ -117,8 +117,8 @@ def generate_main_summary_scenarios() -> List[Scenario]:
             valuation_modifier = lambda config: enable_valuation(
                 config,
                 influence=True,
-                loo=True, loo_freq=10,
-                kernelshap=True, kshap_freq=10,
+                loo=True, loo_freq=5,
+                kernelshap=True, kshap_freq=5,
                 kshap_samples=500
             )
 

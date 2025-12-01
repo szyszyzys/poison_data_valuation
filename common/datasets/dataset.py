@@ -21,7 +21,7 @@ from torchvision.transforms import v2 as transforms
 from common.datasets.data_partitioner import FederatedDataPartitioner, _extract_targets
 from common.datasets.image_data_processor import save_data_statistics, CelebACustom
 from common.datasets.text_data_processor import ProcessedTextData, get_cache_path, \
-    generate_buyer_bias_distribution, split_text_dataset_martfl_discovery, collate_batch, StandardFormatDataset
+    collate_batch, StandardFormatDataset
 from common.gradient_market_configs import AppConfig
 
 try:
@@ -151,7 +151,8 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     logger.info(f"   > Dataset Name: {cfg.experiment.dataset_name}")
     logger.info(f"   > N Sellers:    {cfg.experiment.n_sellers}")
     logger.info(f"   > SELLER Split: Strategy='{image_cfg.strategy}', Alpha={image_cfg.dirichlet_alpha}")
-    logger.info(f"   > BUYER Split:  Strategy='{image_cfg.buyer_strategy}', Alpha={image_cfg.buyer_dirichlet_alpha}, Ratio={image_cfg.buyer_ratio}")
+    logger.info(
+        f"   > BUYER Split:  Strategy='{image_cfg.buyer_strategy}', Alpha={image_cfg.buyer_dirichlet_alpha}, Ratio={image_cfg.buyer_ratio}")
     if cfg.experiment.use_subset:
         logger.warning(f"   > ⚠️  SUBSET MODE: Using only {cfg.experiment.subset_size} samples!")
     # ----------------------------------
@@ -207,7 +208,8 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         else:
             logger.info(f"❗️ No cached data split found (Hash: {config_hash}). Running partitioning...")
             logger.info(f"   -> Partitioning Sellers with {image_cfg.strategy} (alpha={image_cfg.dirichlet_alpha})")
-            logger.info(f"   -> Partitioning Buyer with {image_cfg.buyer_strategy} (alpha={image_cfg.buyer_dirichlet_alpha})")
+            logger.info(
+                f"   -> Partitioning Buyer with {image_cfg.buyer_strategy} (alpha={image_cfg.buyer_dirichlet_alpha})")
 
         # Initialize the partitioner with the (potentially subsetted) training dataset
         partitioner = FederatedDataPartitioner(
@@ -252,26 +254,54 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     # Create DataLoaders
     batch_size = cfg.training.batch_size
     actual_dataset = train_set.dataset if isinstance(train_set, Subset) else train_set
-    buyer_loader = DataLoader(Subset(actual_dataset, buyer_indices), batch_size=batch_size, shuffle=True,
-                              num_workers=cfg.data.num_workers) if buyer_indices.size > 0 else None
+
+    # --- PERFORMANCE FIX START ---
+    # Ensure we use at least 4 workers if config is 0, otherwise use config
+    workers = cfg.data.num_workers if cfg.data.num_workers > 4 else 4
+
+    loader_kwargs = {
+        "batch_size": batch_size,  # Constraint: Must keep this 64
+        "num_workers": workers,  # ACTION: Lower this to 4 (Stable CPU)
+        "prefetch_factor": 8,  # ACTION: New! Loads 8 batches ahead into RAM
+        "persistent_workers": True,  # ACTION: Keeps workers alive between epochs
+        "pin_memory": True  # ACTION: Fast transfer to GPU
+    }
+
+    # Debug print to confirm settings
+    logger.info(f"⚡️ DataLoader Optimized: workers={workers}, pin_memory=True, persistent=True")
+
+    buyer_loader = DataLoader(
+        Subset(actual_dataset, buyer_indices),
+        shuffle=True,
+        **loader_kwargs
+    ) if buyer_indices.size > 0 else None
 
     seller_loaders = {
-        cid: DataLoader(Subset(actual_dataset, indices), batch_size=batch_size, shuffle=True,
-                        num_workers=cfg.data.num_workers)
+        cid: DataLoader(
+            Subset(actual_dataset, indices),
+            shuffle=True,
+            **loader_kwargs
+        )
         for cid, indices in seller_splits.items() if indices
     }
 
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False,
-                             num_workers=cfg.data.num_workers) if test_set else None
+    test_loader = DataLoader(
+        test_set,
+        shuffle=False,
+        **loader_kwargs
+    ) if test_set else None
+    # --- PERFORMANCE FIX END ---
 
     logger.info(f"✅ Federated dataset setup complete. Using {num_classes} classes.")
 
     return buyer_loader, seller_loaders, test_loader, stats, num_classes
 
+
 # --- Helper to extract targets from StandardFormatDataset ---
 def _extract_text_targets(dataset: StandardFormatDataset) -> np.ndarray:
     """Extracts targets from the StandardFormatDataset."""
     return dataset.targets
+
 
 # --- Helper to partition Dirichlet (adapted for StandardFormatDataset) ---
 def _partition_text_dirichlet(
@@ -519,8 +549,8 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     standardized_test_data = StandardFormatDataset(processed_test_data, label_first=False)
 
     # 5. --- Split Data ---
-# 5. --- CACHING & PARTITIONING (UPDATED) ---
-    cache_dir_splits = Path(cfg.data_root) / ".cache_splits" # Separate cache dir for splits
+    # 5. --- CACHING & PARTITIONING (UPDATED) ---
+    cache_dir_splits = Path(cfg.data_root) / ".cache_splits"  # Separate cache dir for splits
     cache_dir_splits.mkdir(exist_ok=True)
 
     # Create cache key based on partitioning parameters
@@ -530,7 +560,8 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         "seed": cfg.seed,
         "seller_strategy": text_cfg.strategy,
         "seller_dirichlet_alpha": text_cfg.dirichlet_alpha if text_cfg.strategy == 'dirichlet' else None,
-        "seller_prop_skew_params": asdict(text_cfg.property_skew) if text_cfg.strategy == 'property-skew' and text_cfg.property_skew else None,
+        "seller_prop_skew_params": asdict(
+            text_cfg.property_skew) if text_cfg.strategy == 'property-skew' and text_cfg.property_skew else None,
         "buyer_ratio": text_cfg.buyer_ratio,
         "buyer_strategy": text_cfg.buyer_strategy,
         "buyer_dirichlet_alpha": text_cfg.buyer_dirichlet_alpha if text_cfg.buyer_strategy == 'dirichlet' else None,
@@ -546,11 +577,13 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         buyer_indices = cached_data['buyer_indices']
         seller_splits = cached_data['seller_splits']
         test_indices = cached_data['test_indices']
-        client_properties = cached_data.get('client_properties', {}) # Load properties if available
+        client_properties = cached_data.get('client_properties', {})  # Load properties if available
 
     else:
-        if not cfg.use_cache: logger.info("Cache disabled. Running partitioning...")
-        else: logger.info(f"❗️ No cached split found or cache disabled. Running partitioning...")
+        if not cfg.use_cache:
+            logger.info("Cache disabled. Running partitioning...")
+        else:
+            logger.info(f"❗️ No cached split found or cache disabled. Running partitioning...")
 
         # --- Perform Partitioning ---
         all_train_indices = np.arange(len(standardized_train_data))
@@ -560,9 +593,9 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         buyer_pool_size = int(len(all_train_indices) * text_cfg.buyer_ratio)
         # Add size checks
         if buyer_pool_size == 0 and text_cfg.buyer_ratio > 0:
-             logger.warning("Buyer ratio resulted in 0 samples for buyer pool.")
+            logger.warning("Buyer ratio resulted in 0 samples for buyer pool.")
         elif buyer_pool_size >= len(all_train_indices):
-             raise ValueError("Buyer ratio too high, leaves no data for sellers.")
+            raise ValueError("Buyer ratio too high, leaves no data for sellers.")
 
         buyer_pool_indices_all = all_train_indices[:buyer_pool_size]
         seller_pool_indices = all_train_indices[buyer_pool_size:]
@@ -574,15 +607,15 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
             buyer_indices, test_indices = _split_buyer_pool_for_root_test(buyer_pool_indices_all)
             logger.info(f"Buyer strategy: IID.")
         elif text_cfg.buyer_strategy.lower() == 'dirichlet':
-             logger.warning("Buyer strategy 'dirichlet' for text currently treated as IID.")
-             buyer_indices, test_indices = _split_buyer_pool_for_root_test(buyer_pool_indices_all)
+            logger.warning("Buyer strategy 'dirichlet' for text currently treated as IID.")
+            buyer_indices, test_indices = _split_buyer_pool_for_root_test(buyer_pool_indices_all)
         else:
-             raise ValueError(f"Unsupported buyer strategy: {text_cfg.buyer_strategy}")
+            raise ValueError(f"Unsupported buyer strategy: {text_cfg.buyer_strategy}")
 
         # Stage 3: Partition Seller Pool
         logger.info(f"Partitioning seller pool using strategy: '{text_cfg.strategy}'")
-        seller_splits = {i: [] for i in range(exp_cfg.n_sellers)} # Initialize empty dict
-        client_properties = {} # Initialize empty properties
+        seller_splits = {i: [] for i in range(exp_cfg.n_sellers)}  # Initialize empty dict
+        client_properties = {}  # Initialize empty properties
 
         if text_cfg.strategy.lower() == 'dirichlet':
             all_train_targets = _extract_text_targets(standardized_train_data)
@@ -591,10 +624,10 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
                 all_train_targets,
                 exp_cfg.n_sellers,
                 text_cfg.dirichlet_alpha,
-                seller_splits # Pass dict to be modified
+                seller_splits  # Pass dict to be modified
             )
         elif text_cfg.strategy.lower() == 'iid':
-             _partition_text_iid(seller_pool_indices, exp_cfg.n_sellers, seller_splits)
+            _partition_text_iid(seller_pool_indices, exp_cfg.n_sellers, seller_splits)
         elif text_cfg.strategy.lower() == 'property-skew':
             # Property skew for text is complex as it needs raw text.
             # This logic should ideally be here, but requires passing raw_train_ds_hf
@@ -604,18 +637,18 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
             # If refactored:
             # client_properties = _partition_text_property_skew(...) # This func would need access to raw text
         elif text_cfg.strategy.lower() == 'discovery':
-             # Keep your existing discovery split logic if needed, adapting it
-             # to operate on seller_pool_indices and populate seller_splits.
-             # You'll need to pass standardized_train_data and extract targets within it.
-             logger.info("Using 'discovery' split strategy for sellers...")
-             train_targets_subset = _extract_text_targets(Subset(standardized_train_data, seller_pool_indices))
-             # Adapt split_text_dataset_martfl_discovery or call relevant parts
-             # Example adaptation (replace with your actual logic):
-             # temp_dataset = Subset(standardized_train_data, seller_pool_indices)
-             # _, seller_splits_relative = split_text_dataset_martfl_discovery(...) # Operates on subset indices
-             # Convert relative indices back to absolute indices based on seller_pool_indices
-             # seller_splits = {cid: seller_pool_indices[rel_indices].tolist() for cid, rel_indices in seller_splits_relative.items()}
-             raise NotImplementedError("Adapt 'discovery' split logic for the new structure.")
+            # Keep your existing discovery split logic if needed, adapting it
+            # to operate on seller_pool_indices and populate seller_splits.
+            # You'll need to pass standardized_train_data and extract targets within it.
+            logger.info("Using 'discovery' split strategy for sellers...")
+            train_targets_subset = _extract_text_targets(Subset(standardized_train_data, seller_pool_indices))
+            # Adapt split_text_dataset_martfl_discovery or call relevant parts
+            # Example adaptation (replace with your actual logic):
+            # temp_dataset = Subset(standardized_train_data, seller_pool_indices)
+            # _, seller_splits_relative = split_text_dataset_martfl_discovery(...) # Operates on subset indices
+            # Convert relative indices back to absolute indices based on seller_pool_indices
+            # seller_splits = {cid: seller_pool_indices[rel_indices].tolist() for cid, rel_indices in seller_splits_relative.items()}
+            raise NotImplementedError("Adapt 'discovery' split logic for the new structure.")
 
         else:
             raise ValueError(f"Unknown client partitioning strategy: {text_cfg.strategy}")
@@ -636,7 +669,7 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     config_hash = Path(split_cache_file).stem
     stats_dir = Path(cfg.data_root) / "data_statistics"
     stats_save_path = stats_dir / f"{config_hash}_stats.json"
-    all_train_targets = _extract_text_targets(standardized_train_data) # Get targets again
+    all_train_targets = _extract_text_targets(standardized_train_data)  # Get targets again
     stats = save_data_statistics(
         buyer_indices=buyer_indices,
         seller_splits=seller_splits,
@@ -649,47 +682,61 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     # 7. --- Create DataLoaders ---
     collate_fn = lambda batch: collate_batch(batch, padding_value=pad_idx)
     batch_size = train_cfg.batch_size
-    num_workers = cfg.data.num_workers
+
+    workers = cfg.data.num_workers if cfg.data.num_workers > 4 else 4
+
+    loader_kwargs = {
+        "batch_size": batch_size,
+        "num_workers": workers,        # Fixed to 4 for stability
+        "pin_memory": True,            # Fast transfer to GPU
+        "prefetch_factor": 8,          # Buffer 512 batches in RAM
+        "persistent_workers": True,    # Save CPU cycles
+        "collate_fn": collate_fn       # <--- IMPORTANT: Padding logic included here
+    }
+
+    logger.info(f"⚡️ Text Loader Optimized: workers={workers}, prefetch=8, pin=True")
 
     buyer_loader = None
     if buyer_indices is not None and len(buyer_indices) > 0:
-        buyer_loader = DataLoader(Subset(standardized_train_data, buyer_indices.tolist()), batch_size=batch_size,
-                                  shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
+        buyer_loader = DataLoader(
+            Subset(standardized_train_data, buyer_indices.tolist()),
+            shuffle=True,
+            **loader_kwargs   # <--- Applies optimization AND collate_fn
+        )
     if buyer_loader is None: logger.warning("Buyer loader is None.")
-
 
     seller_loaders = {}
     non_empty_clients = 0
     for i in range(exp_cfg.n_sellers):
         indices = seller_splits.get(i)
-        # Check if indices is None or empty list/array
         if indices is not None and len(indices) > 0:
-            seller_loaders[i] = DataLoader(Subset(standardized_train_data, indices), batch_size=batch_size,
-                                           shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
+            seller_loaders[i] = DataLoader(
+                Subset(standardized_train_data, indices),
+                shuffle=True,
+                **loader_kwargs  # <--- Applies optimization AND collate_fn
+            )
             non_empty_clients += 1
         else:
-            seller_loaders[i] = None # Explicitly set to None
+            seller_loaders[i] = None
             logger.warning(f"Client {i} has no data assigned.")
     logger.info(f"Created DataLoaders for {non_empty_clients} / {exp_cfg.n_sellers} sellers.")
 
-
     test_loader = None
     if test_indices is not None and len(test_indices) > 0:
-        test_loader = DataLoader(Subset(standardized_train_data, test_indices.tolist()), batch_size=batch_size, shuffle=False,
-                                 collate_fn=collate_fn, num_workers=num_workers)
-    if test_loader is None: logger.warning("Test loader (from buyer pool split) is None.")
-
-    # Optional: Loader for the original test set
-    # original_test_loader = DataLoader(standardized_test_data, batch_size=batch_size, shuffle=False,
-    #                              collate_fn=collate_fn, num_workers=num_workers) if standardized_test_data else None
-
+        test_loader = DataLoader(
+            Subset(standardized_train_data, test_indices.tolist()),
+            shuffle=False,
+            **loader_kwargs  # <--- Applies optimization AND collate_fn
+        )
+    if test_loader is None: logger.warning("Test loader is None.")
+    # --- PERFORMANCE OPTIMIZATION END ---
 
     logging.info("DataLoader creation complete.")
 
     return ProcessedTextData(
         buyer_loader=buyer_loader,
         seller_loaders=seller_loaders,
-        test_loader=test_loader, # Return the test loader from the buyer pool split
+        test_loader=test_loader,
         class_names=class_names,
         vocab=vocab,
         pad_idx=pad_idx,

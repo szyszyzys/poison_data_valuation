@@ -92,6 +92,11 @@ TUNED_DEFENSE_PARAMS = {
     "skymask_cifar100_cnn_labelflip": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 50, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.5},
     "skymask_cifar10_cnn_backdoor": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 20, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.5},
     "skymask_cifar10_cnn_labelflip": {'aggregation.method': 'skymask', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 50, 'aggregation.skymask.mask_lr': 0.001, 'aggregation.skymask.mask_threshold': 0.5},
+    "skymask_small_cifar100_cnn_backdoor": {'aggregation.method': 'skymask_small', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 20, 'aggregation.skymask.mask_lr': 0.5, 'aggregation.skymask.mask_threshold': 0.5},
+    "skymask_small_cifar100_cnn_labelflip": {'aggregation.method': 'skymask_small', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 20, 'aggregation.skymask.mask_lr': 0.5, 'aggregation.skymask.mask_threshold': 0.5},
+    "skymask_small_cifar10_cnn_backdoor": {'aggregation.method': 'skymask_small', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 20, 'aggregation.skymask.mask_lr': 0.5, 'aggregation.skymask.mask_threshold': 0.5},
+    "skymask_small_cifar10_cnn_labelflip": {'aggregation.method': 'skymask_small', 'aggregation.clip_norm': 10.0, 'aggregation.skymask.mask_epochs': 20, 'aggregation.skymask.mask_lr': 0.5, 'aggregation.skymask.mask_threshold': 0.5},
+
 }
 
 def get_tuned_defense_params(
@@ -136,9 +141,9 @@ def get_tuned_defense_params(
     return TUNED_DEFENSE_PARAMS[tuned_params_key]
 
 # This helper list can now be simplified
-ALL_DEFENSES = ["fedavg", "fltrust", "martfl", "skymask"]
-IMAGE_DEFENSES = ["fedavg", "fltrust", "martfl", "skymask"]
-TEXT_TABULAR_DEFENSES = ["fedavg", "fltrust", "martfl"]  # Exclude SkyMask
+ALL_DEFENSES = ["fedavg", "fltrust", "martfl", "skymask", "skymask_small"]
+IMAGE_DEFENSES = ["fltrust", "martfl", "skymask"]
+TEXT_TABULAR_DEFENSES = ["fltrust", "martfl"]
 
 # ==============================================================================
 # --- 3. Define Shared Parameters & Modifiers ---

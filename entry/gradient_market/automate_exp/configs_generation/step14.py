@@ -1,4 +1,4 @@
-# FILE: generate_step13_drowning_attack.py
+# FILE: generate_step14_collusion_attack.py
 
 import copy
 import sys
@@ -6,10 +6,9 @@ from pathlib import Path
 from typing import List
 
 # --- Imports ---
-# Import the same common utils as your Step 6
 from config_common_utils import (
     NUM_SEEDS_PER_CONFIG,
-    use_sybil_attack_strategy,  # <-- The key helper from Step 6
+    use_sybil_attack_strategy,
     get_tuned_defense_params,
     GOLDEN_TRAINING_PARAMS
 )
@@ -25,25 +24,22 @@ except ImportError as e:
 # --- End Imports ---
 
 ## Purpose
-# This script generates configs for the Step 13: Targeted Drowning Attack.
-# It tests the vulnerability of clustering-based defenses (MartFL)
-# to a coordinated Sybil attack designed to exclude a specific
+# This script generates configs for Step 14: Collusion Attack (Baseline Hijacking).
+# It tests defenses when the Buyer and Sybil Sellers coordinate to provide
+# identical (but malicious) gradients to force high trust scores or cluster density.
 
-# --- Drowning Attack Strategies & Parameters to Test ---
-# We follow the Step 6 pattern.
-# We will "sweep" the attack_strength.
-# The victim_id will be set by the 'use_sybil_attack_strategy' helper.
-TARGET_VICTIM_ID = "bn_5"
-DROWNING_TEST_CONFIG = {
-    # The key is the strategy name the coordinator will use.
-    "drowning": {
-        # This is the parameter we will sweep
-        "attack_strength": [0.5, 1.0, 1.5, 2.0]
+# --- Collusion Strategies & Parameters ---
+# We sweep the 'mode' of the collusion vector.
+COLLUSION_TEST_CONFIG = {
+    "collusion": {
+        # 'random': Both generate random noise (Requires shared seed or oracle in backend)
+        # 'inverse': Both flip the benign gradient sign
+        "mode": ["random", "inverse"]
     }
 }
 
-# --- Focus Setup for Drowning Attack ---
-DROWNING_SETUP = {
+# --- Setup ---
+COLLUSION_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
     "dataset_name": "CIFAR100",
@@ -52,22 +48,22 @@ DROWNING_SETUP = {
     "dataset_modifier": use_cifar100_config,
 }
 
-# --- Fixed Attack Parameters (Number of Sybils) ---
-FIXED_ADV_RATE = 0.3  # 30% of sellers will be Sybils
+# --- Fixed Attack Parameters ---
+FIXED_ADV_RATE = 0.3  # 30% Sybils
 
 
-# === Scenario Generation Function (like Step 6) ===
-def generate_drowning_attack_scenarios() -> List[Scenario]:
-    """Generates base scenarios for the Targeted Drowning Attack."""
-    print("\n--- Generating Step 13: Targeted Drowning Attack Scenarios ---")
+# === Scenario Generation Function ===
+def generate_collusion_attack_scenarios() -> List[Scenario]:
+    """Generates scenarios for the Collusion Attack."""
+    print("\n--- Generating Step 14: Collusion Attack Scenarios ---")
     scenarios = []
-    modality = DROWNING_SETUP["modality_name"]
-    model_cfg_name = DROWNING_SETUP["model_config_name"]
-    current_defenses = ["fltrust"]  # Use the common list
+    modality = COLLUSION_SETUP["modality_name"]
+    model_cfg_name = COLLUSION_SETUP["model_config_name"]
+
+    # Testing FLTrust (Vulnerable) and MartFL (Target of Baseline Hijacking)
+    current_defenses = ["fltrust", "martfl", "fedavg", "skymask", "skymask_small"]
 
     for defense_name in current_defenses:
-        # 2. Get Tuned HPs (from Step 3)
-        # We use 'backdoor' tuning params as a neutral default
         tuned_defense_params = get_tuned_defense_params(
             defense_name=defense_name,
             model_config_name=model_cfg_name,
@@ -76,41 +72,46 @@ def generate_drowning_attack_scenarios() -> List[Scenario]:
         )
         print(f"-- Processing Defense: {defense_name}")
 
-        # 3. Create the setup modifier INSIDE the loop (good pattern)
         def create_setup_modifier(
                 current_defense_name=defense_name,
                 current_model_cfg_name=model_cfg_name,
                 current_tuned_params=tuned_defense_params
         ):
             def modifier(config: AppConfig) -> AppConfig:
-                # --- Apply Golden Training HPs (from Step 2.5) ---
-                golden_hp_key = f"{current_model_cfg_name}"  # Use simple key
+                # 1. Apply Golden HPs
+                golden_hp_key = f"{current_model_cfg_name}"
                 training_params = GOLDEN_TRAINING_PARAMS.get(golden_hp_key)
                 if training_params:
                     for key, value in training_params.items():
                         set_nested_attr(config, key, value)
-                else:
-                    print(f"  WARNING: No Golden HPs found for key '{golden_hp_key}'!")
 
-                # --- Apply Tuned Defense HPs (from Step 3) ---
+                # 2. Apply Defense HPs
                 if current_tuned_params:
                     for key, value in current_tuned_params.items():
                         set_nested_attr(config, key, value)
-                else:
-                    print(f"  WARNING: No Tuned HPs found for {current_defense_name}!")
 
-                # (Add SkyMask-specific logic from your Step 6)
                 if "skymask" in current_defense_name:
                     model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                     set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 
-                # --- Apply other fixed settings ---
+                # 3. Standard Setup
                 set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
                 set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
 
-                # --- (CRITICAL) Disable all other attacks ---
+                # 4. (CRITICAL) COLLUSION CONFIGURATION
+
+                # A. Disable standard poisoning (we operate on gradients)
                 config.adversary_seller_config.poisoning.type = PoisonType.NONE
-                config.buyer_attack_config.is_active = False
+
+                # B. ENABLE BUYER ATTACK (The Collusion Partner)
+                # For the collusion to work against FLTrust, the Buyer MUST be malicious
+                config.buyer_attack_config.is_active = True
+
+                # We set the buyer to match the seller's intended mode (e.g., random noise)
+                # The SybilCoordinator (backend) is responsible for synchronizing the exact vector.
+                config.buyer_attack_config.attack_type = "collusion"
+
+                # C. Disable valuation metrics to save time
                 config.valuation.run_influence = False
                 config.valuation.run_loo = False
                 config.valuation.run_kernelshap = False
@@ -119,40 +120,35 @@ def generate_drowning_attack_scenarios() -> List[Scenario]:
 
             return modifier
 
-        # 4. Create the modifier function
         setup_modifier_func = create_setup_modifier()
 
-        # Base Grid (fixed parts)
+        # Base Grid
         base_grid = {
-            DROWNING_SETUP["model_config_param_key"]: [model_cfg_name],
-            "experiment.dataset_name": [DROWNING_SETUP["dataset_name"]],
+            COLLUSION_SETUP["model_config_param_key"]: [model_cfg_name],
+            "experiment.dataset_name": [COLLUSION_SETUP["dataset_name"]],
             "n_samples": [NUM_SEEDS_PER_CONFIG],
             "experiment.adv_rate": [FIXED_ADV_RATE],
-            # This is a pure sabotage attack, model may not converge
             "experiment.use_early_stopping": [False],
             "experiment.global_rounds": [100],
         }
 
-        # Loop through Drowning strategies (just one in this case)
-        for strategy_name, strategy_params_sweep in DROWNING_TEST_CONFIG.items():
+        # Loop through Collusion strategy settings
+        for strategy_name, strategy_params_sweep in COLLUSION_TEST_CONFIG.items():
             print(f"  - Strategy: {strategy_name}")
-            scenario_name = f"step13_drowning_{strategy_name}_{defense_name}"
+            scenario_name = f"step14_collusion_{strategy_name}_{defense_name}"
 
             current_grid = base_grid.copy()
-            # Store "meta" info just like in Step 6
             current_grid["_strategy_name"] = [strategy_name]
             current_grid["_sweep_params"] = [strategy_params_sweep]
 
-            # 5. Build the modifier list
             current_modifiers = [
                 setup_modifier_func,
-                DROWNING_SETUP["dataset_modifier"],
-                # NO attack_modifier (like use_image_backdoor)
+                COLLUSION_SETUP["dataset_modifier"],
             ]
 
             scenario = Scenario(
                 name=scenario_name,
-                base_config_factory=DROWNING_SETUP["base_config_factory"],
+                base_config_factory=COLLUSION_SETUP["base_config_factory"],
                 modifiers=current_modifiers,
                 parameter_grid=current_grid
             )
@@ -161,19 +157,15 @@ def generate_drowning_attack_scenarios() -> List[Scenario]:
     return scenarios
 
 
-# In generate_step13_drowning_attack.py
-
-# In generate_step13_drowning_attack.py
-
 if __name__ == "__main__":
     base_output_dir = "./configs_generated_benchmark"
-    output_dir = Path(base_output_dir) / "step13_drowning_attack"
+    output_dir = Path(base_output_dir) / "step14_collusion_attack"
     generator = ExperimentGenerator(str(output_dir))
 
-    scenarios_to_generate = generate_drowning_attack_scenarios()
+    scenarios_to_generate = generate_collusion_attack_scenarios()
     all_generated_configs = 0
 
-    print("\n--- Generating Configuration Files for Step 13 ---")
+    print("\n--- Generating Configuration Files for Step 14 ---")
 
     for scenario in scenarios_to_generate:
         print(f"\nProcessing scenario base: {scenario.name}")
@@ -185,39 +177,29 @@ if __name__ == "__main__":
         base_hp_suffix = f"adv_{FIXED_ADV_RATE}"
 
         if sweep_params:
-            sweep_key, sweep_values = next(iter(sweep_params.items()))  # e.g., "attack_strength"
+            sweep_key, sweep_values = next(iter(sweep_params.items()))  # e.g., "mode"
 
-            # --- THIS IS THE CRITICAL FIX ---
-            #
-            # The path is not to a specific key *inside* the drowning config,
-            # but to the 'drowning' entry *itself* within the strategy_configs dict.
-            #
-            config_key_path = "adversary_seller_config.sybil.strategy_configs.drowning"
-            #
-            # --- END OF FIX ---
+            # Path to the strategy-specific config in SybilConfig
+            config_key_path = f"adversary_seller_config.sybil.strategy_configs.{strategy_name}"
 
             for sweep_value in sweep_values:
                 current_grid = static_grid.copy()
 
-                # --- FIX 2: Create the config dictionary ---
-                # This is the dictionary that your DrowningStrategy expects.
-                drowning_config_dict = {
-                    "victim_id": TARGET_VICTIM_ID,
-                    sweep_key: sweep_value  # e.g., "attack_strength": 1.0
+                # Configure the Collusion Strategy object
+                collusion_config_dict = {
+                    sweep_key: sweep_value,  # e.g., "mode": "random"
+                    "noise_scale": 1e-5      # Fixed small noise to avoid duplicates
                 }
 
-                # --- FIX 3: Set the entire dictionary object ---
-                # This sets adversary_seller_config.sybil.strategy_configs["drowning"]
-                # to the dictionary we just created.
-                current_grid[config_key_path] = [drowning_config_dict]
-                # --- END OF FIXES ---
+                # Inject config dictionary
+                current_grid[config_key_path] = [collusion_config_dict]
 
                 hp_suffix = f"{base_hp_suffix}_{sweep_key}_{sweep_value}"
 
                 temp_scenario = Scenario(
                     name=f"{scenario.name}/{hp_suffix}",
                     base_config_factory=scenario.base_config_factory,
-                    # This helper function you provided is now called correctly
+                    # Enables the Sybil Coordinator for 'collusion'
                     modifiers=scenario.modifiers + [use_sybil_attack_strategy(strategy=strategy_name)],
                     parameter_grid=current_grid
                 )
@@ -231,16 +213,11 @@ if __name__ == "__main__":
                 num_gen = generator.generate(modified_base_config, temp_scenario)
                 task_configs += num_gen
         else:
-            print(f"  SKIPPING: {strategy_name} has no sweep parameters defined.")
+            print(f"  SKIPPING: {strategy_name} has no sweep parameters.")
 
         print(f"-> Generated {task_configs} configs for {scenario.name} base")
         all_generated_configs += task_configs
 
-    print(f"\n✅ Step 13 (Targeted Drowning Attack) config generation complete!")
+    print(f"\n✅ Step 14 (Collusion Attack) config generation complete!")
     print(f"Total configurations generated: {all_generated_configs}")
     print(f"Configs saved to: {output_dir}")
-    print("\nNext steps:")
-    print(f"1. Run experiments: python run_parallel.py --configs_dir {output_dir}")
-    print(f"2. Analyze results: Plot the 'selection_rate' of seller '{TARGET_VICTIM_ID}'")
-    print(f"   over time (rounds) for MartFL vs. FLTrust.")
-    print(f"3. Expectation: Rate for MartFL -> 0, Rate for FLTrust -> stays high.")

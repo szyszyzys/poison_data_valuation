@@ -37,36 +37,45 @@ TUNING_GRIDS = {
         "aggregation.clip_norm": [5.0, 10.0, None],
     },
 
+    "skymask": {
+        "aggregation.skymask.mask_epochs": [20],
+        "aggregation.skymask.mask_lr": [0.01, 0,1, 0.5, 1e7],
+        "aggregation.skymask.mask_threshold": [0.5],
+        "aggregation.clip_norm": [10],
+        "aggregation.skymask.mask_clip": [1.0]
+    },
+    "skymask_small": {
+        "aggregation.skymask.mask_epochs": [20],
+        "aggregation.skymask.mask_lr": [0.01, 0,1, 0.5],
+        "aggregation.skymask.mask_threshold": [0.5],
+        "aggregation.clip_norm": [10],
+        "aggregation.skymask.mask_clip": [1.0]
+    },
 }
+
 ATTACK_TYPES_TO_TUNE = ["backdoor", "labelflip"]
 TUNING_TARGETS_STEP3 = [
-    # {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Texas100",
-    #  "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_texas100_baseline",
-    #  "dataset_modifier": lambda cfg: cfg,
-    #  "backdoor_attack_modifier": use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL),
-    #  "labelflip_attack_modifier": use_label_flipping_attack},
-    # {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Purchase100",
-    #  "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_purchase100_baseline",
-    #  "dataset_modifier": lambda cfg: cfg,
-    #  "backdoor_attack_modifier": use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL),
-    #  "labelflip_attack_modifier": use_label_flipping_attack},
+    {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Texas100",
+     "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_texas100_baseline",
+     "dataset_modifier": lambda cfg: cfg,
+     "backdoor_attack_modifier": use_tabular_backdoor_with_trigger(TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL),
+     "labelflip_attack_modifier": use_label_flipping_attack},
     {"modality_name": "tabular", "base_config_factory": get_base_tabular_config, "dataset_name": "Purchase100",
      "model_config_param_key": "experiment.tabular_model_config_name", "model_config_name": "mlp_purchase100_baseline",
      "dataset_modifier": lambda cfg: cfg,
      "backdoor_attack_modifier": use_tabular_backdoor_with_trigger(PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL)},
-
-    # {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR10",
-    #  "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar10_cnn",
-    #  "dataset_modifier": use_cifar10_config, "backdoor_attack_modifier": use_image_backdoor_attack,
-    #  "labelflip_attack_modifier": use_label_flipping_attack},
-    # {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR100",
-    #  "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar100_cnn",
-    #  "dataset_modifier": use_cifar100_config, "backdoor_attack_modifier": use_image_backdoor_attack,
-    #  "labelflip_attack_modifier": use_label_flipping_attack},
-    # {"modality_name": "text", "base_config_factory": get_base_text_config, "dataset_name": "TREC",
-    #  "model_config_param_key": "experiment.text_model_config_name", "model_config_name": "textcnn_trec_baseline",
-    #  "dataset_modifier": use_trec_config, "backdoor_attack_modifier": use_text_backdoor_attack,
-    #  "labelflip_attack_modifier": use_label_flipping_attack},
+    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR10",
+     "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar10_cnn",
+     "dataset_modifier": use_cifar10_config, "backdoor_attack_modifier": use_image_backdoor_attack,
+     "labelflip_attack_modifier": use_label_flipping_attack},
+    {"modality_name": "image", "base_config_factory": get_base_image_config, "dataset_name": "CIFAR100",
+     "model_config_param_key": "experiment.image_model_config_name", "model_config_name": "cifar100_cnn",
+     "dataset_modifier": use_cifar100_config, "backdoor_attack_modifier": use_image_backdoor_attack,
+     "labelflip_attack_modifier": use_label_flipping_attack},
+    {"modality_name": "text", "base_config_factory": get_base_text_config, "dataset_name": "TREC",
+     "model_config_param_key": "experiment.text_model_config_name", "model_config_name": "textcnn_trec_baseline",
+     "dataset_modifier": use_trec_config, "backdoor_attack_modifier": use_text_backdoor_attack,
+     "labelflip_attack_modifier": use_label_flipping_attack},
 ]
 
 
@@ -148,14 +157,14 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
                     "experiment.use_early_stopping": [True],
                     "experiment.patience": [10],
                 }
-                if defense_name == "skymask":
+                if "skymask" in defense_name:
                     model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                     base_grid["aggregation.skymask.sm_model_type"] = [model_struct]
 
                 full_parameter_grid = {**base_grid, **defense_grid_to_sweep}
 
                 scenarios.append(Scenario(
-                    name=f"step3_tune_{defense_name}_{attack_type}_{modality}_{target['dataset_name']}_{model_cfg_name}_new",
+                    name=f"step3_tune_{defense_name}_{attack_type}_{modality}_{target['dataset_name']}_{model_cfg_name}",
                     base_config_factory=target["base_config_factory"],
                     modifiers=[setup_modifier_func, target["dataset_modifier"]],
                     parameter_grid=full_parameter_grid
@@ -232,7 +241,7 @@ if __name__ == "__main__":
 
             # Set the unique save path for the *results*
             # This is the path your run_parallel.py will use
-            unique_save_path = f"./results_new/{scenario.name}/{hp_suffix}"
+            unique_save_path = f"./results/{scenario.name}/{hp_suffix}"
             current_grid["experiment.save_path"] = [unique_save_path]
 
             # Set the unique name for the *config file*

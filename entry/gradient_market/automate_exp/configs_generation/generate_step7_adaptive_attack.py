@@ -44,9 +44,8 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
     scenarios = []
     modality = ADAPTIVE_SETUP["modality_name"]
     model_cfg_name = ADAPTIVE_SETUP["model_config_name"]
-    current_defenses = ["fltrust"]
 
-    for defense_name in current_defenses:
+    for defense_name in IMAGE_DEFENSES:
         tuned_defense_params = get_tuned_defense_params(
             defense_name=defense_name,
             model_config_name=model_cfg_name,
@@ -71,7 +70,7 @@ def generate_adaptive_attack_scenarios() -> List[Scenario]:
                         set_nested_attr(config, key, value)
                 else:
                     print(f"  WARNING: No Golden HPs found for key '{golden_hp_key}'!")
-                if current_defense_name == "skymask":
+                if "skymask" in current_defense_name:
                     model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                     set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 
