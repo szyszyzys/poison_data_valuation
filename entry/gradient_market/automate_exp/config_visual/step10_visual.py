@@ -198,7 +198,7 @@ def plot_scalability_composite_row(df: pd.DataFrame, dataset: str, output_dir: P
     set_publication_style()
 
     # --- LAYOUT: Low Height (2.8) ---
-    fig, axes = plt.subplots(1, 4, figsize=(28, 2.8), constrained_layout=True)
+    fig, axes = plt.subplots(1, 4, figsize=(28, 4.8), constrained_layout=True)
 
     # Metric Configurations
     # (metric_col, title_text, y_label)
