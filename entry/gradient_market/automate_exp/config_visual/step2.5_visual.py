@@ -359,7 +359,7 @@ def save_threshold_debug_csv(df: pd.DataFrame, output_dir: Path, target_dataset:
 
 
 def plot_composite_row(df: pd.DataFrame, output_dir: Path):
-    print("\n--- Plotting Composite Row (Compact Legend) ---")
+    print("\n--- Plotting Composite Row (Legend: Top Right, 2 Rows) ---")
 
     sns.set_theme(style="whitegrid")
     sns.set_context("talk", font_scale=1.1)
@@ -378,7 +378,6 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
 
         labels = get_formatted_labels(current_order)
 
-        # Reduced height slightly since we don't need extra bottom space for legend
         fig, axes = plt.subplots(1, 4, figsize=(26, 6), constrained_layout=True)
 
         # --- Data Prep ---
@@ -426,11 +425,10 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
         axes[3].set_title(f"{markers[3]} Avg. Selection Rates", fontweight='bold', fontsize=24, pad=15)
         axes[3].set_ylim(0, 105)
 
-        # --- LEGEND INSIDE FIGURE ---
-        # loc='upper center': Top middle of the plot box
-        # ncol=2: Side-by-side labels
-        # framealpha=0.9: Semi-transparent white background so bars don't make text unreadable
-        axes[3].legend(loc='upper center', ncol=2, frameon=True, framealpha=0.9, fontsize=16)
+        # --- LEGEND: Top Right, 2 Rows ---
+        # loc='upper right': Puts it in the top right corner
+        # ncol=1: Stacks items vertically (2 rows for 2 items)
+        axes[3].legend(loc='upper right', ncol=1, frameon=True, framealpha=0.9, fontsize=16)
 
         # --- Common Styling ---
         for ax in axes:
