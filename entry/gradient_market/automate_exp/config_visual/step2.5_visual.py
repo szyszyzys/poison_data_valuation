@@ -363,15 +363,16 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
     sns.set_theme(style="whitegrid")
     sns.set_context("paper", font_scale=1.4)
 
-    # 1. Iterate over every dataset found in the DataFrame
     unique_datasets = df['dataset'].unique()
+
+    # Define your subplot labels here
+    subplot_markers = ['(a)', '(b)', '(c)', '(d)']
 
     for target_dataset in unique_datasets:
         print(f"   > Processing composite row for: {target_dataset}")
 
         subset = df[df['dataset'] == target_dataset]
 
-        # Check which defenses exist for THIS specific dataset
         current_order = [d for d in DEFENSE_ORDER if d in subset['defense'].unique()]
         if not current_order:
             print(f"     No matching defenses found for {target_dataset}, skipping.")
@@ -379,7 +380,6 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
 
         labels = get_formatted_labels(current_order)
 
-        # Create the figure
         fig, axes = plt.subplots(1, 4, figsize=(24, 6), constrained_layout=True)
 
         # --- Data Prep ---
@@ -387,7 +387,7 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
         d1 = subset.groupby('defense')['platform_usable'].mean().reindex(current_order).reset_index()
         d1['Value'] = d1['platform_usable'] * 100
 
-        # 2. Accuracy (Usable or Max)
+        # 2. Accuracy
         def calc_best_acc_comp(g):
             u = g[g['platform_usable'] == True]
             return u['acc'].mean() if not u.empty else g['acc'].max()
@@ -395,12 +395,12 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
         d2 = subset.groupby('defense').apply(calc_best_acc_comp).reindex(current_order).reset_index(name='acc')
         d2['Value'] = d2['acc'] * 100
 
-        # 3. Cost (Rounds)
+        # 3. Cost
         d3 = subset[subset['platform_usable'] == True].groupby('defense')['rounds'].mean().reindex(
             current_order).reset_index()
         d3['Value'] = d3['rounds']
 
-        # 4. Selection Rates
+        # 4. Selection
         d4 = subset.groupby('defense')[['benign_selection_rate', 'adv_selection_rate']].mean().reindex(
             current_order).reset_index()
         d4 = d4.melt(id_vars='defense', var_name='Type', value_name='Rate')
@@ -408,55 +408,48 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
         d4['Type'] = d4['Type'].replace({'benign_selection_rate': 'Benign', 'adv_selection_rate': 'Adversary'})
 
         # --- Plotting ---
-
-        # Plot 1: Usability
-        sns.barplot(ax=axes[0], data=d1, x='defense', y='Value', order=current_order, palette='viridis',
-                    edgecolor='black')
-        axes[0].set_title(f"Usability Rate (%) - {target_dataset}", fontweight='bold')
+        sns.barplot(ax=axes[0], data=d1, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black')
+        axes[0].set_title(f"Usability Rate (%)", fontweight='bold')
         axes[0].set_ylim(0, 105)
 
-        # Plot 2: Accuracy
-        sns.barplot(ax=axes[1], data=d2, x='defense', y='Value', order=current_order, palette='viridis',
-                    edgecolor='black')
+        sns.barplot(ax=axes[1], data=d2, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black')
         axes[1].set_title("Avg. Usable Acc (%)", fontweight='bold')
         axes[1].set_ylim(0, 105)
-        # Hatching for zero usability
         for i, defense in enumerate(current_order):
             if d1[d1['defense'] == defense]['Value'].values[0] == 0:
                 axes[1].patches[i].set_hatch('///')
                 axes[1].patches[i].set_edgecolor('black')
 
-        # Plot 3: Cost
-        sns.barplot(ax=axes[2], data=d3, x='defense', y='Value', order=current_order, palette='viridis',
-                    edgecolor='black')
+        sns.barplot(ax=axes[2], data=d3, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black')
         axes[2].set_title("Avg. Cost (Rounds)", fontweight='bold')
 
-        # Plot 4: Selection
         sns.barplot(ax=axes[3], data=d4, x='defense', y='Rate', hue='Type', order=current_order,
                     palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor='black')
         axes[3].set_title("Avg. Selection Rates", fontweight='bold')
         axes[3].set_ylim(0, 105)
         axes[3].legend(loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False)
 
-        # Common styling
-        for ax in axes:
+        # --- Common Styling & Labels (abcd) ---
+        for i, ax in enumerate(axes):
             ax.set_xticklabels(labels, fontsize=12, fontweight='bold')
-            ax.set_xlabel("")
+
+            # SET THE SUBPLOT LABEL HERE (a, b, c, d)
+            # We use the 'xlabel' position to hold the (a), (b) tag
+            ax.set_xlabel(subplot_markers[i], fontsize=20, fontweight='bold', labelpad=15)
+
             ax.grid(axis='y', alpha=0.5)
+
+            # Annotations on bars
             for p in ax.patches:
                 h = p.get_height()
                 if not np.isnan(h) and h > 0:
                     ax.annotate(f'{h:.0f}', (p.get_x() + p.get_width() / 2., h), ha='center', va='bottom', fontsize=11,
                                 fontweight='bold', xytext=(0, 2), textcoords='offset points')
 
-        # Save and Close
         save_path = output_dir / f"plot_row_combined_{target_dataset}.pdf"
         plt.savefig(save_path, bbox_inches='tight', format='pdf', dpi=300)
         print(f"     Saved composite row to: {save_path}")
-
-        # Close figure to free memory for next iteration
         plt.close(fig)
-
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
