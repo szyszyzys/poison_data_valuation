@@ -359,13 +359,13 @@ def save_threshold_debug_csv(df: pd.DataFrame, output_dir: Path, target_dataset:
 
 
 def plot_composite_row(df: pd.DataFrame, output_dir: Path):
-    print("\n--- Plotting Composite Row ---")
+    print("\n--- Plotting Composite Row (High Visibility) ---")
+
+    # 1. Base Style: "talk" context makes everything larger by default
     sns.set_theme(style="whitegrid")
-    sns.set_context("paper", font_scale=1.4)
+    sns.set_context("talk", font_scale=1.1)
 
     unique_datasets = df['dataset'].unique()
-
-    # Define markers
     markers = ['(a)', '(b)', '(c)', '(d)']
 
     for target_dataset in unique_datasets:
@@ -375,19 +375,17 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
 
         current_order = [d for d in DEFENSE_ORDER if d in subset['defense'].unique()]
         if not current_order:
-            print(f"     No matching defenses found for {target_dataset}, skipping.")
             continue
 
         labels = get_formatted_labels(current_order)
 
-        fig, axes = plt.subplots(1, 4, figsize=(24, 6), constrained_layout=True)
+        # Increased figure height slightly to accommodate the legend at the bottom
+        fig, axes = plt.subplots(1, 4, figsize=(26, 7), constrained_layout=True)
 
-        # --- Data Prep ---
-        # 1. Usability Rate
+        # --- Data Prep (Same as before) ---
         d1 = subset.groupby('defense')['platform_usable'].mean().reindex(current_order).reset_index()
         d1['Value'] = d1['platform_usable'] * 100
 
-        # 2. Accuracy
         def calc_best_acc_comp(g):
             u = g[g['platform_usable'] == True]
             return u['acc'].mean() if not u.empty else g['acc'].max()
@@ -395,62 +393,66 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
         d2 = subset.groupby('defense').apply(calc_best_acc_comp).reindex(current_order).reset_index(name='acc')
         d2['Value'] = d2['acc'] * 100
 
-        # 3. Cost
-        d3 = subset[subset['platform_usable'] == True].groupby('defense')['rounds'].mean().reindex(
-            current_order).reset_index()
+        d3 = subset[subset['platform_usable'] == True].groupby('defense')['rounds'].mean().reindex(current_order).reset_index()
         d3['Value'] = d3['rounds']
 
-        # 4. Selection
-        d4 = subset.groupby('defense')[['benign_selection_rate', 'adv_selection_rate']].mean().reindex(
-            current_order).reset_index()
+        d4 = subset.groupby('defense')[['benign_selection_rate', 'adv_selection_rate']].mean().reindex(current_order).reset_index()
         d4 = d4.melt(id_vars='defense', var_name='Type', value_name='Rate')
         d4['Rate'] *= 100
         d4['Type'] = d4['Type'].replace({'benign_selection_rate': 'Benign', 'adv_selection_rate': 'Adversary'})
 
-        # --- Plotting with (a) (b) (c) (d) in Titles ---
+        # --- Plotting ---
 
-        # Plot 1: Usability
-        sns.barplot(ax=axes[0], data=d1, x='defense', y='Value', order=current_order, palette='viridis',
-                    edgecolor='black')
-        axes[0].set_title(f"{markers[0]} Usability Rate (%)", fontweight='bold', fontsize=20)
+        # (a) Usability
+        sns.barplot(ax=axes[0], data=d1, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black', linewidth=2)
+        axes[0].set_title(f"{markers[0]} Usability Rate (%)", fontweight='bold', fontsize=24, pad=15)
         axes[0].set_ylim(0, 105)
 
-        # Plot 2: Accuracy
-        sns.barplot(ax=axes[1], data=d2, x='defense', y='Value', order=current_order, palette='viridis',
-                    edgecolor='black')
-        axes[1].set_title(f"{markers[1]} Avg. Usable Acc (%)", fontweight='bold', fontsize=20)
+        # (b) Accuracy
+        sns.barplot(ax=axes[1], data=d2, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black', linewidth=2)
+        axes[1].set_title(f"{markers[1]} Avg. Usable Acc (%)", fontweight='bold', fontsize=24, pad=15)
         axes[1].set_ylim(0, 105)
-
-        # Hatching for zero usability
         for i, defense in enumerate(current_order):
             if d1[d1['defense'] == defense]['Value'].values[0] == 0:
                 axes[1].patches[i].set_hatch('///')
                 axes[1].patches[i].set_edgecolor('black')
 
-        # Plot 3: Cost
-        sns.barplot(ax=axes[2], data=d3, x='defense', y='Value', order=current_order, palette='viridis',
-                    edgecolor='black')
-        axes[2].set_title(f"{markers[2]} Avg. Cost (Rounds)", fontweight='bold', fontsize=20)
+        # (c) Cost
+        sns.barplot(ax=axes[2], data=d3, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black', linewidth=2)
+        axes[2].set_title(f"{markers[2]} Avg. Cost (Rounds)", fontweight='bold', fontsize=24, pad=15)
 
-        # Plot 4: Selection
+        # (d) Selection - Legend Moved to Bottom
         sns.barplot(ax=axes[3], data=d4, x='defense', y='Rate', hue='Type', order=current_order,
-                    palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor='black')
-        axes[3].set_title(f"{markers[3]} Avg. Selection Rates", fontweight='bold', fontsize=20)
+                    palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor='black', linewidth=2)
+        axes[3].set_title(f"{markers[3]} Avg. Selection Rates", fontweight='bold', fontsize=24, pad=15)
         axes[3].set_ylim(0, 105)
-        axes[3].legend(loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False)
 
-        # --- Common Styling ---
+        # LEGEND FIX: Place below the plot to avoid title overlap
+        axes[3].legend(loc='upper center', bbox_to_anchor=(0.5, -0.25),
+                       ncol=2, frameon=False, fontsize=18)
+
+        # --- Common Styling (Big & Bold) ---
         for ax in axes:
-            ax.set_xticklabels(labels, fontsize=12, fontweight='bold')
-            ax.set_xlabel("")  # Clear X label (no need for (a) here anymore)
-            ax.grid(axis='y', alpha=0.5)
+            # X-Axis Labels
+            ax.set_xticklabels(labels, fontsize=18, fontweight='bold')
+            ax.set_xlabel("")
 
-            # Value Annotations
+            # Y-Axis Ticks
+            ax.tick_params(axis='y', labelsize=16)
+            for label in ax.get_yticklabels():
+                label.set_fontweight('bold')
+
+            ax.grid(axis='y', alpha=0.5, linewidth=1.5)
+
+            # Bar Annotations (Big numbers)
             for p in ax.patches:
                 h = p.get_height()
                 if not np.isnan(h) and h > 0:
-                    ax.annotate(f'{h:.0f}', (p.get_x() + p.get_width() / 2., h), ha='center', va='bottom', fontsize=11,
-                                fontweight='bold', xytext=(0, 2), textcoords='offset points')
+                    ax.annotate(f'{h:.0f}',
+                                (p.get_x() + p.get_width() / 2., h),
+                                ha='center', va='bottom',
+                                fontsize=16, fontweight='bold', # Bigger numbers
+                                xytext=(0, 4), textcoords='offset points')
 
         save_path = output_dir / f"plot_row_combined_{target_dataset}.pdf"
         plt.savefig(save_path, bbox_inches='tight', format='pdf', dpi=300)
