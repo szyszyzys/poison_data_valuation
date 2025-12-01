@@ -365,8 +365,8 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
 
     unique_datasets = df['dataset'].unique()
 
-    # Define your subplot labels here
-    subplot_markers = ['(a)', '(b)', '(c)', '(d)']
+    # Define markers
+    markers = ['(a)', '(b)', '(c)', '(d)']
 
     for target_dataset in unique_datasets:
         print(f"   > Processing composite row for: {target_dataset}")
@@ -407,39 +407,45 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
         d4['Rate'] *= 100
         d4['Type'] = d4['Type'].replace({'benign_selection_rate': 'Benign', 'adv_selection_rate': 'Adversary'})
 
-        # --- Plotting ---
-        sns.barplot(ax=axes[0], data=d1, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black')
-        axes[0].set_title(f"Usability Rate (%)", fontweight='bold')
+        # --- Plotting with (a) (b) (c) (d) in Titles ---
+
+        # Plot 1: Usability
+        sns.barplot(ax=axes[0], data=d1, x='defense', y='Value', order=current_order, palette='viridis',
+                    edgecolor='black')
+        axes[0].set_title(f"{markers[0]} Usability Rate (%)", fontweight='bold', fontsize=20)
         axes[0].set_ylim(0, 105)
 
-        sns.barplot(ax=axes[1], data=d2, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black')
-        axes[1].set_title("Avg. Usable Acc (%)", fontweight='bold')
+        # Plot 2: Accuracy
+        sns.barplot(ax=axes[1], data=d2, x='defense', y='Value', order=current_order, palette='viridis',
+                    edgecolor='black')
+        axes[1].set_title(f"{markers[1]} Avg. Usable Acc (%)", fontweight='bold', fontsize=20)
         axes[1].set_ylim(0, 105)
+
+        # Hatching for zero usability
         for i, defense in enumerate(current_order):
             if d1[d1['defense'] == defense]['Value'].values[0] == 0:
                 axes[1].patches[i].set_hatch('///')
                 axes[1].patches[i].set_edgecolor('black')
 
-        sns.barplot(ax=axes[2], data=d3, x='defense', y='Value', order=current_order, palette='viridis', edgecolor='black')
-        axes[2].set_title("Avg. Cost (Rounds)", fontweight='bold')
+        # Plot 3: Cost
+        sns.barplot(ax=axes[2], data=d3, x='defense', y='Value', order=current_order, palette='viridis',
+                    edgecolor='black')
+        axes[2].set_title(f"{markers[2]} Avg. Cost (Rounds)", fontweight='bold', fontsize=20)
 
+        # Plot 4: Selection
         sns.barplot(ax=axes[3], data=d4, x='defense', y='Rate', hue='Type', order=current_order,
                     palette={'Benign': '#2ecc71', 'Adversary': '#e74c3c'}, edgecolor='black')
-        axes[3].set_title("Avg. Selection Rates", fontweight='bold')
+        axes[3].set_title(f"{markers[3]} Avg. Selection Rates", fontweight='bold', fontsize=20)
         axes[3].set_ylim(0, 105)
         axes[3].legend(loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False)
 
-        # --- Common Styling & Labels (abcd) ---
-        for i, ax in enumerate(axes):
+        # --- Common Styling ---
+        for ax in axes:
             ax.set_xticklabels(labels, fontsize=12, fontweight='bold')
-
-            # SET THE SUBPLOT LABEL HERE (a, b, c, d)
-            # We use the 'xlabel' position to hold the (a), (b) tag
-            ax.set_xlabel(subplot_markers[i], fontsize=20, fontweight='bold', labelpad=15)
-
+            ax.set_xlabel("")  # Clear X label (no need for (a) here anymore)
             ax.grid(axis='y', alpha=0.5)
 
-            # Annotations on bars
+            # Value Annotations
             for p in ax.patches:
                 h = p.get_height()
                 if not np.isnan(h) and h > 0:
@@ -450,6 +456,7 @@ def plot_composite_row(df: pd.DataFrame, output_dir: Path):
         plt.savefig(save_path, bbox_inches='tight', format='pdf', dpi=300)
         print(f"     Saved composite row to: {save_path}")
         plt.close(fig)
+
 
 def main():
     output_dir = Path(FIGURE_OUTPUT_DIR)
@@ -469,5 +476,7 @@ def main():
         # Generate Debug CSVs for ALL datasets found
         # for ds in df['dataset'].unique():
         #     save_threshold_debug_csv(df, output_dir, target_dataset=ds)
+
+
 if __name__ == "__main__":
     main()
