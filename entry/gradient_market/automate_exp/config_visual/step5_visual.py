@@ -14,7 +14,7 @@ BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step5_figures"
 
 
-# --- Styling Helper (UPDATED FOR BOLDNESS) ---
+# --- Styling Helper (UPDATED FOR COMPACTNESS & BOLDNESS) ---
 def set_plot_style():
     """Sets a consistent professional style for all plots with BOLD fonts."""
     # Use 'talk' context for larger default sizes
@@ -22,25 +22,25 @@ def set_plot_style():
     sns.set_context("talk", font_scale=1.1)
 
     # Force global bold settings
-    plt.rcParams['font.family'] = 'sans-serif'  # Sans-serif usually looks cleaner bold
+    plt.rcParams['font.family'] = 'sans-serif'
     plt.rcParams['font.weight'] = 'bold'
     plt.rcParams['axes.labelweight'] = 'bold'
     plt.rcParams['axes.titleweight'] = 'bold'
-    plt.rcParams['axes.titlepad'] = 15
+
+    # REDUCED PADDING: Use less space between title and plot (was 15)
+    plt.rcParams['axes.titlepad'] = 8
 
     plt.rcParams['axes.linewidth'] = 2.0
     plt.rcParams['axes.edgecolor'] = '#333333'
-    plt.rcParams['lines.linewidth'] = 3.5  # Thicker lines to match bold text
+    plt.rcParams['lines.linewidth'] = 3.5
     plt.rcParams['lines.markersize'] = 10
 
 
 # --- Parsing Functions (Unchanged) ---
-
 def parse_hp_suffix(hp_folder_name: str) -> Dict[str, Any]:
     hps = {}
     pattern = r'adv_([0-9\.]+)_poison_([0-9\.]+)'
     match = re.search(pattern, hp_folder_name)
-
     if match:
         hps['adv_rate'] = float(match.group(1))
         hps['poison_rate'] = float(match.group(2))
@@ -51,7 +51,6 @@ def parse_scenario_name(scenario_name: str) -> Optional[Dict[str, str]]:
     try:
         pattern = r'step5_atk_sens_(adv|poison)_(fedavg|fltrust|martfl|skymask)_(backdoor|labelflip)_(image|text|tabular)$'
         match = re.search(pattern, scenario_name)
-
         if match:
             modality = match.group(4)
             if modality == 'image':
@@ -91,20 +90,16 @@ def load_run_data(metrics_file: Path) -> Dict[str, Any]:
         if report_file.exists():
             with open(report_file, 'r') as f:
                 report = json.load(f)
-
             sellers = report.get('seller_summaries', {}).values()
             adv_sellers = [s for s in sellers if s.get('type') == 'adversary']
             ben_sellers = [s for s in sellers if s.get('type') == 'benign']
-
             run_data['adv_selection_rate'] = np.mean([s['selection_rate'] for s in adv_sellers]) if adv_sellers else 0.0
             run_data['benign_selection_rate'] = np.mean(
                 [s['selection_rate'] for s in ben_sellers]) if ben_sellers else 0.0
         else:
             run_data['adv_selection_rate'] = 0.0
             run_data['benign_selection_rate'] = 0.0
-
         return run_data
-
     except Exception as e:
         print(f"Error loading data from {metrics_file.parent}: {e}")
         return {}
@@ -123,24 +118,17 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
     for scenario_path in scenario_folders:
         scenario_name = scenario_path.name
         run_scenario = parse_scenario_name(scenario_name)
-
-        if run_scenario is None:
-            continue
+        if run_scenario is None: continue
 
         files_in_scenario = list(scenario_path.rglob("final_metrics.json"))
-
         for metrics_file in files_in_scenario:
             try:
                 relative_parts = metrics_file.parent.relative_to(scenario_path).parts
                 if not relative_parts: continue
-
                 hp_folder_name = relative_parts[0]
                 run_hps = parse_hp_suffix(hp_folder_name)
-
                 if not run_hps: continue
-
                 run_metrics = load_run_data(metrics_file)
-
                 if run_metrics:
                     all_runs.append({
                         **run_scenario,
@@ -155,22 +143,19 @@ def collect_all_results(base_dir: str) -> pd.DataFrame:
         print("Error: No 'final_metrics.json' files were successfully processed.")
         return pd.DataFrame()
 
-    df = pd.DataFrame(all_runs)
-    return df
+    return pd.DataFrame(all_runs)
 
 
-# --- Plotting Function (UPDATED FOR LEGEND POSITION & FONT) ---
+# --- Plotting Function (COMPACT HEIGHT) ---
 
 def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, output_dir: Path):
     """
-    Generates a SINGLE wide figure (1x4).
-    Legend is placed at the TOP.
-    Fonts are BOLD.
+    Generates a COMPACT wide figure (1x4).
+    Height reduced to 3.8 to save space.
     """
     print(f"\n--- Plotting Composite Sensitivity Row: {dataset} ({attack}) ---")
 
     subset = df[(df['dataset'] == dataset) & (df['attack'] == attack)].copy()
-
     if subset.empty:
         print("  -> No data found for this combination.")
         return
@@ -189,8 +174,10 @@ def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, 
 
     set_plot_style()
 
-    # Initialize Figure
-    fig, axes = plt.subplots(1, 4, figsize=(28, 5.5), constrained_layout=True)
+    # --- SPACE SAVING ADJUSTMENT ---
+    # figsize changed from (28, 5.5) -> (28, 3.8)
+    # This reduces the height significantly.
+    fig, axes = plt.subplots(1, 4, figsize=(28, 3.8), constrained_layout=True)
 
     defense_order = sorted(subset['defense'].unique())
 
@@ -199,7 +186,6 @@ def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, 
         ax.set_title(title, fontweight='bold', fontsize=20)
         ax.set_xlabel(xlabel, fontweight='bold', fontsize=18)
         ax.set_ylabel(ylabel, fontweight='bold', fontsize=18)
-        # Bold Tick Labels
         for label in ax.get_xticklabels() + ax.get_yticklabels():
             label.set_fontweight('bold')
             label.set_fontsize(14)
@@ -250,26 +236,25 @@ def plot_sensitivity_composite_row(df: pd.DataFrame, dataset: str, attack: str, 
         else:
             handles, labels = [], []
 
-    # --- LEGEND ON TOP ---
+    # --- LEGEND ---
     if handles:
-        # Clean labels
         labels = [l.capitalize().replace("Fedavg", "FedAvg").replace("Fltrust", "FLTrust").replace("Skymask",
                                                                                                    "SkyMask").replace(
             "Martfl", "MARTFL") for l in labels]
 
-        # loc='lower center' + bbox_to_anchor=(0.5, 1.05) puts the legend JUST ABOVE the figures
+        # bbox_to_anchor reduced to 1.0 (was 1.02) to pull it closer
         fig.legend(handles, labels,
                    loc='lower center',
-                   bbox_to_anchor=(0.5, 1.02),  # >1.0 moves it above the axes
+                   bbox_to_anchor=(0.5, 1.0),
                    ncol=len(defense_order),
                    frameon=False,
-                   fontsize=18)  # Larger font for legend
+                   fontsize=18)
 
     # Save
     safe_dataset = re.sub(r'[^\w]', '', dataset)
     filename = output_dir / f"plot_sensitivity_composite_{safe_dataset}_{attack}.pdf"
 
-    # Use bbox_inches='tight' to ensure the top legend isn't cut off
+    # bbox_inches='tight' will crop exactly around the new shorter figure
     plt.savefig(filename, bbox_inches='tight', format='pdf', dpi=300)
     print(f"  -> Saved plot to: {filename}")
     plt.close('all')
@@ -299,7 +284,6 @@ def main():
     for dataset, attack in combinations:
         if dataset == 'unknown': continue
         if pd.isna(attack): continue
-
         plot_sensitivity_composite_row(df, dataset, attack, output_dir)
 
     print("\nAnalysis complete.")
