@@ -1,16 +1,15 @@
 import copy
 import json
 import logging
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from dataclasses import asdict
 from dataclasses import field, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 from typing import Callable, Tuple
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
@@ -308,9 +307,6 @@ class ConfigurableFlexibleCNN(nn.Module):
         return x
 
 
-import torch.nn as nn
-import torch.nn.functional as F
-
 class ResidualBlock(nn.Module):
     """A standard ResNet residual block, updated for FL."""
 
@@ -356,6 +352,8 @@ class ResidualBlock(nn.Module):
         out += self.shortcut(x)
         out = F.relu(out)
         return out
+
+
 class ConfigurableResNet(nn.Module):
     """A configurable ResNet-18 model, updated for FL."""
 
@@ -372,7 +370,7 @@ class ConfigurableResNet(nn.Module):
         elif getattr(self.config, 'use_group_norm', False):
             num_groups = getattr(self.config, 'num_groups', 32)
             if 64 % num_groups != 0:
-                 num_groups = next(g for g in range(num_groups, 0, -1) if 64 % g == 0)
+                num_groups = next(g for g in range(num_groups, 0, -1) if 64 % g == 0)
             self.bn1 = nn.GroupNorm(num_groups, 64)
         else:
             self.bn1 = nn.Identity()
@@ -406,7 +404,7 @@ class ConfigurableResNet(nn.Module):
                 s,
                 use_batch_norm=use_bn,  # <-- PASS configs
                 use_group_norm=use_gn,  # <-- PASS configs
-                num_groups=num_g      # <-- PASS configs
+                num_groups=num_g  # <-- PASS configs
             ))
             self.in_channels = out_channels
         return nn.Sequential(*layers)
@@ -422,6 +420,8 @@ class ConfigurableResNet(nn.Module):
         out = self.dropout(out)
         out = self.linear(out)
         return out
+
+
 class ImageModelFactory:
     """Factory class for creating and managing configurable models."""
 

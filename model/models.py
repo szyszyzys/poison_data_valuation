@@ -9,14 +9,13 @@ This script provides:
   - A flexible local training function that accepts different optimizers and loss functions.
 """
 import copy
-from typing import List, Type
-
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from typing import List, Type
 
 
 # ======================================================================================

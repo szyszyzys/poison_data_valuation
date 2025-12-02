@@ -9,8 +9,8 @@ from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 
-import daved.src.frank_wolfe as frank_wolfe
-import daved.src.utils as utils
+import marketplace.market_mechanism.discovery.daved.src.frank_wolfe as frank_wolfe
+import marketplace.market_mechanism.discovery.daved.src.utils as utils
 
 
 def main(args):

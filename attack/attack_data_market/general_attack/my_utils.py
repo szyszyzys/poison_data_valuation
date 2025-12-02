@@ -17,7 +17,7 @@ from torchvision.models import resnet18
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize, Lambda
 from tqdm import tqdm
 
-from daved.src.utils import get_gaussian_data, get_mimic_data, get_fitzpatrick_data, get_bone_data, get_drug_data, \
+from marketplace.market_mechanism.discovery.daved.src import get_gaussian_data, get_mimic_data, get_fitzpatrick_data, get_bone_data, get_drug_data, \
     split_data, get_cost_function
 
 

@@ -4,18 +4,17 @@ import argparse
 import copy
 import json
 import logging
+import numpy as np
 import os
+import pandas as pd
 import shutil
 import tempfile
 import time
-from pathlib import Path
-from typing import List, Dict
-
-import numpy as np  # <-- Make sure numpy is imported
-import pandas as pd
 import torch
 import torch.nn as nn
+from pathlib import Path
 from torch.utils.data import DataLoader, random_split
+from typing import List, Dict
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
 from common.datasets.tabular_data_processor import get_tabular_dataset
@@ -35,13 +34,10 @@ from model.model_configs import get_image_model_config
 from model.tabular_model import TabularModelFactory, TabularConfigManager
 
 
-# (Import all your other required functions: get_text_dataset, get_image_dataset, etc.)
-
 def setup_data_and_model(cfg: AppConfig, device):
     """Loads dataset and creates a model factory from the AppConfig."""
     dataset_name = cfg.experiment.dataset_name
     dataset_type = cfg.experiment.dataset_type
-    collate_fn = None
 
     if dataset_type == "text":
         processed_data = get_text_dataset(cfg)
@@ -53,13 +49,10 @@ def setup_data_and_model(cfg: AppConfig, device):
         collate_fn = processed_data.collate_fn
         pad_idx = processed_data.pad_idx
 
-        # --- FIX 3: Added robust check ---
         if not seller_loaders:
             logging.error("get_text_dataset returned empty seller_loaders!")
             raise ValueError("get_text_dataset returned no sellers. Check data partitioning.")
 
-        # The factory now correctly passes the device
-        # Create base factory
         base_factory = TextModelFactory.create_factory(
             dataset_name=dataset_name,
             num_classes=num_classes,
@@ -132,7 +125,6 @@ def setup_data_and_model(cfg: AppConfig, device):
     elif dataset_type == "tabular":
         buyer_loader, seller_loaders, test_loader, num_classes, input_dim, feature_to_idx = get_tabular_dataset(cfg)
 
-        # --- FIX 3: Added robust check ---
         if not seller_loaders:
             logging.error("get_tabular_dataset returned empty seller_loaders!")
             raise ValueError("get_tabular_dataset returned no sellers. Check data partitioning.")
@@ -140,7 +132,6 @@ def setup_data_and_model(cfg: AppConfig, device):
         config_manager = TabularConfigManager(config_dir=cfg.data.tabular.model_config_dir)
         tabular_model_config = config_manager.get_config_by_name(cfg.experiment.tabular_model_config_name)
 
-        # --- FIX 1: Pass device into the factory ---
         base_factory = TabularModelFactory.create_factory(
             model_name=tabular_model_config.model_name,
             input_dim=input_dim,
@@ -239,76 +230,6 @@ def generate_marketplace_report(save_path: Path, marketplace, total_rounds):
         json.dump(report, f, indent=2)
 
     logging.info(f"Marketplace report saved to {save_path / 'marketplace_report.json'}")
-
-
-def save_marketplace_analysis_data(save_path: Path, round_records: List[Dict]):
-    """
-    Save marketplace data in analysis-ready format.
-    Creates multiple CSVs for different aspects of analysis.
-    """
-
-    # 1. Round-level aggregate metrics
-    round_df = pd.DataFrame([{
-        'round': r['round'],
-        'timestamp': r['timestamp'],
-        'duration_sec': r['duration_sec'],
-        'selection_rate': r.get('selection_rate', 0),
-        'outlier_rate': r.get('outlier_rate', 0),
-        'avg_gradient_norm': r.get('avg_gradient_norm', 0),
-        'adversary_detection_rate': r.get('adversary_detection_rate', 0),
-        'false_positive_rate': r.get('false_positive_rate', 0)
-    } for r in round_records])
-    round_df.to_csv(save_path / "round_aggregates.csv", index=False)
-
-    # 2. Per-seller per-round metrics
-    seller_round_records = []
-    for r in round_records:
-        round_num = r['round']
-        for key, value in r.items():
-            if key.startswith('seller_') and '_' in key[7:]:
-                parts = key.split('_', 2)
-                if len(parts) == 3:
-                    _, sid, metric = parts
-                    seller_round_records.append({
-                        'round': round_num,
-                        'seller_id': sid,
-                        'metric': metric,
-                        'value': value
-                    })
-
-    if seller_round_records:
-        seller_df = pd.DataFrame(seller_round_records)
-        # Pivot for easier analysis
-        seller_pivot = seller_df.pivot_table(
-            index=['round', 'seller_id'],
-            columns='metric',
-            values='value',
-            aggfunc='first'
-        ).reset_index()
-        seller_pivot.to_csv(save_path / "seller_round_metrics.csv", index=False)
-
-    # 3. Selection history
-    selection_records = []
-    for r in round_records:
-        for sid in r.get('selected_seller_ids', []):
-            selection_records.append({
-                'round': r['round'],
-                'seller_id': sid,
-                'selected': True,
-                'outlier': False
-            })
-        for sid in r.get('outlier_seller_ids', []):
-            selection_records.append({
-                'round': r['round'],
-                'seller_id': sid,
-                'selected': False,
-                'outlier': True
-            })
-
-    if selection_records:
-        pd.DataFrame(selection_records).to_csv(
-            save_path / "selection_history.csv", index=False
-        )
 
 
 def initialize_sellers(
@@ -1086,10 +1007,6 @@ def run_attack(cfg: AppConfig):
         _mark_experiment_failed(save_path, str(e))
         raise
 
-
-# ==============================================================================
-# Helper Functions
-# ==============================================================================
 
 def _save_config_for_reproducibility(cfg: AppConfig, save_path: Path):
     """

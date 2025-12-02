@@ -11,7 +11,7 @@ import torch
 from tqdm import tqdm
 
 # CLIP model and processor
-import daved.src.frank_wolfe as frank_wolfe  # Ensure this module contains the design_selection function
+import marketplace.market_mechanism.discovery.daved.src.frank_wolfe as frank_wolfe  # Ensure this module contains the design_selection function
 # Import your custom modules or utilities
 from attack.general_attack.my_utils import get_data
 # CLIP model and processor

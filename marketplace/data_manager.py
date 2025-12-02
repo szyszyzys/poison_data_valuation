@@ -1,12 +1,11 @@
-from pathlib import Path
-from typing import Dict, Optional, List, Tuple
-
 import numpy as np
+from pathlib import Path
 from sklearn.cluster import KMeans
 from sklearn.metrics import pairwise_distances_argmin_min
 from sklearn.preprocessing import StandardScaler
+from typing import Dict, Optional, List, Tuple
 
-from daved.src.utils import get_data_data_market
+from marketplace.market_mechanism.discovery.daved.src import get_data_data_market
 
 
 class DatasetManager:
@@ -25,14 +24,14 @@ class DatasetManager:
                  cost_func: str = "linear",
                  buyer_query_selection_method: str = "random",  # New parameter
                  selection_params: Optional[Dict] = None,  # Parameters for selection methods
-                 use_cost = False
+                 use_cost=False
                  ):
-        
+
         self.dataset_type = dataset_type
         self.data_dir = Path(data_dir)
         self.random_state = random_state
         self.seller_data = {}
-        
+
         # Load data using get_data function
         self.data = get_data_data_market(
             dataset=dataset_type,
@@ -46,19 +45,19 @@ class DatasetManager:
             cost_range=cost_range,
             cost_func=cost_func
         )
-        
+
         # Extract components
         self.X_sell = self.data["X_sell"]
         self.y_sell = self.data["y_sell"]
         self.costs_sell = self.data.get("costs_sell") if use_cost else None
         self.index_sell = self.data.get("index_sell")
         self.img_paths = self.data.get("img_paths")
-        
+
         # Buyer data
         self.X_buy_full = self.data["X_buy"]  # Full buyer pool before selection
         self.y_buy_full = self.data["y_buy"]
         self.index_buy_full = self.data.get("index_buy")
-        
+
         # Validation data
         self.X_val = self.data.get("X_val")
         self.y_val = self.data.get("y_val")
@@ -71,10 +70,10 @@ class DatasetManager:
         # Perform buyer data selection
         self.X_buy, self.y_buy, self.index_buy = self.select_buyer_data()
 
-    def allocate_data_to_sellers(self, 
-                               seller_configs: List[Dict],
-                               adversary_ratio: float = 0.1,
-                               overlap_allowed: bool = False) -> Dict[str, Dict]:
+    def allocate_data_to_sellers(self,
+                                 seller_configs: List[Dict],
+                                 adversary_ratio: float = 0.1,
+                                 overlap_allowed: bool = False) -> Dict[str, Dict]:
         """
         Allocate data to sellers based on configurations
         
@@ -88,24 +87,24 @@ class DatasetManager:
         """
         np.random.seed(self.random_state)
         n_samples = len(self.X_sell)
-        
+
         # Separate adversarial and normal sellers
         adversary_sellers = [s for s in seller_configs if s['type'] == 'adversary']
         normal_sellers = [s for s in seller_configs if s['type'] == 'normal']
-        
+
         # Calculate sizes
         adv_size = int(n_samples * adversary_ratio)
         normal_size = n_samples - adv_size
-        
+
         # Create index pools
         all_indices = np.arange(n_samples)
         np.random.shuffle(all_indices)
-        
+
         adv_indices = all_indices[:adv_size]
         normal_indices = all_indices[adv_size:]
-        
+
         allocations = {}
-        
+
         # Allocate to adversaries
         if adversary_sellers:
             indices_per_adv = adv_size // len(adversary_sellers)
@@ -113,15 +112,14 @@ class DatasetManager:
                 start_idx = i * indices_per_adv
                 end_idx = start_idx + indices_per_adv
                 seller_indices = adv_indices[start_idx:end_idx]
-                
+
                 allocations[seller['id']] = {
                     'X': self.X_sell[seller_indices],
                     'y': self.y_sell[seller_indices],
                     'costs': self.costs_sell[seller_indices] if self.costs_sell is not None else None,
                     'indices': self.index_sell[seller_indices] if self.index_sell is not None else None,
-                    # 'img_paths': [self.img_paths[i] for i in seller_indices] if self.img_paths is not None else None
                 }
-        
+
         # Allocate to normal sellers
         if normal_sellers:
             indices_per_normal = normal_size // len(normal_sellers)
@@ -134,7 +132,7 @@ class DatasetManager:
                     start_idx = i * indices_per_normal
                     end_idx = start_idx + indices_per_normal
                     seller_indices = normal_indices[start_idx:end_idx]
-                
+
                 allocations[seller['id']] = {
                     'X': self.X_sell[seller_indices],
                     'y': self.y_sell[seller_indices],
@@ -142,7 +140,7 @@ class DatasetManager:
                     'indices': self.index_sell[seller_indices] if self.index_sell is not None else None,
                     # 'img_paths': [self.img_paths[i] for i in seller_indices] if self.img_paths is not None else None
                 }
-        
+
         self.seller_data = allocations
         return allocations
 

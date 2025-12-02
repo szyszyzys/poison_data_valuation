@@ -29,7 +29,7 @@ from transformers import (
     Trainer, TrainingArguments,
 )
 
-import daved.src.frank_wolfe as frank_wolfe
+import marketplace.market_mechanism.discovery.daved.src.frank_wolfe as frank_wolfe
 
 
 def get_gaussian_data(num_samples=100, dim=10, noise=0.1, costs=None):

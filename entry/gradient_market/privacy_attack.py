@@ -1,21 +1,20 @@
 import copy
 import logging
-import random
-import time
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
 import matplotlib.pyplot as plt
 import numpy as np
+import random
+import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from dataclasses import dataclass
+from pathlib import Path
 from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 from skimage.metrics import structural_similarity as compare_ssim
 from torch import optim
 from torchvision import transforms
 from torchvision.utils import save_image
+from typing import Any, Dict, List, Optional, Tuple
 
 from common.enums import VictimStrategy
 from common.gradient_market_configs import ServerAttackConfig

@@ -1,6 +1,5 @@
-from typing import List, Tuple
-
 import torch
+from typing import List, Tuple
 
 from marketplace.seller.seller import BaseSeller
 
