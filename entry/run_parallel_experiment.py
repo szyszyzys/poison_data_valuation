@@ -2,16 +2,16 @@ import argparse
 import copy
 import logging
 import multiprocessing
+import numpy as np
 import os
 import random
 import shutil
+import time
+import torch
+from filelock import FileLock
 from multiprocessing.pool import Pool
 from pathlib import Path
 from typing import List
-
-import numpy as np
-import torch
-from filelock import FileLock  # pip install filelock
 
 from entry.gradient_market.automate_exp.config_parser import load_config
 from entry.gradient_market.run_all_exp import run_attack
@@ -19,9 +19,8 @@ from entry.gradient_market.run_all_exp import run_attack
 SKIP_IF_VALUATION_EXISTS = True
 
 torch.multiprocessing.set_sharing_strategy('file_system')
-# ==============================================================================
-# == FIX for Nested Parallelism ==
-# ==============================================================================
+
+
 class NoDaemonProcess(multiprocessing.Process):
     @property
     def daemon(self):
@@ -42,118 +41,13 @@ class NestablePool(Pool):
         super(NestablePool, self).__init__(*args, **kwargs)
 
 
-# ==============================================================================
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-CORE_EXPERIMENTS = [
-    # ============================================================================
-    # 1. MAIN RESULTS: Attack Effectiveness Across Defenses & Datasets
-    # ============================================================================
-    "main_summary_cifar10_cnn",
-    "main_summary_cifar10_resnet18",
-    "main_summary_cifar100_cnn",
-    "main_summary_cifar100_resnet18",
-    "main_summary_trec",
-
-    # ============================================================================
-    # 2. SELLER ATTACKS: Category 1 (Model Integrity)
-    # ============================================================================
-    # 2.1 Backdoor Attack (covered in main_summary with Sybil)
-
-    # 2.2 Label Flipping Attack
-    "label_flip_cifar10_cnn",
-    "label_flip_cifar10_resnet18",
-    "label_flip_trec",
-
-    # ============================================================================
-    # 3. SELLER ATTACKS: Category 2 (Marketplace Manipulation)
-    # ============================================================================
-    # 3.1 Sybil Attack Analysis
-    "sybil_baseline_cifar10_cnn",  # Backdoor without Sybil
-    "sybil_mimic_cifar10_cnn",  # Backdoor + Sybil mimic
-    "sybil_pivot_cifar10_cnn",  # Backdoor + Sybil pivot
-    "sybil_knock_out_cifar10_cnn",  # Backdoor + Sybil knock_out
-
-    # 3.2 Selection Rate Gaming
-    "selection_rate_baseline_cifar10_cnn",
-    "selection_rate_cluster_cifar10_cnn",
-
-    "competitor_mimicry_noisy_copy_cifar10_cnn",
-
-    # ============================================================================
-    # 4. BUYER ATTACKS: Category 2 (Marketplace Manipulation) 🚨 CRITICAL GAP
-    # ============================================================================
-    # 4.1 DoS Attack
-    "buyer_attack_dos_cifar10_cnn",  # ⚠️ MISSING FROM YOUR LIST
-
-    # 4.2 Economic Starvation
-    "buyer_attack_starvation_cifar10_cnn",  # ⚠️ MISSING FROM YOUR LIST
-
-    # 4.3 Trust Erosion (Basic)
-    "buyer_attack_erosion_cifar10_cnn",  # ⚠️ MISSING FROM YOUR LIST
-
-    # 4.4 Trust Erosion (Oscillating Variants)
-    "buyer_attack_oscillating_binary_cifar10_cnn",  # ⚠️ MISSING
-    "buyer_attack_oscillating_random_cifar10_cnn",  # ⚠️ MISSING
-    "buyer_attack_oscillating_drift_cifar10_cnn",  # ⚠️ MISSING
-
-    # 4.5 Targeted Exclusion (Class-based - NEW)
-    "buyer_attack_class_exclusion_negative_cifar10_cnn",  # ⚠️ MISSING
-    "buyer_attack_class_exclusion_positive_cifar10_cnn",  # ⚠️ MISSING
-
-    # 4.6 Targeted Exclusion (Orthogonal Pivot - Legacy)
-    "buyer_attack_orthogonal_pivot_legacy_cifar10_cnn",  # ⚠️ MISSING
-
-    # ============================================================================
-    # 5. ABLATION STUDIES & ANALYSES
-    # ============================================================================
-    # 5.1 Defense Mechanism Comparisons
-    "buyer_data_impact_cifar10_cnn",
-
-    # 5.2 Data Heterogeneity Impact
-    "heterogeneity_impact_cifar10_cnn",
-
-    # 5.3 Adversary Rate Trends
-    "trend_adv_rate_martfl_cifar10_cnn",
-
-    # ============================================================================
-    # 7. SCALABILITY ANALYSIS
-    # ============================================================================
-    # 7.1 Seller Attack Scalability
-    "scalability_backdoor_sybil_cifar10_cnn",
-    # "scalability_backdoor_sybil_cifar10_resnet18",  # Add for robustness
-    "scalability_backdoor_sybil_cifar100_cnn",
-
-    # 7.2 Buyer Attack Scalability (⚠️ YOU NEED TO ADD THESE)
-    # "scalability_buyer_class_exclusion_cifar10_cnn",  # Already in generator
-    # "scalability_buyer_oscillating_cifar10_cnn",      # Already in generator
-
-    # 7.3 Baseline (No Attack)
-    "scalability_baseline_no_attack_cifar10_cnn",
-
-    # 7.4 Text Dataset Scalability
-    # "scalability_backdoor_trec",  # From generate_text_scalability_scenarios()
-
-    # ============================================================================
-    # 8. OPTIONAL: Advanced/Exploratory Experiments
-    # ============================================================================
-    # 8.1 Adaptive Attacks (if you claim they're important)
-
-    # 8.2 Extreme Scale Stress Tests (optional, for discussion)
-    # "extreme_scale_backdoor_martfl",
-    # "extreme_scale_buyer_class_exclusion_fltrust",
-]
-
-ENSURE_VALUATION_FILE_EXISTS = False
 
 
 def is_run_completed(run_save_path: Path) -> bool:
     """
     Check if a run is completed.
-    If ENSURE_VALUATION_FILE_EXISTS is True, this considers a run 'incomplete'
-    if it lacks the valuation file, causing it to re-run automatically.
     """
     success_marker = run_save_path / ".success"
     final_metrics = run_save_path / "final_metrics.json"
@@ -164,19 +58,6 @@ def is_run_completed(run_save_path: Path) -> bool:
     if not is_technically_finished:
         return False  # It crashed or never ran, so we must run it.
 
-    # 2. Backfill Check: Do we need to re-run it just to generate valuations?
-    if ENSURE_VALUATION_FILE_EXISTS:
-        val_file = run_save_path / "valuations.jsonl"
-
-        # If the file is missing OR it is empty (0 bytes)
-        if not val_file.exists() or val_file.stat().st_size == 0:
-            # Log a small message so you see why it's re-running
-            # (Using print because logger object might not be passed here)
-            print(
-                f"   [Backfill] Run {run_save_path.name} finished previously, but missing 'valuations.jsonl'. Re-running...")
-            return False  # Return False to trigger the run logic
-
-    # If we get here, it's finished AND has the valuation file (or we don't care).
     return True
 
 
@@ -191,7 +72,6 @@ def mark_run_completed(run_save_path: Path):
     in_progress_marker = run_save_path / ".in_progress"
     success_marker = run_save_path / ".success"
 
-    # Remove in-progress marker and create success marker
     if in_progress_marker.exists():
         in_progress_marker.unlink()
     success_marker.touch()
@@ -239,9 +119,6 @@ def clear_existing_results(run_save_path: Path):
                 logger.debug(f"  Deleted directory: {dirname}")
             except OSError as e:
                 logger.warning(f"  Could not delete directory {dirpath}: {e}")
-
-
-import time  # Add this to your imports at the top
 
 
 def run_single_experiment(config_path: str, run_id: int, sample_idx: int, seed: int,
@@ -317,7 +194,6 @@ def setup_gpu_allocation(num_processes: int, gpu_ids_str: str = None):
         logger.info(f"🎯 Set CUDA_VISIBLE_DEVICES='{gpu_ids_str}' at parent level")
         logger.info(f"🔧 Physical GPUs {physical_gpu_ids} will appear as cuda:0 to cuda:{len(physical_gpu_ids) - 1}")
 
-        # CHANGED: Use requested num_processes instead of forcing to GPU count
         actual_num_processes = num_processes
         assigned_gpu_ids = list(range(len(physical_gpu_ids)))
 
@@ -372,7 +248,6 @@ def get_nested_hp(cfg: object, path_keys: List[str], default=None):
         return default
 
 
-# --- Replace your existing function with this new version ---
 def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, seed: int,
                                 gpu_id: int = None, force_rerun: bool = False, attempt: int = 0):
     run_save_path = None
@@ -449,16 +324,12 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
             val = get_nested_hp(app_config, ["aggregation", "clip_norm"])
             if val is not None: hp_parts.append(f"aggregation.clip_norm_{val}")
 
-        # ... Add elif blocks for any other defenses you are tuning ...
-
         hp_folder_name = "_".join(hp_parts)
         if not hp_folder_name:
             hp_folder_name = "default_hps"
 
         # 3. Build the NEW, CORRECT path by re-ordering the parts
         run_save_path = scenario_path / hp_folder_name / run_details_folder_name / f"run_{sample_idx - 1}_seed_{seed}"
-
-        # --- END OF NEW ROBUST FIX ---
 
         run_save_path.mkdir(parents=True, exist_ok=True)
         print(run_save_path)
@@ -503,7 +374,7 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
         logger.error(f"{log_prefix} ❌ Error running experiment: {e}", exc_info=True)
         if run_save_path:
             (run_save_path / ".failed").touch()
-        raise  # Re-raise to trigger retry logic
+        raise
 
 
 def discover_configs_core(configs_base_dir: str) -> list:
@@ -570,65 +441,22 @@ def discover_configs(configs_base_dir: str) -> list:
 
 
 def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = None,
-                  force_rerun: bool = False, config_filter: str = None, core_only: bool = False):
+                  force_rerun: bool = False):
     """
     Main function to orchestrate parallel execution of experiments.
     """
 
-    # --- START OF FIX ---
     # 1. ALWAYS call your new, robust discover_configs first
     all_config_files = discover_configs(configs_base_dir)
-    # --- END OF FIX ---
 
     if not all_config_files:
         logger.warning(f"❌ No config.yaml files found in {configs_base_dir}. Exiting.")
         return
     logger.info(f"📋 Found {len(all_config_files)} total configuration files")
 
-    if core_only:
-        if config_filter:
-            logger.warning("⚠️ Both --core_only and --filter provided. --core_only takes precedence.")
-
-        logger.info(f"Filtering based on {len(CORE_EXPERIMENTS)} core experiments list.")
-        filtered_config_files = []
-        core_exp_set = set(CORE_EXPERIMENTS)  # Use a set for fast O(1) lookups
-
-        for path_str in all_config_files:
-            p = Path(path_str)
-            found_core_exp = False
-
-            # Walk up the parent directories from the config file
-            for parent in p.parents:
-                if parent.name in core_exp_set:
-                    filtered_config_files.append(path_str)
-                    found_core_exp = True
-                    break  # Found the match, stop walking up
-
-            if not found_core_exp:
-                logger.debug(f"  Skipping (core_only): Path {path_str} did not match any core experiment name.")
-
-        if not filtered_config_files:
-            logger.warning(f"❌ No config files matched the CORE_EXPERIMENTS list.")
-            logger.warning("Please check your --configs_dir path.")
-            return
-
-        logger.info(
-            f"📋 Found {len(filtered_config_files)} matching configurations (out of {len(all_config_files)} total)")
-        all_config_files = filtered_config_files
-        logger.info("--- List of Matched Core Configs: ---")
-        for f_path in all_config_files:
-            logger.info(f"  > {f_path}")
-
-    elif config_filter:
-        # (The rest of the function is the same as before)
-        logger.info(f"🔍 Applying path filter: '{config_filter}'")
-    # This function is now defined TWICE in your script. We'll use the one at the top.
-    # We call setup_gpu_allocation from line 193
     actual_num_processes, assigned_gpu_ids = setup_gpu_allocation(num_processes, gpu_ids_str)
 
     # === Build the full list of individual run tasks ===
-
-    # --- START OF MODIFICATION ---
 
     # Create N task lists, one for each GPU (or process if on CPU)
     if assigned_gpu_ids:
@@ -713,8 +541,6 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
     for p in processes:
         p.join()
 
-    # --- END OF MODIFICATION ---
-
     logger.info("🎉 All parallel experiments completed!")
 
 
@@ -753,17 +579,6 @@ if __name__ == "__main__":
         help="Ignore cached results and rerun all experiments"
     )
     parser.add_argument(
-        "--filter",
-        type=str,
-        default=None,
-        help="Only run configs whose path contains this string (e.g., 'sybil_mimic' or 'main_summary')"
-    )
-    parser.add_argument(
-        "--core_only",
-        action="store_true",
-        help="Only run experiments from the built-in CORE_EXPERIMENTS list"
-    )
-    parser.add_argument(
         "--clear_results_on_rerun",  # New Flag Name
         action="store_true",
         help="[DEPRECATED by --force_rerun logic] Delete existing result files within a run directory before rerunning."
@@ -776,6 +591,4 @@ if __name__ == "__main__":
         num_processes=args.num_processes,
         gpu_ids_str=args.gpu_ids,
         force_rerun=args.force_rerun,
-        config_filter=args.filter,
-        core_only=args.core_only
     )
