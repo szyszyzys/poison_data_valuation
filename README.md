@@ -34,30 +34,6 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 3\. Data Preparation
-
-Before running experiments, you must download and preprocess the datasets (CIFAR-10/100, TREC, Texas100).
-
-```bash
-# [TODO: Insert your data setup command here, e.g.:]
-python entry/setup_data.py --download_dir ./data
-```
-
------
-
-# ⚡ Quick Start (Sanity Check)
-
-To verify that your environment and data are set up correctly, run this minimal example (trains for 1 epoch on CPU):
-
-```bash
-python entry/run_parallel_experiment.py \
-    --configs_dir configs_generated/sanity_check \
-    --num_processes 1 \
-    --force_rerun
-```
-
-**Expected Output:** The script should finish without errors and generate a log file in `results/sanity_check/`.
-
 -----
 
 # 🛠️ Scripts & Configurations
@@ -167,19 +143,18 @@ then run them using the orchestrator.
 
 After running the experiments, use the analysis scripts to generate the paper figures.
 
-| Paper Content | Script Path |
-|:-------------| :-- | :--- |
-| **Table 1**  | `entry/gradient_market/visualization/step3_visual.py` |
-| **Figure 2** | `entry/gradient_market/visualization/step10_summary.py` |
-| **Figure 3** | `entry/gradient_market/visualization/step3_visual.py` |
-| **Figure 4** | `entry/gradient_market/visualization/step4_visual.py` |
-| **Figure 5** | `entry/gradient_market/visualization/step8_scalability_visual.py` |
-| **Figure 6
-** | `entry/gradient_market/visualization/step5_visual_sybil.py` & `entry/gradient_market/visualization/step6_visual_adaptive_attack.py` |
-| **Figure 7** | `entry/gradient_market/visualization/step7_fltrust_martfl.py` |
-| **Figure 8** | `entry/gradient_market/visualization/step7_fltrust_martfl.py` |
-| **Figure 9** | `entry/gradient_market/visualization/step9_heterogeneity_visual.py` |
-| **Figure 10** | `entry/gradient_market/visualization/step10_valuation.py` |
+| Paper Content | Script Path                                                                                                                         |
+|:-------------|:------------------------------------------------------------------------------------------------------------------------------------|
+| **Table 1**  | `entry/gradient_market/visualization/step3_visual.py`                                                                               |
+| **Figure 2** | `entry/gradient_market/visualization/step10_summary.py`                                                                             |
+| **Figure 3** | `entry/gradient_market/visualization/step3_visual.py`                                                                               |
+| **Figure 4** | `entry/gradient_market/visualization/step4_visual.py`                                                                               |
+| **Figure 5** | `entry/gradient_market/visualization/step8_scalability_visual.py`                                                                   |
+| **Figure 6** | `entry/gradient_market/visualization/step5_visual_sybil.py` & `entry/gradient_market/visualization/step6_visual_adaptive_attack.py` |
+| **Figure 7** | `entry/gradient_market/visualization/step7_fltrust_martfl.py`                                                                       |
+| **Figure 8** | `entry/gradient_market/visualization/step7_fltrust_martfl.py`                                                                       |
+| **Figure 9** | `entry/gradient_market/visualization/step9_heterogeneity_visual.py`                                                                 |
+| **Figure 10** | `entry/gradient_market/visualization/step10_valuation.py`                                                                           |
 
 -----
 
