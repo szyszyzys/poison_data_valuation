@@ -36,6 +36,46 @@ pip install -r requirements.txt
 
 -----
 
+# 📂 Project Structure & Extensibility
+
+While this benchmark focuses on **Gradient Marketplaces** (where the "product" is a gradient update $\nabla \theta$), the underlying framework is architected as a generic decentralized exchange.
+
+* **Paper Focus (Gradient Market):** The experiments in this submission utilize `marketplace/market/markplace_gradient.py` and `attack/attack_gradient_market`.
+* **Extensibility (Raw Data Market):** We provide an experimental implementation for **Raw Row Data** exchange to demonstrate architectural generality. The base classes in `marketplace/` are polymorphic, allowing `data_seller.py` and `attack_data_market` to function alongside the gradient implementations.
+
+## Directory Overview
+
+```text
+.
+├── attack/
+│   ├── attack_gradient_market/   # [PAPER FOCUS] Poisoning & Privacy attacks on Gradients
+│   └── attack_data_market/       # [EXTENSION] Attacks on Raw Data (Row) markets
+├── common/
+│   ├── datasets/                 # Loaders for Image (CIFAR), Text (TREC), Tabular
+│   ├── evaluators.py             # Metrics calculation
+│   └── factories.py              # Factory patterns for object creation
+├── entry/
+│   ├── gradient_market/          # Main entry points for the paper's experiments
+│   │   ├── automate_exp/         # Configuration generators (Steps 1-10)
+│   │   └── run_all_exp.py        # Single threat runner
+│   └── run_parallel_experiment.py # MAIN ORCHESTRATOR
+├── marketplace/
+│   ├── market/
+│   │   ├── markplace_gradient.py # [PAPER FOCUS] Gradient exchange logic
+│   │   └── data_market.py        # [EXTENSION] Raw data exchange logic
+│   ├── market_mechanism/
+│   │   ├── aggregators/          # Robust Aggregation (MartFL, SkyMask, etc.)
+│   │   └── valuation/            # Shapley/LOO valuation logic
+│   └── seller/
+│       ├── gradient_seller.py    # Seller sending gradients
+│       └── data_seller.py        # Seller sending raw rows
+├── model/                        # Neural Architectures (ResNet, TextCNN, MLP)
+├── Dockerfile
+└── requirements.txt
+```
+
+-----
+
 # 🛠️ Scripts & Configurations
 
 ### Experiment Orchestrator
@@ -158,6 +198,83 @@ After running the experiments, use the analysis scripts to generate the paper fi
 
 -----
 
+Yes, absolutely. Adding an **"Architecture & Extensibility"** section derived from this text will significantly strengthen the README.
+
+It demonstrates to reviewers that the code isn't just a static script, but a **framework** designed for longevity (Design Principle \#3).
+
+Here is the drafted section. I have translated your academic LaTeX definitions into practical "Developer Instructions" and added a diagram to visualize the modules described in your paper.
+
+### Copy-Paste this section into your README (e.g., before "Installation" or at the end as "Developer Guide")
+
+-----
+
+# 🧩 Architecture & Extensibility
+
+## High-Level Design
+The system consists of five pluggable modules that interact via strict interfaces:
+
+```mermaid
+graph TD
+    subgraph Market["The Marketplace"]
+        Asset[("1. Market Asset<br>(Dataset/Model)")]
+        Regulator["3. The Regulator<br>(Aggregator/Defense)"]
+        Economy["4. The Economy<br>(Valuation Engine)"]
+    end
+    
+    subgraph Participants
+        Supply["2. The Supply Side<br>(Honest & Malicious Sellers)"]
+        Buyer["Buyer<br>(Root Trust)"]
+    end
+    
+    subgraph Audit
+        Auditor["5. The Auditor<br>(Privacy/Integrity Checks)"]
+    end
+
+    Supply -->|Gradients| Regulator
+    Buyer -->|Trust Signal| Regulator
+    Regulator -->|Selected Gradients| Asset
+    Regulator -->|Rewards| Economy
+    Asset -->|State Update| Auditor
+````
+
+## 🔌 How to Extend the Framework
+
+### 1\. Adding a New Defense (Regulator)
+
+To implement a new aggregation mechanism (e.g., a new robust mean estimation):
+
+1.  **Create Class:** Inherit from the base `Aggregator` class in `marketplace/market_mechanism/aggregators/`.
+2.  **Implement Interface:** Override the `run(gradients, trusted_signal)` method.
+3.  **Register:** Add your class key to `common/factories.py`.
+4.  **Config:** You can now use it in YAML: `aggregation.method: "my_new_defense"`.
+
+### 2\. Adding a New Attack (Supply Side)
+
+We decouple the *Payload* (atomic action) from the *Coordination* (group strategy).
+
+  * **To add a Payload (e.g., a new Backdoor):** Add a function in `attack/attack_gradient_market/poison_attack/`.
+  * **To add Coordination (e.g., a generic Sybil strategy):** Inherit from `SybilStrategy` and implement the logic to manipulate the vector distribution of the malicious coalition.
+
+### 3\. Adding a New Dataset (Market Asset)
+
+The framework uses a **Configuration-Driven Factory** to ensure attacks are dataset-agnostic.
+
+1.  **Wrapper:** Create a lightweight wrapper in `common/datasets/` that handles loading and standardizing your data (Image/Text/Tabular).
+2.  **Model:** Define the compatible architecture in `model/`.
+3.  **Config:** Update `DataConfig` to recognize the new string identifier.
+
+## 📊 Marketplace Metrics
+
+Beyond standard accuracy, this framework allows you to plug in custom **Economic** and **Integrity** metrics.
+
+  * **Mechanism Integrity:** Track `Malicious Selection Rate (MSR)` vs `Benign Selection Rate (BSR)` to measure revenue theft and collateral damage.
+  * **Value-Selection Alignment:** The `ValuationEngine` runs in parallel to the training loop. You can plug in new "Ground Truth" auditors (e.g., Shapley Value approximations) in `marketplace/market_mechanism/valuation/`.
+
+<!-- end list -->
+
+```
+
+-----
 ## License
 
 This project is licensed under the [MIT License](https://www.google.com/search?q=./LICENSE).
