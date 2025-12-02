@@ -5,7 +5,7 @@ import sys
 from typing import Callable
 
 # --- (Imports) ---
-from entry.gradient_market.automate_exp.configs_generation.config_common_utils import GOLDEN_TRAINING_PARAMS, \
+from entry.gradient_market.configs_generation.config_common_utils import GOLDEN_TRAINING_PARAMS, \
     NUM_SEEDS_PER_CONFIG
 from entry.gradient_market.automate_exp.scenarios import (
     Scenario

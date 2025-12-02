@@ -14,7 +14,7 @@ import seaborn as sns
 # ==========================================
 
 BASE_RESULTS_DIR = "./results"
-FIGURE_OUTPUT_DIR = "./figures/step2.5_figures_flexible"
+FIGURE_OUTPUT_DIR = "./figures/step2_figures_flexible"
 RELATIVE_ACC_THRESHOLD = 0.90
 
 # 1. DEFENSE LABELS (Pretty Names)
