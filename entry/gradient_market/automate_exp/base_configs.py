@@ -1,6 +1,6 @@
 import torch
 
-from common.gradient_market_configs import (
+from marketplace.utils.gradient_market_utils.gradient_market_configs import (
     AppConfig, ExperimentConfig, TrainingConfig, AdversarySellerConfig, DataConfig, ImageDataConfig, PropertySkewParams,
     VocabConfig, TextDataConfig, DebugConfig, ServerAttackConfig, AggregationConfig
 )

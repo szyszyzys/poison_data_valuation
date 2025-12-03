@@ -10,7 +10,7 @@ from entry.gradient_market.automate_exp.tbl_new import get_base_tabular_config
 
 try:
     # Import the necessary config classes
-    from common.gradient_market_configs import AppConfig, ExperimentConfig, TrainingConfig, \
+    from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, ExperimentConfig, TrainingConfig, \
         DataConfig, AggregationConfig, ServerAttackConfig, AdversarySellerConfig, \
         DebugConfig, BuyerAttackConfig
 

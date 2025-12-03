@@ -8,7 +8,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from attack.evaluation.evaluation_backdoor import evaluate_attack_performance
-from common.gradient_market_configs import AppConfig
+from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig
 
 
 class BaseEvaluator(ABC):

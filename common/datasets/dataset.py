@@ -22,7 +22,7 @@ from common.datasets.data_partitioner import FederatedDataPartitioner, _extract_
 from common.datasets.image_data_processor import save_data_statistics, CelebACustom
 from common.datasets.text_data_processor import ProcessedTextData, get_cache_path, \
     collate_batch, StandardFormatDataset
-from common.gradient_market_configs import AppConfig
+from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig
 
 try:
     from datasets import load_dataset as hf_load

@@ -16,7 +16,7 @@ from entry.gradient_market.automate_exp.scenarios import Scenario, use_image_bac
     use_cifar100_config
 
 try:
-    from common.gradient_market_configs import AppConfig, PoisonType
+    from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, PoisonType
     from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 except ImportError as e:
     print(f"Error importing necessary modules: {e}")

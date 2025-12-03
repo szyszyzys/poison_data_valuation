@@ -9,11 +9,11 @@ import numpy as np
 import torch
 
 from common.enums import ServerAttackMode
-from common.gradient_market_configs import AppConfig
+from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig
 from entry.gradient_market.privacy_attack import GradientInversionAttacker
 from marketplace.market.data_market import DataMarketplace
-from marketplace.market_mechanism.aggregator import Aggregator
-from marketplace.market_mechanism.valuation.valuation import ValuationManager
+from marketplace.market_mechanism.gradient.aggregator import Aggregator
+from marketplace.market_mechanism.gradient.valuation import ValuationManager
 from marketplace.seller.gradient_seller import GradientSeller, SybilCoordinator
 from marketplace.seller.seller import BaseSeller
 

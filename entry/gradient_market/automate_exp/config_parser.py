@@ -7,7 +7,7 @@ import yaml
 from dacite import from_dict, Config as DaciteConfig, MissingValueError, WrongTypeError
 
 # Import your full AppConfig and its components
-from common.gradient_market_configs import AppConfig  # Assuming these are there
+from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig  # Assuming these are there
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

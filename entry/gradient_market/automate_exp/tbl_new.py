@@ -6,7 +6,7 @@ from typing import Any, List, Callable, Dict
 import torch
 
 from common.enums import PoisonType
-from common.gradient_market_configs import AppConfig, AggregationConfig, TabularDataConfig, DataConfig, \
+from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, AggregationConfig, TabularDataConfig, DataConfig, \
     AdversarySellerConfig, ServerAttackConfig, TrainingConfig, ExperimentConfig, DebugConfig
 from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 

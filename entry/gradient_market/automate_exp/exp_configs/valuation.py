@@ -10,7 +10,7 @@ from entry.gradient_market.automate_exp.scenarios import (
 )
 
 try:
-    from common.gradient_market_configs import AppConfig  # Ensure AppConfig is importable
+    from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig  # Ensure AppConfig is importable
     from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator
 except ImportError as e:
     print(f"Error importing necessary modules: {e}")

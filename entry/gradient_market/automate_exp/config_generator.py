@@ -13,7 +13,7 @@ import yaml
 
 from common.enums import PoisonType, VictimStrategy, ImageBackdoorAttackName, ImageTriggerType, ImageTriggerLocation, \
     TextTriggerLocation, TextBackdoorAttackName, LabelFlipMode
-from common.gradient_market_configs import AppConfig, TabularBackdoorAttackName
+from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, TabularBackdoorAttackName
 from entry.gradient_market.automate_exp.scenarios import Scenario
 
 

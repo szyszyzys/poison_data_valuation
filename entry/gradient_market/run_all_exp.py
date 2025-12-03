@@ -14,18 +14,18 @@ import torch
 import torch.nn as nn
 from pathlib import Path
 from torch.utils.data import DataLoader, random_split
-from typing import List, Dict
+from typing import Dict
 
 from common.datasets.dataset import get_image_dataset, get_text_dataset
 from common.datasets.tabular_data_processor import get_tabular_dataset
 from common.evaluators import create_evaluators, CleanEvaluator
-from common.factories import SellerFactory, StatefulModelFactory, TextModelFactory
-from common.gradient_market_configs import AppConfig, RuntimeDataConfig
+from marketplace.utils.gradient_market_utils.factories import SellerFactory, StatefulModelFactory, TextModelFactory
+from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, RuntimeDataConfig
 from common.utils import set_seed
 from entry.gradient_market.automate_exp.config_parser import load_config
 from marketplace.buyer import MaliciousBuyerProxy
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
-from marketplace.market_mechanism.aggregator import Aggregator
+from marketplace.market_mechanism.gradient.aggregator import Aggregator
 from marketplace.seller.gradient_seller import (
     GradientSeller, SybilCoordinator
 )

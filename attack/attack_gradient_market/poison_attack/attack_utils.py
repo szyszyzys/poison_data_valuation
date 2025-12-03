@@ -8,7 +8,7 @@ from typing import Any
 from typing import Dict, Tuple, List
 
 from common.enums import ImageTriggerType, ImageTriggerLocation
-from common.gradient_market_configs import LabelFlipConfig, BackdoorImageConfig, BackdoorTextConfig, \
+from marketplace.utils.gradient_market_utils.gradient_market_configs import LabelFlipConfig, BackdoorImageConfig, BackdoorTextConfig, \
     BackdoorTabularConfig
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

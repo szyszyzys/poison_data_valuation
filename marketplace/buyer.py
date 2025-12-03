@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Subset
 
-from common.gradient_market_configs import BuyerAttackConfig
+from marketplace.utils.gradient_market_utils.gradient_market_configs import BuyerAttackConfig
 from marketplace.seller.gradient_seller import GradientSeller
 
 

@@ -14,7 +14,7 @@ try:
     project_root = Path(__file__).resolve().parent.parent
     sys.path.append(str(project_root))
 
-    from common.gradient_market_configs import AppConfig
+    from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig
     from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 except ImportError:
     print("⚠️  Error: Could not import project modules.")

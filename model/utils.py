@@ -24,7 +24,7 @@ from torch.amp import autocast
 from torch.cuda.amp import GradScaler
 from torch.utils.data import DataLoader
 
-from marketplace.utils.model_utils import _log_param_stats
+from common.model_utils import _log_param_stats
 # from model.text_model import TEXTCNN
 from model.models import LeNet, TextCNN, SimpleCNN
 

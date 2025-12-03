@@ -15,7 +15,7 @@ from entry.gradient_market.automate_exp.base_configs import get_base_image_confi
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar100_config, use_image_backdoor_attack
 
 try:
-    from common.gradient_market_configs import AppConfig
+    from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig
     from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 except ImportError as e:
     print(f"Error importing necessary modules: {e}")

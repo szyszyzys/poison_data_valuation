@@ -12,7 +12,7 @@ from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_squared_error
 from tqdm import tqdm
 
-from marketplace.market_mechanism.discovery.daved.src import evaluate_indices
+from marketplace.market_mechanism.data.discovery.daved.src import evaluate_indices
 
 
 class SelectionStrategy(Enum):

@@ -17,7 +17,7 @@ from ucimlrepo import fetch_ucirepo
 
 from common.datasets.data_partitioner import TabularDataPartitioner
 from common.datasets.image_data_processor import save_data_statistics
-from common.gradient_market_configs import AppConfig, TabularDataConfig  # Import your main config
+from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, TabularDataConfig  # Import your main config
 
 logger = logging.getLogger(__name__)
 

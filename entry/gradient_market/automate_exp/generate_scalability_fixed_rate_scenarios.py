@@ -1,4 +1,3 @@
-import sys
 from typing import Callable, Dict, List, Any
 import copy # Import copy
 
@@ -10,7 +9,7 @@ from entry.gradient_market.automate_exp.scenarios import (
     use_cifar10_config,        # Example dataset config
     Scenario
 )
-from common.gradient_market_configs import AppConfig, PoisonType # Ensure needed configs imported
+from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig  # Ensure needed configs imported
 from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 
 # --- 1. Import or Define GOLDEN_TRAINING_PARAMS ---

@@ -25,7 +25,7 @@ from entry.gradient_market.automate_exp.tbl_new import TEXAS100_TRIGGER, use_tab
     TEXAS100_TARGET_LABEL, get_base_tabular_config, PURCHASE100_TRIGGER, PURCHASE100_TARGET_LABEL
 
 try:
-    from common.gradient_market_configs import AppConfig, PoisonType
+    from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, PoisonType
     from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 except ImportError as e:
     print(f"Error importing necessary modules: {e}")

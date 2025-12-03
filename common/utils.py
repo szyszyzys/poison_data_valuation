@@ -236,6 +236,8 @@ def clip_gradient_update(grad_update: List[torch.Tensor], clip_norm: Optional[fl
     except Exception as e:
         logging.error(f"Error during L2 norm clipping (norm={clip_norm}): {e}. Returning original gradient.")
         return grad_update
+
+
 # ===================================================================
 # Metrics and Training Control
 # ===================================================================
@@ -370,79 +372,3 @@ class ExperimentLoader:
         else:
             logging.error(f"Gradient file not found at {grad_path}")
             return None
-
-
-# --- Example Usage ---
-if __name__ == "__main__":
-    # Assume your experiment results are saved in a directory like this:
-    # my_experiments/
-    # ├── run_0_seed_123/
-    # │   ├── training_log.csv
-    # │   └── ...
-    # └── run_1_seed_456/
-    #     └── ...
-
-    experiment_root = "path/to/your/experiment_results"  # <<< IMPORTANT: Change this to your actual root path
-
-    # Initialize the loader
-    loader = ExperimentLoader(experiment_root)
-
-    # --- Part 1: Aggregated Analysis for Security Attacks (Averaging across runs) ---
-    logging.info("\n--- Aggregated Analysis (e.g., for Security Attack Performance) ---")
-    final_metrics_df = loader.get_aggregated_final_metrics()
-    if not final_metrics_df.empty:
-        logging.info("Collected final metrics from all runs:")
-        print(final_metrics_df.head())
-
-        # Example: Calculate average accuracy and its standard deviation
-        avg_accuracy = final_metrics_df['accuracy'].mean()
-        std_accuracy = final_metrics_df['accuracy'].std()
-        logging.info(
-            f"\nAverage final accuracy across {len(final_metrics_df)} runs: {avg_accuracy:.4f} (Std Dev: {std_accuracy:.4f})")
-
-        # You can do similar aggregations for other metrics like loss, F1-score, etc.
-        # If your 'attack_performed' or 'attack_victim' were logged in final_metrics,
-        # you'd average the success rate of the security attack here.
-    else:
-        logging.warning("No final metrics collected for aggregation.")
-
-    # --- Part 2: Detailed Per-Run Analysis (e.g., for Privacy Attacks) ---
-    logging.info("\n--- Detailed Per-Run Analysis (e.g., for Privacy Attacks) ---")
-    all_runs_data = loader.load_all_runs_data()
-
-    if all_runs_data:
-        # Let's pick the first run for a detailed privacy attack example
-        first_run_data = all_runs_data[0]
-        logging.info(f"\nAnalyzing first run: {first_run_data['run_path'].name}")
-
-        # Example: Analyze a seller's history (assuming you've added payment/weight to logs)
-        if first_run_data["sellers"]:
-            first_seller_id = list(first_run_data["sellers"].keys())[0]
-            seller_history_df = first_run_data["sellers"][first_seller_id]
-            logging.info(f"Seller {first_seller_id}'s round history (first 5 rounds):")
-            print(seller_history_df.head())
-
-            # Example: Load a specific individual gradient for a privacy attack
-            target_round = 10  # Assuming gradients are saved for round 10
-            target_seller = first_seller_id  # The seller you want to attack
-            if target_round in first_run_data["gradient_paths"]:
-                individual_grad = loader.load_gradient(first_run_data, target_round, seller_id=target_seller)
-                if individual_grad is not None:
-                    logging.info(
-                        f"\nLoaded individual gradient for seller {target_seller} in round {target_round}. Shape: {individual_grad.shape}")
-                    # Here you would implement your Membership Inference or Property Inference attack
-                    # using this individual_grad.
-
-                # Example: Load aggregated gradient for buyer intent leakage attack
-                agg_grad = loader.load_gradient(first_run_data, target_round, seller_id=None)
-                if agg_grad is not None:
-                    logging.info(f"Loaded aggregated gradient for round {target_round}. Shape: {agg_grad.shape}")
-                    # Here you would use the sequence of agg_grads to infer buyer intent.
-
-            else:
-                logging.warning(f"Gradients for round {target_round} not available in this run.")
-
-        else:
-            logging.warning("No seller data found for detailed analysis in the first run.")
-    else:
-        logging.error("No experiment runs found to analyze.")

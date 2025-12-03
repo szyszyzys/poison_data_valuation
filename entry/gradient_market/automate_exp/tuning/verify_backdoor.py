@@ -11,7 +11,7 @@ from entry.gradient_market.automate_exp.tbl_new import get_base_tabular_config, 
 
 try:
     # Import the necessary config classes
-    from common.gradient_market_configs import AppConfig, PoisonType
+    from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, PoisonType
     from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 
 

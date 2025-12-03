@@ -5,7 +5,7 @@ from sklearn.metrics import pairwise_distances_argmin_min
 from sklearn.preprocessing import StandardScaler
 from typing import Dict, Optional, List, Tuple
 
-from marketplace.market_mechanism.discovery.daved.src import get_data_data_market
+from marketplace.market_mechanism.data.discovery.daved.src import get_data_data_market
 
 
 class DatasetManager:

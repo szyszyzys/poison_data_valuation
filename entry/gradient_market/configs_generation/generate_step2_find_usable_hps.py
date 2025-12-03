@@ -16,14 +16,14 @@ from entry.gradient_market.automate_exp.base_configs import (
     get_base_image_config, get_base_text_config
 )
 from entry.gradient_market.automate_exp.scenarios import (
-    Scenario, use_cifar10_config, use_image_backdoor_attack, use_label_flipping_attack, use_cifar100_config,
+    Scenario, use_cifar10_config, use_image_backdoor_attack, use_cifar100_config,
     use_trec_config, use_text_backdoor_attack
 )
 from entry.gradient_market.automate_exp.tbl_new import get_base_tabular_config, use_tabular_backdoor_with_trigger, \
     TEXAS100_TRIGGER, TEXAS100_TARGET_LABEL, PURCHASE100_TARGET_LABEL, PURCHASE100_TRIGGER
 
 try:
-    from common.gradient_market_configs import AppConfig, PoisonType
+    from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, PoisonType
     from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr, iter_grid
 except ImportError as e:
     print(f"Error importing necessary modules: {e}")

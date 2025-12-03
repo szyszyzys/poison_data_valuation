@@ -1,12 +1,11 @@
 import sys
-from typing import Callable, Dict, List, Any
+from typing import Callable, Dict, Any
 
 # --- Imports from your project ---
 # (Ensure these paths are correct for your structure)
-from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
+from entry.gradient_market.automate_exp.base_configs import get_base_image_config
 from entry.gradient_market.automate_exp.scenarios import (
-    use_image_backdoor_attack, use_text_backdoor_attack,
-    use_cifar10_config, use_cifar100_config
+    use_image_backdoor_attack, use_cifar10_config
 )
 from entry.gradient_market.automate_exp.tbl_new import (
     get_base_tabular_config, use_tabular_backdoor_with_trigger,
@@ -15,7 +14,7 @@ from entry.gradient_market.automate_exp.tbl_new import (
 )
 
 try:
-    from common.gradient_market_configs import AppConfig
+    from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig
     from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 
 except ImportError as e:

@@ -5,8 +5,7 @@
 from typing import Dict, Any, Callable, Optional
 
 from common.enums import PoisonType
-from common.gradient_market_configs import AppConfig
-from entry.gradient_market.automate_exp.config_generator import set_nested_attr
+from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig
 
 GOLDEN_TRAINING_PARAMS = {
     # --- IMAGE MODELS ---
