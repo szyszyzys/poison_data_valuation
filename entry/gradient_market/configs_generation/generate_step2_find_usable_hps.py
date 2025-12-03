@@ -137,7 +137,6 @@ def generate_training_hp_scenarios() -> List[Scenario]:
 
                     # --- 2. USE THE BOUND VARIABLE ---
                     config = current_attack_modifier(config)  # Use the correct, bound attack
-                    # --- END FIX ---
 
                     set_nested_attr(config, "adversary_seller_config.poisoning.poison_rate", DEFAULT_POISON_RATE)
                     print(f"    Applied Attack: {DEFAULT_ADV_RATE * 100}% rate, {DEFAULT_POISON_RATE * 100}% poison")

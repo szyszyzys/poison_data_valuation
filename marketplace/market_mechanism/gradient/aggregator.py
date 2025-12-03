@@ -41,7 +41,6 @@ class Aggregator:
         if method not in strategy_map:
             raise NotImplementedError(f"Aggregation method '{method}' is not implemented.")
 
-        # --- THIS IS THE FIX ---
         config_attr_name = method
         if method == "skymask_small":
             config_attr_name = "skymask"
@@ -70,7 +69,6 @@ class Aggregator:
             buyer_data_loader=buyer_data_loader,
             **strategy_kwargs  # <-- This now contains clip_norm, max_k, etc.
         )
-        # --- END FIX ---
 
         self.device = device
         self.buyer_data_loader = buyer_data_loader

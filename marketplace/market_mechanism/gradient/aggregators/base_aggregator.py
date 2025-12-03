@@ -76,7 +76,6 @@ class BaseAggregator(ABC):
             return 0.0, 0.0, 0.0, 0.0
 
         with torch.no_grad():
-            # --- FIX: Make the loop modality-aware --- ✅
             for batch in self.buyer_data_loader:
                 # Check the batch format to handle different data types
                 if len(batch) == 3:  # Text data: (labels, texts, lengths)

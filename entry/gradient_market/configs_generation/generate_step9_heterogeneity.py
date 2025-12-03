@@ -148,9 +148,6 @@ if __name__ == "__main__":
         task_configs = 0
         defense_name = scenario.name.split('_')[1]
 
-        # =======================================================================
-        # EXPERIMENT A: VARY SELLER (Fix Buyer to IID)
-        # =======================================================================
         print(f"  -> Generating Group A: Vary Seller (Buyer Fixed IID)")
         for sweep_strat, sweep_alpha, suffix in HETEROGENEITY_SWEEP:
             current_grid = scenario.parameter_grid.copy()

@@ -288,12 +288,7 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
         # "results/step3_tune_.../ds-cifar10_model-lenet..."
         original_base_save_path = Path(app_config.experiment.save_path)
 
-        # --- START OF NEW ROBUST FIX ---
-
-        # 1. Get the parts of the incorrect path
-        # This will be "ds-cifar10_model-lenet..."
         run_details_folder_name = original_base_save_path.name
-        # This will be "results/step3_tune_..."
         scenario_path = original_base_save_path
 
         # 2. Build the HP folder name (Same logic as my previous answer)

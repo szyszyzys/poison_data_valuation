@@ -67,7 +67,6 @@ def generate_main_summary_scenarios() -> List[Scenario]:
         current_defenses = IMAGE_DEFENSES if modality == "image" else TEXT_TABULAR_DEFENSES
 
         for defense_name in current_defenses:
-            # === FIX 3: Removed the buggy `if defense_name not in ...` check ===
 
             # Get Tuned HPs (from Step 3)
             tuned_defense_params = get_tuned_defense_params(
@@ -82,7 +81,6 @@ def generate_main_summary_scenarios() -> List[Scenario]:
                 print(f"  SKIPPING: No Tuned HPs found for {defense_name}")
                 continue
 
-            # === FIX 2: Create the setup modifier INSIDE the loop ===
             def create_setup_modifier(
                     current_defense_name=defense_name,
                     current_model_cfg_name=model_cfg_name,
@@ -122,7 +120,6 @@ def generate_main_summary_scenarios() -> List[Scenario]:
                 kshap_samples=500
             )
 
-            # === FIX 1: Define name and save_path BEFORE the grid ===
             scenario_name = f"step12_main_summary_{defense_name}_{modality}_{target['dataset_name']}_{model_cfg_name.split('_')[-1]}"
             unique_save_path = f"./results/{scenario_name}"
 

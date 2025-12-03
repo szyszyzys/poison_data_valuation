@@ -102,9 +102,6 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
 
                 print(f"    - Defense: {defense_name}")
 
-                # === BUG FIX START ===
-                # The modifier MUST be created INSIDE the defense loop
-                # to get the correct defense-specific golden HPs.
                 def create_setup_modifier(
                         current_modifier=attack_modifier,
                         current_model_cfg_name=model_cfg_name,
@@ -113,9 +110,6 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
                     # Closure to capture the correct attack modifier AND defense
                     def modifier(config: AppConfig) -> AppConfig:
 
-                        # Build the defense-specific key from Step 2.5
-                        # NOTE: This assumes you are using the 'local_clip' results.
-                        # If you have 'no_local_clip', you'd need to adjust this.
                         golden_hp_key = f"{current_model_cfg_name}"
 
                         training_params = GOLDEN_TRAINING_PARAMS.get(golden_hp_key)
@@ -125,10 +119,7 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
                                 set_nested_attr(config, key, value)
                         else:
                             print(f"  WARNING: No Golden HPs found for key '{golden_hp_key}'!")
-                            # You might want to exit here if this is critical
-                            # sys.exit(f"Missing critical HPs for {golden_hp_key}")
 
-                        # Apply fixed attack settings
                         config.experiment.adv_rate = DEFAULT_ADV_RATE
                         config = current_modifier(config)  # Sets attack type (backdoor/labelflip)
                         set_nested_attr(config, "adversary_seller_config.poisoning.poison_rate", DEFAULT_POISON_RATE)
@@ -145,7 +136,6 @@ def generate_defense_tuning_scenarios() -> List[Scenario]:
                     return modifier
 
                 setup_modifier_func = create_setup_modifier()
-                # === BUG FIX END ===
 
                 defense_grid_to_sweep = TUNING_GRIDS[defense_name]
 

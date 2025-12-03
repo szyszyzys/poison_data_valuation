@@ -255,7 +255,6 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
     batch_size = cfg.training.batch_size
     actual_dataset = train_set.dataset if isinstance(train_set, Subset) else train_set
 
-    # --- PERFORMANCE FIX START ---
     # Ensure we use at least 4 workers if config is 0, otherwise use config
     workers = cfg.data.num_workers if cfg.data.num_workers > 4 else 4
 
@@ -290,7 +289,6 @@ def get_image_dataset(cfg: AppConfig) -> Tuple[DataLoader, Dict[int, DataLoader]
         shuffle=False,
         **loader_kwargs
     ) if test_set else None
-    # --- PERFORMANCE FIX END ---
 
     logger.info(f"✅ Federated dataset setup complete. Using {num_classes} classes.")
 
@@ -464,7 +462,6 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         for ex in dataset_obj:
             text_content, label_content = ex.get(text_fld), ex.get(label_fld) if label_fld else None
             if isinstance(text_content, str):
-                # --- FIX 1: Yield data in the standard (data, label) format ---
                 yield (text_content, label_content) if label_fld else text_content
 
     vocab_cache_params = (
@@ -491,7 +488,6 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
             for _, text in data_iterator:
                 yield tokenizer(text)
 
-        # This logic is now correct for modern torchtext
         vocab = build_vocab_from_iterator(
             yield_tokens(hf_iterator(train_ds_hf, text_field, label_field)),
             min_freq=vocab_cfg.min_freq,
@@ -515,21 +511,17 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         for ex in dataset_obj:
             text_content, label_content = ex.get(text_fld), ex.get(label_fld) if label_fld else None
             if isinstance(text_content, str):
-                # --- FIX 1: Yield data in the standard (data, label) format ---
                 yield (text_content, label_content) if label_fld else text_content
 
     # 4. --- Numericalize Data ---
     def numericalize_dataset(data_iterator_func: Callable, split_name: str) -> List[Tuple[int, List[int]]]:
         cache_params = (exp_cfg.dataset_name, vocab_cache_file, split_name)
         cache_path = get_cache_path(app_cache_dir, f"num_{split_name}", cache_params)
-        # if cfg.use_cache and os.path.exists(cache_path):
-        #     with open(cache_path, "rb") as f: return pickle.load(f)
 
         logging.info(f"Numericalizing {split_name} data...")
         processed_data = []
         text_pipeline = lambda x: vocab(tokenizer(x))
 
-        # --- FIX 2: Unpack the tuple in the new (data, label) order ---
         for text, label in data_iterator_func():
             if text and label is not None:
                 processed_text = text_pipeline(text)
@@ -549,7 +541,6 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     standardized_test_data = StandardFormatDataset(processed_test_data, label_first=False)
 
     # 5. --- Split Data ---
-    # 5. --- CACHING & PARTITIONING (UPDATED) ---
     cache_dir_splits = Path(cfg.data_root) / ".cache_splits"  # Separate cache dir for splits
     cache_dir_splits.mkdir(exist_ok=True)
 
@@ -691,7 +682,7 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
         "pin_memory": True,            # Fast transfer to GPU
         "prefetch_factor": 8,          # Buffer 512 batches in RAM
         "persistent_workers": True,    # Save CPU cycles
-        "collate_fn": collate_fn       # <--- IMPORTANT: Padding logic included here
+        "collate_fn": collate_fn
     }
 
     logger.info(f"⚡️ Text Loader Optimized: workers={workers}, prefetch=8, pin=True")

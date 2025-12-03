@@ -115,7 +115,6 @@ class FederatedDataPartitioner:
 
         # Calculate target counts per class
         class_counts = (buyer_class_probs * size).astype(int)
-        # Fix rounding errors to ensure sum equals size
         diff = size - np.sum(class_counts)
         if diff > 0:
             # Add to the majority class or random class

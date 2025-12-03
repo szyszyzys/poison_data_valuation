@@ -153,10 +153,6 @@ def generate_advanced_sybil_scenarios() -> List[Scenario]:
 
     return scenarios
 
-
-# ----------------------------------------------------------------------
-## MAIN EXECUTION BLOCK (The Fix is Applied Here)
-# ----------------------------------------------------------------------
 if __name__ == "__main__":
     base_output_dir = "./configs_generated_benchmark"
     output_dir = Path(base_output_dir) / "step6_advanced_sybil"

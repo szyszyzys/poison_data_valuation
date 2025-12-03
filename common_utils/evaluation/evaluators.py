@@ -74,7 +74,6 @@ class BackdoorEvaluator(BaseEvaluator):
         super().__init__(cfg, device, **kwargs)
 
         if 'backdoor' in cfg.adversary_seller_config.poisoning.type:
-            # --- THIS IS THE FIX ---
             # 1. Make a copy of the runtime kwargs to avoid modifying the original dict.
             kwargs_for_generator = self.runtime_kwargs.copy()
 

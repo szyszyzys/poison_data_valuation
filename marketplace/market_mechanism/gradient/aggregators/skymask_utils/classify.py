@@ -3,13 +3,14 @@ from sklearn import mixture
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler  # <-- Import StandardScaler
 
+
 def GMM2(mask_list):
     if not mask_list or len(mask_list) < 2:
         print("Warning: GMM requires at least 2 samples. Returning default labels.")
         return [0] * len(mask_list)
 
     try:
-        mask_array = np.array(mask_list).astype('float64') # <-- Optional: Use float64 for precision
+        mask_array = np.array(mask_list).astype('float64')  # <-- Optional: Use float64 for precision
 
         if mask_array.ndim == 1:
             print("Warning: PCA/GMM input is 1D. Adjusting.")
@@ -24,8 +25,6 @@ def GMM2(mask_list):
             newX = pca.fit_transform(mask_array)
             n_components_gmm = 2
 
-        # --- FIX 1: Scale the data before GMM ---
-        # GMMs are sensitive to feature scales
         scaler = StandardScaler()
         newX = scaler.fit_transform(newX)
         # ------------------------------------------
@@ -35,8 +34,6 @@ def GMM2(mask_list):
             print("Warning: Not enough samples for GMM after PCA. Returning defaults.")
             return [0] * len(mask_list)
 
-        # --- FIX 2: Add reg_covar ---
-        # This prevents the "ill-defined empirical covariance" error
         gmm = mixture.GaussianMixture(
             n_components=n_components_gmm,
             random_state=0,

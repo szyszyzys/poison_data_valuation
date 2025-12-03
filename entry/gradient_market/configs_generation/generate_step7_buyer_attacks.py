@@ -55,7 +55,6 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
     model_cfg_name = BUYER_ATTACK_SETUP["model_config_name"]
 
     for defense_name in IMAGE_DEFENSES:
-        # === FIX 3: Removed the bugged `if defense_name not in ...` check ===
         # Get Tuned HPs (from Step 3)
         tuned_defense_params = get_tuned_defense_params(
             defense_name=defense_name,
@@ -63,14 +62,11 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
             attack_state="with_attack",  # Use a default
             default_attack_type_for_tuning="backdoor"
         )
-        # This is the CORRECT check
         if not tuned_defense_params:
             print(f"  SKIPPING {defense_name}: No tuned parameters found.")
             continue
 
         print(f"-- Processing Defense: {defense_name}")
-
-        # === FIX 2: Create a correct modifier function INSIDE the loop ===
         def create_setup_modifier(
                 current_defense_name=defense_name,
                 current_model_cfg_name=model_cfg_name,
@@ -93,11 +89,9 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
                     model_struct = "resnet18" if "resnet" in model_cfg_name else "flexiblecnn"
                     set_nested_attr(config, "aggregation.skymask.sm_model_type", model_struct)
 
-                # --- Apply other fixed settings ---
                 set_nested_attr(config, f"data.{modality}.strategy", "dirichlet")
                 set_nested_attr(config, f"data.{modality}.dirichlet_alpha", 0.5)
 
-                # --- Explicitly Disable Seller Attacks ---
                 config.experiment.adv_rate = 0.0
                 config.adversary_seller_config.poisoning.type = PoisonType.NONE
                 config.adversary_seller_config.sybil.is_sybil = False
@@ -112,7 +106,6 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
         for attack_tag, buyer_attack_modifier in BUYER_ATTACK_CONFIGS:
             print(f"  -- Buyer Attack Type: {attack_tag}")
 
-            # === FIX 1: Add unique save_path to the grid ===
             scenario_name = f"step8_buyer_attack_{attack_tag}_{defense_name}_{BUYER_ATTACK_SETUP['dataset_name']}"
             unique_save_path = f"./results/{scenario_name}"
 
@@ -148,7 +141,6 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
     return scenarios
 
 
-# --- Main Execution Block (This is now correct) ---
 if __name__ == "__main__":
     base_output_dir = "./configs_generated_benchmark"
     output_dir = Path(base_output_dir) / "step8_buyer_attacks"
@@ -159,8 +151,6 @@ if __name__ == "__main__":
 
     print("\n--- Generating Configuration Files for Step 8 ---")
 
-    # This loop is now correct because the unique save path
-    # is ALREADY in the scenario's parameter_grid.
     for scenario in scenarios_to_generate:
         print(f"\nProcessing scenario base: {scenario.name}")
         base_config = scenario.base_config_factory()

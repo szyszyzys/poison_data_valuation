@@ -62,11 +62,6 @@ def create_masknet(param_list, net_type, ctx):
             device = ctx if isinstance(ctx, torch.device) else torch.device("cpu")
             num_workers = nworker - 1
 
-            # --- THIS IS THE FLEXIBLE FIX ---
-            #
-            # Infer num_classes from the model's parameters.
-            # The last parameter is the bias of the final linear layer.
-            # Its shape is [num_classes].
             try:
                 last_param = param_list[0][-1]
                 num_classes = last_param.shape[0]
@@ -86,7 +81,6 @@ def create_masknet(param_list, net_type, ctx):
 
             # Create a standard torchvision ResNet18 model as a template.
             temp_real_model = models.resnet18(num_classes=num_classes)
-            # --- END FIX ---
 
             masknet = ResMaskNet(temp_real_model, param_list, num_workers, device)
 

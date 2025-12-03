@@ -192,9 +192,6 @@ if __name__ == "__main__":
     print("\n--- Generating Configuration Files ---")
     total_configs = 0
 
-    # --- START OF CRITICAL FIX ---
-    # We must manually loop over the optimizers to assign the correct LR grid
-
     for scenario in all_tuning_scenarios:
         print(f"\nProcessing scenario: {scenario.name}")
 
@@ -257,8 +254,6 @@ if __name__ == "__main__":
 
         total_configs += num_generated_for_scenario
         print(f"  Generated {num_generated_for_scenario} config files for this scenario.")
-
-    # --- END OF CRITICAL FIX ---
 
     print(f"\n✅ All tuning configurations generated ({total_configs} total).")
     print(f"   Configs saved to: {output_dir}")

@@ -204,10 +204,8 @@ def get_tabular_dataset(cfg: AppConfig) -> Tuple[
         logger.error("NaN/Inf detected in test data after processing!")
         nan_mask = torch.isnan(X_test_tensor).any(dim=0)
         inf_mask = torch.isinf(X_test_tensor).any(dim=0)
-        # --- FIX ---
         problem_cols = [col for i, col in enumerate(X_test_pd.columns)
                         if nan_mask[i] or inf_mask[i]]
-        # --- END FIX ---
         logger.error(f"Problematic columns: {problem_cols}")
         raise ValueError("Cannot proceed with NaN/Inf values in test data. Check data quality.")
 

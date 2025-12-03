@@ -36,9 +36,8 @@ class KernelSHAPEvaluator:
         correct, total = 0, 0
         with torch.no_grad():
             # Iterate over the whole batch
-            for batch in self.buyer_loader:  # <-- FIX 1
+            for batch in self.buyer_loader:
 
-                # --- START FIX 2: Add unpacking logic ---
                 try:
                     if len(batch) == 3:  # Text data
                         labels, data, _ = batch
@@ -50,7 +49,6 @@ class KernelSHAPEvaluator:
                     continue
 
                 data, labels = data.to(self.device), labels.to(self.device)
-                # --- END FIX ---
 
                 outputs = model(data)
                 _, predicted = torch.max(outputs.data, 1)
@@ -90,8 +88,8 @@ class KernelSHAPEvaluator:
         agg_grad, _, _, _ = self.aggregator.aggregate(
             global_epoch=round_number,
             seller_updates=coalition_gradients,
-            root_gradient=buyer_gradient,  # ✅ --- 6. THE FINAL FIX ---
-            buyer_data_loader=self.buyer_loader  # <-- Also pass the loader!
+            root_gradient=buyer_gradient,
+            buyer_data_loader=self.buyer_loader
         )
 
         # 4. Simulate applying the gradient

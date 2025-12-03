@@ -1,12 +1,12 @@
-import pandas as pd
 import json
-import re
-import seaborn as sns
-import matplotlib.pyplot as plt
-import numpy as np
 import os
+import re
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 
 # ==========================================
 # 1. GLOBAL CONFIGURATION & STYLING
@@ -42,18 +42,20 @@ PRETTY_NAMES = {
 # --- Color Standards ---
 # Consistent colors across all papers figures
 DEFENSE_COLORS = {
-    "FedAvg": "#7f8c8d",   # Grey
+    "FedAvg": "#7f8c8d",  # Grey
     "FLTrust": "#3498db",  # Blue
-    "MARTFL": "#2ecc71",   # Green
+    "MARTFL": "#2ecc71",  # Green
     "SkyMask": "#e74c3c",  # Red (Highlighted)
 }
 
 DEFENSE_ORDER = ["FedAvg", "FLTrust", "MARTFL", "SkyMask"]
 
+
 def format_label(label: str) -> str:
     """Standardizes names using the dictionary or title-casing."""
     if not isinstance(label, str): return str(label)
     return PRETTY_NAMES.get(label.lower(), label.replace("_", " ").title())
+
 
 def set_publication_style():
     """Sets the 'Big & Bold' professional style for all figures."""
@@ -77,6 +79,7 @@ def set_publication_style():
         'lines.markersize': 10,
         'figure.figsize': (9, 6),
     })
+
 
 # ==========================================
 # 2. DATA LOADING & PARSING
@@ -205,6 +208,7 @@ def get_baseline_lookup(df: pd.DataFrame) -> Dict[Tuple[str, str], float]:
     lookup = baseline_df.groupby(['defense', 'dataset'])['selection_rate'].mean().to_dict()
     print(f"✅ Baseline calculated for {len(lookup)} configs.")
     return lookup
+
 
 # ==========================================
 # 3. PLOTTING FUNCTIONS
@@ -339,7 +343,7 @@ def plot_buyer_attack_performance(df: pd.DataFrame, output_dir: Path):
             col='Metric', kind='bar',
             order=DEFENSE_ORDER,
             height=5, aspect=1.2, sharey=False,
-            palette={baseline_label: '#95a5a6', attack: '#c0392b'}, # Grey vs Red
+            palette={baseline_label: '#95a5a6', attack: '#c0392b'},  # Grey vs Red
             edgecolor='black', linewidth=1.2,
             legend_out=False
         )
@@ -348,9 +352,6 @@ def plot_buyer_attack_performance(df: pd.DataFrame, output_dir: Path):
         g.fig.suptitle(f'Marketplace Damage Assessment\nAttack: {attack}', y=1.05, fontweight='bold', fontsize=22)
         g.set_axis_labels("", "Metric Value")
         g.set_titles("{col_name}", fontweight='bold', size=18)
-
-        # Fix Legend (move to bottom)
-        # g.add_legend(loc='lower center', bbox_to_anchor=(0.5, -0.1), ncol=2, title=None)
 
         safe_name = re.sub(r'[^\w]', '', attack)
         fname = output_dir / f"Step8_PERFORMANCE_{safe_name}.pdf"

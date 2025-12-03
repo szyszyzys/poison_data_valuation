@@ -257,11 +257,7 @@ class BackdoorTabularGenerator(PoisonGenerator):
     def __init__(self, config: BackdoorTabularConfig, feature_to_idx: Dict[str, int]):
         self.config = config
 
-        # 1. This line is CORRECT
         self.target_label = config.target_label
-
-        # 2. --- THIS IS THE FIX ---
-        #    Get the trigger conditions from the NESTED params object
 
         self.trigger_map: List[Tuple[int, float]] = []
         for feature_name, trigger_value in config.trigger_conditions.items():
@@ -270,11 +266,9 @@ class BackdoorTabularGenerator(PoisonGenerator):
             feature_index = feature_to_idx[feature_name]
             self.trigger_map.append((feature_index, float(trigger_value)))
 
-        # 3. --- THIS IS THE DEBUG LOG YOU ASKED FOR ---
         logging.info(f"BackdoorTabularGenerator initialized:")
         logging.info(f"  - Target Label: {self.target_label}")
         logging.info(f"  - Trigger Map (Index, Value): {self.trigger_map}")
-        # --- END FIX ---
 
     def apply(self, data: torch.Tensor, label: int) -> Tuple[torch.Tensor, int]:
         """

@@ -5,7 +5,8 @@ from typing import Any, Dict, Optional, Tuple, List, Union, Callable, Literal
 
 from torch.utils.data import Dataset
 
-from common_utils.constants.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation, PoisonType, LabelFlipMode, \
+from common_utils.constants.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation, PoisonType, \
+    LabelFlipMode, \
     ImageBackdoorAttackName, TextBackdoorAttackName
 
 logger = logging.getLogger("Configs")
@@ -189,11 +190,9 @@ class PoisoningConfig:
         if self.type == PoisonType.IMAGE_BACKDOOR:
             return self.image_backdoor_params.active_attack_params
 
-        # --- FIX 2: Made text_backdoor consistent with the container pattern ---
         elif self.type == PoisonType.TEXT_BACKDOOR:
             return self.text_backdoor_params
 
-        # --- FIX 3: Added the missing case for tabular backdoor ---
         elif self.type == PoisonType.TABULAR_BACKDOOR:
             return self.tabular_backdoor_params
 
@@ -206,7 +205,6 @@ class PoisoningConfig:
         raise ValueError(f"Unknown poison type: {self.type}")
 
 
-# --- Create a specific parameter class for GIA ---
 @dataclass
 class GradientInversionParams:
     """Parameters for the Gradient Inversion Attack."""

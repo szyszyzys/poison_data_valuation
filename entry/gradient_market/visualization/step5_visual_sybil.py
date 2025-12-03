@@ -273,11 +273,11 @@ def plot_compact_comparison(defense_df: pd.DataFrame, defense: str, output_dir: 
     mask_baseline = defense_df['strategy'].str.contains('baseline', case=False, na=False)
 
     # Mimic
-    mask_mimic    = defense_df['strategy'] == 'mimic'
+    mask_mimic = defense_df['strategy'] == 'mimic'
 
     # Oracle: Filter for alpha = 0.9 (Data), but Label as 0.1 (Visual)
-    mask_oracle   = (defense_df['strategy'].str.contains('oracle', case=False, na=False)) & \
-                    (np.isclose(defense_df['blend_alpha'], 0.9))
+    mask_oracle = (defense_df['strategy'].str.contains('oracle', case=False, na=False)) & \
+                  (np.isclose(defense_df['blend_alpha'], 0.9))
 
     # Create slices
     df_base = defense_df[mask_baseline].copy()
@@ -287,7 +287,7 @@ def plot_compact_comparison(defense_df: pd.DataFrame, defense: str, output_dir: 
     df_mimic['DisplayLabel'] = 'Mimic\n($\\alpha=0.1$)'
 
     df_oracle = defense_df[mask_oracle].copy()
-    df_oracle['DisplayLabel'] = 'Oracle\n($\\alpha=0.1$)' # Visual label
+    df_oracle['DisplayLabel'] = 'Oracle\n($\\alpha=0.1$)'  # Visual label
 
     # Combine
     plot_df_source = pd.concat([df_base, df_mimic, df_oracle])
@@ -355,6 +355,7 @@ def plot_compact_comparison(defense_df: pd.DataFrame, defense: str, output_dir: 
     print(f"  -> Saved: {plot_file}")
     plt.close('all')
 
+
 def main():
     set_publication_style()
     output_dir = Path(FIGURE_OUTPUT_DIR)
@@ -375,10 +376,8 @@ def main():
     group_cols = ['defense', 'strategy', 'blend_alpha']
     df['blend_alpha'] = df['blend_alpha'].fillna(-1)
 
-    # --- FIX IS HERE: as_index=False ensures these keys remain columns ---
     df_agg = df.groupby(group_cols, as_index=False)[metrics].mean()
 
-    # Safety: If strategy is still in index for some reason, reset it
     if 'strategy' not in df_agg.columns:
         df_agg = df_agg.reset_index()
 

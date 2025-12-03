@@ -545,7 +545,6 @@ def generate_attack_scalability_scenarios_OLD() -> List[Scenario]:
             # --- PRIMARY SWEEP: Marketplace Size ---
             "experiment.n_sellers": MARKETPLACE_SIZES,
 
-            # --- FIXED: Adversary Rate (30% at all scales) ---
             "experiment.adv_rate": [FIXED_ADV_RATE],
 
             # --- SECONDARY SWEEP: Defense Method ---

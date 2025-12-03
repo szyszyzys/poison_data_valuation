@@ -14,7 +14,6 @@ class FedAvgAggregator(BaseAggregator):
     It performs a simple, unweighted average of all valid seller updates.
     """
 
-    # --- FIX 1: Update the return signature to include the new stats dictionary ---
     def aggregate(self, global_epoch: int, seller_updates: Dict[str, List[torch.Tensor]], **kwargs) -> Tuple[
         List[torch.Tensor], List[str], List[str], Dict[str, Any]]:
 
@@ -38,12 +37,9 @@ class FedAvgAggregator(BaseAggregator):
 
         logger.info(f"Aggregated updates from {num_valid_sellers} sellers.")
 
-        # Since FedAvg doesn't reject anyone, all are selected and none are outliers.
         selected_sids = valid_sellers
         outlier_sids = []
 
-        # --- FIX 2: Return an empty dictionary for the aggregation stats ---
-        # This makes its return signature consistent with the other aggregators.
         aggregation_stats = {}
 
         return aggregated_gradient, selected_sids, outlier_sids, aggregation_stats

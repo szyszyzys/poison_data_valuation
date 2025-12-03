@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
+from common_utils.utils import unflatten_tensor, flatten_tensor
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data import Subset
@@ -27,12 +28,12 @@ from torch.utils.data import Subset
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
     BackdoorTextGenerator, BackdoorTabularGenerator
 from common_utils.constants.enums import ImageTriggerType, ImageTriggerLocation, PoisonType
-from marketplace.utils.gradient_market_utils.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, BackdoorTextConfig, SybilConfig, \
-    RuntimeDataConfig, TrainingConfig, BackdoorTabularConfig, SybilDrowningConfig
-from common_utils.utils import unflatten_tensor, flatten_tensor
 from marketplace.market_mechanism.gradient.aggregator import Aggregator
-from seller.seller import BaseSeller
+from marketplace.utils.gradient_market_utils.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, \
+    BackdoorTextConfig, SybilConfig, \
+    RuntimeDataConfig, TrainingConfig, BackdoorTabularConfig, SybilDrowningConfig
 from model.utils import local_training_and_get_gradient
+from seller.seller import BaseSeller
 
 
 class BaseGradientStrategy(ABC):
@@ -170,19 +171,7 @@ def estimate_byte_size(data: Any) -> int:
         except TypeError:
             # Fallback for standard python types if numpy dtype fails
             total_size = sys.getsizeof(data)  # Includes Python object overhead
-            # Or just use fixed estimates: 8 for int/float, 1 for bool?
-            # total_size = 8 if isinstance(data, (int, float)) else 1
-
-    # --- Handle Other Types ---
-    # Add elif blocks here for other data types you expect (e.g., strings)
-    # elif isinstance(data, str):
-    #    total_size = sys.getsizeof(data) # Includes overhead
-
-    # --- Unhandled Type ---
     else:
-        # You might want to log a warning for unexpected types
-        # logging.warning(f"estimate_byte_size encountered unhandled type: {type(data)}. Size may be inaccurate.")
-        # Attempt sys.getsizeof as a fallback, but it includes Python overhead
         try:
             total_size = sys.getsizeof(data)
         except TypeError:
@@ -211,11 +200,6 @@ def validate_and_fix_model_initialization(model: nn.Module) -> bool:
         f"🔄 NaN/Inf detected. Attempting stable reinitialization for {len(problematic_params)} parameters..."
     )
 
-    # -------------------- START OF FIX --------------------
-    #
-    # We will iterate over model.modules() directly instead of using model.apply()
-    # This is more explicit and fixes the bug.
-    #
     for m in model.modules():
         if isinstance(m, nn.Linear):
             # USE UNIFORM: This is bounded and cannot create Inf
@@ -223,8 +207,6 @@ def validate_and_fix_model_initialization(model: nn.Module) -> bool:
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-        # --- THIS IS THE CRITICAL BUG FIX ---
-        # Your old code had nn.BatchNorm2d, but the model uses nn.BatchNorm1d
         elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
             nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)
@@ -239,9 +221,6 @@ def validate_and_fix_model_initialization(model: nn.Module) -> bool:
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    # -------------------- END OF FIX --------------------
-
-    # Verify fix worked
     for name, param in model.named_parameters():
         if torch.isnan(param).any() or torch.isinf(param).any():
             error_msg = f"❌ CRITICAL: Still NaN/Inf in '{name}' after stable reinitialization. This is unrecoverable."
@@ -396,10 +375,6 @@ class GradientSeller(BaseSeller):
                 'upload_bytes': estimate_byte_size(zero_grad),
                 'num_samples': 0
             }
-
-        # if not validate_and_fix_model_initialization(model_to_train):
-        #     logging.error(f"[{self.seller_id}] ❌ Model has unfixable NaN/Inf values!")
-        #     return None, {'error': 'Model initialization contains NaN/Inf'}
 
         logging.info(f"[{self.seller_id}] Training on {len(dataset_to_use)} samples...")
 
@@ -578,7 +553,7 @@ class GradientSeller(BaseSeller):
         """Saves the federated round history for this seller to a CSV file in a seller-specific subdirectory."""
         history_dir = self.seller_specific_path / subdirectory
         os.makedirs(history_dir, exist_ok=True)
-        file_name = history_dir / f"round_history.csv"  # Fixed name within seller's history dir
+        file_name = history_dir / f"round_history.csv"
 
         if not self.federated_round_history:
             logging.info(f"[{self.seller_id}] No round history data to save for CSV.")
@@ -1137,7 +1112,7 @@ class SybilCoordinator:
     def _analyze_selection_patterns(self) -> None:
         """Analyze stored selected gradients to compute a centroid..."""
         all_selected_flat = [
-            flat_grad  # <-- FIX: grad is ALREADY the flat tensor
+            flat_grad
             for round_dict in self.selected_history
             for flat_grad in round_dict.values()
         ]
@@ -1216,13 +1191,10 @@ class PoisonedDataset(Dataset):
         if not (0.0 <= poison_rate <= 1.0):
             raise ValueError("Poison rate must be between 0.0 and 1.0")
 
-        # --- THIS IS THE FIX ---
-        # The logic for _select_indices is now moved directly here.
         n_poison = int(len(original_dataset) * poison_rate)
         all_indices = list(range(len(original_dataset)))
         random.shuffle(all_indices)
         self.poison_indices = set(all_indices[:n_poison])
-        # -----------------------
 
     def __len__(self):
         # Always return the full, original length.
@@ -1772,7 +1744,6 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
                           marketplace_metrics: Dict = None, **kwargs):
         """
         Record outcome and update threat-model-specific state.
-        Fixed signature to match GradientSeller parent class.
         """
         # 1. Update Bandit History (The specific Adaptive logic)
         # We record: (Round, Strategy Used, Success/Failure)
@@ -1789,647 +1760,6 @@ class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
         )
 
 
-# class AdaptiveAttackerSeller(AdvancedPoisoningAdversarySeller):
-#     """
-#     Adaptive adversary simulating three threat models.
-#
-#     This class combines a multi-armed bandit (black-box) to discover *which* strategy
-#     to use, with a sophisticated "stealthy_blend" strategy that learns *how much*
-#     malice to inject.
-#
-#     Key Improvements in this version:
-#     1. Fixes UCB learning freeze (continues learning even after exploration phase).
-#     2. Optimizes gradient computation (prevents double calculation for data attacks).
-#     3. Clamps attack intensity to valid ranges.
-#     """
-#
-#     def __init__(self, seller_id: str, data_config: Any,
-#                  training_config: Any, model_factory: Callable[[], nn.Module],
-#                  adversary_config: Any,
-#                  model_type: str,
-#                  device: str = "cpu",
-#                  # --- FIX 1: Explicitly accept the argument to prevent crash ---
-#                  validation_loader: DataLoader = None,
-#                  **kwargs):
-#
-#         super().__init__(seller_id=seller_id, data_config=data_config,
-#                          training_config=training_config, model_factory=model_factory,
-#                          adversary_config=adversary_config, poison_generator=None,
-#                          device=device, **kwargs)
-#
-#         # --- FIX 2: Store it so the Oracle attack can use it ---
-#         self.validation_loader = validation_loader
-#
-#         # Fallback: Check kwargs just in case
-#         if self.validation_loader is None and 'validation_loader' in kwargs:
-#             self.validation_loader = kwargs['validation_loader']
-#
-#         self.adv_cfg = adversary_config.adaptive_attack
-#         if not self.adv_cfg.is_active:
-#             raise ValueError("AdaptiveAttackerSeller requires is_active=True")
-#
-#         self.model_type = model_type
-#         self.kwargs = kwargs
-#
-#         self.threat_model = self.adv_cfg.threat_model
-#
-#         self.phase = "exploration"
-#         self.strategy_history = collections.deque(maxlen=200)
-#         self.current_strategy = "honest"
-#         self.round_counter = 0
-#
-#         # --- FIX 3: Use the "Selection Boosting" Strategy Pool ---
-#         if self.adv_cfg.attack_mode == "gradient_manipulation":
-#             # Removed 'add_noise' because it gets rejected by MartFL
-#             self.base_strategies = ["honest", "reduce_norm", "stealthy_blend"]
-#
-#         elif self.adv_cfg.attack_mode == "data_poisoning":
-#             # Removed 'subsample_clean' because it creates high variance (rejection)
-#             # Added 'balance_classes' and 'easy_samples' to look like the Global Mean (selection)
-#             self.base_strategies = ["honest", "balance_classes", "easy_samples"]
-#             self._add_class_based_strategies()
-#
-#         # ... (Rest of resources remains the same) ...
-#         self.previous_centroid = None
-#         self.previous_aggregate = None
-#         self.blend_cfg = adversary_config.drowning_attack
-#         self.blend_phase = "mimicry"
-#         self.blend_mimicry_rounds = self.blend_cfg.mimicry_rounds
-#         self.blend_attack_intensity = self.blend_cfg.attack_intensity
-#         self.blend_honest_gradient_stats = {'mean_norm': None, 'direction_estimate': None}
-#
-#         self.backdoor_dataset: Optional[Dataset] = None
-#         self.poisoned_dataset: Optional[Dataset] = None
-#         self.layer_name_to_index: Dict[str, int] = {}
-#         self.target_layer_indices: Set[int] = set()
-#
-#         self._initialize_malicious_resources()
-#
-#         logging.info(f"[{self.seller_id}] Initialized AdaptiveAttacker ({self.threat_model})")
-#
-#     def _initialize_malicious_resources(self):
-#         """Helper to setup malicious datasets and layer maps."""
-#         # 1. Create Malicious Datasets
-#         try:
-#             # We create the generator based on the MAIN poisoning config
-#             malicious_generator = self._create_poison_generator(
-#                 self.adversary_config, self.model_type, self.device, **self.kwargs
-#             )
-#
-#             if malicious_generator:
-#                 poison_type_enum = self.adversary_config.poisoning.type
-#
-#                 # FIX: Check the POISON TYPE directly, not the blend config
-#                 if "backdoor" in poison_type_enum.value:
-#                     logging.info(f"[{self.seller_id}] Initializing BACKDOOR dataset.")
-#                     self.backdoor_dataset = PoisonedDataset(
-#                         original_dataset=self.dataset,
-#                         poison_generator=malicious_generator,
-#                         poison_rate=1.0,  # Backdoors target 100% of trigger inputs
-#                         data_format=self.model_type
-#                     )
-#                 else:
-#                     # Targeted / Untargeted / Label Flip
-#                     logging.info(f"[{self.seller_id}] Initializing POISONED dataset.")
-#                     self.poisoned_dataset = PoisonedDataset(
-#                         original_dataset=self.dataset,
-#                         poison_generator=malicious_generator,
-#                         poison_rate=self.adversary_config.poisoning.poison_rate,
-#                         data_format=self.model_type
-#                     )
-#             else:
-#                 logging.warning(f"[{self.seller_id}] No malicious generator created.")
-#
-#         except Exception as e:
-#             logging.warning(f"[{self.seller_id}] Malicious dataset setup failed: {e}", exc_info=True)
-#
-#         # 2. Map Layers (Keep existing logic)
-#         try:
-#             temp_model = self.model_factory()
-#             for i, (name, _) in enumerate(temp_model.named_parameters()):
-#                 self.layer_name_to_index[name] = i
-#             if self.blend_cfg.target_layers:
-#                 for layer_name in self.blend_cfg.target_layers:
-#                     if layer_name in self.layer_name_to_index:
-#                         self.target_layer_indices.add(self.layer_name_to_index[layer_name])
-#         except Exception:
-#             pass
-#
-#     def _add_class_based_strategies(self):
-#         """Adds strategies like 'focus_class_0', 'exclude_class_1' to the pool."""
-#         try:
-#             # Detect number of classes
-#             if hasattr(self.dataset, 'classes'):
-#                 num_classes = len(self.dataset.classes)
-#             elif hasattr(self.dataset, 'targets'):
-#                 num_classes = len(set(self.dataset.targets))
-#             elif hasattr(self.dataset, 'dataset') and hasattr(self.dataset.dataset, 'targets'):
-#                 # Handle Subset
-#                 targets = [self.dataset.dataset.targets[i] for i in self.dataset.indices]
-#                 num_classes = len(set(targets))
-#             else:
-#                 return  # Can't determine classes
-#
-#             # Add strategies for every single class
-#             # The bandit will find which specific class the Aggregator prefers!
-#             for c in range(num_classes):
-#                 self.base_strategies.append(f"focus_class_{c}")
-#                 # Exclude might be useful if one class is "noisy" and causing rejection
-#                 self.base_strategies.append(f"exclude_class_{c}")
-#
-#         except Exception as e:
-#             logging.warning(f"Could not add class strategies: {e}")
-#
-#     # ========================================================================
-#     # THREAT MODELS 1 & 2: ORACLE / GRADIENT INVERSION
-#     # ========================================================================
-#     def _apply_oracle_attack(self, malicious_gradient: List[torch.Tensor]) -> List[torch.Tensor]:
-#         if self.validation_loader is None:
-#             logging.error(f"[{self.seller_id}] Oracle attack requires validation_loader!")
-#             return malicious_gradient
-#
-#         # 1. Get True Honest Direction (from Validation Data)
-#         # Note: We create a temporary model to avoid mutating the main one
-#         temp_model = self.model_factory().to(self.device)
-#         true_honest_grad, _ = self._compute_local_grad(
-#             temp_model,
-#             self.validation_loader.dataset
-#         )
-#
-#         honest_flat = flatten_tensor(true_honest_grad)
-#         malicious_flat = flatten_tensor(malicious_gradient)
-#
-#         # 2. Constraint: Target Cosine Similarity
-#         target_similarity = 0.95
-#
-#         h_norm = torch.norm(honest_flat)
-#         h_unit = honest_flat / (h_norm + 1e-9)
-#
-#         # 3. Geometric Projection ("Boundary Riding")
-#         # Decompose malicious vector into Parallel (honest) and Orthogonal components
-#         parallel_component = torch.dot(malicious_flat, h_unit) * h_unit
-#         orthogonal_component = malicious_flat - parallel_component
-#
-#         # Edge Case: Malicious is already perfectly aligned with Honest
-#         if torch.norm(orthogonal_component) < 1e-9:
-#             return true_honest_grad
-#
-#         orth_unit = orthogonal_component / torch.norm(orthogonal_component)
-#
-#         # 4. Construct the vector at exactly 'theta' degrees
-#         import math
-#         # Clamp to avoid domain errors if target_similarity > 1.0 due to float precision
-#         theta = math.acos(min(max(target_similarity, -1.0), 1.0))
-#
-#         # New Direction = (Cos(theta) * Honest_Dir) + (Sin(theta) * Malicious_Orth_Dir)
-#         boundary_dir = (target_similarity * h_unit) + (math.sin(theta) * orth_unit)
-#
-#         # Scale: Mimic the honest norm to avoid norm-clipping defenses
-#         final_flat = boundary_dir * h_norm
-#
-#         # --- FIX IS HERE: Use 'malicious_gradient' for shapes ---
-#         return unflatten_tensor(final_flat, [p.shape for p in malicious_gradient])
-#
-#     def _apply_gradient_inversion_attack(self, _unused_gradient_input) -> List[torch.Tensor]:
-#         """
-#         Gradient Inversion: Simulates having reconstructed honest data.
-#         We mix the LOSS, not the gradients. This creates a much more natural vector.
-#         """
-#         # 1. IDENTIFY MALICIOUS DATASET
-#         # We need actual data to calculate the 'malicious loss'.
-#         # Check backdoor first, then poisoned (e.g. targeted poisoning).
-#         malicious_dataset = self.backdoor_dataset
-#         if malicious_dataset is None:
-#             malicious_dataset = self.poisoned_dataset
-#
-#         # SAFETY CHECK: If no malicious data is configured/loaded, we cannot attack.
-#         if malicious_dataset is None:
-#             logging.warning(f"[{self.seller_id}] GradInv skipped: No malicious dataset found. Returning honest grad.")
-#             # Fallback: Compute honest gradient
-#             model = self.model_factory().to(self.device)
-#             grad, _ = self._compute_local_grad(model, self.dataset)
-#             return grad
-#
-#         # 2. EXTRA KNOWLEDGE: Get 'Inverted' (Honest) Data
-#         # In a real attack, this comes from the reconstruction algorithm.
-#         try:
-#             # Safe iterator handling
-#             inverted_iter = iter(self.train_loader)
-#             inverted_batch_data, inverted_batch_label = next(inverted_iter)
-#         except StopIteration:
-#             # Handle edge case of empty loader
-#             return self._compute_local_grad(self.model_factory().to(self.device), self.dataset)[0]
-#
-#         inverted_batch_data = inverted_batch_data.to(self.device)
-#         inverted_batch_label = inverted_batch_label.to(self.device)
-#
-#         model = self.model_factory().to(self.device)
-#         model.train()
-#
-#         # 3. Compute Honest Loss on Inverted Data
-#         outputs_honest = model(inverted_batch_data)
-#         loss_honest = nn.functional.cross_entropy(outputs_honest, inverted_batch_label)
-#
-#         # 4. Compute Malicious Loss on Malicious Data
-#         # [FIX] Use the safely resolved 'malicious_dataset'
-#         try:
-#             # Note: Creating a DataLoader inside a loop is inefficient but functional for small batch attacks.
-#             # Using shuffle=True ensures we don't just overfit to the first 32 examples.
-#             bd_iter = iter(DataLoader(malicious_dataset, batch_size=32, shuffle=True))
-#             bd_data, bd_label = next(bd_iter)
-#         except Exception as e:
-#             logging.error(f"[{self.seller_id}] Failed to load malicious batch: {e}")
-#             return self._compute_local_grad(model, self.dataset)[0]
-#
-#         bd_data = bd_data.to(self.device)
-#         bd_label = bd_label.to(self.device)
-#
-#         outputs_mal = model(bd_data)
-#         loss_mal = nn.functional.cross_entropy(outputs_mal, bd_label)
-#
-#         # 5. Joint Optimization (The "Shadow Imitator")
-#         # We minimize: Loss_Honest + lambda * Loss_Malicious
-#         lambda_val = 2.0
-#         total_loss = loss_honest + lambda_val * loss_mal
-#
-#         total_loss.backward()
-#
-#         grad_list = [p.grad.clone() for p in model.parameters()]
-#         return grad_list
-#
-#     def _select_black_box_strategy(self) -> str:
-#         """Selects a strategy using UCB1 with epsilon-greedy fallback."""
-#
-#         # 1. Ensure all strategies are tried at least once
-#         tried_strategies = set(hist[1] for hist in self.strategy_history)
-#         untried = [s for s in self.base_strategies if s not in tried_strategies]
-#         if untried:
-#             return random.choice(untried)
-#
-#         # 2. Epsilon-Greedy exploration (prevents getting stuck in local optima)
-#         # Higher epsilon in exploration phase, lower in exploitation
-#         epsilon = 0.2 if self.phase == "exploration" else 0.05
-#         if random.random() < epsilon:
-#             return random.choice(self.base_strategies)
-#
-#         # 3. UCB Calculation
-#         strategy_stats = collections.defaultdict(lambda: {'attempts': 0, 'successes': 0})
-#         for _, strategy, selected in self.strategy_history:
-#             strategy_stats[strategy]['attempts'] += 1
-#             if selected:
-#                 strategy_stats[strategy]['successes'] += 1
-#
-#         total_attempts = sum(s['attempts'] for s in strategy_stats.values())
-#         if total_attempts == 0:
-#             return "honest"
-#
-#         best_score = -float('inf')
-#         best_strategy = "honest"
-#
-#         for strategy in self.base_strategies:
-#             stats = strategy_stats[strategy]
-#             if stats['attempts'] == 0:
-#                 continue
-#
-#             avg_reward = stats['successes'] / stats['attempts']
-#             # UCB1 Exploration Term
-#             exploration_bonus = np.sqrt(2 * np.log(total_attempts) / stats['attempts'])
-#             # 0.5 is the exploration constant (tunable)
-#             ucb_score = avg_reward + 0.5 * exploration_bonus
-#
-#             if ucb_score > best_score:
-#                 best_score = ucb_score
-#                 best_strategy = strategy
-#
-#         logging.debug(f"[{self.seller_id}] UCB Selected '{best_strategy}' (Score: {best_score:.3f})")
-#         return best_strategy
-#
-#     def _apply_black_box_data_strategy(self, strategy: str) -> Dataset:
-#         """Apply data manipulation based on learned strategy."""
-#         if strategy == "honest":
-#             return self.dataset
-#         elif strategy == "balance_classes":
-#             return self._create_balanced_subset()  # Helper function call
-#
-#         # 3. HYGIENE: EASY SAMPLES (Variance Reduction)
-#         elif strategy == "easy_samples":
-#             return self._create_easy_subset()  # Helper function call
-#         elif strategy == "subsample_clean":
-#             subset_ratio = self.adv_cfg.subset_ratio
-#             subset_size = max(1, int(len(self.dataset) * subset_ratio))
-#             indices = random.sample(range(len(self.dataset)), subset_size)
-#             return Subset(self.dataset, indices)
-#         elif strategy.startswith("focus_class_") or strategy.startswith("exclude_class_"):
-#             return self._apply_class_filter_strategy(strategy)
-#         else:
-#             return self.dataset
-#
-#     def _create_balanced_subset(self):
-#         # (Logic from previous response)
-#         targets = self._get_targets()
-#         if targets is None: return self.dataset
-#
-#         targets = np.array(targets)
-#         class_counts = np.bincount(targets)
-#         weights = 1.0 / np.maximum(class_counts[targets], 1)
-#
-#         num_samples = len(self.dataset)
-#         balanced_indices = torch.multinomial(torch.DoubleTensor(weights), num_samples, replacement=True)
-#         return Subset(self.dataset, balanced_indices.tolist())
-#
-#     def _create_easy_subset(self):
-#         # (Logic from previous response)
-#         # Random sample to save time
-#         subset_indices = random.sample(range(len(self.dataset)), min(len(self.dataset), 512))
-#
-#         model = self.model_factory().to(self.device)
-#         model.eval()
-#         criterion = nn.CrossEntropyLoss(reduction='none')
-#         losses = []
-#
-#         # Quick eval
-#         temp_loader = DataLoader(Subset(self.dataset, subset_indices), batch_size=64, shuffle=False)
-#         with torch.no_grad():
-#             for batch in temp_loader:
-#                 if len(batch) == 2:
-#                     data, target = batch
-#                 else:
-#                     _, data, target = batch
-#                 data, target = data.to(self.device), target.to(self.device)
-#                 loss = criterion(model(data), target)
-#                 losses.extend(loss.cpu().numpy())
-#
-#         # Take bottom 50%
-#         sorted_args = np.argsort(losses)
-#         cutoff = int(len(sorted_args) * 0.5)
-#         final_indices = [subset_indices[i] for i in sorted_args[:cutoff]]
-#         return Subset(self.dataset, final_indices)
-#
-#     def _apply_class_filter_strategy(self, strategy: str) -> Dataset:
-#         """Filter dataset by class."""
-#         try:
-#             action, _, class_label = strategy.rpartition('_')
-#             class_label = int(class_label)
-#
-#             # Determine targets based on dataset type
-#             if hasattr(self.dataset, 'targets'):
-#                 targets = np.array(self.dataset.targets)
-#             elif isinstance(self.dataset, Subset):
-#                 base_targets = np.array(self.dataset.dataset.targets)
-#                 targets = base_targets[self.dataset.indices]
-#             else:
-#                 targets = np.array([self.dataset[i][1] for i in range(len(self.dataset))])
-#
-#             if action == "focus_class":
-#                 indices = np.where(targets == class_label)[0]
-#             else:  # exclude_class
-#                 indices = np.where(targets != class_label)[0]
-#
-#             if len(indices) == 0:
-#                 return self.dataset
-#             return Subset(self.dataset, indices.tolist())
-#         except Exception:
-#             return self.dataset
-#
-#     def _apply_black_box_gradient_manipulation(self, gradient: List[torch.Tensor], strategy: str) -> List[torch.Tensor]:
-#         """Applies simple black-box manipulations."""
-#         if strategy == "honest":
-#             return gradient
-#
-#         flat_grad = flatten_tensor(gradient).clone().detach()
-#
-#         if strategy == "add_noise":
-#             noise = torch.randn_like(flat_grad)
-#             scaled_noise = noise * self.adv_cfg.noise_level * torch.norm(flat_grad) / (torch.norm(noise) + 1e-9)
-#             manipulated_flat_grad = flat_grad + scaled_noise
-#         elif strategy == "reduce_norm":
-#             manipulated_flat_grad = flat_grad * self.adv_cfg.scale_factor
-#         else:
-#             return gradient
-#
-#         return unflatten_tensor(manipulated_flat_grad, [p.shape for p in gradient])
-#
-#     # ========================================================================
-#     # HELPER METHODS FOR "STEALTHY_BLEND"
-#     # ========================================================================
-#
-#     @staticmethod
-#     def _create_poison_generator(adv_cfg, model_type, device, **kwargs):
-#         # Implementation depends on your PoisonGenerator class structure
-#         # Returning None as placeholder if not defined
-#         if hasattr(adv_cfg, 'poisoning') and adv_cfg.poisoning:
-#             # Logic to instantiate BackdoorImageGenerator etc. goes here
-#             # based on previous snippets provided in context
-#             return None
-#         return None
-#
-#     def _update_honest_gradient_stats(self, gradient: List[torch.Tensor]):
-#         """Learn characteristics of honest gradients (norm EMA)."""
-#         flat_grad = flatten_tensor(gradient)
-#         grad_norm = torch.norm(flat_grad).item()
-#
-#         if self.blend_honest_gradient_stats['mean_norm'] is None:
-#             self.blend_honest_gradient_stats['mean_norm'] = grad_norm
-#         else:
-#             beta = 0.9
-#             self.blend_honest_gradient_stats['mean_norm'] = (
-#                     beta * self.blend_honest_gradient_stats['mean_norm'] +
-#                     (1 - beta) * grad_norm
-#             )
-#
-#     def _get_targets(self):
-#         # Robust helper to get targets from any dataset wrapper
-#         if hasattr(self.dataset, 'targets'): return self.dataset.targets
-#         if hasattr(self.dataset, 'dataset') and hasattr(self.dataset.dataset, 'targets'):
-#             return [self.dataset.dataset.targets[i] for i in self.dataset.indices]
-#         return None
-#
-#     def _compute_malicious_gradient(self) -> Optional[List[torch.Tensor]]:
-#         """Compute gradient on malicious objective."""
-#         model = self.model_factory().to(self.device)
-#         if self.blend_cfg.attack_type == "backdoor" and self.backdoor_dataset:
-#             backdoor_grad, _ = self._compute_local_grad(model, self.backdoor_dataset)
-#             return backdoor_grad
-#         elif self.blend_cfg.attack_type == "targeted_poisoning" and self.poisoned_dataset:
-#             poison_grad, _ = self._compute_local_grad(model, self.poisoned_dataset)
-#             return poison_grad
-#         return None
-#
-#     def _identify_vulnerable_layers(self, gradient: List[torch.Tensor]) -> List[int]:
-#         """Identify which layers to inject malicious gradients into."""
-#         if self.target_layer_indices:
-#             return list(self.target_layer_indices)
-#         num_layers = len(gradient)
-#         num_target = max(1, int(num_layers * 0.2))
-#         layer_norms = [torch.norm(g).item() for g in gradient]
-#         sorted_indices = sorted(range(num_layers), key=lambda i: layer_norms[i], reverse=True)
-#         return sorted_indices[:num_target]
-#
-#     def _create_stealthy_malicious_gradient(self, honest_gradient, malicious_gradient):
-#         """Blend honest and malicious gradients."""
-#         honest_flat = flatten_tensor(honest_gradient)
-#         malicious_flat = flatten_tensor(malicious_gradient)
-#
-#         if honest_flat.numel() != malicious_flat.numel():
-#             return honest_gradient
-#
-#         target_norm = self.blend_honest_gradient_stats.get('mean_norm') or torch.norm(honest_flat).item()
-#
-#         if self.blend_cfg.replacement_strategy == "layer_wise":
-#             vulnerable_layers = self._identify_vulnerable_layers(honest_gradient)
-#             blended_gradient = []
-#             for i, (h_grad, m_grad) in enumerate(zip(honest_gradient, malicious_gradient)):
-#                 if i in vulnerable_layers:
-#                     alpha = self.blend_attack_intensity
-#                     layer_blend = (1 - alpha) * h_grad + alpha * m_grad
-#                     blended_gradient.append(layer_blend)
-#                 else:
-#                     blended_gradient.append(h_grad.clone())
-#
-#             # Renormalize entire vector
-#             blended_flat = flatten_tensor(blended_gradient)
-#             scale = target_norm / (torch.norm(blended_flat).item() + 1e-9)
-#             return [g * scale for g in blended_gradient]
-#
-#         elif self.blend_cfg.replacement_strategy == "global_blend":
-#             alpha = self.blend_attack_intensity
-#             blended_flat = (1 - alpha) * honest_flat + alpha * malicious_flat
-#             blended_flat = blended_flat * (target_norm / (torch.norm(blended_flat) + 1e-9))
-#             return unflatten_tensor(blended_flat, [g.shape for g in honest_gradient])
-#
-#         return honest_gradient
-#
-#     # ========================================================================
-#     # MAIN PIPELINE: GENERATE GRADIENT
-#     # ========================================================================
-#
-#     def get_gradient_for_upload(self, all_seller_gradients=None, target_seller_id=None):
-#         self.round_counter += 1
-#         stats = {}
-#         local_model = self.model_factory().to(self.device)
-#
-#         # 1. Determine Phase and Strategy
-#         if self.phase == "exploration" and self.round_counter > self.adv_cfg.exploration_rounds:
-#             self.phase = "exploitation"
-#
-#         if self.threat_model == "black_box":
-#             self.current_strategy = self._select_black_box_strategy()
-#         elif self.threat_model == "oracle":
-#             self.current_strategy = "oracle_specific"
-#         elif self.threat_model == "gradient_inversion":
-#             self.current_strategy = "gradient_inversion_specific"
-#         else:
-#             self.current_strategy = "honest"
-#
-#         stats['attack_strategy'] = self.current_strategy
-#
-#         # 2. OPTIMIZATION: Black-Box Data Poisoning
-#         # If strategy changes data, compute on that data directly and return.
-#         if self.adv_cfg.attack_mode == "data_poisoning" and self.threat_model == "black_box":
-#             dataset_for_training = self._apply_black_box_data_strategy(self.current_strategy)
-#
-#             final_gradient, train_stats = self._compute_local_grad(local_model, dataset_for_training)
-#             stats.update(train_stats)
-#
-#             self.last_computed_gradient = final_gradient
-#             self.last_training_stats = stats
-#             return final_gradient, stats
-#
-#         # 3. Base Computation: Honest Gradient
-#         # We compute this ONCE. It serves as the "Mask" for attacks or the fallback.
-#         honest_gradient, train_stats = self._compute_local_grad(local_model, self.dataset)
-#         stats.update(train_stats)
-#
-#         if honest_gradient is None:
-#             stats['error'] = 'Honest gradient computation failed'
-#             return None, stats
-#
-#         final_gradient = honest_gradient  # Default fallback
-#
-#         # 4. Apply Advanced Attacks
-#         if self.threat_model == "oracle":
-#             # [FIXED LOGIC]
-#             # 1. Compute the MALICIOUS target (Poison/Backdoor)
-#             malicious_gradient = self._compute_malicious_gradient()
-#
-#             if malicious_gradient is not None:
-#                 # 2. Project the MALICIOUS target onto the Honest Boundary
-#                 final_gradient = self._apply_oracle_attack(malicious_gradient)
-#             else:
-#                 logging.warning(f"[{self.seller_id}] Oracle attack missing malicious dataset. Sending honest.")
-#                 final_gradient = honest_gradient
-#
-#         elif self.threat_model == "gradient_inversion":
-#             # Pass None because this method calculates gradients via Joint Loss Optimization
-#             final_gradient = self._apply_gradient_inversion_attack(None)
-#
-#         elif self.threat_model == "black_box":
-#             # Gradient Manipulation Mode
-#             if self.current_strategy == "stealthy_blend":
-#                 stats['blend_phase'] = self.blend_phase
-#
-#                 # Check phase transition
-#                 if self.blend_phase == "mimicry" and self.round_counter > self.blend_mimicry_rounds:
-#                     self.blend_phase = "attack"
-#                     logging.info(f"[{self.seller_id}] Blend strategy entering ATTACK phase.")
-#
-#                 if self.blend_phase == "mimicry":
-#                     self._update_honest_gradient_stats(honest_gradient)
-#                     final_gradient = honest_gradient
-#                 else:
-#                     malicious_gradient = self._compute_malicious_gradient()
-#                     if malicious_gradient:
-#                         final_gradient = self._create_stealthy_malicious_gradient(
-#                             honest_gradient, malicious_gradient
-#                         )
-#             else:
-#                 # Standard manipulations (reduce_norm, etc.)
-#                 final_gradient = self._apply_black_box_gradient_manipulation(
-#                     honest_gradient, self.current_strategy
-#                 )
-#
-#         # Cache and Return
-#         stats.update({
-#             'threat_model': self.threat_model,
-#             'attack_phase': self.phase
-#         })
-#         self.last_computed_gradient = final_gradient
-#         self.last_training_stats = stats
-#         return final_gradient, stats
-#
-#     # ========================================================================
-#     # FEEDBACK LOOP
-#     # ========================================================================
-#
-#     def round_end_process(self, round_number: int, was_selected: bool,
-#                           marketplace_metrics: Dict = None, **kwargs):
-#         """Record outcome and update threat-model-specific state."""
-#         super().round_end_process(round_number=round_number, was_selected=was_selected,
-#                                   marketplace_metrics=marketplace_metrics, **kwargs)
-#
-#         # 1. Update UCB Bandit (CRITICAL: Always update, regardless of phase)
-#         if self.threat_model == "black_box":
-#             self.strategy_history.append((round_number, self.current_strategy, was_selected))
-#             logging.debug(f"[{self.seller_id}] History: {self.current_strategy} -> {was_selected}")
-#
-#         # 2. Update "Stealthy Blend" Intensity
-#         if self.current_strategy == "stealthy_blend" and self.blend_phase == "attack":
-#             if not was_selected:
-#                 # Rejected? Reduce intensity significantly
-#                 self.blend_attack_intensity = max(0.01, self.blend_attack_intensity * 0.9)
-#                 logging.info(f"[{self.seller_id}] Blend failed. Reduced to {self.blend_attack_intensity:.3f}")
-#             else:
-#                 # Accepted? Increase intensity slightly to push limits
-#                 self.blend_attack_intensity = min(0.99, self.blend_attack_intensity * 1.05)
-#
-#         # 3. Update Oracle/GradInv Snapshots
-#         if marketplace_metrics:
-#             if self.threat_model == "oracle" and 'selected_centroid_flat' in marketplace_metrics:
-#                 self.previous_centroid = marketplace_metrics['selected_centroid_flat'].clone().detach().cpu()
-#             if self.threat_model == "gradient_inversion" and 'final_aggregated_gradient_flat' in marketplace_metrics:
-#                 self.previous_aggregate = marketplace_metrics['final_aggregated_gradient_flat'].clone().detach().cpu()
-
-
 class DrowningAttackerSeller(GradientSeller):
     """
     Stealthy gradient manipulation attack that maintains selection probability
@@ -2437,16 +1767,15 @@ class DrowningAttackerSeller(GradientSeller):
     """
 
     def __init__(self,
-                 seller_id: str,  # <-- Added missing *args from parent
-                 data_config: RuntimeDataConfig,  # <-- FIX: Added data_config
-                 training_config: TrainingConfig,  # <-- Added missing *args
-                 model_factory: Callable[[], nn.Module],  # <-- Added missing *args
+                 seller_id: str,
+                 data_config: RuntimeDataConfig,
+                 training_config: TrainingConfig,
+                 model_factory: Callable[[], nn.Module],
                  adversary_config: AdversarySellerConfig,
-                 model_type: str,  # <-- FIX: Added model_type
-                 device: str = "cpu",  # <-- Added missing *args
+                 model_type: str,
+                 device: str = "cpu",
                  **kwargs: Any):
 
-        # <-- FIX: Call parent __init__ with all required args
         super().__init__(
             seller_id=seller_id,
             data_config=data_config,
@@ -2474,7 +1803,6 @@ class DrowningAttackerSeller(GradientSeller):
         # Attack state
         self.attack_intensity = self.adv_cfg.attack_intensity  # e.g., 0.1
 
-        # --- FIX 1: Initialize Malicious Datasets ---
         self.backdoor_dataset: Optional[Dataset] = None
         self.poisoned_dataset: Optional[Dataset] = None
         self.adversary_config = adversary_config  # Store full config
@@ -2513,7 +1841,6 @@ class DrowningAttackerSeller(GradientSeller):
                 f"'{self.adv_cfg.attack_type}': {e}. Attack may fail."
             )
 
-        # --- FIX 2: Map Target Layer Names to Indices ---
         self.layer_name_to_index: Dict[str, int] = {}
         self.target_layer_indices: Set[int] = set()
 
@@ -2546,7 +1873,6 @@ class DrowningAttackerSeller(GradientSeller):
         logging.info(f"  Target Layers: {self.adv_cfg.target_layers}")
         logging.info(f"  Attack Intensity: {self.attack_intensity}")
 
-    # --- FIX 1 (HELPER): Added this static method ---
     @staticmethod
     def _create_poison_generator(adv_cfg: AdversarySellerConfig, model_type: str, device: str,
                                  **kwargs: Any) -> Optional[PoisonGenerator]:
@@ -2632,14 +1958,13 @@ class DrowningAttackerSeller(GradientSeller):
 
         logging.debug(f"[{self.seller_id}] Updated stats: mean_norm={self.honest_gradient_stats['mean_norm']:.4f}")
 
-    def _compute_malicious_gradient(self) -> Optional[List[torch.Tensor]]:  # <-- FIX: Return Optional
+    def _compute_malicious_gradient(self) -> Optional[List[torch.Tensor]]:
         """
         Compute gradient on malicious objective (backdoor, poisoning, etc.).
         This is what we actually want to inject into the aggregate.
         """
         model = self.model_factory().to(self.device)
 
-        # --- FIX: Use the datasets initialized in __init__ ---
         if self.adv_cfg.attack_type == "backdoor" and self.backdoor_dataset:
             logging.debug(f"[{self.seller_id}] Computing backdoor gradient...")
             backdoor_grad, _ = self._compute_local_grad(model, self.backdoor_dataset)
@@ -2650,7 +1975,7 @@ class DrowningAttackerSeller(GradientSeller):
             honest_grad, _ = self._compute_local_grad(model, self.dataset)
             if honest_grad:
                 return [-g for g in honest_grad]
-            return None  # <-- FIX
+            return None
 
         elif self.adv_cfg.attack_type == "targeted_poisoning" and self.poisoned_dataset:
             logging.debug(f"[{self.seller_id}] Computing targeted poisoning gradient...")
@@ -2670,7 +1995,6 @@ class DrowningAttackerSeller(GradientSeller):
         Identify which layers to inject malicious gradients into.
         Strategy: Target layers from config, or fallback to high-magnitude/final layers.
         """
-        # --- FIX 2: Use the pre-computed indices ---
         if self.target_layer_indices:
             logging.debug(f"[{self.seller_id}] Using user-defined target layers: {self.target_layer_indices}")
             return list(self.target_layer_indices)
@@ -2694,8 +2018,6 @@ class DrowningAttackerSeller(GradientSeller):
         2. Direction close enough to pass selection
         3. Malicious component in vulnerable layers
         """
-        # ... (this function was already correct) ...
-        # (It relies on _identify_vulnerable_layers, which is now fixed)
 
         honest_flat = flatten_tensor(honest_gradient)
         malicious_flat = flatten_tensor(malicious_gradient)
@@ -2794,7 +2116,6 @@ class DrowningAttackerSeller(GradientSeller):
         else:  # Attack Phase
             malicious_gradient = self._compute_malicious_gradient()
 
-            # --- FIX: Handle failure in malicious gradient computation ---
             if malicious_gradient is None:
                 logging.error(f"[{self.seller_id}] Failed to compute malicious gradient. Aborting attack this round.")
                 return honest_gradient, stats  # Submit honest gradient

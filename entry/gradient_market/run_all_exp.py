@@ -119,7 +119,7 @@ def setup_data_and_model(cfg: AppConfig, device):
         # Wrap in stateful factory
         model_factory = StatefulModelFactory(base_factory, device)
 
-        collate_fn = None  # --- FIX 2: Explicitly set collate_fn ---
+        collate_fn = None
         seller_extra_args = {}
 
     elif dataset_type == "tabular":
@@ -464,7 +464,6 @@ def run_final_evaluation_and_logging(
 
     save_path = Path(cfg.experiment.save_path)
 
-    # --- START FIX ---
     final_metrics = {}  # <-- BUG 1: This line was missing
 
     # Get the final round count from the log file
@@ -491,7 +490,6 @@ def run_final_evaluation_and_logging(
     # Add final metadata
     final_metrics['timestamp'] = time.time()
     final_metrics['completed_rounds'] = completed_rounds  # <-- BUG 2: Use this, not results_buffer
-    # --- END FIX ---
 
     # Save final metrics atomically
     save_json_atomic(final_metrics, save_path / "final_metrics.json")
@@ -531,10 +529,8 @@ def save_json_atomic(data, filepath):
     )
     try:
         with os.fdopen(temp_fd, 'w') as f:
-            # --- THIS IS THE FIX ---
             # Use the custom encoder to handle numpy types
             json.dump(data, f, indent=2, cls=NumpyJSONEncoder)
-            # --- END FIX ---
 
         shutil.move(temp_path, filepath)
         logging.debug(f"Saved (atomic): {filepath}")
@@ -718,7 +714,7 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
     else:
         logging.info("ℹ️ No early stopping occurred - using model from final round")
 
-    return final_global_model  # --- END FIX ---
+    return final_global_model
 
 
 _csv_headers_cache = {}

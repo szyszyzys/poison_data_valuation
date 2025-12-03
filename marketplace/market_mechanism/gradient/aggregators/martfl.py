@@ -170,7 +170,6 @@ class MartflAggregator(BaseAggregator):
             # b) Find optimal k using gap, with official adjustment
             diameter = np.max(np_similarities_for_clustering) - np.min(np_similarities_for_clustering)
 
-            # --- START FIX ---
             # Calculate max_k based on config and data size
             max_k_to_test = min(len(np_similarities_for_clustering) - 1, self.max_k)
 
@@ -196,12 +195,9 @@ class MartflAggregator(BaseAggregator):
             clusters2_no_baseline = clusters_no_baseline  # Use the k=1 result
             centroids2 = centroids  # Use the k=1 centroids
         else:
-            # --- START FIX ---
             # Get the centroids from the k=2 clustering as well
             clusters2_no_baseline, centroids2 = kmeans(np_similarities_for_clustering.reshape(-1, 1), 2)
-            # --- END FIX ---
 
-        # --- NEW: Find the inlier label for the k=2 clustering ---
         inlier_label_k2 = np.argmax(centroids2)
         # e) Reconstruct full cluster arrays, inserting baseline placeholder (e.g., -1)
         clusters_full = [-1] * len(seller_ids)
@@ -218,10 +214,8 @@ class MartflAggregator(BaseAggregator):
         # g) Calculate the "border" distance (max distance within the k=2 inlier group)
         border = 0.0
         for i, sim_val in enumerate(similarities):
-            # --- START FIX ---
             # Use the k=2 inlier label (inlier_label_k2)
             if i != baseline_idx and clusters2_full[i] == inlier_label_k2:
-                # --- END FIX ---
                 dist_from_center = abs(center - sim_val.item())
                 if dist_from_center > border:
                     border = dist_from_center

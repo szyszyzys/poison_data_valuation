@@ -134,7 +134,6 @@ def get_tuned_defense_params(
         print(f"  Could not find tuned params for key: '{tuned_params_key}'")
         print(f"  Please check your TUNED_DEFENSE_PARAMS in config_common_utils.py")
 
-        # --- FIX 2: Return None. Do NOT fall back. ---
         return None
 
     return TUNED_DEFENSE_PARAMS[tuned_params_key]
