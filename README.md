@@ -46,32 +46,99 @@ While this benchmark focuses on **Gradient Marketplaces** (where the "product" i
 ## Directory Overview
 
 ```text
-.
-├── attack/
-│   ├── attack_gradient_market/   # [PAPER FOCUS] Poisoning & Privacy attacks on Gradients
-│   └── attack_data_market/       # [EXTENSION] Attacks on Raw Data (Row) markets
-├── common/
-│   ├── datasets/                 # Loaders for Image (CIFAR), Text (TREC), Tabular
-│   ├── evaluators.py             # Metrics calculation
-│   └── factories.py              # Factory patterns for object creation
-├── entry/
-│   ├── gradient_market/          # Main entry points for the paper's experiments
-│   │   ├── automate_exp/         # Configuration generators (Steps 1-10)
-│   │   └── run_all_exp.py        # Single threat runner
-│   └── run_parallel_experiment.py # MAIN ORCHESTRATOR
-├── marketplace/
-│   ├── market/
-│   │   ├── markplace_gradient.py # [PAPER FOCUS] Gradient exchange logic
-│   │   └── data_market.py        # [EXTENSION] Raw data exchange logic
-│   ├── market_mechanism/
-│   │   ├── aggregators/          # Robust Aggregation (MartFL, SkyMask, etc.)
-│   │   └── valuation/            # Shapley/LOO valuation logic
-│   └── seller/
-│       ├── gradient_seller.py    # Seller sending gradients
-│       └── data_seller.py        # Seller sending raw rows
-├── model/                        # Neural Architectures (ResNet, TextCNN, MLP)
-├── Dockerfile
-└── requirements.txt
+./
+├── LICENSE
+├── README.md
+├── requirements.txt
+├── experiments/
+│   ├── configs/
+│   │   ├── base_configs.py
+│   │   ├── config_generator.py
+│   │   ├── config_parser.py
+│   │   ├── scenarios.py
+│   │   └── tabular_scenarios.py
+│   ├── scenarios/
+│   │   ├── generate_step1_iid_tuning.py
+│   │   ├── generate_step2_find_usable_hps.py
+│   │   ├── generate_step3_defense_tuning.py
+│   │   ├── generate_step4_attack_sensitivity.py
+│   │   ├── generate_step5_advanced_sybil.py
+│   │   ├── generate_step6_adaptive_attack.py
+│   │   ├── generate_step7_buyer_attacks.py
+│   │   ├── generate_step8_scalability.py
+│   │   ├── generate_step9_heterogeneity.py
+│   │   ├── generate_step10_main_summary.py
+│   │   ├── generate_step13_drowning_attack.py
+│   │   ├── generate_step14_martfl_collusion.py
+│   │   └── step14.py
+│   └── visualization/
+│       ├── compare_skymasks.py
+│       ├── step2_visual.py
+│       ├── step3_visual.py
+│       ├── step4_visual.py
+│       ├── step5_visual_sybil.py
+│       ├── step6_visual_adaptive_attack.py
+│       ├── step7_fltrust_martfl.py
+│       ├── step8_scalability_visual.py
+│       ├── step9_heterogeneity_visual.py
+│       ├── step10_summary.py
+│       ├── step10_valuation.py
+│       ├── step13_visual.py
+│       └── step14_martfl_visual.py
+└── src/
+    ├── __init__.py
+    ├── attacks/
+    │   ├── __init__.py
+    │   ├── data/
+    │   │   ├── __init__.py
+    │   │   ├── adv.py
+    │   │   ├── attack_daved.py
+    │   │   └── clip_adv.py
+    │   ├── gradient/
+    │   │   ├── __init__.py
+    │   │   ├── gradient_manipulation.py
+    │   │   ├── pfed.py
+    │   │   └── sybil_coordinator.py
+    │   └── privacy/
+    │       ├── __init__.py
+    │       ├── inference.py
+    │       ├── reconstruction.py
+    │       ├── gradient_attack.py
+    │       ├── malicious_seller.py
+    │       └── privacy_attacker.py
+    ├── mechanisms/
+    │   ├── __init__.py
+    │   ├── defenses/
+    │   │   ├── __init__.py
+    │   │   ├── fltrust.py
+    │   │   ├── martfl.py
+    │   │   ├── skymask.py
+    │   │   └── fedavg.py
+    │   ├── discovery/
+    │   │   ├── __init__.py
+    │   │   └── daved.py
+    │   └── valuation/
+    │       ├── __init__.py
+    │       ├── shapley.py
+    │       ├── influence.py
+    │       └── contribution_evaluator.py
+    ├── markets/
+    │   ├── __init__.py
+    │   ├── data_market.py
+    │   └── gradient_market.py
+    ├── participants/
+    │   ├── __init__.py
+    │   ├── buyers.py
+    │   └── sellers.py
+    ├── models/
+    │   ├── __init__.py
+    │   ├── image_model.py
+    │   └── tabular_model.py
+    └── utils/
+        ├── __init__.py
+        ├── data_loader.py
+        ├── model_utils.py
+        └── logging_utils.py
 ```
 
 -----
@@ -103,7 +170,7 @@ reliability and high-throughput parallel execution.
 
 ```bash
 # Run experiments on GPUs 0 and 1 with 4 parallel workers
-python entry/run_parallel_experiment.py --gpu_ids 0,1 --num_processes 4 --configs_dir 'configs_generated/step10_main_summary'
+python experiments/gradient_market/run_parallel_experiment.py --gpu_ids 0,1 --num_processes 4 --configs_dir 'configs_generated/step10_main_summary'
 ```
 
 -----
@@ -166,16 +233,16 @@ then run them using the orchestrator.
 
 | Step   | Script Path                                                  | Purpose                                                                                                                                         | Corresponds To                          |
 |:-------|:-------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------|:----------------------------------------|
-| **1**  | `entry/gradient_market/generate_step1_iid_tuning.py`         | **Benign Baselines:** Establishes the ideal optimizer and learning rate for standard `FedAvg` (Benign) across all datasets.                     | **Table 1** (Baseline Performance)      |
-| **2**  | `entry/gradient_market/generate_step2_find_usable_hps.py`    | **Fairness Calibration:** Runs a sweep to find "usable" training HPs (LR, Optimizer) specifically for *each defense* to ensure fair comparison. | **Fairness Methodology**                |
-| **3**  | `entry/gradient_market/generate_step3_defense_tuning.py`     | **Defense Hyperparameter Search:** Uses optimal LRs from Step 2 to tune internal defense parameters (e.g., `clip_norm`, `max_k`).               | **Figures 3 & 4** (Defense Sensitivity) |
-| **4**  | `entry/gradient_market/generate_step4_attack_sensitivity.py` | **Attack Sensitivity:** Evaluates defense performance under varying attack strengths (Poison Rates).                                            | **Attack Analysis**                     |
-| **5**  | `entry/gradient_market/generate_step5_advanced_sybil.py`     | **Sybil Attacks:** Configures coordinated Sybil attacks (Mimicry, Pivot, Knock-out) against the marketplace.                                    | **Sybil Robustness Section**            |
-| **6**  | `entry/gradient_market/generate_step6_adaptive_attack.py`    | **Adaptive Attacks:** Configures sophisticated individual attacks (Stealthy Drowning, Gradient Manipulation).                                   | **Adaptive Defense Section**            |
-| **7**  | `entry/gradient_market/generate_step7_buyer_attacks.py`      | **Buyer Attacks:** Simulates malicious buyers attempting DoS, Starvation, or Class Exclusion attacks.                                           | **Buyer Threat Analysis**               |
-| **8**  | `entry/gradient_market/generate_step8_scalability.py`        | **Scalability Tests:** Measures system throughput and accuracy as the number of sellers increases (10 to 100+).                                 | **Scalability Figures**                 |
-| **9**  | `entry/gradient_market/generate_step9_heterogeneity.py`      | **Heterogeneity Impact:** Tests robustness under varying degrees of Non-IID data distributions (Dirichlet alpha).                               | **Ablation Studies**                    |
-| **10** | `entry/gradient_market/generate_step10_main_summary.py`      | **Main Benchmark:** The comprehensive suite combining the best parameters for the final comparison.                                             | **Figure 5** (Main Results)             |
+| **1**  | `experiments/gradient_market/generate_step1_iid_tuning.py`         | **Benign Baselines:** Establishes the ideal optimizer and learning rate for standard `FedAvg` (Benign) across all datasets.                     | **Table 1** (Baseline Performance)      |
+| **2**  | `experiments/gradient_market/generate_step2_find_usable_hps.py`    | **Fairness Calibration:** Runs a sweep to find "usable" training HPs (LR, Optimizer) specifically for *each defense* to ensure fair comparison. | **Fairness Methodology**                |
+| **3**  | `experiments/gradient_market/generate_step3_defense_tuning.py`     | **Defense Hyperparameter Search:** Uses optimal LRs from Step 2 to tune internal defense parameters (e.g., `clip_norm`, `max_k`).               | **Figures 3 & 4** (Defense Sensitivity) |
+| **4**  | `experiments/gradient_market/generate_step4_attack_sensitivity.py` | **Attack Sensitivity:** Evaluates defense performance under varying attack strengths (Poison Rates).                                            | **Attack Analysis**                     |
+| **5**  | `experiments/gradient_market/generate_step5_advanced_sybil.py`     | **Sybil Attacks:** Configures coordinated Sybil attacks (Mimicry, Pivot, Knock-out) against the marketplace.                                    | **Sybil Robustness Section**            |
+| **6**  | `experiments/gradient_market/generate_step6_adaptive_attack.py`    | **Adaptive Attacks:** Configures sophisticated individual attacks (Stealthy Drowning, Gradient Manipulation).                                   | **Adaptive Defense Section**            |
+| **7**  | `experiments/gradient_market/generate_step7_buyer_attacks.py`      | **Buyer Attacks:** Simulates malicious buyers attempting DoS, Starvation, or Class Exclusion attacks.                                           | **Buyer Threat Analysis**               |
+| **8**  | `experiments/gradient_market/generate_step8_scalability.py`        | **Scalability Tests:** Measures system throughput and accuracy as the number of sellers increases (10 to 100+).                                 | **Scalability Figures**                 |
+| **9**  | `experiments/gradient_market/generate_step9_heterogeneity.py`      | **Heterogeneity Impact:** Tests robustness under varying degrees of Non-IID data distributions (Dirichlet alpha).                               | **Ablation Studies**                    |
+| **10** | `experiments/gradient_market/generate_step10_main_summary.py`      | **Main Benchmark:** The comprehensive suite combining the best parameters for the final comparison.                                             | **Figure 5** (Main Results)             |
 
 -----
 
@@ -185,16 +252,16 @@ After running the experiments, use the analysis scripts to generate the paper fi
 
 | Paper Content | Script Path                                                                                                                         |
 |:-------------|:------------------------------------------------------------------------------------------------------------------------------------|
-| **Table 1**  | `entry/gradient_market/visualization/step3_visual.py`                                                                               |
-| **Figure 2** | `entry/gradient_market/visualization/step10_summary.py`                                                                             |
-| **Figure 3** | `entry/gradient_market/visualization/step3_visual.py`                                                                               |
-| **Figure 4** | `entry/gradient_market/visualization/step4_visual.py`                                                                               |
-| **Figure 5** | `entry/gradient_market/visualization/step8_scalability_visual.py`                                                                   |
-| **Figure 6** | `entry/gradient_market/visualization/step5_visual_sybil.py` & `entry/gradient_market/visualization/step6_visual_adaptive_attack.py` |
-| **Figure 7** | `entry/gradient_market/visualization/step7_fltrust_martfl.py`                                                                       |
-| **Figure 8** | `entry/gradient_market/visualization/step7_fltrust_martfl.py`                                                                       |
-| **Figure 9** | `entry/gradient_market/visualization/step9_heterogeneity_visual.py`                                                                 |
-| **Figure 10** | `entry/gradient_market/visualization/step10_valuation.py`                                                                           |
+| **Table 1**  | `experiments/gradient_market/visualization/step3_visual.py`                                                                               |
+| **Figure 2** | `experiments/gradient_market/visualization/step10_summary.py`                                                                             |
+| **Figure 3** | `experiments/gradient_market/visualization/step3_visual.py`                                                                               |
+| **Figure 4** | `experiments/gradient_market/visualization/step4_visual.py`                                                                               |
+| **Figure 5** | `experiments/gradient_market/visualization/step8_scalability_visual.py`                                                                   |
+| **Figure 6** | `experiments/gradient_market/visualization/step5_visual_sybil.py` & `experiments/gradient_market/visualization/step6_visual_adaptive_attack.py` |
+| **Figure 7** | `experiments/gradient_market/visualization/step7_fltrust_martfl.py`                                                                       |
+| **Figure 8** | `experiments/gradient_market/visualization/step7_fltrust_martfl.py`                                                                       |
+| **Figure 9** | `experiments/gradient_market/visualization/step9_heterogeneity_visual.py`                                                                 |
+| **Figure 10** | `experiments/gradient_market/visualization/step10_valuation.py`                                                                           |
 
 -----
 
