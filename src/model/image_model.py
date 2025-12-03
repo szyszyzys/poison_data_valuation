@@ -317,7 +317,6 @@ class ResidualBlock(nn.Module):
 
         super(ResidualBlock, self).__init__()
 
-        # --- Define the correct norm layer ---
         norm_layer = nn.Identity
 
         if use_batch_norm:

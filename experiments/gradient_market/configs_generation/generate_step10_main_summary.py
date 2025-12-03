@@ -54,7 +54,6 @@ MAIN_SUMMARY_TARGETS = [
 ]
 
 
-# === THIS IS THE CORRECTED FUNCTION ===
 def generate_main_summary_scenarios() -> List[Scenario]:
     """Generates the main benchmark comparison configs with valuation."""
     print("\n--- Generating Step 12: Main Summary Scenarios (with Valuation) ---")
@@ -76,7 +75,6 @@ def generate_main_summary_scenarios() -> List[Scenario]:
                 default_attack_type_for_tuning="backdoor"
             )
             print(f"  - Defense: {defense_name}")
-            # This is the correct check:
             if not tuned_defense_params:
                 print(f"  SKIPPING: No Tuned HPs found for {defense_name}")
                 continue
@@ -149,8 +147,6 @@ def generate_main_summary_scenarios() -> List[Scenario]:
             scenarios.append(scenario)
     return scenarios
 
-
-# --- Main Execution Block (This is now correct) ---
 if __name__ == "__main__":
     base_output_dir = "./configs_generated_benchmark"
     output_dir = Path(base_output_dir) / "step12_main_summary"
@@ -161,8 +157,6 @@ if __name__ == "__main__":
 
     print("\n--- Generating Configuration Files for Step 12 ---")
 
-    # This loop is now correct because the unique save path
-    # is ALREADY in the scenario's parameter_grid.
     for scenario in scenarios_to_generate:
         print(f"\nProcessing scenario base: {scenario.name}")
         base_config = scenario.base_config_factory()

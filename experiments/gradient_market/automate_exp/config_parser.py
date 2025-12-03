@@ -46,7 +46,7 @@ def load_config(config_path: str) -> AppConfig:
         cfg = from_dict(
             data_class=AppConfig,
             data=processed_config_dict,
-            config=type_config  # Use the updated config object
+            config=type_config
         )
 
         logger.info("Successfully loaded and validated config.")

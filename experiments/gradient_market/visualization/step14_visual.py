@@ -89,7 +89,6 @@ def parse_scenario_name(scenario_name: str) -> Dict[str, str]:
                 "attack_mode": match.group(1),
                 "defense": match.group(2),
             }
-            # If group 3 exists, it's the dataset. If not, assume 'cifar100' or 'unknown'
             if match.group(3):
                 data["dataset"] = match.group(3)
             else:

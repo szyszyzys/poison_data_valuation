@@ -15,7 +15,6 @@ from experiments.gradient_market.automate_exp.base_configs import get_base_image
 from experiments.gradient_market.automate_exp.scenarios import Scenario, use_image_backdoor_attack, use_cifar100_config
 
 try:
-    # NOTE: Assuming these imports are correctly resolved in your environment
     from src.marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, PoisonType
     from experiments.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 except ImportError as e:

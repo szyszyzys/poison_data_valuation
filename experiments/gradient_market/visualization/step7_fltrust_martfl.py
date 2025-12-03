@@ -262,7 +262,6 @@ import matplotlib.patches as mpatches # <--- ADD THIS IMPORT
 def plot_victim_isolation(df, output_dir):
     """
     SHOWS: Specific Target ID (Did they get hit/promoted?)
-    UPDATED: Manually constructs the legend to prevent empty box.
     """
     attacks = [a for a in ATTACK_CATEGORIES["isolation"] if a in df['attack'].unique()]
     if not attacks: return

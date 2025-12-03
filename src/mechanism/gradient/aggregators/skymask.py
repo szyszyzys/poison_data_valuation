@@ -145,7 +145,6 @@ class SkymaskAggregator(BaseAggregator):
             # ✅ This loop WILL find all layers, no matter how deeply nested
             for layer in masknet.modules():
                 if isinstance(layer, (myconv2d, mylinear)):
-                    # This code will now execute correctly
                     if hasattr(layer, 'weight_mask'):
                         seller_mask_layers.append(torch.flatten(torch.sigmoid(layer.weight_mask[i].data)))
                     if hasattr(layer, 'bias_mask') and layer.bias_mask is not None:

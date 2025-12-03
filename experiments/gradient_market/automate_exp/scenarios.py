@@ -90,7 +90,6 @@ TUNED_DEFENSE_PARAMS = {
     "fedavg": {"aggregation.method": "fedavg"},
     "fltrust": {"aggregation.method": "fltrust", "aggregation.clip_norm": 10.0},
     "martfl": {"aggregation.method": "martfl", "aggregation.martfl.max_k": 5, "aggregation.clip_norm": 10.0},
-    # --- IMPORTANT: Fill in the SkyMask parameters correctly ---
     "skymask": {
         "aggregation.method": "skymask",
         "aggregation.skymask.mask_epochs": 20,  # Example
@@ -169,7 +168,6 @@ def generate_sybil_selection_rate_scenarios() -> List[Scenario]:
     scenarios.append(Scenario(
         name="selection_rate_cluster_cifar10_cnn",
         base_config_factory=get_base_image_config,
-        # Assume 'cluster' is a new strategy you'll implement
         modifiers=[use_cifar10_config, use_image_backdoor_attack, use_sybil_attack('cluster')],
         parameter_grid={
             "experiment.image_model_config_name": ["cifar10_cnn"],

@@ -246,7 +246,6 @@ from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-# Assuming these utilities are correctly defined in your project
 from src.attacks import evaluate_reconstruction, save_results_pkl
 
 

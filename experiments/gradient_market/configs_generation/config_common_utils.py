@@ -113,7 +113,6 @@ def get_tuned_defense_params(
     if defense_name == "fedavg":
         return {"aggregation.method": "fedavg"}
 
-    # --- THIS IS THE NEW, CORRECTED LOGIC ---
     attack_type_key = default_attack_type_for_tuning  # Start with the default
 
     if explicit_attack_type:
@@ -122,9 +121,6 @@ def get_tuned_defense_params(
     elif attack_state == "no_attack":
         # For a no_attack run (like in Step 4), use the default.
         attack_type_key = default_attack_type_for_tuning
-    # If attack_state is "with_attack" and no explicit_type,
-    # it will also (correctly) use the default.
-    # --- END NEW LOGIC ---
 
     # Build the specific key
     tuned_params_key = f"{defense_name}_{model_config_name}_{attack_type_key}"

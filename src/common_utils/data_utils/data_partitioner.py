@@ -477,7 +477,6 @@ class TabularDataPartitioner:
 
         logging.info(f"TabularDataPartitioner initialized with {len(self.dataset)} samples.")
 
-    # --- UPDATED partition method signature ---
     def partition(self, data_config: TabularDataConfig):
         """
         Partitions the dataset based on the provided TabularDataConfig.

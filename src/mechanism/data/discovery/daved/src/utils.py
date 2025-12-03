@@ -553,9 +553,6 @@ def plot_errors_fixed(results, save_path):
             print(f"Warning: No valid error data found for method '{k}'. Skipping this method in plot.")
             continue # Skip to the next item in the loop
 
-        # Check if dimensions match eval_range (optional but good practice)
-        # This assumes errors are recorded for each point in eval_range across potentially multiple runs
-        # Example check: Needs adjustment based on your actual err shape (e.g., (num_runs, num_eval_points))
         expected_len = len(eval_range)
         if err.ndim > 1 and err.shape[-1] != expected_len:
              print(f"Warning: Shape mismatch for method '{k}'. Error shape {err.shape} last dim != eval_range len {expected_len}. Skipping.")

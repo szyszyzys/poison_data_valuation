@@ -479,7 +479,6 @@ def run_attack_experiment(
     weights_updated = updated_results['weights']
     selected_indices_updated, unsampled_indices_updated = identify_samples(weights_updated, num_select=10)
 
-    # Evaluate updated selection
     print("Evaluating updated selection...")
     updated_mse = evaluate_selection(
         X_buy=X_buy,

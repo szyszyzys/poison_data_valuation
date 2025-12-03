@@ -6,7 +6,6 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Assuming these utilities are correctly defined in your project
 from src.attacks import save_results_pkl
 
 # Set random seed for reproducibility
@@ -501,7 +500,6 @@ def fim_reverse_math(x_s, selected_indices, unselected_indices, x_query, device,
     save_dir = f"{save_dir}/reverse_math"
     os.makedirs(save_dir, exist_ok=True)
 
-    # Verify that x_s has the correct number of features
     assert x_s.shape[1] == params[
         'n_features'], f"Expected x_s to have {params['n_features']} features, but got {x_s.shape[1]}."
 

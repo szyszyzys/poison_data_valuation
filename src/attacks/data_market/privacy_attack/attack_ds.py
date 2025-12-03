@@ -23,7 +23,6 @@ def reconstruction_loss(X_buy_hat, S_obs, X_sell, k):
     _, selected_indices = nbrs.kneighbors(S_obs)  # Shape: (k, 1)
     selected_indices = selected_indices.flatten()  # Shape: (k,)
 
-    # Initialize mask correctly as 1D array
     selected_mask = np.zeros(n, dtype=int)
     selected_mask[selected_indices] = 1  # Now works
 

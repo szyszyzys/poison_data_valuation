@@ -262,7 +262,6 @@ class GradientInversionAttacker:
         self.device = device
         self.save_dir = Path(save_dir) / "gradient_inversion"
         self.dataset_name, self.input_shape, self.num_classes = dataset_name, input_shape, num_classes
-        # This will now work correctly with the Enum
         self.victim_strategy = self.config.victim_strategy
 
     def should_run(self, round_number: int) -> bool:
@@ -276,7 +275,6 @@ class GradientInversionAttacker:
         """Selects a victim, tunes the attack LR, runs GIA, and returns the best result log."""
         if not all_seller_ids: return None
 
-        # This logic is now fully supported by your updated config
         if self.victim_strategy == VictimStrategy.RANDOM:
             victim_id = random.choice(all_seller_ids)
         else:
@@ -295,7 +293,6 @@ class GradientInversionAttacker:
         logging.info(f"GIA: Starting attack on victim '{victim_id}' (Round {round_number})...")
         best_log, best_psnr = None, -float('inf')
 
-        # This LR tuning loop is now correctly configured
         for lr in self.config.lrs_to_try:
             logging.info(f"  Trying LR: {lr}")
 

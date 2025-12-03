@@ -73,7 +73,6 @@ def generate_attack_sensitivity_scenarios() -> List[Scenario]:
             attack_modifier = SENSITIVITY_SETUP_STEP5[attack_modifier_key]
 
             # 3. Create the setup modifier function *inside the loop*
-            #    This correctly binds all the HPs
             def create_setup_modifier(
                     current_defense_name=defense_name,
                     current_model_cfg_name=model_cfg_name,
@@ -142,7 +141,6 @@ def generate_attack_sensitivity_scenarios() -> List[Scenario]:
     return scenarios
 
 
-# --- Main Execution Block (This was already correct, no changes needed) ---
 if __name__ == "__main__":
     # (Your main block is perfect)
     base_output_dir = "./configs_generated_benchmark"

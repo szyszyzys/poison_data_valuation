@@ -32,9 +32,6 @@ class StandardFormatDataset(Dataset):
     def __init__(self, data: List[Tuple[Any, Any]], label_first: bool = True):
         self.data = data
         self.label_first = label_first
-
-        # --- CORRECTED LOGIC ---
-        # Determine the correct index for the label
         label_index = 0 if self.label_first else 1
 
         processed_labels = []

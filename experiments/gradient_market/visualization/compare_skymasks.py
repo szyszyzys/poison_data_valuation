@@ -145,7 +145,7 @@ def plot_comprehensive_comparison(df: pd.DataFrame, output_dir: Path):
         add_labels(ax)
         plt.title(f"Best Accuracy Comparison - {ds}")
         plt.ylabel("Test Accuracy")
-        plt.ylim(0, 1.05) # Assume acc is 0-1 or 0-100. Adjust if needed.
+        plt.ylim(0, 1.05)
         plt.tight_layout()
         plt.savefig(output_dir / f"{ds}_comparison_accuracy.pdf")
         plt.close()

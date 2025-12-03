@@ -16,14 +16,12 @@ def get_base_image_config() -> AppConfig:
             evaluations=["clean", "backdoor"],
         ),
         training=TrainingConfig(
-            # --- This looks correct based on your tuning ---
             local_epochs=2,
             batch_size=64,
             learning_rate=0.01,
             optimizer="sgd",
             momentum=0.9,
             weight_decay=0.0001
-            # ----------------------------------------------
         ),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
@@ -55,7 +53,6 @@ def get_base_text_config() -> AppConfig:
             evaluations=["clean", "backdoor"]
         ),
         training=TrainingConfig(
-            # --- This looks correct based on your tuning ---
             local_epochs=2,
             batch_size=64,
             optimizer='sgd',

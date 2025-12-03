@@ -359,7 +359,6 @@ def initialize_sellers(
                     else:
                         logging.warning(
                             f"      -> Sybil attack enabled, but SybilCoordinator not found in marketplace!")
-            # Updated logging using the flag
             logging.info(
                 f"  ✅ {seller_id} ({seller_type}): "
                 f"{len(loader.dataset)} samples"
@@ -617,7 +616,6 @@ def run_training_loop(cfg, marketplace, validation_loader, test_loader, evaluato
         if cfg.experiment.use_early_stopping and validation_loader:
             all_val_metrics = {}
             try:
-                # IMPORTANT: Use the UPDATED global model after training round
                 current_global_model = marketplace.global_model
 
                 for evaluator in evaluators:

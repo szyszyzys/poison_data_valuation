@@ -323,7 +323,7 @@ def _run_single_experiment_impl(config_path: str, run_id: int, sample_idx: int, 
         if not hp_folder_name:
             hp_folder_name = "default_hps"
 
-        # 3. Build the NEW, CORRECT path by re-ordering the parts
+        # 3. Build the NEW path by re-ordering the parts
         run_save_path = scenario_path / hp_folder_name / run_details_folder_name / f"run_{sample_idx - 1}_seed_{seed}"
 
         run_save_path.mkdir(parents=True, exist_ok=True)
@@ -494,7 +494,6 @@ def main_parallel(configs_base_dir: str, num_processes: int, gpu_ids_str: str = 
 
             task = (config_path, run_counter, i + 1, current_seed, current_gpu_id, force_rerun)
 
-            # Add task to the correct process's dedicated list
             tasks_by_process[process_idx].append(task)
 
             task_counter += 1

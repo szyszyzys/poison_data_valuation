@@ -18,7 +18,6 @@ from src.marketplace.utils.gradient_market_utils.gradient_market_configs import 
 
 class CustomDumper(yaml.SafeDumper):
     # (This class is unchanged, same as your file)
-    """A custom YAML dumper to correctly handle None, numpy types, and enums."""
 
     def represent_none(self, _):
         """Represents None as an empty string (or choose 'null')."""
@@ -122,7 +121,6 @@ class ExperimentGenerator:
 
             # 3. Create the descriptive run name
             try:
-                # THIS IS THE KEY: We updated create_run_name below
                 run_name = self.create_run_name(final_config)
             except Exception as e:
                 print(f"  ❌ Error creating run name for combo {i}: {e}. Using index instead.")

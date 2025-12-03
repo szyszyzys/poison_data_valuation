@@ -14,7 +14,6 @@ BASE_RESULTS_DIR = "./results"
 FIGURE_OUTPUT_DIR = "./figures/step5_figures"
 
 
-# --- Styling Helper (UPDATED FOR COMPACTNESS & BOLDNESS) ---
 def set_plot_style():
     """Sets a consistent professional style for all plots with BOLD fonts."""
     # Use 'talk' context for larger default sizes

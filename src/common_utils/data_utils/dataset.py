@@ -417,7 +417,6 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
     if not text_cfg:
         raise ValueError("Text data configuration ('data.text') is missing from the AppConfig.")
 
-    # Get parameters from their new, correct locations
     vocab_cfg = text_cfg.vocab
     buyer_percentage = text_cfg.buyer_ratio
 
@@ -526,7 +525,6 @@ def get_text_dataset(cfg: AppConfig) -> ProcessedTextData:
             if text and label is not None:
                 processed_text = text_pipeline(text)
                 if processed_text:
-                    # This append is now correct and consistent
                     processed_data.append((processed_text, label))
 
         if cfg.use_cache:

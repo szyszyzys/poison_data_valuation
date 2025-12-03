@@ -47,7 +47,7 @@ class BackdoorSimpleDataPoisonParams:
     location: ImageTriggerLocation = ImageTriggerLocation.BOTTOM_RIGHT
     trigger_shape: Tuple[int, int] = (10, 10)
     strength: float = 1
-    pattern_channel: int = 3 # Assumed to mean "apply to all 3 channels" if > 2
+    pattern_channel: int = 3
 
 @dataclass
 class ImageBackdoorParams:

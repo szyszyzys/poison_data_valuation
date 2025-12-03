@@ -22,7 +22,6 @@ except ImportError as e:
     print(f"Error importing necessary modules: {e}")
     sys.exit(1)
 
-# --- (Constants are all correct) ---
 BUYER_ATTACK_SETUP = {
     "modality_name": "image",
     "base_config_factory": get_base_image_config,
@@ -46,7 +45,6 @@ BUYER_ATTACK_CONFIGS = [
 ]
 
 
-# === THIS IS THE CORRECTED FUNCTION ===
 def generate_buyer_attack_scenarios() -> List[Scenario]:
     """Generates scenarios testing tuned defenses against various buyer attacks."""
     print("\n--- Generating Step 8: Buyer Attack Scenarios ---")
@@ -122,7 +120,7 @@ def generate_buyer_attack_scenarios() -> List[Scenario]:
                 name=scenario_name,
                 base_config_factory=BUYER_ATTACK_SETUP["base_config_factory"],
                 modifiers=[
-                    setup_modifier_func,  # <-- Use the new, correct modifier
+                    setup_modifier_func,
                     BUYER_ATTACK_SETUP["dataset_modifier"],
                     buyer_attack_modifier,
                     lambda config: enable_valuation(

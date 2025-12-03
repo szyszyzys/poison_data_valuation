@@ -175,8 +175,6 @@ class ConfigurableTabularMLP(nn.Module):
         for i, hidden_dim in enumerate(config.hidden_dims):
             layers.append(nn.Linear(prev_dim, hidden_dim))
 
-            # --- This is the updated normalization logic ---
-            # Assume 'config' now has a 'use_layer_norm: bool' attribute
             if config.use_batch_norm:
                 norm_layer = nn.BatchNorm1d(hidden_dim)
             elif getattr(config, 'use_layer_norm', False):

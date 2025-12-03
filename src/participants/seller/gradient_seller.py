@@ -1230,7 +1230,6 @@ class AdvancedPoisoningAdversarySeller(GradientSeller):
 
     def __init__(self,
                  seller_id: str,
-                 # Assumes you use the RuntimeDataConfig from our previous discussion
                  data_config: RuntimeDataConfig,
                  training_config: TrainingConfig,
                  model_factory: Callable[[], nn.Module],
@@ -1395,7 +1394,6 @@ class TriggeredSubsetDataset(Dataset):
             data, label = self.backdoor_generator.apply(data, label)
 
         # 3. Standardize output and move to the correct device at the end
-        # This ensures both clean and poisoned samples are handled consistently.
         if isinstance(data, torch.Tensor):
             data = data.to(self.device)
 

@@ -206,7 +206,6 @@ if __name__ == "__main__":
                 temp_scenario = Scenario(
                     name=f"{scenario.name}/{hp_suffix}",
                     base_config_factory=scenario.base_config_factory,
-                    # This helper function you provided is now called correctly
                     modifiers=scenario.modifiers + [use_sybil_attack_strategy(strategy=strategy_name)],
                     parameter_grid=current_grid
                 )

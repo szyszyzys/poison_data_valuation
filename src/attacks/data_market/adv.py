@@ -341,8 +341,6 @@ class Adv:
         selected_embeddings = self.embeddings[selected_indices]
         mean_embedding = np.mean(selected_embeddings, axis=0)
 
-        # Example inference: similarity to certain prototypes
-        # For demonstration, we'll assume we have some prototypes
         prototypes = self.get_prototypes()
 
         similarities = {proto_name: np.dot(mean_embedding, proto_vec) for proto_name, proto_vec in prototypes.items()}
@@ -548,29 +546,20 @@ class Adv:
         Returns:
             dict: Results including selected indices, classifier metrics, feature importance, and FIM analysis.
         """
-        # Step 1: Assume the buyer selects data points using Frank-Wolfe optimization
         selected_indices = self.frank_wolfe_optimization(self.fisher_information)
 
-        # Step 2: Sample unselected data points
         sampled_unselected = self.sample_unselected_data(selected_indices)
 
-        # Step 3: Train a classifier using both selected and unselected data
         classifier, metrics = self.train_selection_classifier(selected_indices, sampled_unselected)
 
-        # Step 4: Analyze feature importance
         feature_importance = self.analyze_feature_importance(classifier)
 
-        # Step 5: Build a weighted Fisher Information Matrix
         weighted_fim = self.build_weighted_fisher_information_matrix(selected_indices, sampled_unselected)
 
-        # Step 6: Explore the weighted FIM
         fim_analysis = self.explore_fisher_information_matrix(weighted_fim)
 
-        # Step 7: Visualize eigenvalues
         self.visualize_eigenvalues(fim_analysis["eigenvalues"])
 
-        # Step 8: Visualize principal components (top 2)
-        # Select a subset of data points to visualize (e.g., selected + sampled unselected)
         combined_indices = selected_indices + sampled_unselected
         X_visualize = self.embeddings[combined_indices]
         self.visualize_principal_components(fim_analysis["eigenvectors"], X_visualize, num_components=2)
@@ -585,11 +574,7 @@ class Adv:
             "fim_eigenvectors": fim_analysis["eigenvectors"]
         }
 
-    ### **Utility Functions for Fine-Grained Inference (Optional)**
-    # These functions can be included as needed, similar to previous implementations.
 
-
-# Example Usage
 if __name__ == "__main__":
     # Example seller data (e.g., text descriptions)
     seller_data = [

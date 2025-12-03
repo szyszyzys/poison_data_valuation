@@ -79,26 +79,12 @@ def opt_step_size(X_sell_data, X_buy, inverse_covariance, old_loss, lower=1e-3):
     - float: Optimal step size (value in [0,1])
     - float: New loss after applying the optimal step size
     """
-    # OPTION I: recopmute loss for different updated inverse matrix.
-    # def new_loss(alpha):
-    #     updated_inv = sherman_morrison_update_inverse(
-    #         inverse_covariance / (1-alpha),
-    #         alpha * X_sell_data,
-    #         X_sell_data,
-    #     )
-    #     return np.mean((X_buy @ updated_inv) * X_buy)
-
-    # OPTION II: efficient line search by reusing computations
     a = old_loss
-    # # E(x_0 P x_i)^2
     prod = (X_sell_data.T @ inverse_covariance) @ X_buy.T
     b = np.mean(prod ** 2)
     c = X_sell_data @ inverse_covariance @ X_sell_data
 
-    # print(a, b, c)
-    # Compute optimal step size
     loss = lambda x: (1 / (1 - x)) * (a - (x * b) / (1 - x * (1 - c)))
-    # result = minimize_scalar(loss, bounds=(lower, 0.9))
     result = minimize_scalar(loss, bounds=(0, 0.9))
     return result.x, result.fun
 

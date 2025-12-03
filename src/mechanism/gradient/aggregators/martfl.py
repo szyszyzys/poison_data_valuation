@@ -178,7 +178,6 @@ class MartflAggregator(BaseAggregator):
                 logger.warning(f"Not enough data to cluster (k_max={max_k_to_test}), defaulting k=1.")
                 n_clusters = 1
             else:
-                # Call the correct, imported function and pass k_max
                 n_clusters = optimal_k_gap(
                     np_similarities_for_clustering.reshape(-1, 1),
                     k_max=max_k_to_test
