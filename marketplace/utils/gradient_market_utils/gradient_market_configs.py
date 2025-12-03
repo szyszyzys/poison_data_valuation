@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, Tuple, List, Union, Callable, Literal
 
 from torch.utils.data import Dataset
 
-from common.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation, PoisonType, LabelFlipMode, \
+from common_utils.constants.enums import TextTriggerLocation, ImageTriggerType, ImageTriggerLocation, PoisonType, LabelFlipMode, \
     ImageBackdoorAttackName, TextBackdoorAttackName
 
 logger = logging.getLogger("Configs")

@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import yaml
 
-from common.model_utils import init_weights, _log_param_stats
+from common_utils.model_utils import init_weights, _log_param_stats
 from model.image_model import BaseModelConfig
 
 

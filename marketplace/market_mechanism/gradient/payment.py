@@ -3,7 +3,7 @@ from typing import Dict, Any, Optional
 import numpy as np
 import pandas as pd
 
-from common.utils import cosine_similarity
+from common_utils.utils import cosine_similarity
 
 
 # from common.utils import cosine_similarity

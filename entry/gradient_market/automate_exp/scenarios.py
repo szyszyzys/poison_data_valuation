@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Callable, Dict, Any
 
-from common.enums import PoisonType
+from common_utils.constants.enums import PoisonType
 from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, SybilDrowningConfig, SybilConfig
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
 

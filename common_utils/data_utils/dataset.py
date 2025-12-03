@@ -18,9 +18,9 @@ from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import Vocab, build_vocab_from_iterator
 from torchvision.transforms import v2 as transforms
 
-from common.datasets.data_partitioner import FederatedDataPartitioner, _extract_targets
-from common.datasets.image_data_processor import save_data_statistics, CelebACustom
-from common.datasets.text_data_processor import ProcessedTextData, get_cache_path, \
+from common_utils.datasets.data_partitioner import FederatedDataPartitioner, _extract_targets
+from common_utils.datasets.image_data_processor import save_data_statistics, CelebACustom
+from common_utils.datasets.text_data_processor import ProcessedTextData, get_cache_path, \
     collate_batch, StandardFormatDataset
 from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig
 

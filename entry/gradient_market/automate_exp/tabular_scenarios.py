@@ -1,28 +1,16 @@
-# FILE: entry/gradient_market/automate_exp/tabular_scenarios.py
-
-from dataclasses import dataclass, field
 from typing import Any, List, Callable, Dict
 
 import torch
 
-from common.enums import PoisonType
-from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, AggregationConfig, TabularDataConfig, DataConfig, \
+from common_utils.constants.enums import PoisonType
+from entry.gradient_market.automate_exp.config_generator import set_nested_attr
+from entry.gradient_market.automate_exp.scenarios import Scenario, use_label_flipping_attack
+from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, AggregationConfig, \
+    TabularDataConfig, DataConfig, \
     AdversarySellerConfig, ServerAttackConfig, TrainingConfig, ExperimentConfig, DebugConfig
-from entry.gradient_market.automate_exp.config_generator import ExperimentGenerator, set_nested_attr
 
-# --- Define your target labels ---
 TEXAS100_TARGET_LABEL = 1  # Or whatever you choose
 PURCHASE100_TARGET_LABEL = 1
-
-
-# --- Define the structure of a Scenario ---
-@dataclass
-class Scenario:
-    """A declarative representation of an experimental scenario."""
-    name: str
-    base_config_factory: Callable[[], AppConfig]
-    modifiers: List[Callable[[AppConfig], AppConfig]] = field(default_factory=list)
-    parameter_grid: Dict[str, List[Any]] = field(default_factory=dict)
 
 
 # --- Base Configuration Factory ---
@@ -43,12 +31,12 @@ def get_base_tabular_config() -> AppConfig:
         ),
         # training=TrainingConfig(local_epochs=2, batch_size=64, learning_rate=0.0001,),
         training=TrainingConfig(
-            local_epochs=5,                 # <-- From your tuning winner
+            local_epochs=5,  # <-- From your tuning winner
             batch_size=64,
-            optimizer="Adam",                 # <-- From your tuning winner
-            learning_rate=0.001,            # <-- From your tuning winner
-            momentum=0.0,                   # <-- Adam does not use SGD momentum
-            weight_decay=0.0,                 # <-- Not needed for Adam here
+            optimizer="Adam",  # <-- From your tuning winner
+            learning_rate=0.001,  # <-- From your tuning winner
+            momentum=0.0,  # <-- Adam does not use SGD momentum
+            weight_decay=0.0,  # <-- Not needed for Adam here
         ),
         server_attack_config=ServerAttackConfig(),
         adversary_seller_config=AdversarySellerConfig(),
@@ -68,8 +56,6 @@ def get_base_tabular_config() -> AppConfig:
     )
 
 
-# --- CRITICAL: DEFINE YOUR TRIGGER PATTERNS HERE ---
-# You MUST verify that these feature names match your datasets.
 TEXAS100_TRIGGER = {
     "feature_10": 1.0,  # Set 5 specific features to 1
     "feature_50": 1.0,
@@ -78,7 +64,6 @@ TEXAS100_TRIGGER = {
     "feature_1000": 1.0
 }
 
-# Purchase100: Similar pattern with different indices
 PURCHASE100_TRIGGER = {
     "feature_15": 1.0,
     "feature_75": 1.0,
@@ -88,21 +73,19 @@ PURCHASE100_TRIGGER = {
 }
 
 
-# --- Reusable Modifier Functions ---
 def use_tabular_backdoor_with_trigger(
         trigger_conditions: Dict[str, Any],
         target_label: int  # <-- ADD THIS ARGUMENT
 ) -> Callable[[AppConfig], AppConfig]:
     """Returns a modifier to enable the tabular backdoor attack with specific trigger conditions."""
     print(f'current trigger condiftion: {trigger_conditions}')
+
     def modifier(config: AppConfig) -> AppConfig:
         config.adversary_seller_config.poisoning.type = PoisonType.TABULAR_BACKDOOR
 
-        # --- ADD THIS LINE to set the target_label explicitly ---
         label_key = "adversary_seller_config.poisoning.tabular_backdoor_params.target_label"
         set_nested_attr(config, label_key, target_label)
 
-        # --- This path must match your Python class (TabularBackdoorParams) ---
         trigger_key = "adversary_seller_config.poisoning.tabular_backdoor_params.feature_trigger_params.trigger_conditions"
         set_nested_attr(config, trigger_key, trigger_conditions)
         return config
@@ -118,13 +101,10 @@ def generate_tabular_main_summary_scenarios() -> List[Scenario]:
     scenarios = []
     ALL_AGGREGATORS = ['fedavg', 'fltrust', 'martfl']  # Core aggregators for comparison
 
-    # --- Standard Fixed Attack Settings (adjust if needed) ---
     FIXED_ADV_RATE = 0.3
     FIXED_POISON_RATE = 0.3
     SYBIL_STRATEGY = 'mimic'  # Assuming 'mimic' is your standard for main figs
-    # ---------------------------------------------------------
 
-    # --- Scenario for Texas100 (MLP) ---
     scenarios.append(Scenario(
         name="main_summary_texas100",  # Match naming convention
         base_config_factory=get_base_tabular_config,
@@ -163,7 +143,6 @@ def generate_tabular_main_summary_scenarios() -> List[Scenario]:
     ))
 
     return scenarios
-
 
 
 def use_sybil_attack(strategy: str) -> Callable[[AppConfig], AppConfig]:
@@ -250,7 +229,7 @@ def generate_tabular_label_flipping_scenarios() -> List[Scenario]:
     scenarios.append(Scenario(
         name="label_flip_texas100",
         base_config_factory=get_base_tabular_config,
-        modifiers=[use_tabular_label_flipping_attack],
+        modifiers=[use_label_flipping_attack],
         parameter_grid={
             "experiment.dataset_name": ["texas100"],
             "experiment.model_structure": ["mlp"],
@@ -291,35 +270,11 @@ def generate_tabular_scalability_scenarios() -> List[Scenario]:
             "experiment.model_structure": ["mlp"],
             "experiment.tabular_model_config_name": [model_config],
 
-            # --- The Key Sweep Parameters ---
             "aggregation.method": ALL_AGGREGATORS,
             "experiment.n_sellers": N_SELLERS_TO_SWEEP,
 
-            # --- Fixed Attack Parameters ---
             "experiment.adv_rate": [FIXED_ADV_RATE],
             "adversary_seller_config.poisoning.poison_rate": [FIXED_POISON_RATE],
         }
     ))
     return scenarios
-
-
-# --- Main Execution Block ---
-if __name__ == "__main__":
-    output_dir = "./configs_generated/tabular_fixed2"
-    generator = ExperimentGenerator(output_dir)
-
-    ALL_TABULAR_SCENARIOS = []
-    # --- ADD THIS LINE (e.g., at the beginning) ---
-    ALL_TABULAR_SCENARIOS.extend(generate_tabular_main_summary_scenarios())
-    # ----------------------------------------------
-    ALL_TABULAR_SCENARIOS.extend(generate_tabular_sybil_impact_scenarios())
-    ALL_TABULAR_SCENARIOS.extend(generate_tabular_attack_impact_scenarios())
-    ALL_TABULAR_SCENARIOS.extend(generate_tabular_label_flipping_scenarios())
-    ALL_TABULAR_SCENARIOS.extend(generate_tabular_scalability_scenarios())
-
-    for scenario in ALL_TABULAR_SCENARIOS:
-        base_config = scenario.base_config_factory()
-        generator.generate(base_config, scenario)
-
-    print(f"\n✅ All configurations for {len(ALL_TABULAR_SCENARIOS)} tabular scenarios have been generated.")
-    print(f"   Configs saved to: {output_dir}")

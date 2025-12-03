@@ -19,7 +19,7 @@ from tqdm import tqdm
 from attack.attack_gradient_market.privacy_attack.attack_methods.buyer_attack import PIAFeatureExtractor, \
     MIAFeatureExtractor
 from attack.attack_gradient_market.privacy_attack.utils import get_seller_ground_truth, get_buyer_dataset, model_factory
-from common.utils import ExperimentLoader
+from common_utils.utils import ExperimentLoader
 
 
 class AccessLevel(Enum):

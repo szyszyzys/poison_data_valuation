@@ -1,20 +1,19 @@
-# config_generator.py
-
 import copy
 import itertools
 from dataclasses import asdict
 from enum import Enum
 from pathlib import Path
 from types import NoneType
-from typing import Any, List # Added List
+from typing import Any, List
 
 import numpy as np
 import yaml
 
-from common.enums import PoisonType, VictimStrategy, ImageBackdoorAttackName, ImageTriggerType, ImageTriggerLocation, \
+from common_utils.constants.enums import PoisonType, VictimStrategy, ImageBackdoorAttackName, ImageTriggerType, \
+    ImageTriggerLocation, \
     TextTriggerLocation, TextBackdoorAttackName, LabelFlipMode
-from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, TabularBackdoorAttackName
 from entry.gradient_market.automate_exp.scenarios import Scenario
+from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, TabularBackdoorAttackName
 
 
 class CustomDumper(yaml.SafeDumper):
@@ -37,6 +36,7 @@ class CustomDumper(yaml.SafeDumper):
         """Tells YAML how to represent any Enum: by using its NAME as a string."""
         return self.represent_scalar('tag:yaml.org,2002:str', data.value)
 
+
 CustomDumper.add_representer(NoneType, CustomDumper.represent_none)
 CustomDumper.add_representer(Enum, CustomDumper.represent_enum)
 CustomDumper.add_representer(PoisonType, CustomDumper.represent_enum)
@@ -53,7 +53,6 @@ for numpy_type in (np.integer, np.floating, np.ndarray, np.bool_):
 
 
 def set_nested_attr(obj: Any, key: str, value: Any):
-    # (This function is unchanged, same as your file)
     """
     Sets a nested attribute on an object or a key in a nested dict
     using a dot-separated key.
@@ -68,8 +67,7 @@ def set_nested_attr(obj: Any, key: str, value: Any):
     else:
         setattr(current_obj, final_key, value)
 
-# --- START OF NEW FUNCTION ---
-# Added the iter_grid function you asked about
+
 def iter_grid(parameter_grid: dict) -> List[dict]:
     """
     Expands a grid (dict of lists) into a list of single-run dicts.
@@ -78,7 +76,6 @@ def iter_grid(parameter_grid: dict) -> List[dict]:
     keys, values = zip(*parameter_grid.items())
     param_combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
     return param_combinations
-# --- END OF NEW FUNCTION ---
 
 
 class ExperimentGenerator:
@@ -196,10 +193,6 @@ class ExperimentGenerator:
             parts.append(f"sk_thr-{format_hp(agg_cfg.skymask.mask_threshold)}")
             parts.append(f"clip-{format_hp(agg_cfg.clip_norm)}")
 
-        # (Add other defenses here if needed)
-
-        # --- END OF MODIFICATION ---
-
         # 5. Seller Attack Information (Was part 5)
         seller_attack_parts = []
         poison_cfg = config.adversary_seller_config.poisoning
@@ -214,7 +207,7 @@ class ExperimentGenerator:
             seller_attack_parts.append(f"poison-{poison_rate}")
             # (Rest of seller attack logic is fine)
             if sybil_cfg.is_sybil:
-                 seller_attack_parts.append(f"sybil-{sybil_cfg.gradient_default_mode or 'unknown'}")
+                seller_attack_parts.append(f"sybil-{sybil_cfg.gradient_default_mode or 'unknown'}")
             if config.adversary_seller_config.adaptive_attack.is_active:
                 seller_attack_parts.append(f"adaptive-{config.adversary_seller_config.adaptive_attack.attack_mode}")
 
@@ -225,29 +218,32 @@ class ExperimentGenerator:
 
         # 6. Buyer Attack (Was part 6, unchanged)
         if config.buyer_attack_config.is_active:
-            pass # Placeholder
+            pass  # Placeholder
 
         # 7. Data Distribution Parameters (Was part 7, unchanged)
         modality_data_config = None
-        if config.data.image: modality_data_config = config.data.image
-        elif config.data.text: modality_data_config = config.data.text
-        elif config.data.tabular: modality_data_config = config.data.tabular
+        if config.data.image:
+            modality_data_config = config.data.image
+        elif config.data.text:
+            modality_data_config = config.data.text
+        elif config.data.tabular:
+            modality_data_config = config.data.tabular
 
         if modality_data_config:
             if modality_data_config.strategy == "dirichlet":
-                default_alpha = 0.5 # Your default
+                default_alpha = 0.5  # Your default
                 alpha = modality_data_config.dirichlet_alpha
                 if alpha != default_alpha:
                     parts.append(f"alpha-{format_hp(alpha)}")
 
-            default_buyer_ratio = 0.1 # Your default
+            default_buyer_ratio = 0.1  # Your default
             buyer_pct = modality_data_config.buyer_ratio
             if buyer_pct != default_buyer_ratio:
                 parts.append(f"buyerdata-{format_hp(buyer_pct)}")
 
         # 8. Marketplace Size (Was part 8, unchanged)
         n_sellers = config.experiment.n_sellers
-        default_n_sellers = 10 # Your default
+        default_n_sellers = 10  # Your default
         if n_sellers != default_n_sellers:
             parts.append(f"sellers-{n_sellers}")
 

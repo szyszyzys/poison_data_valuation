@@ -12,7 +12,7 @@ from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import roc_auc_score
 from tqdm import tqdm
 
-from common.utils import ExperimentLoader
+from common_utils.utils import ExperimentLoader
 # --- Import your project's utilities and loader ---
 from utils import get_buyer_dataset, get_seller_ground_truth, model_factory
 

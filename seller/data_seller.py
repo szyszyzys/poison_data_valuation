@@ -1,7 +1,7 @@
 import torch
 from typing import List, Tuple
 
-from marketplace.seller.seller import BaseSeller
+from seller.seller import BaseSeller
 
 
 class DataSeller(BaseSeller):

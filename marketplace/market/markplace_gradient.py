@@ -8,14 +8,14 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 import torch
 
-from common.enums import ServerAttackMode
+from common_utils.constants.enums import ServerAttackMode
 from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig
 from entry.gradient_market.privacy_attack import GradientInversionAttacker
 from marketplace.market.data_market import DataMarketplace
 from marketplace.market_mechanism.gradient.aggregator import Aggregator
 from marketplace.market_mechanism.gradient.valuation import ValuationManager
-from marketplace.seller.gradient_seller import GradientSeller, SybilCoordinator
-from marketplace.seller.seller import BaseSeller
+from seller.gradient_seller import GradientSeller, SybilCoordinator
+from seller.seller import BaseSeller
 
 
 class DataMarketplaceFederated(DataMarketplace):

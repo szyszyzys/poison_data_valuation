@@ -9,7 +9,7 @@ import seaborn as sns
 from tqdm import tqdm
 from utils import get_buyer_dataset, get_seller_ground_truth
 
-from common.utils import ExperimentLoader
+from common_utils.utils import ExperimentLoader
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 

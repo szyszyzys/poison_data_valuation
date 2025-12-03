@@ -3,7 +3,7 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 import torch
 
-from common.utils import global_clip_np, unflatten_np, flatten_np
+from common_utils.utils import global_clip_np, unflatten_np, flatten_np
 
 
 # -------------------------------------------------------------------

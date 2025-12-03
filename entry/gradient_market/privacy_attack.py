@@ -16,7 +16,7 @@ from torchvision import transforms
 from torchvision.utils import save_image
 from typing import Any, Dict, List, Optional, Tuple
 
-from common.enums import VictimStrategy
+from common_utils.constants.enums import VictimStrategy
 from marketplace.utils.gradient_market_utils.gradient_market_configs import ServerAttackConfig
 
 # --- 1. Configuration & Constants ---

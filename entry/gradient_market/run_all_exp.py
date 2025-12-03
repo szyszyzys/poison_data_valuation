@@ -16,17 +16,17 @@ from pathlib import Path
 from torch.utils.data import DataLoader, random_split
 from typing import Dict
 
-from common.datasets.dataset import get_image_dataset, get_text_dataset
-from common.datasets.tabular_data_processor import get_tabular_dataset
-from common.evaluators import create_evaluators, CleanEvaluator
+from common_utils.datasets.dataset import get_image_dataset, get_text_dataset
+from common_utils.datasets.tabular_data_processor import get_tabular_dataset
+from common_utils.evaluation.evaluators import create_evaluators, CleanEvaluator
 from marketplace.utils.gradient_market_utils.factories import SellerFactory, StatefulModelFactory, TextModelFactory
 from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, RuntimeDataConfig
-from common.utils import set_seed
+from common_utils.utils import set_seed
 from entry.gradient_market.automate_exp.config_parser import load_config
-from marketplace.buyer import MaliciousBuyerProxy
+from buyer.gradient.buyer import MaliciousBuyerProxy
 from marketplace.market.markplace_gradient import DataMarketplaceFederated
 from marketplace.market_mechanism.gradient.aggregator import Aggregator
-from marketplace.seller.gradient_seller import (
+from seller.gradient_seller import (
     GradientSeller, SybilCoordinator
 )
 from model.image_model import ImageModelFactory

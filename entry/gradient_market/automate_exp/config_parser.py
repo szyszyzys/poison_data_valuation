@@ -1,4 +1,3 @@
-# config_loader.py
 import logging
 from enum import Enum
 from typing import Any
@@ -6,15 +5,12 @@ from typing import Any
 import yaml
 from dacite import from_dict, Config as DaciteConfig, MissingValueError, WrongTypeError
 
-# Import your full AppConfig and its components
 from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig  # Assuming these are there
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
-# --- New helper function to pre-process the dictionary ---
 def _convert_lists_to_tuples_for_specific_fields(data: Any) -> Any:
     """
     Recursively converts lists to tuples for specific fields that are type-hinted as Tuple
@@ -31,9 +27,6 @@ def _convert_lists_to_tuples_for_specific_fields(data: Any) -> Any:
         # Recursively apply to elements in a list
         return [_convert_lists_to_tuples_for_specific_fields(item) for item in data]
     return data
-
-
-# --- End of new helper function ---
 
 
 def load_config(config_path: str) -> AppConfig:

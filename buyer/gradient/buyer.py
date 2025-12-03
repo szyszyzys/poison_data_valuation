@@ -1,5 +1,3 @@
-# In marketplace/seller/gradient_seller.py
-
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -7,13 +5,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Subset
 
+from seller.gradient_seller import GradientSeller
 from marketplace.utils.gradient_market_utils.gradient_market_configs import BuyerAttackConfig
-from marketplace.seller.gradient_seller import GradientSeller
 
-
-# Assume these classes are defined elsewhere in your project
-
-# Add to marketplace/seller/gradient_seller.py
 
 class MaliciousBuyerProxy(GradientSeller):
     """

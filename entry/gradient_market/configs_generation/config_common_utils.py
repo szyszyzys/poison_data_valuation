@@ -4,7 +4,7 @@
 # --- CRITICAL: FILL THESE WITH YOUR ACTUAL RESULTS ---
 from typing import Dict, Any, Callable, Optional
 
-from common.enums import PoisonType
+from common_utils.constants.enums import PoisonType
 from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig
 
 GOLDEN_TRAINING_PARAMS = {

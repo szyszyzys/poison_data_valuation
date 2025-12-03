@@ -6,7 +6,7 @@ import torch
 from torch.utils.data import Dataset, Subset
 from typing import Any, Dict, List, Tuple  # Added Optional
 
-from common.datasets.image_data_processor import CelebACustom
+from common_utils.datasets.image_data_processor import CelebACustom
 from marketplace.utils.gradient_market_utils.gradient_market_configs import PropertySkewParams, TabularDataConfig
 
 logging.basicConfig(

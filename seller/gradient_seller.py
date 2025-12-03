@@ -26,12 +26,12 @@ from torch.utils.data import Subset
 
 from attack.attack_gradient_market.poison_attack.attack_utils import PoisonGenerator, BackdoorImageGenerator, \
     BackdoorTextGenerator, BackdoorTabularGenerator
-from common.enums import ImageTriggerType, ImageTriggerLocation, PoisonType
+from common_utils.constants.enums import ImageTriggerType, ImageTriggerLocation, PoisonType
 from marketplace.utils.gradient_market_utils.gradient_market_configs import AdversarySellerConfig, BackdoorImageConfig, BackdoorTextConfig, SybilConfig, \
     RuntimeDataConfig, TrainingConfig, BackdoorTabularConfig, SybilDrowningConfig
-from common.utils import unflatten_tensor, flatten_tensor
+from common_utils.utils import unflatten_tensor, flatten_tensor
 from marketplace.market_mechanism.gradient.aggregator import Aggregator
-from marketplace.seller.seller import BaseSeller
+from seller.seller import BaseSeller
 from model.utils import local_training_and_get_gradient
 
 

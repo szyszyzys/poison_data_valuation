@@ -10,7 +10,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset, Subset
 
-from common.utils import set_seed
+from common_utils.utils import set_seed
 # --- 1. Import the necessary functions from your project ---
 # Make sure your project structure allows these imports.
 from entry.gradient_market.automate_exp.config_parser import load_config

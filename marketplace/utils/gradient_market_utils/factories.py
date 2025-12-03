@@ -10,12 +10,12 @@ from torch.utils.data import Dataset
 from attack.attack_gradient_market.poison_attack.attack_utils import (
     LabelFlipGenerator, PoisonGenerator
 )
-from common.enums import PoisonType
+from common_utils.constants.enums import PoisonType
 from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, RuntimeDataConfig
 from marketplace.utils.gradient_market_utils.gradient_market_configs import LabelFlipConfig
-from common.model_utils import _log_param_stats
+from common_utils.model_utils import _log_param_stats
 # Import the specific seller classes
-from marketplace.seller.gradient_seller import (
+from seller.gradient_seller import (
     GradientSeller, AdvancedBackdoorAdversarySeller,
     AdvancedPoisoningAdversarySeller, AdaptiveAttackerSeller, DrowningAttackerSeller
 )

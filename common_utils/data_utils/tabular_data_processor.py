@@ -15,8 +15,8 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, Subset, TensorDataset
 from ucimlrepo import fetch_ucirepo
 
-from common.datasets.data_partitioner import TabularDataPartitioner
-from common.datasets.image_data_processor import save_data_statistics
+from common_utils.datasets.data_partitioner import TabularDataPartitioner
+from common_utils.datasets.image_data_processor import save_data_statistics
 from marketplace.utils.gradient_market_utils.gradient_market_configs import AppConfig, TabularDataConfig  # Import your main config
 
 logger = logging.getLogger(__name__)

@@ -3,9 +3,9 @@ from typing import Dict, Union, Tuple, List
 import numpy as np
 
 from attack.privacy_attack.malicious_seller import MaliciousDataSeller
-from marketplace.seller.seller import BaseSeller
+from seller.seller import BaseSeller
 from marketplace.market.data_market import DataMarketplace
-from marketplace.data_selector import DataSelector, SelectionStrategy
+from common_utils.datasets.data_selector import DataSelector, SelectionStrategy
 
 
 class DataMarketplaceData(DataMarketplace):

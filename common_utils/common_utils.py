@@ -26,9 +26,6 @@ def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
     return dot_val / (norm1 * norm2)
 
 
-# -------------------------------------------------------------------
-# Utility functions: flatten/unflatten parameters & gradient clipping
-# -------------------------------------------------------------------
 def flatten_np(param_tensors: List[torch.Tensor]) -> np.ndarray:
     """Flatten a list of PyTorch tensors into a single 1D NumPy array."""
     flat = []

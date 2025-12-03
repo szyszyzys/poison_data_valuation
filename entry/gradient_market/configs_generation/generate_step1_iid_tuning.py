@@ -3,7 +3,7 @@
 import sys
 from typing import Callable
 
-from common.enums import PoisonType
+from common_utils.constants.enums import PoisonType
 from entry.gradient_market.automate_exp.base_configs import get_base_image_config, get_base_text_config
 from entry.gradient_market.automate_exp.scenarios import Scenario, use_cifar100_config, use_cifar10_config
 from entry.gradient_market.automate_exp.tbl_new import get_base_tabular_config

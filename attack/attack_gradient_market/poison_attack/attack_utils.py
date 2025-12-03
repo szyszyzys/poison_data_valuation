@@ -7,7 +7,7 @@ from torchtext.vocab import Vocab
 from typing import Any
 from typing import Dict, Tuple, List
 
-from common.enums import ImageTriggerType, ImageTriggerLocation
+from common_utils.constants.enums import ImageTriggerType, ImageTriggerLocation
 from marketplace.utils.gradient_market_utils.gradient_market_configs import LabelFlipConfig, BackdoorImageConfig, BackdoorTextConfig, \
     BackdoorTabularConfig
 
